@@ -1,0 +1,251 @@
+"""@benchmark, @parametrize, @product decorator behavior."""
+
+from __future__ import annotations
+
+import pytest
+
+import mew
+from mew._registry import REGISTRY
+
+# ---------- @benchmark ------------------------------------------------------
+
+
+def test_bare_decorator_registers_one_entry():
+    @mew.benchmark
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    entries = REGISTRY.all()
+    assert len(entries) == 1
+    assert "bench_x" in entries[0].name
+    assert entries[0].fn is bench_x
+    assert entries[0].options == {}
+
+
+def test_called_decorator_captures_options():
+    @mew.benchmark(min_time=0.5, unit="us", iterations=10)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    entry = REGISTRY.all()[0]
+    assert entry.options["min_time"] == 0.5
+    assert entry.options["unit"] == "us"
+    assert entry.options["iterations"] == 10
+
+
+def test_unknown_option_raises():
+    with pytest.raises(TypeError, match="unknown option"):
+
+        @mew.benchmark(foo=1)  # type: ignore[call-overload]
+        def _bench(state):
+            for _ in state:
+                pass
+
+
+def test_custom_name_override():
+    @mew.benchmark(name="my/custom/name")
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    assert REGISTRY.all()[0].name == "my/custom/name"
+
+
+# ---------- @parametrize ----------------------------------------------------
+
+
+def test_parametrize_registers_one_per_variant():
+    @mew.parametrize([{"n": 1}, {"n": 10}, {"n": 100}])
+    def bench_x(state, n):
+        for _ in state:
+            assert n in (1, 10, 100)
+
+    names = [e.name for e in REGISTRY.all()]
+    assert len(names) == 3
+    assert all("[n=" in n for n in names)
+
+
+def test_parametrize_multi_kwarg_dict():
+    @mew.parametrize(
+        [
+            {"n": 1, "algo": "a"},
+            {"n": 10, "algo": "b"},
+        ]
+    )
+    def bench_x(state, n, algo):
+        for _ in state:
+            pass
+
+    names = sorted(e.name for e in REGISTRY.all())
+    assert len(names) == 2
+    labels = [n.split("[", 1)[1].rstrip("]") for n in names]
+    assert set(labels) == {"n=1-algo=a", "n=10-algo=b"}
+
+
+def test_parametrize_options_apply_to_all_variants():
+    @mew.parametrize([{"n": 1}, {"n": 2}], min_time=0.25, unit="us")
+    def bench_x(state, n):
+        for _ in state:
+            pass
+
+    assert all(e.options["min_time"] == 0.25 for e in REGISTRY.all())
+    assert all(e.options["unit"] == "us" for e in REGISTRY.all())
+
+
+def test_parametrize_custom_ids():
+    @mew.parametrize([{"n": 10}, {"n": 1000}], ids=["small", "big"])
+    def bench_x(state, n):
+        for _ in state:
+            pass
+
+    names = [e.name for e in REGISTRY.all()]
+    assert any(n.endswith("[small]") for n in names)
+    assert any(n.endswith("[big]") for n in names)
+
+
+def test_parametrize_ids_length_mismatch():
+    with pytest.raises(ValueError, match="ids"):
+
+        @mew.parametrize([{"n": 1}, {"n": 2}, {"n": 3}], ids=["a", "b"])
+        def _bench(state, n):
+            for _ in state:
+                pass
+
+
+def test_parametrize_accepts_generator():
+    @mew.parametrize({"n": n} for n in range(3))
+    def bench_x(state, n):
+        for _ in state:
+            pass
+
+    assert len(REGISTRY.all()) == 3
+
+
+def test_variant_passes_kwargs_through():
+    seen = []
+
+    @mew.parametrize([{"n": 7}, {"n": 9}])
+    def bench_capture(state, n):
+        seen.append(n)
+        _ = state.name
+
+    class DummyState:
+        name = "dummy"
+
+    for entry in REGISTRY.all():
+        entry.fn(DummyState())
+    assert sorted(seen) == [7, 9]
+
+
+# ---------- @product --------------------------------------------------------
+
+
+def test_product_cartesian():
+    @mew.product(n=[1, 2], algo=["a", "b"])
+    def bench_x(state, n, algo):
+        for _ in state:
+            pass
+
+    names = sorted(e.name for e in REGISTRY.all())
+    assert len(names) == 4
+    labels = [n.split("[", 1)[1].rstrip("]") for n in names]
+    assert set(labels) == {
+        "n=1-algo=a",
+        "n=1-algo=b",
+        "n=2-algo=a",
+        "n=2-algo=b",
+    }
+
+
+def test_product_pulls_options_out_of_kwargs():
+    @mew.product(n=[1, 2], min_time=0.05, unit="us")
+    def bench_x(state, n):
+        for _ in state:
+            pass
+
+    entries = REGISTRY.all()
+    assert len(entries) == 2  # only 2 variants — min_time/unit are options
+    assert all(e.options["min_time"] == 0.05 for e in entries)
+    assert all(e.options["unit"] == "us" for e in entries)
+
+
+def test_product_needs_at_least_one_iterable():
+    with pytest.raises(TypeError, match="at least one iterable"):
+
+        @mew.product(min_time=0.1)
+        def _bench(state):
+            for _ in state:
+                pass
+
+
+# ---------- composition guard ----------------------------------------------
+
+
+def test_double_registration_raises():
+    with pytest.raises(RuntimeError, match="already registered"):
+
+        @mew.benchmark
+        @mew.parametrize([{"n": 1}])
+        def _bench(state, n):
+            for _ in state:
+                pass
+
+
+# ---------- tags -----------------------------------------------------------
+
+
+def test_benchmark_tags_propagate():
+    @mew.benchmark(tags=("io", "slow"))
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    entry = REGISTRY.all()[0]
+    assert entry.tags == ("io", "slow")
+
+
+def test_benchmark_tags_accepts_single_string():
+    @mew.benchmark(tags="io")
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    assert REGISTRY.all()[0].tags == ("io",)
+
+
+def test_parametrize_tags_apply_to_all_variants():
+    @mew.parametrize([{"n": 1}, {"n": 2}], tags=("sort",))
+    def bench_x(state, n):
+        for _ in state:
+            pass
+
+    assert all(e.tags == ("sort",) for e in REGISTRY.all())
+
+
+def test_product_tags_apply_to_all_variants():
+    @mew.product(n=[1, 2], algo=["a", "b"], tags=("sort", "heavy"))
+    def bench_x(state, n, algo):
+        for _ in state:
+            pass
+
+    assert all(e.tags == ("sort", "heavy") for e in REGISTRY.all())
+
+
+def test_empty_tags_normalize_to_empty_tuple():
+    @mew.benchmark
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    assert REGISTRY.all()[0].tags == ()
+
+
+def test_tags_must_be_strings():
+    with pytest.raises(TypeError, match="non-empty strings"):
+
+        @mew.benchmark(tags=("ok", "", 42))  # type: ignore[arg-type]
+        def _bench(state):
+            for _ in state:
+                pass
