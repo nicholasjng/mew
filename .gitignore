@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# CMake / C++
+.cache/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.so
+*.dylib
+*.pyd
+_skbuild/
+compile_commands.json
+
+# IDE
+.vscode/
+.idea/
+.zed/
+
+# Test/coverage
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage

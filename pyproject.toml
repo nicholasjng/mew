@@ -1,0 +1,55 @@
+[build-system]
+requires = ["scikit-build-core >=0.10", "nanobind >=2.2"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "mew"
+version = "0.1.0"
+description = "A CLI for microbenchmarking Python code snippets."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Nicholas Junge", email = "nicho.junge@gmail.com" }]
+dependencies = [
+    "cyclopts >=3.0",
+    "rich >=13.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest >=8",
+    "ruff >=0.6",
+    "nanobind >=2.2",
+    "scikit-build-core >=0.10",
+    "pyarrow >=17",
+    "duckdb >=1.1",
+]
+
+[tool.uv]
+# Build mew against the project's own .venv so paths baked into
+# compile_commands.json (nanobind headers, etc.) survive across rebuilds.
+no-build-isolation-package = ["mew"]
+
+[project.scripts]
+mew = "mew.cli:app"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+build-dir = "build"
+wheel.packages = ["src/mew"]
+wheel.py-api = "cp312"
+cmake.version = ">=3.21"
+cmake.build-type = "Release"
+
+[tool.scikit-build.cmake.define]
+BENCHMARK_ENABLE_TESTING = "OFF"
+BENCHMARK_ENABLE_GTEST_TESTS = "OFF"
+BENCHMARK_ENABLE_INSTALL = "OFF"
+CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+extend-select = ["I", "UP", "B", "SIM"]
