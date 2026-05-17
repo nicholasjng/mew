@@ -2,12 +2,40 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import os
+import sys
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from typing import Any
 
 from mew import _core
 from mew import context as _context
 from mew._registry import REGISTRY, Entry
+
+
+@contextmanager
+def _silence_native_stderr() -> Iterator[None]:
+    """Redirect OS-level fd 2 to /dev/null around the C++ call.
+
+    Google Benchmark's init writes platform diagnostics ("Unable to determine
+    clock rate", thread affinity warnings, etc.) straight to fd 2, bypassing
+    Python's sys.stderr. Python-level redirection won't catch them.
+
+    User-facing benchmark errors don't go through fd 2: `skip_with_error`
+    routes through the reporter callback, and Python exceptions raised inside
+    benchmark callbacks propagate normally.
+    """
+    sys.stderr.flush()
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    saved = os.dup(2)
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        sys.stderr.flush()
+        os.dup2(saved, 2)
+        os.close(saved)
+        os.close(devnull)
 
 
 def _apply_options(handle: _core.BenchmarkHandle, opts: dict[str, Any]) -> None:
@@ -62,7 +90,8 @@ def run(
     custom = _context._snapshot()
     if custom and rep is not None:
         rep = _ContextInjecting(rep, custom)
-    return _core.run_benchmarks(cli, rep)
+    with _silence_native_stderr():
+        return _core.run_benchmarks(cli, rep)
 
 
 def _to_single_reporter(reporter: Any) -> Any:
