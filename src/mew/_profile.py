@@ -48,16 +48,35 @@ class _MockState:
             raise StopIteration
         self._i += 1
 
-    def pause_timing(self) -> None: pass
-    def resume_timing(self) -> None: pass
-    def set_counter(self, name: str, value: float) -> None: pass
-    def set_label(self, label: str) -> None: pass
-    def set_items_processed(self, n: int) -> None: pass
-    def set_bytes_processed(self, n: int) -> None: pass
-    def set_iteration_time(self, seconds: float) -> None: pass
-    def skip_with_error(self, msg: str) -> None: pass
-    def skip_with_message(self, msg: str) -> None: pass
-    def range(self, pos: int = 0) -> int: return 0
+    def pause_timing(self) -> None:
+        pass
+
+    def resume_timing(self) -> None:
+        pass
+
+    def set_counter(self, name: str, value: float) -> None:
+        pass
+
+    def set_label(self, label: str) -> None:
+        pass
+
+    def set_items_processed(self, n: int) -> None:
+        pass
+
+    def set_bytes_processed(self, n: int) -> None:
+        pass
+
+    def set_iteration_time(self, seconds: float) -> None:
+        pass
+
+    def skip_with_error(self, msg: str) -> None:
+        pass
+
+    def skip_with_message(self, msg: str) -> None:
+        pass
+
+    def range(self, pos: int = 0) -> int:
+        return 0
 
 
 class EnrichedRun:
@@ -98,14 +117,16 @@ class _ProfileEnriching:
         return self._inner.report_context(context)
 
     def report_runs(self, runs: list[Any]) -> None:
-        self._inner.report_runs([
-            EnrichedRun(
-                r,
-                memory=self._mem.get(r.benchmark_name()),
-                cpu=self._cpu.get(r.benchmark_name()),
-            )
-            for r in runs
-        ])
+        self._inner.report_runs(
+            [
+                EnrichedRun(
+                    r,
+                    memory=self._mem.get(r.benchmark_name()),
+                    cpu=self._cpu.get(r.benchmark_name()),
+                )
+                for r in runs
+            ]
+        )
 
     def finalize(self) -> None:
         if fn := getattr(self._inner, "finalize", None):

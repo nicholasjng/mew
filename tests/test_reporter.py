@@ -130,3 +130,42 @@ def test_rich_reporter_runs_without_error():
     out = buf.getvalue()
     assert "host=" in out
     assert "Benchmark" in out  # the table header
+
+
+def test_rich_reporter_streams_header_before_first_run():
+    """Header must be emitted at report_context, not deferred to finalize."""
+    import io
+
+    from rich.console import Console
+
+    from mew.reporter import RichReporter
+
+    buf = io.StringIO()
+    rep = RichReporter(console=Console(file=buf, force_terminal=False, width=120))
+    rep.report_context({"host_name": "h", "num_cpus": 4, "mhz_per_cpu": 1000, "cpu_scaling": "off"})
+    # Header is already on screen — we haven't reported any runs yet.
+    out = buf.getvalue()
+    assert "host=" in out
+    assert "Benchmark" in out
+    assert "Iters" in out
+
+
+def test_rich_reporter_profile_flags_add_columns():
+    import io
+
+    from rich.console import Console
+
+    from mew.reporter import RichReporter
+
+    buf = io.StringIO()
+    rep = RichReporter(
+        console=Console(file=buf, force_terminal=False, width=200),
+        show_memory=True,
+        show_cpu=True,
+    )
+    rep.report_context({"host_name": "h", "num_cpus": 1, "mhz_per_cpu": 1000, "cpu_scaling": "?"})
+    out = buf.getvalue()
+    assert "Peak Mem" in out
+    assert "Total Alloc" in out
+    assert "Samples" in out
+    assert "Top Fn" in out

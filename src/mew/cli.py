@@ -79,7 +79,12 @@ def list_(
 _STDOUT_SENTINELS = frozenset({"-", "stdout"})
 
 
-def _build_reporters(outputs: list[str]) -> list[Reporter]:
+def _build_reporters(
+    outputs: list[str],
+    *,
+    show_memory: bool = False,
+    show_cpu: bool = False,
+) -> list[Reporter]:
     """Resolve `-o` sinks into a list of reporters.
 
     Sentinels: `-` or `stdout` (terminal, rich) and `*.json` (JSON file).
@@ -90,7 +95,7 @@ def _build_reporters(outputs: list[str]) -> list[Reporter]:
     quoting hassles.
     """
     if not outputs:
-        return [RichReporter()]
+        return [RichReporter(show_memory=show_memory, show_cpu=show_cpu)]
 
     reps: list[Reporter] = []
     seen_stdout = False
@@ -101,7 +106,7 @@ def _build_reporters(outputs: list[str]) -> list[Reporter]:
                 print("duplicate stdout sink", file=sys.stderr)
                 raise SystemExit(2)
             seen_stdout = True
-            reps.append(RichReporter())
+            reps.append(RichReporter(show_memory=show_memory, show_cpu=show_cpu))
             continue
         path = Path(raw).resolve()
         if path in seen_files:
@@ -153,6 +158,48 @@ def run(
         list[str],
         Parameter(name="--gb", help="raw arg forwarded to Google Benchmark"),
     ] = [],  # noqa: B006
+    profile_memory: Annotated[
+        bool,
+        Parameter(
+            name="--profile-memory",
+            help="profile memory allocations with memray before the timing run",
+        ),
+    ] = False,
+    flamegraph: Annotated[
+        Path | None,
+        Parameter(
+            name="--flamegraph",
+            help="write an HTML flame graph to this path (implies --profile-memory)",
+        ),
+    ] = None,
+    profile_cpu: Annotated[
+        bool,
+        Parameter(
+            name="--profile-cpu",
+            help="profile CPU time with pyinstrument before the timing run",
+        ),
+    ] = False,
+    cpu_interval: Annotated[
+        float,
+        Parameter(
+            name="--cpu-interval",
+            help="pyinstrument sampling interval in seconds (default 1e-4)",
+        ),
+    ] = 1e-4,
+    cpu_iterations: Annotated[
+        int,
+        Parameter(
+            name="--cpu-iterations",
+            help="iterations of the body per benchmark under the sampler (default 1000)",
+        ),
+    ] = 1000,
+    cpu_output: Annotated[
+        Path | None,
+        Parameter(
+            name="--cpu-output",
+            help="write a pyinstrument HTML report to this path (implies --profile-cpu)",
+        ),
+    ] = None,
 ) -> None:
     """Discover and run benchmarks."""
     entries = _collect(paths, pattern=pattern, tags=tag or None)
@@ -167,7 +214,36 @@ def run(
         argv.append(f"--benchmark_repetitions={repetitions}")
     argv.extend(extra)
 
-    reporters = _build_reporters(output)
+    reporters = _build_reporters(
+        output,
+        show_memory=profile_memory or flamegraph is not None,
+        show_cpu=profile_cpu or cpu_output is not None,
+    )
+
+    memory_profiles = None
+    cpu_profiles = None
+    if profile_memory or flamegraph is not None:
+        from mew.memory import profile as _profile_mem
+
+        memory_profiles = _profile_mem(entries, flamegraph=flamegraph)
+    if profile_cpu or cpu_output is not None:
+        from mew.cpu import profile as _profile_cpu
+
+        cpu_profiles = _profile_cpu(
+            entries,
+            output=cpu_output,
+            interval=cpu_interval,
+            inner_iterations=cpu_iterations,
+        )
+
+    if memory_profiles is not None or cpu_profiles is not None:
+        from mew._profile import _ProfileEnriching
+
+        reporters = [
+            _ProfileEnriching(r, memory_profiles=memory_profiles, cpu_profiles=cpu_profiles)
+            for r in reporters
+        ]
+
     runner.run(entries, argv=argv, reporter=reporters)
 
 
