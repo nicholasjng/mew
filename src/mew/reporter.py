@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol, TextIO, runtime_checkable
 
 from rich.console import Console
-from rich.table import Table
+from rich.text import Text
 
 from mew._core import Run
 
@@ -26,8 +26,15 @@ class Reporter(Protocol):
     def report_runs(self, runs: list[Run]) -> None: ...
 
 
-def _run_to_dict(r: Run) -> dict[str, Any]:
-    return {
+def _fmt_bytes(n: int) -> str:
+    for threshold, unit in ((1 << 30, "GB"), (1 << 20, "MB"), (1 << 10, "KB")):
+        if n >= threshold:
+            return f"{n / threshold:.1f} {unit}"
+    return f"{n} B"
+
+
+def _run_to_dict(r: Any) -> dict[str, Any]:
+    d: dict[str, Any] = {
         "name": r.benchmark_name(),
         "run_name": str(r.run_name),
         "family_index": r.family_index,
@@ -48,6 +55,24 @@ def _run_to_dict(r: Run) -> dict[str, Any]:
         "skip_message": r.skip_message,
         "counters": dict(r.counters) if r.counters else {},
     }
+    mem = getattr(r, "memory", None)
+    if mem is not None:
+        d["memory"] = {
+            "profiler": mem.profiler,
+            "peak_bytes": mem.peak_bytes,
+            "total_bytes": mem.total_bytes,
+            "total_allocations": mem.total_allocations,
+        }
+    cpu = getattr(r, "cpu", None)
+    if cpu is not None:
+        d["cpu_profile"] = {
+            "profiler": cpu.profiler,
+            "wall_time": cpu.wall_time,
+            "sample_count": cpu.sample_count,
+            "top_function": cpu.top_function,
+            "top_function_total_self_time": cpu.top_function_total_self_time,
+        }
+    return d
 
 
 class JSONReporter:
@@ -96,21 +121,42 @@ class JSONReporter:
 
 
 class RichReporter:
-    """Print a colorized summary table at the end of the run."""
+    """Stream one row per benchmark family as Google Benchmark completes it.
 
-    def __init__(self, *, console: Console | None = None) -> None:
+    Pass ``show_memory`` / ``show_cpu`` when constructing to enable the extra
+    columns: streaming can't auto-detect those mid-run because the header is
+    printed before any results land. The CLI wires these from
+    ``--profile-memory`` / ``--profile-cpu``.
+    """
+
+    def __init__(
+        self,
+        *,
+        console: Console | None = None,
+        show_memory: bool = False,
+        show_cpu: bool = False,
+    ) -> None:
         self._console = console or Console()
+        self._show_memory = show_memory
+        self._show_cpu = show_cpu
         self._context: dict[str, Any] = {}
-        self._runs: list[Run] = []
+        self._widths: dict[str, int] = {}
 
     def report_context(self, context: dict[str, Any]) -> bool:
         self._context = dict(context)
+        self._print_banner()
+        self._compute_widths()
+        self._print_header()
         return True
 
     def report_runs(self, runs: list[Run]) -> None:
-        self._runs.extend(runs)
+        for r in runs:
+            self._print_row(r)
 
     def finalize(self) -> None:
+        pass
+
+    def _print_banner(self) -> None:
         c = self._context
         host = c.get("host_name") or "?"
         cpus = c.get("num_cpus", "?")
@@ -122,22 +168,67 @@ class RichReporter:
             f"scaling=[cyan]{scaling}[/]"
         )
 
-        t = Table(show_header=True, header_style="bold")
-        t.add_column("Benchmark", overflow="fold")
-        t.add_column("Iters", justify="right")
-        t.add_column("Real", justify="right")
-        t.add_column("CPU", justify="right")
-        t.add_column("Label", overflow="fold")
-        for r in self._runs:
-            unit = r.time_unit.name
-            t.add_row(
-                r.benchmark_name(),
-                f"{r.iterations:,}",
-                f"{r.adjusted_real_time():.2f} {unit}",
-                f"{r.adjusted_cpu_time():.2f} {unit}",
-                r.report_label or "",
-            )
-        self._console.print(t)
+    def _compute_widths(self) -> None:
+        fixed: dict[str, int] = {
+            "iters": 12,
+            "real": 14,
+            "cpu": 14,
+        }
+        if self._show_memory:
+            fixed["peak"] = 10
+            fixed["alloc"] = 12
+        if self._show_cpu:
+            fixed["samples"] = 9
+            fixed["top_fn"] = 30
+        n_cols = len(fixed) + 1  # +1 for the name column
+        spacing = (n_cols - 1) * 2
+        # Name column takes whatever's left; floor at 30 even if it overflows.
+        name_w = max(30, self._console.width - sum(fixed.values()) - spacing)
+        self._widths = {"name": name_w, **fixed}
+
+    def _print_header(self) -> None:
+        w = self._widths
+        cells = [
+            "Benchmark".ljust(w["name"]),
+            "Iters".rjust(w["iters"]),
+            "Real".rjust(w["real"]),
+            "CPU".rjust(w["cpu"]),
+        ]
+        if self._show_memory:
+            cells.append("Peak Mem".rjust(w["peak"]))
+            cells.append("Total Alloc".rjust(w["alloc"]))
+        if self._show_cpu:
+            cells.append("Samples".rjust(w["samples"]))
+            cells.append("Top Fn".ljust(w["top_fn"]))
+        line = "  ".join(cells)
+        self._console.print(Text(line, style="bold"))
+        self._console.print(Text("─" * len(line), style="dim"))
+
+    def _print_row(self, r: Any) -> None:
+        w = self._widths
+        unit = r.time_unit.name
+        name = r.benchmark_name()
+        if len(name) > w["name"]:
+            name = name[: w["name"] - 1] + "…"
+
+        cells = [
+            name.ljust(w["name"]),
+            f"{r.iterations:,}".rjust(w["iters"]),
+            f"{r.adjusted_real_time():.2f} {unit}".rjust(w["real"]),
+            f"{r.adjusted_cpu_time():.2f} {unit}".rjust(w["cpu"]),
+        ]
+        if self._show_memory:
+            mem = getattr(r, "memory", None)
+            cells.append((_fmt_bytes(mem.peak_bytes) if mem else "-").rjust(w["peak"]))
+            cells.append((_fmt_bytes(mem.total_bytes) if mem else "-").rjust(w["alloc"]))
+        if self._show_cpu:
+            cpu = getattr(r, "cpu", None)
+            cells.append((f"{cpu.sample_count:,}" if cpu else "-").rjust(w["samples"]))
+            top = cpu.top_function if cpu else "-"
+            if len(top) > w["top_fn"]:
+                top = top[: w["top_fn"] - 1] + "…"
+            cells.append(top.ljust(w["top_fn"]))
+        self._console.print(Text("  ".join(cells)))
 
 
 class ParquetReporter:
@@ -184,8 +275,10 @@ class ParquetReporter:
         table = pa.Table.from_pylist(rows, schema=_parquet_schema(pa))
         pq.write_table(table, str(self._output))
 
-    def _row(self, r: Run, date: datetime, custom_json: str | None) -> dict[str, Any]:
+    def _row(self, r: Any, date: datetime, custom_json: str | None) -> dict[str, Any]:
         ctx = self._context
+        mem = getattr(r, "memory", None)
+        cpu = getattr(r, "cpu", None)
         return {
             "name": r.benchmark_name(),
             "run_name": str(r.run_name),
@@ -217,6 +310,27 @@ class ParquetReporter:
             "cpu_scaling_enabled": ctx.get("cpu_scaling") == "enabled",
             "library_build_type": ctx.get("library_build_type"),
             "custom": custom_json,
+            "memory": json.dumps(
+                {
+                    "profiler": mem.profiler,
+                    "peak_bytes": mem.peak_bytes,
+                    "total_bytes": mem.total_bytes,
+                    "total_allocations": mem.total_allocations,
+                }
+            )
+            if mem is not None
+            else None,
+            "cpu_profile": json.dumps(
+                {
+                    "profiler": cpu.profiler,
+                    "wall_time": cpu.wall_time,
+                    "sample_count": cpu.sample_count,
+                    "top_function": cpu.top_function,
+                    "top_function_total_self_time": cpu.top_function_total_self_time,
+                }
+            )
+            if cpu is not None
+            else None,
         }
 
 
@@ -250,6 +364,8 @@ def _parquet_schema(pa: Any) -> Any:
             ("cpu_scaling_enabled", pa.bool_()),
             ("library_build_type", pa.string()),
             ("custom", pa.string()),
+            ("memory", pa.string()),
+            ("cpu_profile", pa.string()),
         ]
     )
 
