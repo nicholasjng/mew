@@ -72,7 +72,7 @@ def _qualified_name(fn: Callable[..., Any], file: str | None) -> str:
             return f"{rel}::{qualname}"
         except ValueError:
             return f"{Path(file).name}::{qualname}"
-    module = getattr(fn, "__module__", None) or "<unknown>"
+    module = getattr(fn, "__module__", "<unknown>")
     return f"{module}::{qualname}"
 
 
