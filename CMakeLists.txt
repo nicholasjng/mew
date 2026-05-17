@@ -103,9 +103,11 @@ execute_process(
 if(_ruff_available EQUAL 0)
     add_custom_command(
         TARGET _core_stub POST_BUILD
+        COMMAND ${Python_EXECUTABLE} -m ruff check --fix --quiet
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
         COMMAND ${Python_EXECUTABLE} -m ruff format --quiet
             ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
-        COMMENT "ruff format _core.pyi"
+        COMMENT "ruff fix + format _core.pyi"
         VERBATIM
     )
 endif()

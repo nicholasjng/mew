@@ -16,6 +16,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cpu = [ "pyinstrument >=4.6" ]
+memory = [ "memray>=1.5; sys_platform != 'win32'" ]
 dev = [
     "pytest >=8",
     "ruff >=0.6",
@@ -29,6 +31,8 @@ dev = [
 # Build mew against the project's own .venv so paths baked into
 # compile_commands.json (nanobind headers, etc.) survive across rebuilds.
 no-build-isolation-package = ["mew"]
+# exclude dependency versions newer than one week
+exclude-newer = "1 week"
 
 [project.scripts]
 mew = "mew.cli:app"

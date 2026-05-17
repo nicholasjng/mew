@@ -31,3 +31,6 @@ compile_commands.json
 .ruff_cache/
 htmlcov/
 .coverage
+
+# flame graphs and profiles
+*.html
