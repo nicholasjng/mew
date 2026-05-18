@@ -5,11 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from mew._profile import _MockState
 
 if TYPE_CHECKING:
+    from pyinstrument.frame import Frame
+    from pyinstrument.session import Session
+
     from mew._registry import Entry
 
 
@@ -64,7 +67,10 @@ def _collect_stats(
         prof = pyinstrument.Profiler(interval=interval, async_mode="disabled")
         with prof:
             entry.fn(_MockState(n_iterations=inner_iterations))
-        profiles[entry.name] = _summarize(prof.last_session)
+        session = prof.last_session
+        # set on context manager exit, always present.
+        assert session is not None
+        profiles[entry.name] = _summarize(session)
     return profiles
 
 
@@ -83,7 +89,7 @@ def _write_html(
     path.write_text(prof.output_html())
 
 
-def _summarize(session: Any) -> CPUProfile:
+def _summarize(session: Session) -> CPUProfile:
     root = session.root_frame()
     if root is None or session.sample_count == 0:
         return CPUProfile(
@@ -104,7 +110,7 @@ def _summarize(session: Any) -> CPUProfile:
     )
 
 
-def _hottest_frame(root: Any) -> Any:
+def _hottest_frame(root: Frame) -> Frame:
     """Find the frame with the largest self_time anywhere in the call tree."""
     best = root
     stack = [root]
