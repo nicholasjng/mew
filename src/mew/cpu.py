@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,16 +22,12 @@ class CPUProfile:
     top_function_total_self_time: float
 
 
-def _require_pyinstrument() -> Any:
-    try:
-        import pyinstrument  # type: ignore[import-not-found]
-
-        return pyinstrument
-    except ImportError:
+def _ensure_pyinstrument() -> None:
+    if find_spec("pyinstrument") is None:
         raise SystemExit(
             "pyinstrument is required for CPU profiling. "
             "Install it with: uv add --optional cpu pyinstrument"
-        ) from None
+        )
 
 
 def profile(
@@ -48,27 +45,25 @@ def profile(
     given, additionally runs a combined session over all entries and writes
     a pyinstrument HTML report to that path.
     """
-    pyinstrument = _require_pyinstrument()
-    profiles = _collect_stats(entries, pyinstrument, interval, inner_iterations)
+    _ensure_pyinstrument()
+    profiles = _collect_stats(entries, interval, inner_iterations)
     if output is not None:
-        _write_html(entries, output, pyinstrument, interval, inner_iterations)
+        _write_html(entries, output, interval, inner_iterations)
     return profiles
 
 
 def _collect_stats(
     entries: list[Entry],
-    pyinstrument: Any,
     interval: float,
     inner_iterations: int,
 ) -> dict[str, CPUProfile]:
+    import pyinstrument
+
     profiles: dict[str, CPUProfile] = {}
     for entry in entries:
         prof = pyinstrument.Profiler(interval=interval, async_mode="disabled")
-        prof.start()
-        try:
+        with prof:
             entry.fn(_MockState(n_iterations=inner_iterations))
-        finally:
-            prof.stop()
         profiles[entry.name] = _summarize(prof.last_session)
     return profiles
 
@@ -76,17 +71,15 @@ def _collect_stats(
 def _write_html(
     entries: list[Entry],
     path: Path,
-    pyinstrument: Any,
     interval: float,
     inner_iterations: int,
 ) -> None:
+    import pyinstrument
+
     prof = pyinstrument.Profiler(interval=interval, async_mode="disabled")
-    prof.start()
-    try:
+    with prof:
         for entry in entries:
             entry.fn(_MockState(n_iterations=inner_iterations))
-    finally:
-        prof.stop()
     path.write_text(prof.output_html())
 
 

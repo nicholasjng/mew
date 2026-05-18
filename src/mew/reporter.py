@@ -5,13 +5,19 @@ from __future__ import annotations
 import json
 import sys
 from datetime import UTC, datetime
+from importlib.util import find_spec
 from pathlib import Path
-from typing import Any, Protocol, TextIO, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TextIO, runtime_checkable
 
 from rich.console import Console
 from rich.text import Text
 
 from mew._core import Run
+from mew._profile import EnrichedRun
+
+if TYPE_CHECKING:
+    from mew.cpu import CPUProfile
+    from mew.memory import MemoryProfile
 
 
 @runtime_checkable
@@ -26,6 +32,9 @@ class Reporter(Protocol):
     def report_runs(self, runs: list[Run]) -> None: ...
 
 
+_COL_SEP = " │ "
+
+
 def _fmt_bytes(n: int) -> str:
     for threshold, unit in ((1 << 30, "GB"), (1 << 20, "MB"), (1 << 10, "KB")):
         if n >= threshold:
@@ -33,7 +42,7 @@ def _fmt_bytes(n: int) -> str:
     return f"{n} B"
 
 
-def _run_to_dict(r: Any) -> dict[str, Any]:
+def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
     d: dict[str, Any] = {
         "name": r.benchmark_name(),
         "run_name": str(r.run_name),
@@ -55,7 +64,7 @@ def _run_to_dict(r: Any) -> dict[str, Any]:
         "skip_message": r.skip_message,
         "counters": dict(r.counters) if r.counters else {},
     }
-    mem = getattr(r, "memory", None)
+    mem: MemoryProfile | None = getattr(r, "memory", None)
     if mem is not None:
         d["memory"] = {
             "profiler": mem.profiler,
@@ -63,7 +72,7 @@ def _run_to_dict(r: Any) -> dict[str, Any]:
             "total_bytes": mem.total_bytes,
             "total_allocations": mem.total_allocations,
         }
-    cpu = getattr(r, "cpu", None)
+    cpu: CPUProfile | None = getattr(r, "cpu", None)
     if cpu is not None:
         d["cpu_profile"] = {
             "profiler": cpu.profiler,
@@ -179,9 +188,9 @@ class RichReporter:
             fixed["alloc"] = 12
         if self._show_cpu:
             fixed["samples"] = 9
-            fixed["top_fn"] = 30
+            fixed["hottest_frame"] = 30
         n_cols = len(fixed) + 1  # +1 for the name column
-        spacing = (n_cols - 1) * 2
+        spacing = (n_cols - 1) * len(_COL_SEP)
         # Name column takes whatever's left; floor at 30 even if it overflows.
         name_w = max(30, self._console.width - sum(fixed.values()) - spacing)
         self._widths = {"name": name_w, **fixed}
@@ -199,8 +208,8 @@ class RichReporter:
             cells.append("Total Alloc".rjust(w["alloc"]))
         if self._show_cpu:
             cells.append("Samples".rjust(w["samples"]))
-            cells.append("Top Fn".ljust(w["top_fn"]))
-        line = "  ".join(cells)
+            cells.append("Hottest Frame".ljust(w["hottest_frame"]))
+        line = _COL_SEP.join(cells)
         self._console.print(Text(line, style="bold"))
         self._console.print(Text("─" * len(line), style="dim"))
 
@@ -218,17 +227,17 @@ class RichReporter:
             f"{r.adjusted_cpu_time():.2f} {unit}".rjust(w["cpu"]),
         ]
         if self._show_memory:
-            mem = getattr(r, "memory", None)
+            mem: MemoryProfile | None = getattr(r, "memory", None)
             cells.append((_fmt_bytes(mem.peak_bytes) if mem else "-").rjust(w["peak"]))
             cells.append((_fmt_bytes(mem.total_bytes) if mem else "-").rjust(w["alloc"]))
         if self._show_cpu:
-            cpu = getattr(r, "cpu", None)
+            cpu: CPUProfile | None = getattr(r, "cpu", None)
             cells.append((f"{cpu.sample_count:,}" if cpu else "-").rjust(w["samples"]))
             top = cpu.top_function if cpu else "-"
-            if len(top) > w["top_fn"]:
-                top = top[: w["top_fn"] - 1] + "…"
-            cells.append(top.ljust(w["top_fn"]))
-        self._console.print(Text("  ".join(cells)))
+            if len(top) > w["hottest_frame"]:
+                top = top[: w["hottest_frame"] - 1] + "…"
+            cells.append(top.ljust(w["hottest_frame"]))
+        self._console.print(Text(_COL_SEP.join(cells)))
 
 
 class ParquetReporter:
@@ -257,14 +266,13 @@ class ParquetReporter:
         self._runs.extend(runs)
 
     def finalize(self) -> None:
-        try:
-            import pyarrow as pa
-            import pyarrow.parquet as pq
-        except ImportError as exc:  # pragma: no cover - exercised when pyarrow absent
+        if find_spec("pyarrow") is None:
             raise RuntimeError(
                 "ParquetReporter requires pyarrow. Install it with "
                 "`pip install pyarrow` (or `uv add pyarrow`)."
-            ) from exc
+            )
+        import pyarrow as pa
+        import pyarrow.parquet as pq
 
         date = datetime.now(UTC)
         ctx = self._context
@@ -272,13 +280,13 @@ class ParquetReporter:
         custom_json = json.dumps(custom, default=str) if custom else None
 
         rows = [self._row(r, date, custom_json) for r in self._runs]
-        table = pa.Table.from_pylist(rows, schema=_parquet_schema(pa))
+        table = pa.Table.from_pylist(rows, schema=_parquet_schema())
         pq.write_table(table, str(self._output))
 
-    def _row(self, r: Any, date: datetime, custom_json: str | None) -> dict[str, Any]:
+    def _row(self, r: Run | EnrichedRun, date: datetime, custom_json: str | None) -> dict[str, Any]:
         ctx = self._context
-        mem = getattr(r, "memory", None)
-        cpu = getattr(r, "cpu", None)
+        mem: MemoryProfile | None = getattr(r, "memory", None)
+        cpu: CPUProfile | None = getattr(r, "cpu", None)
         return {
             "name": r.benchmark_name(),
             "run_name": str(r.run_name),
@@ -334,7 +342,9 @@ class ParquetReporter:
         }
 
 
-def _parquet_schema(pa: Any) -> Any:
+def _parquet_schema() -> Any:
+    import pyarrow as pa
+
     return pa.schema(
         [
             ("name", pa.string()),

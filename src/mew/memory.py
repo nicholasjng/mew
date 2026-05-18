@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import tempfile
 from dataclasses import dataclass
+from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from mew._profile import _MockState
 
@@ -23,16 +22,12 @@ class MemoryProfile:
     total_allocations: int
 
 
-def _require_memray() -> Any:
-    try:
-        import memray  # type: ignore[import-not-found]
-
-        return memray
-    except ImportError:
+def _ensure_memray() -> None:
+    if find_spec("memray") is None:
         raise SystemExit(
             "memray is required for memory profiling. "
             "Install it with: uv add --optional memory memray"
-        ) from None
+        )
 
 
 def profile(
@@ -45,21 +40,24 @@ def profile(
     If *flamegraph* is given, also runs a combined pass over all entries and
     writes an HTML flame graph to that path.
     """
-    memray = _require_memray()
-    profiles = _collect_stats(entries, memray)
+    _ensure_memray()
+    profiles = _collect_stats(entries)
     if flamegraph is not None:
-        _write_flamegraph(entries, flamegraph, memray)
+        _write_flamegraph(entries, flamegraph)
     return profiles
 
 
-def _collect_stats(entries: list[Entry], memray: Any) -> dict[str, MemoryProfile]:
+def _collect_stats(entries: list[Entry]) -> dict[str, MemoryProfile]:
+    import memray
+
     profiles: dict[str, MemoryProfile] = {}
-    for entry in entries:
-        dest = Path(tempfile.mktemp(suffix=".bin"))
-        try:
-            with memray.Tracker(str(dest)):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        for i, entry in enumerate(entries):
+            dest = root / f"capture-{i}.bin"
+            with memray.Tracker(dest):
                 entry.fn(_MockState())
-            reader = memray.FileReader(str(dest))
+            reader = memray.FileReader(dest)
             records = list(reader.get_allocation_records())
             total_bytes = sum(r.size for r in records if r.size > 0)
             total_allocs = sum(r.n_allocations for r in records if r.size > 0)
@@ -74,20 +72,29 @@ def _collect_stats(entries: list[Entry], memray: Any) -> dict[str, MemoryProfile
                 total_bytes=total_bytes,
                 total_allocations=total_allocs,
             )
-        finally:
-            dest.unlink(missing_ok=True)
     return profiles
 
 
-def _write_flamegraph(entries: list[Entry], path: Path, memray: Any) -> None:
-    combined = Path(tempfile.mktemp(suffix=".bin"))
-    try:
-        with memray.Tracker(str(combined)):
+def _write_flamegraph(entries: list[Entry], path: Path) -> None:
+    import memray
+    from memray.reporters.flamegraph import FlameGraphReporter
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        combined = Path(tmpdir) / "combined.bin"
+        with memray.Tracker(combined):
             for entry in entries:
                 entry.fn(_MockState())
-        subprocess.run(
-            [sys.executable, "-m", "memray", "flamegraph", "-o", str(path), str(combined)],
-            check=True,
+        reader = memray.FileReader(combined)
+        reporter = FlameGraphReporter.from_snapshot(
+            reader.get_high_watermark_allocation_records(merge_threads=True),
+            memory_records=tuple(reader.get_memory_snapshots()),
+            native_traces=False,
         )
-    finally:
-        combined.unlink(missing_ok=True)
+        with path.open("w") as f:
+            reporter.render(
+                f,
+                metadata=reader.metadata,
+                show_memory_leaks=False,
+                merge_threads=True,
+                inverted=False,
+            )
