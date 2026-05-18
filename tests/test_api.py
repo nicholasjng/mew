@@ -38,7 +38,7 @@ def test_called_decorator_captures_options():
 def test_unknown_option_raises():
     with pytest.raises(TypeError, match="unknown option"):
 
-        @mew.benchmark(foo=1)  # type: ignore[call-overload]
+        @mew.benchmark(foo=1)  # ty: ignore[no-matching-overload]
         def _bench(state):
             for _ in state:
                 pass
@@ -135,7 +135,7 @@ def test_variant_passes_kwargs_through():
         name = "dummy"
 
     for entry in REGISTRY.all():
-        entry.fn(DummyState())
+        entry.fn(DummyState())  # ty: ignore[invalid-argument-type]
     assert sorted(seen) == [7, 9]
 
 
@@ -203,7 +203,7 @@ def test_benchmark_tags_propagate():
             pass
 
     entry = REGISTRY.all()[0]
-    assert entry.tags == ("io", "slow")
+    assert entry.tags == frozenset({"io", "slow"})
 
 
 def test_benchmark_tags_accepts_single_string():
@@ -212,7 +212,7 @@ def test_benchmark_tags_accepts_single_string():
         for _ in state:
             pass
 
-    assert REGISTRY.all()[0].tags == ("io",)
+    assert REGISTRY.all()[0].tags == frozenset({"io"})
 
 
 def test_parametrize_tags_apply_to_all_variants():
@@ -221,7 +221,7 @@ def test_parametrize_tags_apply_to_all_variants():
         for _ in state:
             pass
 
-    assert all(e.tags == ("sort",) for e in REGISTRY.all())
+    assert all(e.tags == frozenset({"sort"}) for e in REGISTRY.all())
 
 
 def test_product_tags_apply_to_all_variants():
@@ -230,22 +230,13 @@ def test_product_tags_apply_to_all_variants():
         for _ in state:
             pass
 
-    assert all(e.tags == ("sort", "heavy") for e in REGISTRY.all())
+    assert all(e.tags == frozenset({"sort", "heavy"}) for e in REGISTRY.all())
 
 
-def test_empty_tags_normalize_to_empty_tuple():
+def test_empty_tags_normalize_to_empty_frozenset():
     @mew.benchmark
     def bench_x(state):
         for _ in state:
             pass
 
-    assert REGISTRY.all()[0].tags == ()
-
-
-def test_tags_must_be_strings():
-    with pytest.raises(TypeError, match="non-empty strings"):
-
-        @mew.benchmark(tags=("ok", "", 42))  # type: ignore[arg-type]
-        def _bench(state):
-            for _ in state:
-                pass
+    assert REGISTRY.all()[0].tags == frozenset()

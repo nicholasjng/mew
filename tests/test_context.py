@@ -162,6 +162,7 @@ def test_context_snapshot_is_captured_at_run_start():
 
     cap = _Capture()
     mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=cap)
+    assert cap.context is not None
     assert cap.context["custom"] == {"snapshot_phase": "before"}
 
 

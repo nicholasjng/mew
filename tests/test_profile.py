@@ -43,19 +43,29 @@ def test_mockstate_exposes_iteration_count_via_properties():
     assert state.max_iterations == 42
 
 
-def test_enriched_run_proxies_attributes_and_carries_profiles():
+def test_enriched_run_forwards_run_fields_and_carries_profiles():
     class FakeRun:
-        x = 42
+        iterations = 7
+        threads = 2
+        real_accumulated_time = 0.5
 
         def benchmark_name(self) -> str:
             return "bench_x"
 
-    er = EnrichedRun(FakeRun(), memory=_fake_mem(), cpu=_fake_cpu())
-    # Proxy reaches into the wrapped run.
-    assert er.x == 42
+        def adjusted_real_time(self) -> float:
+            return 0.25
+
+    er = EnrichedRun(FakeRun(), memory=_fake_mem(), cpu=_fake_cpu())  # ty: ignore[invalid-argument-type]
+    # Explicit forwards reach into the wrapped run.
     assert er.benchmark_name() == "bench_x"
-    # Attachments are first-class slots, not proxied.
+    assert er.adjusted_real_time() == 0.25
+    assert er.iterations == 7
+    assert er.threads == 2
+    assert er.real_accumulated_time == 0.5
+    # Profile attachments are first-class fields.
+    assert er.memory is not None
     assert er.memory.peak_bytes == 1024
+    assert er.cpu is not None
     assert er.cpu.sample_count == 500
 
 
@@ -64,7 +74,7 @@ def test_enriched_run_handles_missing_profiles():
         def benchmark_name(self) -> str:
             return "bench_x"
 
-    er = EnrichedRun(FakeRun())
+    er = EnrichedRun(FakeRun())  # ty: ignore[invalid-argument-type]
     assert er.memory is None
     assert er.cpu is None
 

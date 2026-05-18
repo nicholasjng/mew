@@ -26,10 +26,10 @@ def test_filter_substring():
 
 def test_filter_tags_or_semantics():
     r = Registry()
-    r.add(Entry(name="a", fn=lambda s: None, tags=("io",)))
-    r.add(Entry(name="b", fn=lambda s: None, tags=("cpu",)))
-    r.add(Entry(name="c", fn=lambda s: None, tags=("io", "slow")))
-    r.add(Entry(name="d", fn=lambda s: None, tags=()))
+    r.add(Entry(name="a", fn=lambda s: None, tags=frozenset({"io"})))
+    r.add(Entry(name="b", fn=lambda s: None, tags=frozenset({"cpu"})))
+    r.add(Entry(name="c", fn=lambda s: None, tags=frozenset({"io", "slow"})))
+    r.add(Entry(name="d", fn=lambda s: None, tags=frozenset()))
     # OR across requested tags
     assert {e.name for e in r.filter(tags=["io"])} == {"a", "c"}
     assert {e.name for e in r.filter(tags=["io", "cpu"])} == {"a", "b", "c"}
@@ -39,9 +39,9 @@ def test_filter_tags_or_semantics():
 
 def test_filter_pattern_and_tags_combine():
     r = Registry()
-    r.add(Entry(name="foo::a", fn=lambda s: None, tags=("io",)))
-    r.add(Entry(name="bar::b", fn=lambda s: None, tags=("io",)))
-    r.add(Entry(name="foo::c", fn=lambda s: None, tags=("cpu",)))
+    r.add(Entry(name="foo::a", fn=lambda s: None, tags=frozenset({"io"})))
+    r.add(Entry(name="bar::b", fn=lambda s: None, tags=frozenset({"io"})))
+    r.add(Entry(name="foo::c", fn=lambda s: None, tags=frozenset({"cpu"})))
     result = r.filter("foo", tags=["io"])
     assert [e.name for e in result] == ["foo::a"]
 

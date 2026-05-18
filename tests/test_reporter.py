@@ -168,4 +168,4 @@ def test_rich_reporter_profile_flags_add_columns():
     assert "Peak Mem" in out
     assert "Total Alloc" in out
     assert "Samples" in out
-    assert "Top Fn" in out
+    assert "Hottest Frame" in out
