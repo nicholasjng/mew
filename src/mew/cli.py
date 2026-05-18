@@ -247,5 +247,32 @@ def run(
     runner.run(entries, argv=argv, reporter=reporters)
 
 
+@app.command
+def compare(
+    files: Annotated[list[Path], Parameter(name="files")],
+    *,
+    metric: Annotated[
+        str,
+        Parameter(
+            name=["--metric", "-m"],
+            help="metric to compare: real_time, cpu_time, or iterations",
+        ),
+    ] = "real_time",
+    pattern: Annotated[
+        str | None, Parameter(name=["--pattern", "-k"], help="substring filter")
+    ] = None,
+    stddev: Annotated[
+        bool,
+        Parameter(name="--stddev", help="show stddev columns if present in the result files"),
+    ] = False,
+) -> None:
+    """Compare benchmark result files; the first file is the baseline."""
+    from mew.compare import compare as _compare
+
+    code = _compare(files, metric=metric, pattern=pattern, show_stddev=stddev)
+    if code:
+        raise SystemExit(code)
+
+
 if __name__ == "__main__":
     app()
