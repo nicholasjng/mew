@@ -7,9 +7,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from mew._core import BenchmarkName, Run, RunType, TimeUnit
     from mew.cpu import CPUProfile
     from mew.memory import MemoryProfile
 
@@ -79,24 +81,94 @@ class _MockState:
         return 0
 
 
+@dataclass(frozen=True, slots=True)
 class EnrichedRun:
-    """Wraps a C++ Run and carries optional profile attachments."""
+    """Wraps a C++ Run and carries optional profile attachments.
 
-    __slots__ = ("_run", "memory", "cpu")
+    All Run fields are forwarded explicitly so type checkers see the full
+    public surface (rather than going through a dynamic ``__getattr__``).
+    """
 
-    def __init__(
-        self,
-        run: Any,
-        *,
-        memory: MemoryProfile | None = None,
-        cpu: CPUProfile | None = None,
-    ) -> None:
-        self._run = run
-        self.memory = memory
-        self.cpu = cpu
+    run: Run = field(repr=False)
+    memory: MemoryProfile | None = None
+    cpu: CPUProfile | None = None
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._run, name)
+    def benchmark_name(self) -> str:
+        return self.run.benchmark_name()
+
+    def adjusted_real_time(self) -> float:
+        return self.run.adjusted_real_time()
+
+    def adjusted_cpu_time(self) -> float:
+        return self.run.adjusted_cpu_time()
+
+    @property
+    def run_name(self) -> BenchmarkName:
+        return self.run.run_name
+
+    @property
+    def family_index(self) -> int:
+        return self.run.family_index
+
+    @property
+    def per_family_instance_index(self) -> int:
+        return self.run.per_family_instance_index
+
+    @property
+    def run_type(self) -> RunType:
+        return self.run.run_type
+
+    @property
+    def aggregate_name(self) -> str:
+        return self.run.aggregate_name
+
+    @property
+    def report_label(self) -> str:
+        return self.run.report_label
+
+    @property
+    def skip_message(self) -> str:
+        return self.run.skip_message
+
+    @property
+    def iterations(self) -> int:
+        return self.run.iterations
+
+    @property
+    def threads(self) -> int:
+        return self.run.threads
+
+    @property
+    def repetition_index(self) -> int:
+        return self.run.repetition_index
+
+    @property
+    def repetitions(self) -> int:
+        return self.run.repetitions
+
+    @property
+    def time_unit(self) -> TimeUnit:
+        return self.run.time_unit
+
+    @property
+    def real_accumulated_time(self) -> float:
+        return self.run.real_accumulated_time
+
+    @property
+    def cpu_accumulated_time(self) -> float:
+        return self.run.cpu_accumulated_time
+
+    @property
+    def complexity_n(self) -> int:
+        return self.run.complexity_n
+
+    @property
+    def counters(self) -> dict[str, float]:
+        return self.run.counters
+
+    @property
+    def skipped(self) -> bool:
+        return self.run.skipped
 
 
 class _ProfileEnriching:
