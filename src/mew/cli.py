@@ -265,11 +265,42 @@ def compare(
         bool,
         Parameter(name="--stddev", help="show stddev columns if present in the result files"),
     ] = False,
+    fail_on_regression: Annotated[
+        float | None,
+        Parameter(
+            name="--fail-on-regression",
+            help="exit 2 if any benchmark is slower than baseline by more than this percent",
+        ),
+    ] = None,
+    regressions_config: Annotated[
+        Path | None,
+        Parameter(
+            name="--regressions-config",
+            help="TOML file with [tool.mew.regressions] (default: ./pyproject.toml)",
+        ),
+    ] = None,
+    allow: Annotated[
+        list[str],
+        Parameter(
+            name="--allow",
+            help="inline allowlist entry `PATTERN` (ignore) or `PATTERN:PCT` (per-rule threshold)",
+        ),
+    ] = [],  # noqa: B006
 ) -> None:
     """Compare benchmark result files; the first file is the baseline."""
     from mew.compare import compare as _compare
 
-    code = _compare(files, metric=metric, pattern=pattern, show_stddev=stddev)
+    cfg = None
+    if fail_on_regression is not None or allow or regressions_config is not None:
+        from mew.regressions import load_config
+
+        cfg = load_config(
+            default_threshold_pct=fail_on_regression if fail_on_regression is not None else 5.0,
+            path=regressions_config,
+            inline_allows=allow,
+        )
+
+    code = _compare(files, metric=metric, pattern=pattern, show_stddev=stddev, regressions=cfg)
     if code:
         raise SystemExit(code)
 

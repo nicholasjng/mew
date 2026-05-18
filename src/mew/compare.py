@@ -13,7 +13,10 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+from mew.regressions import BenchmarkVerdict, RegressionConfig, report
+
 _METRICS = frozenset({"real_time", "cpu_time", "iterations"})
+_HIGHER_IS_BETTER = frozenset({"iterations"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +157,7 @@ def compare(
     metric: str = "real_time",
     pattern: str | None = None,
     show_stddev: bool = False,
+    regressions: RegressionConfig | None = None,
     console: Console | None = None,
 ) -> int:
     """Render a comparison table; returns a process exit code."""
@@ -198,12 +202,15 @@ def compare(
         if show_stddev:
             table.add_column("± stddev", justify="right")
 
+    higher_is_better = metric in _HIGHER_IS_BETTER
+    verdicts: list[BenchmarkVerdict] = []
+
     for name in sorted(shared):
         base = baseline[name]
         row: list[Any] = [name, _fmt_value(base, metric)]
         if show_stddev:
             row.append(f"{base.stddev:.2f}" if base.stddev is not None else "-")
-        for _, samples in others:
+        for idx, (_, samples) in enumerate(others):
             s = samples[name]
             delta = (s.value - base.value) / base.value if base.value else 0.0
             speedup = base.value / s.value if s.value else float("inf")
@@ -212,7 +219,16 @@ def compare(
             row.append(_fmt_speedup(speedup))
             if show_stddev:
                 row.append(f"{s.stddev:.2f}" if s.stddev is not None else "-")
+            # Gate only against the first non-baseline column — the rightmost
+            # columns are informational in a multi-file comparison.
+            if regressions is not None and idx == 0:
+                verdicts.append(
+                    regressions.evaluate(name, delta * 100.0, higher_is_better=higher_is_better)
+                )
         table.add_row(*row)
 
     console.print(table)
+
+    if regressions is not None:
+        return report(verdicts, default_threshold_pct=regressions.default_threshold_pct)
     return 0

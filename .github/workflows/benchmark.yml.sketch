@@ -1,0 +1,97 @@
+# Sketch: benchmark a PR branch against master and post the comparison.
+#
+# Rename to `benchmark.yml` to activate. Notes before enabling:
+#   * Self-hosted (or at minimum a dedicated runner) is strongly recommended;
+#     GitHub-hosted runners share hardware and produce ±10-20% noise that
+#     swamps most real regressions.
+#   * Both runs must execute on the same physical machine for the comparison
+#     to be meaningful — keep them in one job, not two.
+#   * --benchmark_repetitions=5 gives `mew compare` enough samples to compute
+#     a useful stddev. Tune up for noisier hardware.
+
+name: benchmarks
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "benchmarks/**"
+
+permissions:
+  contents: read
+  pull-requests: write  # for the sticky comment
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v8
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      # --- master baseline ---
+      - name: Check out master
+        run: git checkout origin/${{ github.base_ref }}
+      - name: Install (master)
+        run: uv sync --all-extras
+      - name: Benchmark master
+        run: uv run mew run benchmarks/ -o master.parquet --gb --benchmark_repetitions=5
+
+      # --- PR head ---
+      - name: Check out PR head
+        run: git checkout ${{ github.event.pull_request.head.sha }}
+      - name: Install (PR)
+        run: uv sync --all-extras
+      - name: Benchmark PR
+        run: uv run mew run benchmarks/ -o pr.parquet --gb --benchmark_repetitions=5
+
+      # --- compare ---
+      - name: Compare
+        # `--fail-on-regression 5` fails the job if any benchmark is more than
+        # 5% slower than master. Per-benchmark allowlists live in
+        # `[tool.mew.regressions]` in pyproject.toml. Use `continue-on-error`
+        # while you calibrate thresholds, then remove it to start gating merges.
+        run: |
+          uv run mew compare master.parquet pr.parquet \
+            --stddev \
+            --fail-on-regression 5 \
+            | tee compare.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: |
+            master.parquet
+            pr.parquet
+            compare.txt
+
+      - name: Render PR comment body
+        id: body
+        run: |
+          {
+            echo 'body<<EOF'
+            echo '## Benchmark comparison'
+            echo
+            echo 'Baseline: `master` · Variant: PR head'
+            echo
+            echo '```'
+            cat compare.txt
+            echo '```'
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: mew-benchmarks
+          message: ${{ steps.body.outputs.body }}
