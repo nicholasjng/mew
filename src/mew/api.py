@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import functools
 import inspect
 import itertools
-import types
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any, overload
 
 from mew._registry import REGISTRY, Entry
+from mew._typing import BenchmarkFn
 
 _REGISTERED_ATTR = "__mew_registered__"
 
@@ -40,32 +41,13 @@ def _default_id(kwargs: dict[str, Any]) -> str:
     return "-".join(f"{k}={_format_id_value(v)}" for k, v in kwargs.items())
 
 
-def _fn_name(fn: Callable[..., Any]) -> str:
-    """Return `fn.__name__` safely.
-
-    `Callable` is a structural protocol that doesn't carry `__name__`; only
-    concrete function / lambda / method types do. ty's typing FAQ recommends
-    narrowing with `types.FunctionType` before accessing the attribute.
-    """
-    if isinstance(fn, types.FunctionType):
-        return fn.__name__
-    return getattr(fn, "__name__", "<callable>")
-
-
-def _fn_qualname(fn: Callable[..., Any]) -> str:
-    """Return `fn.__qualname__` safely, falling back to `__name__`."""
-    if isinstance(fn, types.FunctionType):
-        return fn.__qualname__
-    return getattr(fn, "__qualname__", _fn_name(fn))
-
-
-def _qualified_name(fn: Callable[..., Any], file: str | None) -> str:
+def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
     """Pytest-style nodeid: `path/to/bench_foo.py::bench_name`.
 
     Falls back to the function's module + qualname when the source file
     can't be resolved (REPL, exec'd string, frozen module).
     """
-    qualname = _fn_qualname(fn)
+    qualname = fn.__qualname__
     if file:
         try:
             rel = Path(file).resolve().relative_to(Path.cwd())
@@ -76,7 +58,7 @@ def _qualified_name(fn: Callable[..., Any], file: str | None) -> str:
     return f"{module}::{qualname}"
 
 
-def _source_file(fn: Callable[..., Any]) -> str | None:
+def _source_file(fn: BenchmarkFn) -> str | None:
     try:
         return inspect.getsourcefile(fn)
     except TypeError:
@@ -89,43 +71,34 @@ def _check_options(options: dict[str, Any]) -> None:
         raise TypeError(f"unknown option(s): {sorted(extra)}")
 
 
-def _normalize_tags(tags: Iterable[str] | str | None) -> tuple[str, ...]:
+def _normalize_tags(tags: Iterable[str] | str | None) -> frozenset[str]:
     if not tags:
-        return ()
+        return frozenset()
     if isinstance(tags, str):
-        return (tags,)
-    out = tuple(tags)
-    bad = [t for t in out if not isinstance(t, str) or not t]
-    if bad:
-        raise TypeError(f"tags must be non-empty strings, got {bad!r}")
-    return out
+        return frozenset((tags,))
+    return frozenset(tags)
 
 
-def _mark_registered(fn: Callable[..., Any]) -> None:
+def _mark_registered(fn: BenchmarkFn) -> None:
     if getattr(fn, _REGISTERED_ATTR, False):
         raise RuntimeError(
-            f"{_fn_qualname(fn)} is already registered; apply only one of "
+            f"{fn.__qualname__} is already registered; apply only one of "
             "@benchmark / @parametrize / @product."
         )
     setattr(fn, _REGISTERED_ATTR, True)
 
 
 def _make_variant(
-    fn: Callable[..., None],
+    fn: BenchmarkFn,
     kwargs: dict[str, Any],
     *,
     name: str,
     qualname: str,
-) -> Callable[..., None]:
-    """Wrap `fn` so it only takes a State; kwargs are bound as defaults.
+) -> BenchmarkFn:
+    """Wrap `fn` so it only takes a State; kwargs are bound as defaults."""
 
-    `variant` is a locally-`def`'d function, so ty infers it as
-    `types.FunctionType` and the `__name__` / `__qualname__` assignments
-    typecheck cleanly here — they would not at the call site where the
-    return is widened to `Callable[..., None]`.
-    """
-
-    def variant(state, _fn=fn, _kw=kwargs):  # type: ignore[no-untyped-def]
+    @functools.wraps(fn, assigned=("__module__", "__doc__"))
+    def variant(state, _fn=fn, _kw=kwargs):
         return _fn(state, **_kw)
 
     variant.__name__ = name
@@ -137,7 +110,7 @@ def _make_variant(
 
 
 @overload
-def benchmark(fn: Callable[..., None], /) -> Callable[..., None]: ...
+def benchmark(fn: BenchmarkFn, /) -> BenchmarkFn: ...
 @overload
 def benchmark(
     *,
@@ -152,11 +125,11 @@ def benchmark(
     use_manual_time: bool = False,
     measure_process_cpu_time: bool = False,
     report_aggregates_only: bool = False,
-) -> Callable[[Callable[..., None]], Callable[..., None]]: ...
+) -> Callable[[BenchmarkFn], BenchmarkFn]: ...
 
 
 def benchmark(
-    fn: Callable[..., None] | None = None,
+    fn: BenchmarkFn | None = None,
     /,
     *,
     name: str | None = None,
@@ -171,7 +144,7 @@ def benchmark(
     _check_options(options)
     norm_tags = _normalize_tags(tags)
 
-    def deco(target: Callable[..., None]) -> Callable[..., None]:
+    def deco(target: BenchmarkFn) -> BenchmarkFn:
         file = _source_file(target)
         REGISTRY.add(
             Entry(
@@ -195,14 +168,14 @@ def benchmark(
 
 
 def _register_family(
-    target: Callable[..., None],
+    target: BenchmarkFn,
     variants: Sequence[dict[str, Any]],
     *,
     name: str | None,
     ids: Sequence[str] | None,
     options: dict[str, Any],
-    tags: tuple[str, ...],
-) -> Callable[..., None]:
+    tags: frozenset[str],
+) -> BenchmarkFn:
     if ids is not None:
         ids = list(ids)
         if len(ids) != len(variants):
@@ -218,8 +191,8 @@ def _register_family(
         variant = _make_variant(
             target,
             kwargs,
-            name=f"{_fn_name(target)}[{label}]",
-            qualname=f"{_fn_qualname(target)}[{label}]",
+            name=f"{target.__name__}[{label}]",
+            qualname=f"{target.__qualname__}[{label}]",
         )
         REGISTRY.add(
             Entry(
@@ -242,7 +215,7 @@ def parametrize(
     ids: Sequence[str] | None = None,
     tags: Iterable[str] | str | None = None,
     **options: Any,
-) -> Callable[[Callable[..., None]], Callable[..., None]]:
+) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a parametrized benchmark family.
 
     Each item in `parameters` is a dict of kwargs passed to the wrapped function
@@ -264,7 +237,7 @@ def parametrize(
     norm_tags = _normalize_tags(tags)
     variants = [dict(p) for p in parameters]  # snapshot, allow generators
 
-    def deco(target: Callable[..., None]) -> Callable[..., None]:
+    def deco(target: BenchmarkFn) -> BenchmarkFn:
         return _register_family(
             target,
             variants,
@@ -292,7 +265,7 @@ def product(
     measure_process_cpu_time: bool = False,
     report_aggregates_only: bool = False,
     **iterables: Iterable[Any],
-) -> Callable[[Callable[..., None]], Callable[..., None]]:
+) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a benchmark family from the cartesian product of `iterables`.
 
     Each `**iterables` kwarg names a parameter and supplies its values.
@@ -335,7 +308,7 @@ def product(
     value_lists = [list(v) for v in iterables.values()]
     variants = [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*value_lists)]
 
-    def deco(target: Callable[..., None]) -> Callable[..., None]:
+    def deco(target: BenchmarkFn) -> BenchmarkFn:
         return _register_family(
             target,
             variants,

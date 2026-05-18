@@ -6,15 +6,17 @@ The registry is process-global so benchmark files imported from anywhere
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
+
+from mew._typing import BenchmarkFn
 
 
 @dataclass(slots=True)
 class Entry:
     name: str
-    fn: Callable[..., None]
+    fn: BenchmarkFn
     module: str | None = None
     file: str | None = None
     options: dict[str, Any] = field(default_factory=dict)

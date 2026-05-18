@@ -9,10 +9,10 @@ from mew._core import (
     BenchmarkHandle,
     Run,
     RunType,
-    State,
     TimeUnit,
 )
 from mew._registry import REGISTRY, Entry, Registry
+from mew._typing import BenchmarkFn, State
 from mew.api import benchmark, parametrize, product
 from mew.context import clear_context, get_context, set_context, update_context
 from mew.reporter import Fanout, JSONReporter, ParquetReporter, Reporter, RichReporter
@@ -24,6 +24,7 @@ except PackageNotFoundError:  # editable / source checkout without metadata
     __version__ = "0.0.0+unknown"
 
 __all__ = [
+    "BenchmarkFn",
     "BenchmarkHandle",
     "Entry",
     "Fanout",
