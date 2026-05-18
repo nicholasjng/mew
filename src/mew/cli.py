@@ -70,7 +70,7 @@ def list_(
         raise SystemExit(1)
     for e in entries:
         if show_tags:
-            tags_str = ",".join(e.tags) if e.tags else "-"
+            tags_str = ",".join(sorted(e.tags)) if e.tags else "-"
             print(f"{e.name}\t[{tags_str}]")
         else:
             print(e.name)

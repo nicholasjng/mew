@@ -20,7 +20,7 @@ class Entry:
     module: str | None = None
     file: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
-    tags: tuple[str, ...] = ()
+    tags: frozenset[str] = field(default_factory=frozenset)
 
 
 class Registry:
