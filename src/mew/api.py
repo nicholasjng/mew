@@ -138,8 +138,38 @@ def benchmark(
 ) -> Any:
     """Register a function as a single benchmark.
 
-    Use `@parametrize` or `@product` for benchmark families. `tags` is an
-    iterable of strings used by `mew run --tag <name>` for filtering.
+    Use ``@parametrize`` or ``@product`` for benchmark families.
+
+    Parameters
+    ----------
+    fn : BenchmarkFn, optional
+        The benchmark function. When passed positionally (bare ``@benchmark``),
+        registration happens immediately. Omit to apply options first
+        (``@benchmark(min_time=...)``).
+    name : str, optional
+        Override the auto-derived ``path/to/file.py::qualname`` registration
+        name.
+    tags : Iterable[str] or str, optional
+        Labels used by ``mew run --tag <name>`` for filtering. A single string
+        is treated as one tag.
+    **options
+        Google Benchmark options: ``min_time``, ``min_warmup_time``,
+        ``iterations``, ``repetitions``, ``unit``, ``use_real_time``,
+        ``use_manual_time``, ``measure_process_cpu_time``,
+        ``report_aggregates_only``.
+
+    Returns
+    -------
+    BenchmarkFn or Callable[[BenchmarkFn], BenchmarkFn]
+        The original function (bare form) or a decorator that takes one
+        (called form).
+
+    Raises
+    ------
+    TypeError
+        If ``options`` contains an unknown key.
+    RuntimeError
+        If the same function is already registered via another decorator.
     """
     _check_options(options)
     norm_tags = _normalize_tags(tags)
@@ -218,20 +248,52 @@ def parametrize(
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a parametrized benchmark family.
 
-    Each item in `parameters` is a dict of kwargs passed to the wrapped function
-    in addition to the State. One registered benchmark per dict. `tags` apply
-    to every variant.
+    One registered benchmark per item in ``parameters``; each variant binds
+    its kwargs into the wrapped function and exposes a ``[label]`` suffix on
+    the registration name.
 
-    Example::
+    Parameters
+    ----------
+    parameters : Iterable[dict[str, Any]]
+        One dict of kwargs per variant. Snapshotted eagerly, so generators
+        are fine.
+    name : str, optional
+        Override the auto-derived base name. Variant labels are still
+        appended.
+    ids : Sequence[str], optional
+        Explicit labels (one per parameter dict). When omitted, labels are
+        derived from the kwargs (e.g. ``n=10-algo=merge``).
+    tags : Iterable[str] or str, optional
+        Labels applied to every variant.
+    **options
+        Google Benchmark options applied to every variant. Same keys as
+        :func:`benchmark`.
 
-        @mew.parametrize([
-            {"n": 10, "algo": "merge"},
-            {"n": 100, "algo": "quick"},
-        ], min_time=0.05, tags=("sort",))
-        def bench_sort(state, n, algo):
-            data = list(range(n, 0, -1))
-            for _ in state:
-                sorted(data)
+    Returns
+    -------
+    Callable[[BenchmarkFn], BenchmarkFn]
+        Decorator that registers the family and returns the original
+        function unchanged.
+
+    Raises
+    ------
+    ValueError
+        If ``ids`` is provided and its length doesn't match ``parameters``.
+    TypeError
+        If ``options`` contains an unknown key.
+    RuntimeError
+        If the same function is already registered via another decorator.
+
+    Examples
+    --------
+    >>> @mew.parametrize([
+    ...     {"n": 10, "algo": "merge"},
+    ...     {"n": 100, "algo": "quick"},
+    ... ], min_time=0.05, tags=("sort",))
+    ... def bench_sort(state, n, algo):
+    ...     data = list(range(n, 0, -1))
+    ...     for _ in state:
+    ...         sorted(data)
     """
     _check_options(options)
     norm_tags = _normalize_tags(tags)
@@ -266,19 +328,54 @@ def product(
     report_aggregates_only: bool = False,
     **iterables: Iterable[Any],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
-    """Register a benchmark family from the cartesian product of `iterables`.
+    """Register a benchmark family from the cartesian product of iterables.
 
-    Each `**iterables` kwarg names a parameter and supplies its values.
-    Benchmark options (`min_time`, `unit`, ...) are explicit, typed kwargs.
+    Each ``**iterables`` kwarg names a parameter and supplies its values; one
+    benchmark is registered per tuple in the cartesian product.
 
-    Example::
+    Parameters
+    ----------
+    name : str, optional
+        Override the auto-derived base name.
+    ids : Sequence[str], optional
+        Explicit labels (one per cartesian-product tuple).
+    tags : Iterable[str] or str, optional
+        Labels applied to every variant.
+    min_time, min_warmup_time : float, optional
+        Per-variant Google Benchmark timing options.
+    iterations, repetitions : int, optional
+        Per-variant Google Benchmark iteration controls.
+    unit : str, optional
+        Override Google Benchmark's reported time unit.
+    use_real_time, use_manual_time, measure_process_cpu_time : bool
+        Flag-style Google Benchmark options.
+    report_aggregates_only : bool
+        Suppress per-repetition rows when ``repetitions > 1``.
+    **iterables
+        Parameter name → iterable of values. The cartesian product across
+        these defines the registered variants.
 
-        @mew.product(n=[10, 100], algo=["merge", "quick"],
-                     tags=("sort",), min_time=0.05)
-        def bench_sort(state, n, algo):
-            ...
+    Returns
+    -------
+    Callable[[BenchmarkFn], BenchmarkFn]
+        Decorator that registers the family and returns the original
+        function unchanged.
 
-    Registers 4 benchmarks (one per (n, algo) pair).
+    Raises
+    ------
+    TypeError
+        If no iterables are supplied.
+    RuntimeError
+        If the same function is already registered via another decorator.
+
+    Examples
+    --------
+    >>> @mew.product(n=[10, 100], algo=["merge", "quick"],
+    ...              tags=("sort",), min_time=0.05)
+    ... def bench_sort(state, n, algo):
+    ...     ...
+
+    Registers 4 benchmarks (one per ``(n, algo)`` pair).
     """
     if not iterables:
         raise TypeError("@product needs at least one iterable kwarg")

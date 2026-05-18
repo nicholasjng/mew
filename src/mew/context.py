@@ -46,15 +46,44 @@ def _set_nested(target: dict[str, Any], key: str, value: Any) -> None:
 
 
 def set_context(key: str, value: Any) -> None:
-    """Set a context value. Dots in `key` create nested dicts."""
+    """Set a single value in the global benchmark context.
+
+    Parameters
+    ----------
+    key : str
+        Context key. Dotted names result in nested dicts
+        (``"dataset.size"`` → ``{"dataset": {"size": ...}}``).
+    value : Any
+        Value to store. Reporters serialize this when emitting context,
+        so JSON-friendly values are preferred.
+
+    Raises
+    ------
+    ValueError
+        If ``key`` is empty, has an empty path segment, or traverses through
+        a non-dict value.
+    """
     _set_nested(_CONTEXT, key, value)
 
 
 def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
     """Set many context values at once.
 
-    Positional dicts are applied first, then `kwargs`. Dotted keys nest in
-    both forms. For dotted keys via splat, use ``update_context(**{"a.b": 1})``.
+    Positional dicts are applied first, then ``kwargs``. Dotted keys nest in
+    both forms; for dotted keys via splat, use
+    ``update_context(**{"a.b": 1})``.
+
+    Parameters
+    ----------
+    *mapping : dict[str, Any]
+        Mappings whose items are applied in order.
+    **kwargs
+        Additional key-value pairs applied after the positional mappings.
+
+    Raises
+    ------
+    ValueError
+        Same conditions as :func:`set_context`.
     """
     for m in mapping:
         for k, v in m.items():
@@ -64,12 +93,18 @@ def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
 
 
 def get_context() -> dict[str, Any]:
-    """Return a deep-copy snapshot of the current context."""
+    """Return a deep copy of the current global benchmark context.
+
+    Returns
+    -------
+    dict[str, Any]
+        Independent snapshot — mutating it does not affect future runs.
+    """
     return copy.deepcopy(_CONTEXT)
 
 
 def clear_context() -> None:
-    """Drop every context entry."""
+    """Drop every entry from the global benchmark context."""
     _CONTEXT.clear()
 
 

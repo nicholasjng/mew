@@ -24,8 +24,20 @@ if TYPE_CHECKING:
 class Reporter(Protocol):
     """Duck-typed reporter interface consumed by the C++ runner.
 
-    Implementations only need `report_context` and `report_runs`; `finalize`
-    is optional. All callbacks run on the main thread with the GIL held.
+    Implementations only need ``report_context`` and ``report_runs``;
+    ``finalize`` is optional. All callbacks run on the main thread with the
+    GIL held.
+
+    Methods
+    -------
+    report_context(context)
+        Called once before any runs with the C++ context dict
+        (``host_name``, ``num_cpus``, …). Returning ``False`` aborts the
+        Google Benchmark run.
+    report_runs(runs)
+        Called one or more times with completed
+        :class:`~mew._core.Run` objects (possibly wrapped as
+        :class:`~mew._profile.EnrichedRun`).
     """
 
     def report_context(self, context: dict[str, Any]) -> bool: ...
@@ -85,7 +97,18 @@ def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
 
 
 class JSONReporter:
-    """Emit a single JSON document modeled on Google Benchmark's own format."""
+    """Emit a single JSON document modeled on Google Benchmark's own format.
+
+    Buffers context and runs until :meth:`finalize` is called, then serializes
+    a ``{"context": ..., "benchmarks": [...]}`` document.
+
+    Parameters
+    ----------
+    output : Path, TextIO, or None, optional
+        Destination. A :class:`~pathlib.Path` is written via
+        :meth:`Path.write_text`; a text stream is written to directly; ``None``
+        writes to ``sys.stdout``.
+    """
 
     def __init__(self, *, output: Path | TextIO | None = None) -> None:
         self._output = output
@@ -132,10 +155,21 @@ class JSONReporter:
 class RichReporter:
     """Stream one row per benchmark family as Google Benchmark completes it.
 
-    Pass ``show_memory`` / ``show_cpu`` when constructing to enable the extra
-    columns: streaming can't auto-detect those mid-run because the header is
-    printed before any results land. The CLI wires these from
-    ``--profile-memory`` / ``--profile-cpu``.
+    The header is printed before any results land, so the optional-column
+    flags must be passed up front rather than auto-detected from the runs.
+
+    Parameters
+    ----------
+    console : rich.console.Console, optional
+        Rich console to print to. Defaults to a fresh
+        :class:`~rich.console.Console`.
+    show_memory : bool, default False
+        Add ``Peak Mem`` / ``Total Alloc`` columns and read per-run memory
+        profiles via :class:`~mew._profile.EnrichedRun`.
+    show_cpu : bool, default False
+        Add ``Samples`` / ``Hottest Frame`` columns and read per-run CPU
+        profiles. The CLI wires these flags from
+        ``--profile-memory`` / ``--profile-cpu``.
     """
 
     def __init__(
@@ -243,14 +277,24 @@ class RichReporter:
 class ParquetReporter:
     """Write a Parquet file with one row per benchmark Run.
 
-    Requires `pyarrow` (not installed by default — `pip install pyarrow`). The
-    schema is static; arbitrarily-shaped user context is encoded as a JSON
-    string column named `custom`. Query it from DuckDB with `json_extract`::
+    The schema is static; arbitrarily-shaped user context is encoded as a
+    JSON string column named ``custom``. Query it from DuckDB with
+    ``json_extract``::
 
         SELECT name, real_time,
                counters['rss_kb'] AS rss_kb,
                json_extract(custom, '$.dataset.size') AS dataset_size
         FROM 'results.parquet';
+
+    Parameters
+    ----------
+    output : Path
+        Destination Parquet file. Overwritten if it exists.
+
+    Raises
+    ------
+    RuntimeError
+        From :meth:`finalize` when ``pyarrow`` is not installed.
     """
 
     def __init__(self, *, output: Path) -> None:
@@ -381,14 +425,23 @@ def _parquet_schema() -> Any:
 
 
 class Fanout:
-    """Broadcast reporter callbacks to a list of underlying reporters."""
+    """Broadcast reporter callbacks to a list of underlying reporters.
+
+    Used by :func:`mew.run` to multiplex when multiple reporters are passed.
+    ``report_context`` returns ``all(...)`` of the children's responses —
+    Google Benchmark halts when a reporter returns ``False``, so the
+    strictest sub-reporter wins.
+
+    Parameters
+    ----------
+    reporters : list[Reporter]
+        Underlying reporters. Calls are dispatched in iteration order.
+    """
 
     def __init__(self, reporters: list[Reporter]) -> None:
         self._reporters = list(reporters)
 
     def report_context(self, context: dict[str, Any]) -> bool:
-        # If any sub-reporter rejects the context, GB will halt the run. We
-        # AND the responses so the strictest one wins.
         results = [r.report_context(context) for r in self._reporters]
         return all(results) if results else True
 

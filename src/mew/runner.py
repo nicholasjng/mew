@@ -68,11 +68,27 @@ def run(
 ) -> int:
     """Run benchmarks via the C++ Google Benchmark backend.
 
-    With `entries=None`, runs everything in the global registry. Pass a
-    filtered subset (e.g. from `REGISTRY.filter(pattern)`) to scope a run.
-    `reporter` is a single reporter or any iterable of reporters; multiple
-    reporters are multiplexed via `Fanout`. `filter` is forwarded to GB as
-    `--benchmark_filter=` (a regex).
+    Parameters
+    ----------
+    entries : Sequence[Entry], optional
+        Benchmarks to run. ``None`` (default) runs everything in the global
+        registry. Pass a filtered subset (e.g. from
+        ``REGISTRY.filter(pattern)``) to scope a run.
+    argv : Sequence[str], optional
+        Argv forwarded to Google Benchmark's ``Initialize``. Defaults to
+        ``["mew"]``. Use this to pass flags like ``--benchmark_min_time``.
+    reporter : Reporter, Iterable[Reporter], or None, optional
+        A single reporter, an iterable of reporters (multiplexed via
+        :class:`Fanout`), or ``None`` for Google Benchmark's default console
+        reporter.
+    filter : str, optional
+        Regex forwarded to Google Benchmark as ``--benchmark_filter=``.
+
+    Returns
+    -------
+    int
+        The number of benchmarks Google Benchmark executed. ``0`` if no
+        entries were selected.
     """
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
