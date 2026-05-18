@@ -38,7 +38,7 @@ def test_called_decorator_captures_options():
 def test_unknown_option_raises():
     with pytest.raises(TypeError, match="unknown option"):
 
-        @mew.benchmark(foo=1)  # ty: ignore[no-matching-overload]
+        @mew.benchmark(foo=1)
         def _bench(state):
             for _ in state:
                 pass

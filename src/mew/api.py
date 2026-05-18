@@ -5,28 +5,42 @@ from __future__ import annotations
 import functools
 import inspect
 import itertools
-from collections.abc import Callable, Iterable, Sequence
+import sys
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, overload
+from typing import Any, TypedDict, Unpack, overload
+
+if sys.version_info >= (3, 14):
+    from annotationlib import get_annotations
+else:
+    from inspect import get_annotations
 
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn
 
 _REGISTERED_ATTR = "__mew_registered__"
 
-_OptionKeys = frozenset(
-    {
-        "min_time",
-        "min_warmup_time",
-        "iterations",
-        "repetitions",
-        "unit",
-        "use_real_time",
-        "use_manual_time",
-        "measure_process_cpu_time",
-        "report_aggregates_only",
-    }
-)
+
+class BenchmarkOptions(TypedDict, total=False):
+    """Per-benchmark Google Benchmark options accepted by the decorators.
+
+    All keys are optional; omit a key to fall back to Google Benchmark's
+    default. Used as ``**options: Unpack[BenchmarkOptions]`` in
+    :func:`benchmark` and :func:`parametrize`.
+    """
+
+    min_time: float
+    min_warmup_time: float
+    iterations: int
+    repetitions: int
+    unit: str
+    use_real_time: bool
+    use_manual_time: bool
+    measure_process_cpu_time: bool
+    report_aggregates_only: bool
+
+
+_OptionKeys = frozenset(get_annotations(BenchmarkOptions))
 
 
 def _format_id_value(value: Any) -> str:
@@ -65,7 +79,7 @@ def _source_file(fn: BenchmarkFn) -> str | None:
         return None
 
 
-def _check_options(options: dict[str, Any]) -> None:
+def _check_options(options: Mapping[str, object]) -> None:
     extra = set(options) - _OptionKeys
     if extra:
         raise TypeError(f"unknown option(s): {sorted(extra)}")
@@ -116,15 +130,7 @@ def benchmark(
     *,
     name: str | None = None,
     tags: Iterable[str] | str | None = None,
-    min_time: float | None = None,
-    min_warmup_time: float | None = None,
-    iterations: int | None = None,
-    repetitions: int | None = None,
-    unit: str | None = None,
-    use_real_time: bool = False,
-    use_manual_time: bool = False,
-    measure_process_cpu_time: bool = False,
-    report_aggregates_only: bool = False,
+    **options: Unpack[BenchmarkOptions],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]: ...
 
 
@@ -134,8 +140,8 @@ def benchmark(
     *,
     name: str | None = None,
     tags: Iterable[str] | str | None = None,
-    **options: Any,
-) -> Any:
+    **options: Unpack[BenchmarkOptions],
+) -> BenchmarkFn | Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a function as a single benchmark.
 
     Use ``@parametrize`` or ``@product`` for benchmark families.
@@ -161,8 +167,7 @@ def benchmark(
     Returns
     -------
     BenchmarkFn or Callable[[BenchmarkFn], BenchmarkFn]
-        The original function (bare form) or a decorator that takes one
-        (called form).
+        The original function (bare form) or a decorator that takes one (called form).
 
     Raises
     ------
@@ -182,7 +187,7 @@ def benchmark(
                 fn=target,
                 module=getattr(target, "__module__", None),
                 file=file,
-                options=dict(options),
+                options={**options},
                 tags=norm_tags,
             )
         )
@@ -203,7 +208,7 @@ def _register_family(
     *,
     name: str | None,
     ids: Sequence[str] | None,
-    options: dict[str, Any],
+    options: Mapping[str, Any],
     tags: frozenset[str],
 ) -> BenchmarkFn:
     if ids is not None:
@@ -230,7 +235,7 @@ def _register_family(
                 fn=variant,
                 module=module,
                 file=file,
-                options=dict(options),
+                options={**options},
                 tags=tags,
             )
         )
@@ -244,7 +249,7 @@ def parametrize(
     name: str | None = None,
     ids: Sequence[str] | None = None,
     tags: Iterable[str] | str | None = None,
-    **options: Any,
+    **options: Unpack[BenchmarkOptions],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a parametrized benchmark family.
 
