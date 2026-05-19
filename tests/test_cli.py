@@ -192,6 +192,19 @@ def test_run_parquet_pq_extension_accepted(benchdir, tmp_path):
     assert out.exists()
 
 
+def test_run_benchmark_options_from_pyproject(benchdir, tmp_path):
+    # `iterations = 1` matches `--benchmark_min_time=1x`: GB runs each
+    # benchmark exactly once. The CLI doesn't expose this directly, so a
+    # successful single-iter run proves the config flowed through.
+    (tmp_path / "pyproject.toml").write_text('[tool.mew.benchmark_options]\nmin_time = "1x"\n')
+    out = tmp_path / "results.json"
+    res = _mew("run", str(benchdir), "-o", str(out), cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    doc = json.loads(out.read_text())
+    assert len(doc["benchmarks"]) == 3
+    assert all(b["iterations"] == 1 for b in doc["benchmarks"])
+
+
 def test_run_filter_by_tag(benchdir, tmp_path):
     out = tmp_path / "results.json"
     res = _mew(
