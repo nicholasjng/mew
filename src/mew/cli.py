@@ -8,12 +8,19 @@ from typing import Annotated
 
 from cyclopts import App, Parameter
 
+from mew import __version__ as _mew_version
 from mew import config as _config
 from mew import discovery, runner
+from mew._core import BENCHMARK_COMMIT as _gb_commit
+from mew._core import BENCHMARK_VERSION as _gb_version
 from mew._registry import REGISTRY, Entry
 from mew.reporter import JSONReporter, ParquetReporter, Reporter, RichReporter
 
-app = App(name="mew", help="Microbenchmarking for Python via Google Benchmark.")
+app = App(
+    name="mew",
+    help="Microbenchmarking for Python via Google Benchmark.",
+    version=f"mew {_mew_version} (Google Benchmark {_gb_version} @ {_gb_commit[:8]})",
+)
 
 
 def _collect(
