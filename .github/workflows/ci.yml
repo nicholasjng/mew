@@ -43,3 +43,30 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests/ -q
+
+  docs:
+    name: docs · sphinx
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install project and docs dependencies
+        run: uv sync --all-extras
+
+      - name: Build docs (warnings = errors)
+        run: uv run sphinx-build -W --keep-going -b html docs docs/_build/html
+
+      - name: Run doctests
+        run: uv run sphinx-build -b doctest docs docs/_build/doctest
+
+      - name: Check links
+        run: uv run sphinx-build -b linkcheck docs docs/_build/linkcheck
+        continue-on-error: true
