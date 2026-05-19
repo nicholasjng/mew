@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
+from cyclopts.help import ColumnSpec, DefaultFormatter, HelpEntry
 
 from mew import __version__ as _mew_version
 from mew import config as _config
@@ -16,10 +17,33 @@ from mew._core import BENCHMARK_VERSION as _gb_version
 from mew._registry import REGISTRY, Entry
 from mew.reporter import JSONReporter, ParquetReporter, Reporter, RichReporter
 
+
+def _short_first_name(entry: HelpEntry) -> str:
+    """Render option names as `-s, --long`, with shorts before longs."""
+    parts = (
+        *entry.positive_shorts,
+        *entry.positive_names,
+        *entry.negative_shorts,
+        *entry.negative_names,
+    )
+    return ", ".join(parts)
+
+
+def _param_columns(console, options, entries):  # noqa: ARG001
+    name_column = ColumnSpec(
+        renderer=_short_first_name, header="Option", justify="left", style="cyan"
+    )
+    description_column = ColumnSpec(renderer="description", header="Description", overflow="fold")
+    return (name_column, description_column)
+
+
 app = App(
     name="mew",
     help="Microbenchmarking for Python via Google Benchmark.",
-    version=f"mew {_mew_version} (Google Benchmark {_gb_version} @ {_gb_commit[:8]})",
+    version=f"mew {_mew_version} (Google Benchmark {_gb_version}@{_gb_commit[:8]})",
+    # Suppress auto-generated `--empty-<arg>` flags for list-typed parameters.
+    default_parameter=Parameter(negative_bool=(), negative_iterable=()),
+    help_formatter=DefaultFormatter(column_specs=_param_columns),
 )
 
 
@@ -54,21 +78,31 @@ def _collect(
     return entries
 
 
-@app.command(name=["list", "ls"])
+_PATHS_HELP = (
+    "Files, directories, or `<path>::<filter>` selectors to discover benchmarks from. "
+    "Defaults to `[tool.mew] benchpaths`."
+)
+
+
+@app.command(name=["list", "ls"], usage="Usage: mew list [OPTIONS] [PATHS]")
 def list_(
-    paths: Annotated[list[str], Parameter(name="paths")] = [],  # noqa: B006
+    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],  # noqa: B006
+    /,
     *,
     pattern: Annotated[
-        str | None, Parameter(name=["--pattern", "-k"], help="substring filter")
+        str | None,
+        Parameter(name=["-k", "--pattern"], help="List all benchmarks matching the given pattern."),
     ] = None,
     tag: Annotated[
         list[str],
         Parameter(
-            name=["--tag", "-t"],
-            help="filter by tag (repeatable, OR semantics)",
+            name=["-t", "--tag"],
+            help="Filter benchmarks by tag. Can be repeated, uses OR semantics.",
         ),
     ] = [],  # noqa: B006
-    show_tags: Annotated[bool, Parameter(help="print tags alongside each benchmark name")] = False,
+    show_tags: Annotated[
+        bool, Parameter(help="Show associated tags alongside each benchmark name.")
+    ] = False,
 ) -> None:
     """List discovered benchmarks without running them."""
     entries = _collect(paths, pattern=pattern, tags=tag or None)
@@ -134,77 +168,81 @@ def _build_reporters(
     return reps
 
 
-@app.command
+@app.command(usage="Usage: mew run [OPTIONS] [PATHS]")
 def run(
-    paths: Annotated[list[str], Parameter(name="paths")] = [],  # noqa: B006
+    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],  # noqa: B006
+    /,
     *,
     pattern: Annotated[
-        str | None, Parameter(name=["--pattern", "-k"], help="substring filter")
+        str | None,
+        Parameter(name=["-k", "--pattern"], help="Only run benchmarks matching the given pattern."),
     ] = None,
     tag: Annotated[
         list[str],
         Parameter(
-            name=["--tag", "-t"],
-            help="filter by tag (repeatable, OR semantics)",
+            name=["-t", "--tag"],
+            help="Filter benchmarks by tag. Can be repeated, uses OR semantics.",
         ),
     ] = [],  # noqa: B006
     output: Annotated[
         list[str],
         Parameter(
-            name=["--output", "-o"],
-            help="output sink, repeatable: `-` for a rich terminal table, "
-            "`<path>.json` for a JSON file. Default: `-`.",
+            name=["-o", "--output"],
+            help="Output sink, repeatable: `-` for a rich terminal table, "
+            "`<path>.{json,parquet}` for a JSON/Parquet file. Default: `-`.",
         ),
     ] = [],  # noqa: B006
     min_time: Annotated[
         str | None,
-        Parameter(help="GB --benchmark_min_time: seconds (`0.5`) or fixed iters (`100x`)"),
+        Parameter(
+            help="The minimum amount of time that each benchmark should run, in seconds (float, e.g. `0.5`) or number of iterations (e.g. `100x`)."
+        ),
     ] = None,
-    repetitions: Annotated[int | None, Parameter(help="repeat each benchmark N times")] = None,
+    repetitions: Annotated[int | None, Parameter(help="Repeat each benchmark N times.")] = None,
     extra: Annotated[
         list[str],
-        Parameter(name="--gb", help="raw arg forwarded to Google Benchmark"),
+        Parameter(name="--benchmark-option", help="raw arguments forwarded to Google Benchmark"),
     ] = [],  # noqa: B006
     profile_memory: Annotated[
         bool,
         Parameter(
             name="--profile-memory",
-            help="profile memory allocations with memray before the timing run",
+            help="Profile memory allocations with `memray` before the timing run.",
         ),
     ] = False,
     flamegraph: Annotated[
         Path | None,
         Parameter(
             name="--flamegraph",
-            help="write an HTML flame graph to this path (implies --profile-memory)",
+            help="Write an HTML flame graph containing allocation data to this path. Implies `--profile-memory`.",
         ),
     ] = None,
     profile_cpu: Annotated[
         bool,
         Parameter(
             name="--profile-cpu",
-            help="profile CPU time with pyinstrument before the timing run",
+            help="Profile CPU time with `pyinstrument` before the timing run.",
         ),
     ] = False,
     cpu_interval: Annotated[
         float,
         Parameter(
             name="--cpu-interval",
-            help="pyinstrument sampling interval in seconds (default 1e-4)",
+            help="`pyinstrument` sampling interval in seconds (default 1e-4).",
         ),
     ] = 1e-4,
     cpu_iterations: Annotated[
         int,
         Parameter(
             name="--cpu-iterations",
-            help="iterations of the body per benchmark under the sampler (default 1000)",
+            help="Iterations of the body per benchmark under the sampler (default 1000).",
         ),
     ] = 1000,
     cpu_output: Annotated[
         Path | None,
         Parameter(
             name="--cpu-output",
-            help="write a pyinstrument HTML report to this path (implies --profile-cpu)",
+            help="Write a pyinstrument HTML report to this path. Implies `--profile-cpu`",
         ),
     ] = None,
 ) -> None:
@@ -214,7 +252,9 @@ def run(
         print("no benchmarks found", file=sys.stderr)
         raise SystemExit(1)
 
-    argv: list[str] = ["mew"]
+    # Config defaults go in first so CLI flags (later) override them via
+    # gflags' last-wins semantics. `--gb` passthrough is last for full control.
+    argv: list[str] = ["mew", *_config.format_benchmark_args(_config.load().benchmark_options)]
     if min_time is not None:
         argv.append(f"--benchmark_min_time={min_time}")
     if repetitions is not None:
@@ -256,7 +296,8 @@ def run(
 
 @app.command
 def compare(
-    files: Annotated[list[Path], Parameter(name="files")],
+    files: list[Path],
+    /,
     *,
     metric: Annotated[
         str,
