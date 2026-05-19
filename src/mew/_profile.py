@@ -51,12 +51,6 @@ class _MockState:
             raise StopIteration
         self._i += 1
 
-    def pause_timing(self) -> None:
-        pass
-
-    def resume_timing(self) -> None:
-        pass
-
     def pause(self) -> AbstractContextManager[None]:
         return nullcontext()
 

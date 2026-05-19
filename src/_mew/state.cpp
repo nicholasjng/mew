@@ -46,8 +46,6 @@ void register_state(nb::module_& m) {
                  // internal counter, and calls FinishKeepRunning when the budget is spent.
                  if (!self.KeepRunning()) throw nb::stop_iteration();
              })
-        .def("pause_timing", &benchmark::State::PauseTiming)
-        .def("resume_timing", &benchmark::State::ResumeTiming)
         .def(
             "pause", [](benchmark::State& self) { return PauseScope{&self, nullptr}; },
             "Return a context manager that pauses timing for the duration of the `with` block.")
