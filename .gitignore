@@ -34,3 +34,7 @@ htmlcov/
 
 # flame graphs and profiles
 *.html
+
+# Sphinx
+docs/_build/
+docs/_generated/

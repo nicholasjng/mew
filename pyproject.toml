@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A CLI for microbenchmarking Python code snippets."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "Apache-2.0"
 authors = [{ name = "Nicholas Junge", email = "nicho.junge@gmail.com" }]
 dependencies = [
     "cyclopts >=3.0",
@@ -25,6 +25,14 @@ dev = [
     "scikit-build-core >=0.10",
     "pyarrow >=17",
     "duckdb >=1.1",
+]
+docs = [
+    "sphinx >=8",
+    "furo >=2024.8",
+    "myst-parser >=4",
+    "sphinx-design >=0.6",
+    "sphinx-copybutton >=0.5",
+    "sphinx-autodoc-typehints >=2.4",
 ]
 
 [tool.uv]
