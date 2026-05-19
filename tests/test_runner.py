@@ -103,6 +103,76 @@ def test_run_filter_selects_subset():
     assert not any("bench_b" in n for n in names)
 
 
+def test_state_pause_context_manager_excludes_work_from_timing():
+    from mew._core import PauseScope
+
+    seen: list[object] = []
+
+    @mew.benchmark(iterations=1)
+    def bench_x(state):
+        for _ in state:
+            cm = state.pause()
+            assert isinstance(cm, PauseScope)
+            with cm as entered:
+                assert entered is cm
+
+    @mew.benchmark(iterations=1)
+    def bench_y(state):
+        for _ in state:
+            with state.pause():
+                seen.append("inside")
+
+    cap = Capture()
+    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    assert cap.runs[0].iterations == 1
+    assert cap.runs[1].iterations == 1
+    assert seen == ["inside"]
+
+
+def test_state_pause_excludes_paused_work_from_real_time():
+    # Same workload in both benchmarks; one runs it inside `state.pause()`,
+    # the other doesn't. The paused variant's measured real_time should be a
+    # small fraction of the unpaused variant's.
+    WORK = 200_000
+
+    @mew.benchmark(iterations=1)
+    def bench_unpaused(state):
+        for _ in state:
+            sum(range(WORK))
+
+    @mew.benchmark(iterations=1)
+    def bench_paused(state):
+        for _ in state:
+            with state.pause():
+                sum(range(WORK))
+
+    cap = Capture()
+    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    unpaused, paused = cap.runs
+    paused_time = paused.real_accumulated_time
+    unpaused_time = unpaused.real_accumulated_time
+    # Generous margin: paused real time should be at least 10x smaller than
+    # the work it excluded. In practice it's typically 100x+ smaller.
+    assert paused_time < unpaused_time / 10, f"paused={paused}s, unpaused={unpaused}s"
+
+
+def test_state_pause_resumes_on_exception():
+    @mew.benchmark(iterations=1)
+    def bench_raises(state):
+        for _ in state:
+            try:
+                with state.pause():
+                    raise RuntimeError("boom")
+            except RuntimeError:
+                pass
+
+    cap = Capture()
+    # Body completes normally because the exception is swallowed; ScopedPauseTiming's
+    # destructor still resumes timing as the with-block unwinds.
+    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    assert cap.runs[0].iterations == 1
+
+
 def test_run_with_no_entries_returns_zero():
     cap = Capture()
     assert mew.run(argv=_argv_fast(), reporter=cap) == 0

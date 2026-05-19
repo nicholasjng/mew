@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -55,6 +56,9 @@ class _MockState:
 
     def resume_timing(self) -> None:
         pass
+
+    def pause(self) -> AbstractContextManager[None]:
+        return nullcontext()
 
     def set_counter(self, name: str, value: float) -> None:
         pass

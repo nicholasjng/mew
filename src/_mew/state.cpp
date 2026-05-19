@@ -4,10 +4,37 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 
+#include <memory>
+
 namespace nb = nanobind;
 using namespace nb::literals;
 
+namespace {
+// Python context manager wrapping benchmark::ScopedPauseTiming. The guard is
+// constructed on __enter__ (which calls PauseTiming) and destroyed on __exit__
+// (which calls ResumeTiming). ScopedPauseTiming is non-movable, so we hold it
+// behind a unique_ptr to defer construction until __enter__.
+struct PauseScope {
+    benchmark::State* state;
+    std::unique_ptr<benchmark::ScopedPauseTiming> guard;
+};
+}  // namespace
+
 void register_state(nb::module_& m) {
+    nb::class_<PauseScope>(m, "PauseScope",
+                           "Context manager that pauses State timing within a scope.")
+        .def(
+            "__enter__",
+            [](PauseScope& self) -> PauseScope& {
+                self.guard = std::make_unique<benchmark::ScopedPauseTiming>(*self.state);
+                return self;
+            },
+            nb::rv_policy::reference_internal)
+        .def(
+            "__exit__",
+            [](PauseScope& self, nb::object, nb::object, nb::object) { self.guard.reset(); },
+            "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none());
+
     nb::class_<benchmark::State>(
         m, "State", "Active microbenchmark state. Iterate with `for _ in state:` to time the body.")
         .def(
@@ -21,6 +48,9 @@ void register_state(nb::module_& m) {
              })
         .def("pause_timing", &benchmark::State::PauseTiming)
         .def("resume_timing", &benchmark::State::ResumeTiming)
+        .def(
+            "pause", [](benchmark::State& self) { return PauseScope{&self, nullptr}; },
+            "Return a context manager that pauses timing for the duration of the `with` block.")
         .def("skip_with_error", &benchmark::State::SkipWithError, "msg"_a)
         .def("skip_with_message", &benchmark::State::SkipWithMessage, "msg"_a)
         .def("set_label", &benchmark::State::SetLabel, "label"_a)

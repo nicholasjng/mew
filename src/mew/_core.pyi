@@ -3,7 +3,7 @@
 import enum
 from collections.abc import Callable, Sequence
 
-BENCHMARK_COMMIT: str = "c47bbfbdbbf59d6fbd2df110965374ef3bfe9bd7"
+BENCHMARK_COMMIT: str = "ac68e7d7de60fb55ccad12536d485d4880502cfe"
 
 BENCHMARK_VERSION: str = "v1.9.5"
 
@@ -88,6 +88,14 @@ def run_benchmarks(argv: Sequence[str], reporter: object | None = None) -> int:
     Initialize Google Benchmark with `argv`, run all registered benchmarks, then clear the registry. Returns the number of benchmarks run. Pass a Fanout reporter from Python to multiplex into multiple sinks (GB's own `--benchmark_out` requirement only kicks in for the native file-reporter slot, which we don't use).
     """
 
+class PauseScope:
+    """Context manager that pauses State timing within a scope."""
+
+    def __enter__(self) -> PauseScope: ...
+    def __exit__(
+        self, exc_type: object | None, exc_value: object | None, traceback: object | None
+    ) -> None: ...
+
 class State:
     """
     Active microbenchmark state. Iterate with `for _ in state:` to time the body.
@@ -97,6 +105,11 @@ class State:
     def __next__(self) -> None: ...
     def pause_timing(self) -> None: ...
     def resume_timing(self) -> None: ...
+    def pause(self) -> PauseScope:
+        """
+        Return a context manager that pauses timing for the duration of the `with` block.
+        """
+
     def skip_with_error(self, msg: str) -> None: ...
     def skip_with_message(self, msg: str) -> None: ...
     def set_label(self, label: str) -> None: ...
