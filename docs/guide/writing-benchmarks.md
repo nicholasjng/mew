@@ -56,7 +56,7 @@ Pass a single string or any iterable:
 @mew.benchmark(tags=("hot-path", "sort"))
 ```
 
-Tag filters use OR semantics: `mew run --tag a --tag b` runs anything tagged as `a` or `b`. 
+Tag filters use OR semantics: `mew run --tag a --tag b` runs anything tagged as `a` or `b`.
 Combine with `-k` for AND across tag and name.
 
 ## Common pitfalls
