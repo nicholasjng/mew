@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
+
+TimeUnitStr = Literal["ns", "us", "ms", "s"]
 
 
 @runtime_checkable

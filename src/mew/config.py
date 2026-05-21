@@ -5,7 +5,11 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
+
+from mew._typing import TimeUnitStr
+
+_VALID_UNITS = frozenset(get_args(TimeUnitStr))
 
 
 @dataclass(slots=True)
@@ -29,10 +33,16 @@ def load(start: Path | None = None) -> Config:
         with candidate.open("rb") as fh:
             data = tomllib.load(fh)
         tool = data.get("tool", {}).get("mew", {})
+        benchmark_options = dict(tool.get("benchmark_options", {}))
+        if (unit := benchmark_options.get("unit")) is not None and unit not in _VALID_UNITS:
+            raise ValueError(
+                f"invalid time unit {unit!r} in [tool.mew.benchmark_options]; "
+                f"expected one of {sorted(_VALID_UNITS)}"
+            )
         return Config(
             benchpaths=list(tool.get("benchpaths", ["benchmarks"])),
             python_files=list(tool.get("python_files", ["bench_*.py", "*_bench.py"])),
-            benchmark_options=dict(tool.get("benchmark_options", {})),
+            benchmark_options=benchmark_options,
             project_root=parent,
         )
     return Config()

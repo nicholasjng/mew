@@ -43,7 +43,9 @@ void register_registry(nb::module_& m) {
         .def(
             "unit",
             [](benchmark::Benchmark& b, const std::string& u) { return b.Unit(parse_unit(u)); },
-            "unit"_a, nb::rv_policy::reference)
+            "unit"_a, nb::rv_policy::reference,
+            nb::sig(
+                "def unit(self, unit: typing.Literal['ns', 'us', 'ms', 's']) -> BenchmarkHandle"))
         .def(
             "use_real_time", [](benchmark::Benchmark& b) { return b.UseRealTime(); },
             nb::rv_policy::reference)
