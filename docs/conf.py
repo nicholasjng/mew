@@ -96,8 +96,8 @@ def _render_cli_help() -> None:
     out_dir = os.path.join(os.path.dirname(__file__), "_generated")
     os.makedirs(out_dir, exist_ok=True)
     try:
-        from mew.cli import app  # noqa: PLC0415
-    except Exception as exc:  # pragma: no cover - best-effort doc helper
+        from mew.cli import app
+    except Exception as exc:
         with open(os.path.join(out_dir, "cli-help.txt"), "w") as fh:
             fh.write(f"<<failed to render CLI help: {exc!r}>>\n")
         return
