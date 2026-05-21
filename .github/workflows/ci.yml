@@ -26,14 +26,11 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
-      - name: Run linters and formatters
+      - name: Run linters, formatter and type checker
         run: uvx prek run --all-files --show-diff-on-failure
 
-      - name: Install project and dev dependencies for type checking
-        run: uv sync --all-extras --group dev
-
       - name: Type check the codebase
-        run: uvx ty check src/mew/ tests/
+        run: uv run --all-extras --group test --group typing ty check src/mew/ tests/
 
   test:
     name: ${{ matrix.os }} · py${{ matrix.python-version }}
@@ -56,7 +53,7 @@ jobs:
           enable-cache: true
 
       - name: Install project and its dependencies
-        run: uv sync --all-extras --group dev
+        run: uv sync --all-extras --group test
 
       - name: Run tests
         run: uv run pytest

@@ -24,14 +24,6 @@ build = [
     "nanobind >=2.2",
     "scikit-build-core >=0.10",
 ]
-dev = [
-    "pytest >=8",
-    "ruff >=0.6",
-    "pyarrow >=17",
-    "duckdb >=1.1",
-    "ty>=0.0.35",
-    "tzdata>=2026.2 ; sys_platform == 'win32'",
-]
 docs = [
     "sphinx >=8",
     "furo >=2024.8",
@@ -39,6 +31,15 @@ docs = [
     "sphinx-design >=0.6",
     "sphinx-copybutton >=0.5",
     "sphinx-autodoc-typehints >=2.4",
+]
+test = [
+    "duckdb >=1.1",
+    "pyarrow >=17",
+    "pytest >=8",
+    "tzdata>=2026.2 ; sys_platform == 'win32'",
+]
+typing = [
+    "ty>=0.0.35",
 ]
 
 [tool.uv]
