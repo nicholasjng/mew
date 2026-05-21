@@ -8,7 +8,7 @@ import itertools
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, TypedDict, Unpack, overload
+from typing import Any, Unpack, overload
 
 if sys.version_info >= (3, 14):
     from annotationlib import get_annotations
@@ -16,28 +16,9 @@ else:
     from inspect import get_annotations
 
 from mew._registry import REGISTRY, Entry
-from mew._typing import BenchmarkFn, TimeUnitStr
+from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
 
 _REGISTERED_ATTR = "__mew_registered__"
-
-
-class BenchmarkOptions(TypedDict, total=False):
-    """Per-benchmark Google Benchmark options accepted by the decorators.
-
-    All keys are optional; omit a key to fall back to Google Benchmark's
-    default. Used as ``**options: Unpack[BenchmarkOptions]`` in
-    :func:`benchmark` and :func:`parametrize`.
-    """
-
-    min_time: float
-    min_warmup_time: float
-    iterations: int
-    repetitions: int
-    unit: TimeUnitStr
-    use_real_time: bool
-    use_manual_time: bool
-    measure_process_cpu_time: bool
-    report_aggregates_only: bool
 
 
 _OptionKeys = frozenset(get_annotations(BenchmarkOptions))
@@ -187,7 +168,7 @@ def benchmark(
                 fn=target,
                 module=getattr(target, "__module__", None),
                 file=file,
-                options={**options},
+                options=options,
                 tags=norm_tags,
             )
         )
@@ -208,7 +189,7 @@ def _register_family(
     *,
     name: str | None,
     ids: Sequence[str] | None,
-    options: Mapping[str, Any],
+    options: BenchmarkOptions,
     tags: frozenset[str],
 ) -> BenchmarkFn:
     if ids is not None:
@@ -235,7 +216,7 @@ def _register_family(
                 fn=variant,
                 module=module,
                 file=file,
-                options={**options},
+                options=options,
                 tags=tags,
             )
         )
@@ -385,7 +366,7 @@ def product(
     if not iterables:
         raise TypeError("@product needs at least one iterable kwarg")
 
-    options: dict[str, Any] = {}
+    options: BenchmarkOptions = {}
     if min_time is not None:
         options["min_time"] = min_time
     if min_warmup_time is not None:
