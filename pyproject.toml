@@ -28,6 +28,7 @@ memory = [ "memray>=1.5; sys_platform != 'win32'" ]
 [dependency-groups]
 build = [
     "nanobind >=2.2",
+    "ruff>=0.15.12",  # for CMake's post-build stub formatting step.
     "scikit-build-core >=0.10",
 ]
 docs = [

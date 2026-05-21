@@ -33,7 +33,9 @@ void register_state(nb::module_& m) {
         .def(
             "__exit__",
             [](PauseScope& self, nb::object, nb::object, nb::object) { self.guard.reset(); },
-            "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none());
+            "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none(),
+            nb::sig("def __exit__(self, exc_type: type[BaseException] | None, exc_value: "
+                    "BaseException | None, traceback: types.TracebackType | None) -> None"));
 
     nb::class_<benchmark::State>(
         m, "State", "Active microbenchmark state. Iterate with `for _ in state:` to time the body.")
