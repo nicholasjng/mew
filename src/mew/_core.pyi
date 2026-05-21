@@ -3,7 +3,7 @@
 import enum
 from collections.abc import Callable, Sequence
 
-BENCHMARK_COMMIT: str = "486f6ea9fb97b35c9b86b90d8b452d8d0c12b8c3"
+BENCHMARK_COMMIT: str = "83c826c8d9499bb3ecd02f6f4abbac1e990297fe"
 
 BENCHMARK_VERSION: str = "v1.9.5"
 
