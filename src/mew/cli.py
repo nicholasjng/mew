@@ -86,7 +86,7 @@ _PATHS_HELP = (
 
 @app.command(name=["list", "ls"], usage="Usage: mew list [OPTIONS] [PATHS]")
 def list_(
-    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],  # noqa: B006
+    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],
     /,
     *,
     pattern: Annotated[
@@ -99,7 +99,7 @@ def list_(
             name=["-t", "--tag"],
             help="Filter benchmarks by tag. Can be repeated, uses OR semantics.",
         ),
-    ] = [],  # noqa: B006
+    ] = [],
     show_tags: Annotated[
         bool, Parameter(help="Show associated tags alongside each benchmark name.")
     ] = False,
@@ -170,7 +170,7 @@ def _build_reporters(
 
 @app.command(usage="Usage: mew run [OPTIONS] [PATHS]")
 def run(
-    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],  # noqa: B006
+    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],
     /,
     *,
     pattern: Annotated[
@@ -183,7 +183,7 @@ def run(
             name=["-t", "--tag"],
             help="Filter benchmarks by tag. Can be repeated, uses OR semantics.",
         ),
-    ] = [],  # noqa: B006
+    ] = [],
     output: Annotated[
         list[str],
         Parameter(
@@ -191,7 +191,7 @@ def run(
             help="Output sink, repeatable: `-` for a rich terminal table, "
             "`<path>.{json,parquet}` for a JSON/Parquet file. Default: `-`.",
         ),
-    ] = [],  # noqa: B006
+    ] = [],
     min_time: Annotated[
         str | None,
         Parameter(
@@ -202,7 +202,7 @@ def run(
     extra: Annotated[
         list[str],
         Parameter(name="--benchmark-option", help="raw arguments forwarded to Google Benchmark"),
-    ] = [],  # noqa: B006
+    ] = [],
     profile_memory: Annotated[
         bool,
         Parameter(
@@ -333,7 +333,7 @@ def compare(
             name="--allow",
             help="inline allowlist entry `PATTERN` (ignore) or `PATTERN:PCT` (per-rule threshold)",
         ),
-    ] = [],  # noqa: B006
+    ] = [],
 ) -> None:
     """Compare benchmark result files; the first file is the baseline."""
     from mew.compare import compare as _compare
