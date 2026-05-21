@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mew import _core
 from mew import context as _context
 from mew._registry import REGISTRY, Entry
+from mew.reporter import Reporter
+
+if TYPE_CHECKING:
+    from mew._core import Run
 
 
 @contextmanager
@@ -63,7 +67,7 @@ def run(
     entries: Sequence[Entry] | None = None,
     *,
     argv: Sequence[str] | None = None,
-    reporter: Any = None,
+    reporter: Reporter | Iterable[Reporter] | None = None,
     filter: str | None = None,
 ) -> int:
     """Run benchmarks via the C++ Google Benchmark backend.
@@ -110,13 +114,15 @@ def run(
         return _core.run_benchmarks(cli, rep)
 
 
-def _to_single_reporter(reporter: Any) -> Any:
+def _to_single_reporter(
+    reporter: Reporter | Iterable[Reporter] | None,
+) -> Reporter | None:
     """Accept a reporter, an iterable of reporters, or None."""
     if reporter is None:
         return None
     # Treat anything with the reporter callbacks as a single reporter, even if
     # it happens to also be iterable.
-    if hasattr(reporter, "report_runs"):
+    if isinstance(reporter, Reporter):
         return reporter
     from mew.reporter import Fanout
 
@@ -131,7 +137,7 @@ def _to_single_reporter(reporter: Any) -> Any:
 class _ContextInjecting:
     """Reporter wrapper that injects user-defined context under ctx['custom']."""
 
-    def __init__(self, inner: Any, custom: dict[str, Any]) -> None:
+    def __init__(self, inner: Reporter, custom: dict[str, Any]) -> None:
         self._inner = inner
         self._custom = custom
 
@@ -140,7 +146,7 @@ class _ContextInjecting:
         merged["custom"] = self._custom
         return self._inner.report_context(merged)
 
-    def report_runs(self, runs: Any) -> None:
+    def report_runs(self, runs: list[Run]) -> None:
         self._inner.report_runs(runs)
 
     def finalize(self) -> None:
