@@ -133,5 +133,10 @@ _render_cli_help()
 nitpicky = False
 suppress_warnings = ["myst.header"]
 
+# -- linkcheck ---------------------------------------------------------------
+# GitHub's HTML commit pages aggressively rate-limit unauthenticated linkcheck
+# requests, which stalls CI.
+linkcheck_ignore = [r"https://github\.com/.*/commits/.*"]
+
 # Add docs/ to sys.path so any local helpers are importable.
 sys.path.insert(0, os.path.dirname(__file__))
