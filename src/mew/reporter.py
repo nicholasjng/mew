@@ -298,6 +298,12 @@ class ParquetReporter:
     """
 
     def __init__(self, *, output: Path) -> None:
+        if sys.platform == "win32" and find_spec("tzdata") is None:
+            raise RuntimeError(
+                "ParquetReporter on Windows requires the `tzdata` package "
+                "for pyarrow's UTC timestamp support. Install it with "
+                "`pip install tzdata`."
+            )
         self._output = Path(output)
         self._context: dict[str, Any] = {}
         self._runs: list[Run] = []
