@@ -247,7 +247,7 @@ class RichReporter:
         self._console.print(Text(line, style="bold"))
         self._console.print(Text("─" * len(line), style="dim"))
 
-    def _print_row(self, r: Any) -> None:
+    def _print_row(self, r: Run | EnrichedRun) -> None:
         w = self._widths
         unit = r.time_unit.name
         name = r.benchmark_name()
