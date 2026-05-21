@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -34,11 +35,14 @@ def benchdir(tmp_path: Path) -> Path:
 
 
 def _mew(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
         [sys.executable, "-m", "mew.cli", *args],
         cwd=cwd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=env,
         check=False,
     )
 

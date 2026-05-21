@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -198,4 +199,5 @@ def test_json_reporter_handles_non_serializable_via_default(tmp_path: Path):
     )
     doc = json.loads(out.read_text())
     # Path stringifies via default=str — lossy but doesn't crash.
-    assert doc["context"]["custom"]["path"] == "/tmp/something"
+    expected_val = "/tmp/something" if sys.platform != "win32" else "\\tmp\\something"
+    assert doc["context"]["custom"]["path"] == expected_val
