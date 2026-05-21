@@ -13,12 +13,6 @@ build:
     post_create_environment:
       - pip install uv
     install:
-      # `uv sync` builds the C++ extension via scikit-build-core so autodoc
-      # can import the real `mew._core`. The `docs` extra pins Sphinx + theme
-      # + plugins, plus the build backend (scikit-build-core + nanobind) since
-      # `mew` is built with no-build-isolation (see [tool.uv] in pyproject.toml).
-      # UV_PROJECT_ENVIRONMENT points uv at the venv RTD will run `sphinx-build`
-      # from, instead of creating a project-local `.venv`.
       - UV_PROJECT_ENVIRONMENT=$READTHEDOCS_VIRTUALENV_PATH uv sync --group docs
 
 sphinx:

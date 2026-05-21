@@ -15,6 +15,12 @@ dependencies = [
     "rich >=13.7",
 ]
 
+[project.urls]
+Documentation = "https://mew.readthedocs.io"
+Repository = "https://github.com/nicholasjng/mew"
+Issues = "https://github.com/nicholasjng/mew/issues"
+Changelog = "https://mew.readthedocs.io/en/latest/changelog.html"
+
 [project.optional-dependencies]
 cpu = [ "pyinstrument >=4.6" ]
 memory = [ "memray>=1.5; sys_platform != 'win32'" ]
@@ -43,8 +49,8 @@ typing = [
 ]
 
 [tool.uv]
-# Build mew against the project's own .venv so paths baked into
-# compile_commands.json (nanobind headers, etc.) survive across rebuilds.
+# Build mew against the project .venv so includes from Python packages
+# (nanobind etc.) in compile_commands.json survive across rebuilds.
 no-build-isolation-package = ["mew"]
 # exclude dependency versions newer than one week
 exclude-newer = "1 week"
