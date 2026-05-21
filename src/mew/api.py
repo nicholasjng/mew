@@ -16,7 +16,7 @@ else:
     from inspect import get_annotations
 
 from mew._registry import REGISTRY, Entry
-from mew._typing import BenchmarkFn
+from mew._typing import BenchmarkFn, TimeUnitStr
 
 _REGISTERED_ATTR = "__mew_registered__"
 
@@ -33,7 +33,7 @@ class BenchmarkOptions(TypedDict, total=False):
     min_warmup_time: float
     iterations: int
     repetitions: int
-    unit: str
+    unit: TimeUnitStr
     use_real_time: bool
     use_manual_time: bool
     measure_process_cpu_time: bool
@@ -326,7 +326,7 @@ def product(
     min_warmup_time: float | None = None,
     iterations: int | None = None,
     repetitions: int | None = None,
-    unit: str | None = None,
+    unit: TimeUnitStr | None = None,
     use_real_time: bool = False,
     use_manual_time: bool = False,
     measure_process_cpu_time: bool = False,
