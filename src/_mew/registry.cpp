@@ -6,7 +6,6 @@
 #include <nanobind/stl/string.h>
 
 #include <memory>
-#include <stdexcept>
 #include <string>
 
 namespace nb = nanobind;

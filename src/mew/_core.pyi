@@ -1,6 +1,7 @@
-"""mew C++ core (Google Benchmark + nanobind)"""
+"""The mew C++ core (Google Benchmark bindings)."""
 
 import enum
+import types
 from collections.abc import Callable, Sequence
 
 BENCHMARK_COMMIT: str = "83c826c8d9499bb3ecd02f6f4abbac1e990297fe"
@@ -85,7 +86,7 @@ class Run:
 
 def run_benchmarks(argv: Sequence[str], reporter: object | None = None) -> int:
     """
-    Initialize Google Benchmark with `argv`, run all registered benchmarks, then clear the registry. Returns the number of benchmarks run. Pass a Fanout reporter from Python to multiplex into multiple sinks (GB's own `--benchmark_out` requirement only kicks in for the native file-reporter slot, which we don't use).
+    Initialize Google Benchmark with `argv`, run all registered benchmarks, then clear the registry. Returns the number of benchmarks run. Pass a Fanout reporter from Python to multiplex into multiple sinks.
     """
 
 class PauseScope:
@@ -93,7 +94,10 @@ class PauseScope:
 
     def __enter__(self) -> PauseScope: ...
     def __exit__(
-        self, exc_type: object | None, exc_value: object | None, traceback: object | None
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: types.TracebackType | None,
     ) -> None: ...
 
 class State:

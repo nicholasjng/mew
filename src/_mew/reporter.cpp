@@ -183,7 +183,5 @@ void register_reporter(nb::module_& m) {
         "argv"_a, "reporter"_a = nb::none(),
         "Initialize Google Benchmark with `argv`, run all registered benchmarks, "
         "then clear the registry. Returns the number of benchmarks run. Pass a "
-        "Fanout reporter from Python to multiplex into multiple sinks (GB's own "
-        "`--benchmark_out` requirement only kicks in for the native file-reporter "
-        "slot, which we don't use).");
+        "Fanout reporter from Python to multiplex into multiple sinks.");
 }

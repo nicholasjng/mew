@@ -15,7 +15,7 @@ void register_registry(nb::module_& m);
 void register_reporter(nb::module_& m);
 
 NB_MODULE(_core, m) {
-    m.doc() = "mew C++ core (Google Benchmark + nanobind)";
+    m.doc() = "The mew C++ core (Google Benchmark bindings).";
 
     // Diagnostic metadata about the bundled Google Benchmark build.
     m.attr("BENCHMARK_COMMIT") = MEW_BENCHMARK_COMMIT;
