@@ -52,7 +52,7 @@ run(REGISTRY.all(), reporter=JSONReporter(output=Path("out.json")))
 
 ## Reporters
 
-Reporters are duck-typed objects with `report_context()` and `report_runs()` methods. 
+Reporters are duck-typed objects with `report_context()` and `report_runs()` methods.
 Built-ins: {class}`~mew.RichReporter`, {class}`~mew.JSONReporter`, {class}`~mew.ParquetReporter`.
 You can combine multiple reporters using the {class}`~mew.Fanout` class.
 For more information, see [](../guide/reporters.md).
@@ -60,5 +60,5 @@ For more information, see [](../guide/reporters.md).
 ## Context
 
 `mew.set_context()` and `mew.update_context()` populate a process-global metadata dict that's merged into every reporter's context under the `custom` key.
-Use it to stamp results with a git SHA, dataset identifiers, hardware tags — anything you'd later want to filter on. 
+Use it to stamp results with a git SHA, dataset identifiers, hardware tags — anything you'd later want to filter on.
 For more information, see [](../guide/context.md).

@@ -4,7 +4,7 @@ All contributions are welcome.
 
 ## Suggested workflow
 
-1. Fork and clone the `nicholasjng/mew` repository on GitHub. 
+1. Fork and clone the `nicholasjng/mew` repository on GitHub.
 2. Run `uv sync --all-extras` to set up the editable install with all dev deps.
 3. Make your changes, add tests under `tests/` if necessary.
 4. Run `uv run pytest tests/ -q` and `uvx prek run --all-files` before pushing.
