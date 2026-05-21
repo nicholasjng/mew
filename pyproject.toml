@@ -18,13 +18,18 @@ dependencies = [
 [project.optional-dependencies]
 cpu = [ "pyinstrument >=4.6" ]
 memory = [ "memray>=1.5; sys_platform != 'win32'" ]
+
+[dependency-groups]
+build = [
+    "nanobind >=2.2",
+    "scikit-build-core >=0.10",
+]
 dev = [
     "pytest >=8",
     "ruff >=0.6",
-    "nanobind >=2.2",
-    "scikit-build-core >=0.10",
     "pyarrow >=17",
     "duckdb >=1.1",
+    "ty>=0.0.35",
 ]
 docs = [
     "sphinx >=8",
@@ -33,8 +38,6 @@ docs = [
     "sphinx-design >=0.6",
     "sphinx-copybutton >=0.5",
     "sphinx-autodoc-typehints >=2.4",
-    "scikit-build-core >=0.10",
-    "nanobind >=2.2",
 ]
 
 [tool.uv]
@@ -43,6 +46,8 @@ docs = [
 no-build-isolation-package = ["mew"]
 # exclude dependency versions newer than one week
 exclude-newer = "1 week"
+# Require the "build" group due to no build isolation
+default-groups = ["build"]
 
 [project.scripts]
 mew = "mew.cli:app"
