@@ -15,6 +15,7 @@ from mew.reporter import Reporter
 
 if TYPE_CHECKING:
     from mew._core import Run
+    from mew._typing import BenchmarkOptions
 
 
 @contextmanager
@@ -42,7 +43,7 @@ def _silence_native_stderr() -> Iterator[None]:
         os.close(devnull)
 
 
-def _apply_options(handle: _core.BenchmarkHandle, opts: dict[str, Any]) -> None:
+def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> None:
     if (v := opts.get("min_time")) is not None:
         handle.min_time(float(v))
     if (v := opts.get("min_warmup_time")) is not None:
@@ -52,7 +53,7 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: dict[str, Any]) -> None:
     if (v := opts.get("repetitions")) is not None:
         handle.repetitions(int(v))
     if v := opts.get("unit"):
-        handle.unit(str(v))
+        handle.unit(v)
     if opts.get("use_real_time"):
         handle.use_real_time()
     if opts.get("use_manual_time"):

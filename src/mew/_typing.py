@@ -3,9 +3,28 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
 
 TimeUnitStr = Literal["ns", "us", "ms", "s"]
+
+
+class BenchmarkOptions(TypedDict, total=False):
+    """Per-benchmark Google Benchmark options accepted by the decorators.
+
+    All keys are optional; omit a key to fall back to Google Benchmark's
+    default. Used as ``**options: Unpack[BenchmarkOptions]`` in
+    :func:`mew.benchmark` and :func:`mew.parametrize`.
+    """
+
+    min_time: float
+    min_warmup_time: float
+    iterations: int
+    repetitions: int
+    unit: TimeUnitStr
+    use_real_time: bool
+    use_manual_time: bool
+    measure_process_cpu_time: bool
+    report_aggregates_only: bool
 
 
 @runtime_checkable

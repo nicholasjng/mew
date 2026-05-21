@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -109,11 +110,11 @@ class _Capture:
         self.context: dict | None = None
         self.runs: list = []
 
-    def report_context(self, ctx):
-        self.context = ctx
+    def report_context(self, context: dict[str, Any]) -> bool:
+        self.context = context
         return True
 
-    def report_runs(self, runs):
+    def report_runs(self, runs: list[mew.Run]) -> None:
         self.runs.extend(runs)
 
     def finalize(self):

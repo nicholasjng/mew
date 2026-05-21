@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any
 
-from mew._typing import BenchmarkFn
+from mew._typing import BenchmarkFn, BenchmarkOptions
 
 
 @dataclass(slots=True)
@@ -19,7 +18,7 @@ class Entry:
     fn: BenchmarkFn
     module: str | None = None
     file: str | None = None
-    options: dict[str, Any] = field(default_factory=dict)
+    options: BenchmarkOptions = field(default_factory=lambda: BenchmarkOptions())
     tags: frozenset[str] = field(default_factory=frozenset)
 
 
