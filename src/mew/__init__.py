@@ -1,7 +1,7 @@
 """mew — microbenchmarking for Python via Google Benchmark."""
 
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as _pkg_version
+import atexit
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 from mew._core import (
     BENCHMARK_COMMIT,
@@ -10,6 +10,7 @@ from mew._core import (
     Run,
     RunType,
     TimeUnit,
+    clear_registered_benchmarks as _clear_registered_benchmarks,
 )
 from mew._registry import REGISTRY, Entry, Registry
 from mew._typing import BenchmarkFn, State
@@ -20,8 +21,12 @@ from mew.runner import run
 
 try:
     __version__ = _pkg_version("mew")
-except PackageNotFoundError:  # editable / source checkout without metadata
+except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
+
+# Clear Google Benchmark registrations at interpreter shutdown.
+atexit.register(_clear_registered_benchmarks)
+del _clear_registered_benchmarks
 
 __all__ = [
     "BenchmarkFn",

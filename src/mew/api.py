@@ -15,6 +15,7 @@ if sys.version_info >= (3, 14):
 else:
     from inspect import get_annotations
 
+from mew._core import TimeUnit
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
 
@@ -83,22 +84,30 @@ def _mark_registered(fn: BenchmarkFn) -> None:
     setattr(fn, _REGISTERED_ATTR, True)
 
 
-def _make_variant(
+def _make_family_trampoline(
     fn: BenchmarkFn,
-    kwargs: dict[str, Any],
+    cases: list[dict[str, Any]],
+    labels: list[str],
     *,
     name: str,
     qualname: str,
 ) -> BenchmarkFn:
-    """Wrap `fn` so it only takes a State; kwargs are bound as defaults."""
+    """Wrap `fn` as a Google Benchmark family driven by an index axis.
+
+    The returned trampoline reads `state.range(0)` (the per-instance index
+    Google Benchmark assigns via `.dense_range(0, N-1)`), looks up the real
+    kwargs in `cases`, attaches the human-readable label, and dispatches.
+    """
 
     @functools.wraps(fn, assigned=("__module__", "__doc__"))
-    def variant(state, _fn=fn, _kw=kwargs):
-        return _fn(state, **_kw)
+    def trampoline(state, _fn=fn, _cases=cases, _labels=labels):
+        idx = state.range(0)
+        state.set_label(_labels[idx])
+        return _fn(state, **_cases[idx])
 
-    variant.__name__ = name
-    variant.__qualname__ = qualname
-    return variant
+    trampoline.__name__ = name
+    trampoline.__qualname__ = qualname
+    return trampoline
 
 
 # ---------- @benchmark ------------------------------------------------------
@@ -196,30 +205,33 @@ def _register_family(
         ids = list(ids)
         if len(ids) != len(variants):
             raise ValueError(f"ids has {len(ids)} entries but parameters has {len(variants)}")
+    if not variants:
+        raise ValueError("parametrize/product needs at least one case")
 
     file = _source_file(target)
-    base = name or _qualified_name(target, file)
+    base_name = name or _qualified_name(target, file)
     module = getattr(target, "__module__", None)
+    cases = [dict(kw) for kw in variants]
+    labels = list(ids) if ids is not None else [_default_id(kw) for kw in cases]
 
-    for i, kwargs in enumerate(variants):
-        label = ids[i] if ids is not None else _default_id(kwargs)
-        full = f"{base}[{label}]"
-        variant = _make_variant(
-            target,
-            kwargs,
-            name=f"{target.__name__}[{label}]",
-            qualname=f"{target.__qualname__}[{label}]",
+    trampoline = _make_family_trampoline(
+        target,
+        cases,
+        labels,
+        name=target.__name__,
+        qualname=target.__qualname__,
+    )
+    REGISTRY.add(
+        Entry(
+            name=base_name,
+            fn=trampoline,
+            module=module,
+            file=file,
+            options=options,
+            tags=tags,
+            case_labels=labels,
         )
-        REGISTRY.add(
-            Entry(
-                name=full,
-                fn=variant,
-                module=module,
-                file=file,
-                options=options,
-                tags=tags,
-            )
-        )
+    )
     _mark_registered(target)
     return target
 
@@ -307,7 +319,7 @@ def product(
     min_warmup_time: float | None = None,
     iterations: int | None = None,
     repetitions: int | None = None,
-    unit: TimeUnitStr | None = None,
+    unit: TimeUnitStr | TimeUnit | None = None,
     use_real_time: bool = False,
     use_manual_time: bool = False,
     measure_process_cpu_time: bool = False,

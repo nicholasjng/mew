@@ -51,8 +51,10 @@ def test_list_discovers_all_entries(benchdir, tmp_path):
     res = _mew("list", str(benchdir), cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     names = [n for n in res.stdout.splitlines() if n.strip()]
+    # Parametrized families list as a single row; per-case expansion happens
+    # at run time via Google Benchmark's family bookkeeping.
     assert any(n.endswith("::bench_one") for n in names)
-    assert sum(1 for n in names if "bench_two[" in n) == 2
+    assert any(n.endswith("::bench_two") for n in names)
 
 
 def test_list_pattern_filter(benchdir, tmp_path):
@@ -148,8 +150,9 @@ def test_list_filter_by_multiple_tags_is_or(benchdir, tmp_path):
     res = _mew("list", str(benchdir), "-t", "io", "-t", "cpu", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     names = [n for n in res.stdout.splitlines() if n.strip()]
-    # io picks bench_one, cpu picks the two bench_two variants → 3 entries
-    assert len(names) == 3
+    # io picks bench_one, cpu picks the bench_two family → 2 entries
+    # (the family expands to two Runs at run time, but `list` reports families).
+    assert len(names) == 2
 
 
 def test_list_show_tags(benchdir, tmp_path):
