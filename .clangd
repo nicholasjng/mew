@@ -1,13 +1,7 @@
 # clangd configuration for Zed (and any clangd-driven LSP).
-#
-# scikit-build-core is configured to build into `build/` directly (see the
-# `build-dir` key under `[tool.scikit-build]` in pyproject.toml), so
-# `compile_commands.json` lands there after every `uv sync`. Paths in that
-# file (e.g. nanobind headers) resolve into the project's .venv because mew
-# is built with build isolation disabled — see `[tool.uv]` in pyproject.toml.
 
 CompileFlags:
-  CompilationDatabase: build
+  CompilationDatabase: .
   Add:
     - -std=c++17
     - -Wno-unknown-warning-option
