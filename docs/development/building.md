@@ -43,6 +43,30 @@ $ uvx ty check src/mew/ tests/
 
 These steps run in CI (`.github/workflows/ci.yml`) across Linux, macOS, and Windows on Python 3.11–3.14.
 
+## AddressSanitizer
+
+Build a separate ASAN wheel (lands in `build/asan/`, leaving the Release wheel
+alone; a plain `uv sync` afterwards swaps the editable install back to Release):
+
+```console
+$ MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
+```
+
+`uv run pytest` alone does *not* preload the ASAN runtime, so the test process
+aborts at the first import of an ASAN-built extension. Preload it explicitly:
+
+```console
+# Linux: preload the ASAN runtime *and* libc++. libc++ must be preloaded too,
+# otherwise its container-overflow annotations don't line up with the
+# instrumented build and ASAN reports false positives.
+$ MEW_ASAN=1 LD_PRELOAD="$(clang -print-file-name=libclang_rt.asan.so) $(clang -print-file-name=libc++.so)" \
+    ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" uv run --all-groups pytest
+
+# macOS: use the wrapper script (dyld drops DYLD_INSERT_LIBRARIES across the
+# Homebrew python shim, so the script re-execs the real interpreter directly).
+$ scripts/asan-pytest.sh
+```
+
 ## Building the documentation locally
 
 ```console

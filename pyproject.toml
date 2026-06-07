@@ -63,7 +63,7 @@ mew = "mew.cli:app"
 
 [tool.scikit-build]
 minimum-version = "build-system.requires"
-build-dir = "build"
+build-dir = "build/{wheel_tag}"
 wheel.packages = ["src/mew"]
 wheel.py-api = "cp312"
 cmake.version = ">=3.21"
@@ -74,6 +74,12 @@ BENCHMARK_ENABLE_TESTING = "OFF"
 BENCHMARK_ENABLE_GTEST_TESTS = "OFF"
 BENCHMARK_ENABLE_INSTALL = "OFF"
 CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
+
+[[tool.scikit-build.overrides]]
+if.env.MEW_ASAN = "1"
+build-dir = "build/asan"
+cmake.build-type = "Debug"
+cmake.args = ["-DMEW_ASAN=ON"]
 
 [tool.ruff]
 line-length = 100
