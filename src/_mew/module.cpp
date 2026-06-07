@@ -17,12 +17,11 @@ void register_reporter(nb::module_& m);
 NB_MODULE(_core, m) {
     m.doc() = "The mew C++ core (Google Benchmark bindings).";
 
-    // Diagnostic metadata about the bundled Google Benchmark build.
     m.attr("BENCHMARK_COMMIT") = MEW_BENCHMARK_COMMIT;
     m.attr("BENCHMARK_VERSION") = benchmark::GetBenchmarkVersion();
 
-    // Reporter bindings must come first so register_benchmark / run_benchmarks
-    // can reference the Run and TimeUnit types they bind.
+    // Reporter bindings first so register_benchmark / run_benchmarks can
+    // reference the Run and TimeUnit types they bind.
     register_reporter(m);
     register_state(m);
     register_registry(m);

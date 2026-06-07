@@ -40,13 +40,24 @@ def profile(
     interval: float = 1e-4,
     inner_iterations: int = 1000,
 ) -> dict[str, CPUProfile]:
-    """Profile each entry under pyinstrument and return per-entry CPUProfiles.
+    """Profile each entry under pyinstrument.
 
-    `inner_iterations` controls how many times the benchmark body runs under
-    the sampler — fast benchmarks need many iterations to accumulate samples.
-    `interval` is pyinstrument's sampling period in seconds. If *output* is
-    given, additionally runs a combined session over all entries and writes
-    a pyinstrument HTML report to that path.
+    Parameters
+    ----------
+    entries : list[Entry]
+        Benchmarks to profile.
+    output : Path, optional
+        If given, additionally writes a combined pyinstrument HTML report to this path.
+    interval : float, default 1e-4
+        Pyinstrument's sampling period in seconds.
+    inner_iterations : int, default 1000
+        Times the benchmark body runs under the sampler per entry.
+        Fast benchmarks need many iterations to accumulate samples.
+
+    Returns
+    -------
+    dict[str, CPUProfile]
+        Per-entry profiles keyed by ``entry.name``.
     """
     _ensure_pyinstrument()
     profiles = _collect_stats(entries, interval, inner_iterations)

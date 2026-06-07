@@ -1,12 +1,8 @@
-"""Regression gating for `mew compare`.
+"""Regression gating for ``mew compare``.
 
-A *regression* is a benchmark whose delta against the baseline exceeds a
-threshold in the *slower* direction. `real_time`/`cpu_time`: larger is worse;
-`iterations`: smaller is worse.
-
-Per-benchmark allowlist rules can either *ignore* a benchmark (skip gating
-entirely) or *raise* its threshold. Rules are matched against the full
-benchmark name with :func:`fnmatch.fnmatchcase`.
+A *regression* is a benchmark whose delta against the baseline exceeds a threshold in the slower direction.
+For ``real_time`` / ``cpu_time`` larger is worse; for ``iterations`` smaller is worse.
+Per-benchmark allowlist rules can ignore a benchmark or raise its threshold, matched against the full name via :func:`fnmatch.fnmatchcase`.
 """
 
 from __future__ import annotations
@@ -22,7 +18,7 @@ from pathlib import Path
 
 class Verdict(Enum):
     OK = "ok"
-    """Within the active threshold — does not contribute to gate failure."""
+    """Within the active threshold; does not contribute to gate failure."""
 
     REGRESSED = "regressed"
     """Slower than the default threshold and not covered by any allow rule.
@@ -31,16 +27,15 @@ class Verdict(Enum):
     """
 
     ALLOWED_OVER = "allowed_over"
-    """Over the default threshold, but a matching rule lifted the bar.
+    """Over the default threshold but inside a rule-supplied threshold.
 
-    Surfaced in the panel as a soft warning so periodic review can decide
-    whether to tighten the rule or fix the benchmark.
+    Surfaced as a soft warning for periodic review.
     """
 
     IGNORED = "ignored"
-    """A matching rule declared this benchmark out-of-scope (``ignore=true``).
+    """Out-of-scope per a matching ``ignore=true`` rule.
 
-    Still listed in the panel so the allowlist stays visible.
+    Listed in the panel so the allowlist stays visible.
     """
 
 
@@ -86,9 +81,8 @@ class RegressionConfig:
         name : str
             Full benchmark name (matched against ``rule.pattern``).
         delta_pct : float
-            Signed percent change vs baseline. For ``real_time``/``cpu_time``
-            positive means slower; for ``iterations`` positive means *more*
-            iterations (which is better) — pass ``higher_is_better=True``.
+            Signed percent change vs baseline.
+            For ``real_time`` / ``cpu_time`` positive means slower; for ``iterations`` use ``higher_is_better=True``.
         higher_is_better : bool
             Invert the sign when computing the regression magnitude.
 
@@ -154,10 +148,8 @@ def load_config(
 ) -> RegressionConfig:
     """Build a :class:`RegressionConfig`.
 
-    Reads ``[tool.mew.regressions]`` from *path* (or ``pyproject.toml`` in the
-    cwd when *path* is None and a pyproject exists). Inline ``--allow``
-    strings from the CLI are appended after file rules; both lists are
-    searched in order via :meth:`RegressionConfig.find_rule`.
+    Reads ``[tool.mew.regressions]`` from ``path`` (or ``pyproject.toml`` in the cwd when ``path`` is ``None``).
+    Inline ``--allow`` strings from the CLI are appended after file rules; both lists are searched in order.
     """
     rules: list[AllowRule] = []
     threshold = default_threshold_pct
@@ -184,11 +176,10 @@ def load_config(
 
 
 def _parse_inline(spec: str) -> AllowRule:
-    """Parse a `PATTERN[:PCT]` string from the CLI.
+    """Parse a ``PATTERN[:PCT]`` string from the CLI.
 
-    Bare pattern → ignore=true with a placeholder reason. ``PATTERN:5`` →
-    threshold_pct=5.0. Inline rules are meant for ad-hoc use; persistent
-    allowlisting should live in pyproject.toml so the reason gets reviewed.
+    Bare pattern → ``ignore=true``; ``PATTERN:5`` → ``threshold_pct=5.0``.
+    Inline rules are for ad-hoc use; persistent allowlisting belongs in ``pyproject.toml``.
     """
     if ":" in spec:
         pattern, _, pct = spec.rpartition(":")
@@ -220,8 +211,8 @@ def render_panel(
     Returns
     -------
     (text, exit_code) : tuple[str, int]
-        ``text`` is the panel body (empty if nothing to report). ``exit_code``
-        is 2 if any verdict is :attr:`Verdict.REGRESSED`, else 0.
+        Panel body (empty if nothing to report) and the exit code.
+        ``exit_code`` is 2 if any verdict is :attr:`Verdict.REGRESSED`, else 0.
     """
     regressed = [v for v in verdicts if v.verdict is Verdict.REGRESSED]
     allowed_over = [v for v in verdicts if v.verdict is Verdict.ALLOWED_OVER]

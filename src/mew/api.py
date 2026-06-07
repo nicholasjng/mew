@@ -38,10 +38,9 @@ def _default_id(kwargs: dict[str, Any]) -> str:
 
 
 def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
-    """Pytest-style nodeid: `path/to/bench_foo.py::bench_name`.
+    """Pytest-style nodeid: ``path/to/bench_foo.py::bench_name``.
 
-    Falls back to the function's module + qualname when the source file
-    can't be resolved (REPL, exec'd string, frozen module).
+    Falls back to the function's module + qualname when the source file can't be resolved.
     """
     qualname = fn.__qualname__
     if file:
@@ -92,11 +91,9 @@ def _make_family_trampoline(
     name: str,
     qualname: str,
 ) -> BenchmarkFn:
-    """Wrap `fn` as a Google Benchmark family driven by an index axis.
+    """Wrap ``fn`` as a Google Benchmark family driven by an index axis.
 
-    The returned trampoline reads `state.range(0)` (the per-instance index
-    Google Benchmark assigns via `.dense_range(0, N-1)`), looks up the real
-    kwargs in `cases`, attaches the human-readable label, and dispatches.
+    The trampoline reads ``state.range(0)`` to look up the variant kwargs and label, then dispatches.
     """
 
     @functools.wraps(fn, assigned=("__module__", "__doc__"))
@@ -134,30 +131,27 @@ def benchmark(
 ) -> BenchmarkFn | Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a function as a single benchmark.
 
-    Use ``@parametrize`` or ``@product`` for benchmark families.
+    Use :func:`parametrize` or :func:`product` for benchmark families.
 
     Parameters
     ----------
     fn : BenchmarkFn, optional
-        The benchmark function. When passed positionally (bare ``@benchmark``),
-        registration happens immediately. Omit to apply options first
-        (``@benchmark(min_time=...)``).
+        The benchmark function.
+        When passed positionally (bare ``@benchmark``), registration happens immediately.
+        Omit to apply options first (``@benchmark(min_time=...)``).
     name : str, optional
-        Override the auto-derived ``path/to/file.py::qualname`` registration
-        name.
+        Override the auto-derived ``path/to/file.py::qualname`` registration name.
     tags : Iterable[str] or str, optional
-        Labels used by ``mew run --tag <name>`` for filtering. A single string
-        is treated as one tag.
+        Labels used by ``mew run --tag <name>`` for filtering.
+        A single string is treated as one tag.
     **options
-        Google Benchmark options: ``min_time``, ``min_warmup_time``,
-        ``iterations``, ``repetitions``, ``unit``, ``use_real_time``,
-        ``use_manual_time``, ``measure_process_cpu_time``,
-        ``report_aggregates_only``.
+        Google Benchmark options.
+        See :class:`~mew._typing.BenchmarkOptions` for the accepted keys.
 
     Returns
     -------
     BenchmarkFn or Callable[[BenchmarkFn], BenchmarkFn]
-        The original function (bare form) or a decorator that takes one (called form).
+        The original function (bare form), or a decorator (called form).
 
     Raises
     ------
@@ -165,6 +159,13 @@ def benchmark(
         If ``options`` contains an unknown key.
     RuntimeError
         If the same function is already registered via another decorator.
+
+    Examples
+    --------
+    >>> @mew.benchmark
+    ... def bench_sort(state):
+    ...     for _ in state:
+    ...         sorted([3, 1, 2])
     """
     _check_options(options)
     norm_tags = _normalize_tags(tags)
@@ -246,37 +247,34 @@ def parametrize(
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a parametrized benchmark family.
 
-    One registered benchmark per item in ``parameters``; each variant binds
-    its kwargs into the wrapped function and exposes a ``[label]`` suffix on
-    the registration name.
+    One benchmark is registered per item in ``parameters``.
+    Each variant binds its kwargs into the wrapped function and appends a ``[label]`` suffix to the registration name.
 
     Parameters
     ----------
     parameters : Iterable[dict[str, Any]]
-        One dict of kwargs per variant. Snapshotted eagerly, so generators
-        are fine.
+        One dict of kwargs per variant.
+        Snapshotted eagerly, so generators are fine.
     name : str, optional
-        Override the auto-derived base name. Variant labels are still
-        appended.
+        Override the auto-derived base name.
     ids : Sequence[str], optional
-        Explicit labels (one per parameter dict). When omitted, labels are
-        derived from the kwargs (e.g. ``n=10-algo=merge``).
+        Explicit labels (one per variant).
+        Defaults to labels derived from the kwargs (e.g. ``n=10-algo=merge``).
     tags : Iterable[str] or str, optional
         Labels applied to every variant.
     **options
-        Google Benchmark options applied to every variant. Same keys as
-        :func:`benchmark`.
+        Google Benchmark options applied to every variant.
+        Same keys as :func:`benchmark`.
 
     Returns
     -------
     Callable[[BenchmarkFn], BenchmarkFn]
-        Decorator that registers the family and returns the original
-        function unchanged.
+        Decorator that registers the family and returns the original function unchanged.
 
     Raises
     ------
     ValueError
-        If ``ids`` is provided and its length doesn't match ``parameters``.
+        If ``ids`` length doesn't match ``parameters``.
     TypeError
         If ``options`` contains an unknown key.
     RuntimeError
@@ -328,8 +326,7 @@ def product(
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a benchmark family from the cartesian product of iterables.
 
-    Each ``**iterables`` kwarg names a parameter and supplies its values; one
-    benchmark is registered per tuple in the cartesian product.
+    One benchmark is registered per tuple in the cartesian product over ``**iterables``.
 
     Parameters
     ----------
@@ -350,14 +347,12 @@ def product(
     report_aggregates_only : bool
         Suppress per-repetition rows when ``repetitions > 1``.
     **iterables
-        Parameter name → iterable of values. The cartesian product across
-        these defines the registered variants.
+        Parameter name → iterable of values.
 
     Returns
     -------
     Callable[[BenchmarkFn], BenchmarkFn]
-        Decorator that registers the family and returns the original
-        function unchanged.
+        Decorator that registers the family and returns the original function unchanged.
 
     Raises
     ------
@@ -368,12 +363,9 @@ def product(
 
     Examples
     --------
-    >>> @mew.product(n=[10, 100], algo=["merge", "quick"],
-    ...              tags=("sort",), min_time=0.05)
+    >>> @mew.product(n=[10, 100], algo=["merge", "quick"], tags=("sort",))
     ... def bench_sort(state, n, algo):
     ...     ...
-
-    Registers 4 benchmarks (one per ``(n, algo)`` pair).
     """
     if not iterables:
         raise TypeError("@product needs at least one iterable kwarg")
