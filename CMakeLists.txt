@@ -13,6 +13,23 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# AddressSanitizer build. Driven by -DMEW_ASAN=ON (or MEW_ASAN=1 in the env
+# from scikit-build-core). The flag goes onto the _core target's COMPILE_OPTIONS
+# / LINK_OPTIONS (not CMAKE_CXX_FLAGS) so nanobind's stubgen sanitizer-detector
+# (nanobind PR #1000) finds it and preloads libclang_rt.asan via DYLD_INSERT_LIBRARIES
+# when importing _core during stub generation — putting the flag on the global
+# CMAKE_CXX_FLAGS works for the compiler but not for the detector, which walks
+# per-target properties only. add_compile_options also covers the fetched
+# googlebenchmark target so its objects stay ASAN-instrumented.
+option(MEW_ASAN "Build with AddressSanitizer" OFF)
+if(DEFINED ENV{MEW_ASAN} AND NOT MEW_ASAN)
+    set(MEW_ASAN ON)
+endif()
+if(MEW_ASAN)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif()
+
 # --- Python + nanobind --------------------------------------------------------
 find_package(Python 3.11 COMPONENTS Interpreter Development.Module REQUIRED)
 
@@ -75,6 +92,17 @@ target_link_libraries(_core PRIVATE benchmark::benchmark)
 target_compile_definitions(_core PRIVATE
     MEW_BENCHMARK_COMMIT="${_benchmark_commit}"
 )
+
+# Repeat -fsanitize=address on the _core target itself: add_compile_options sets
+# the *directory*'s COMPILE_OPTIONS, but nanobind's stubgen sanitizer detector
+# (PR #1000, see nanobind_sanitizer_preload_env in nanobind-config.cmake) only
+# scans per-target COMPILE_OPTIONS / LINK_OPTIONS. Without this, the detector
+# concludes "no sanitizer" and runs stubgen without preloading libclang_rt.asan,
+# which then aborts at `import _core` with "Interceptors are not working".
+if(MEW_ASAN)
+    target_compile_options(_core PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+    target_link_options(_core PRIVATE -fsanitize=address)
+endif()
 
 install(TARGETS _core LIBRARY DESTINATION mew)
 
