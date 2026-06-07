@@ -3,9 +3,9 @@
 import enum
 import types
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Literal, overload
 
-BENCHMARK_COMMIT: str = "83c826c8d9499bb3ecd02f6f4abbac1e990297fe"
+BENCHMARK_COMMIT: str = "a8460680f0df91fd26205e0931708a26c3b4094d"
 
 BENCHMARK_VERSION: str = "v1.9.5"
 
@@ -90,6 +90,29 @@ def run_benchmarks(argv: Sequence[str], reporter: object | None = None) -> int:
     Initialize Google Benchmark with `argv`, run all registered benchmarks, then clear the registry. Returns the number of benchmarks run. Pass a Fanout reporter from Python to multiplex into multiple sinks.
     """
 
+class CounterFlags(enum.IntEnum):
+    """
+    Flags forwarded to `benchmark::Counter`. OR them together to combine (e.g. `kIsRate | kInvert`).
+    """
+
+    kDefaults = 0
+
+    kIsRate = 1
+
+    kAvgThreads = 2
+
+    kAvgThreadsRate = 3
+
+    kIsIterationInvariant = 4
+
+    kIsIterationInvariantRate = 5
+
+    kAvgIterations = 8
+
+    kAvgIterationsRate = 9
+
+    kInvert = -2147483648
+
 class PauseScope:
     """Context manager that pauses State timing within a scope."""
 
@@ -119,7 +142,9 @@ class State:
     def set_iteration_time(self, seconds: float) -> None: ...
     def set_items_processed(self, items: int) -> None: ...
     def set_bytes_processed(self, n_bytes: int) -> None: ...
-    def set_counter(self, name: str, value: float) -> None: ...
+    def set_counter(
+        self, name: str, value: float, flags: CounterFlags = CounterFlags.kDefaults
+    ) -> None: ...
     def range(self, pos: int = 0) -> int: ...
     @property
     def range_size(self) -> int: ...
@@ -141,18 +166,25 @@ class State:
 class BenchmarkHandle:
     """
     Handle to a registered Google Benchmark. Methods return the same handle so options can be chained.
+
+    Lifetime: valid until the next `clear_registered_benchmarks()` call (which mew.run() performs before re-registering) or interpreter shutdown. Holding a handle past either point and calling a method on it is undefined behaviour — Google Benchmark deletes the underlying object on clear.
     """
 
     def min_time(self, seconds: float) -> BenchmarkHandle: ...
     def min_warmup_time(self, seconds: float) -> BenchmarkHandle: ...
     def iterations(self, n: int) -> BenchmarkHandle: ...
     def repetitions(self, n: int) -> BenchmarkHandle: ...
+    @overload
     def unit(self, unit: Literal["ns", "us", "ms", "s"]) -> BenchmarkHandle: ...
+    @overload
+    def unit(self, unit: TimeUnit) -> BenchmarkHandle: ...
     def use_real_time(self) -> BenchmarkHandle: ...
     def use_manual_time(self) -> BenchmarkHandle: ...
     def measure_process_cpu_time(self) -> BenchmarkHandle: ...
     def report_aggregates_only(self, value: bool = True) -> BenchmarkHandle: ...
     def display_aggregates_only(self, value: bool = True) -> BenchmarkHandle: ...
+    def dense_range(self, start: int, limit: int, step: int = 1) -> BenchmarkHandle: ...
+    def arg_name(self, name: str) -> BenchmarkHandle: ...
     @property
     def name(self) -> str: ...
 
