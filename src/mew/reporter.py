@@ -24,20 +24,16 @@ if TYPE_CHECKING:
 class Reporter(Protocol):
     """Duck-typed reporter interface consumed by the C++ runner.
 
-    Implementations only need ``report_context`` and ``report_runs``;
-    ``finalize`` is optional. All callbacks run on the main thread with the
-    GIL held.
+    Implementations must provide ``report_context`` and ``report_runs``; ``finalize`` is optional.
+    All callbacks run on the main thread with the GIL held.
 
     Methods
     -------
     report_context(context)
-        Called once before any runs with the C++ context dict
-        (``host_name``, ``num_cpus``, …). Returning ``False`` aborts the
-        Google Benchmark run.
+        Called once before any runs with the C++ context dict.
+        Returning ``False`` aborts the Google Benchmark run.
     report_runs(runs)
-        Called one or more times with completed
-        :class:`~mew._core.Run` objects (possibly wrapped as
-        :class:`~mew._profile.EnrichedRun`).
+        Called one or more times with completed :class:`~mew._core.Run` objects.
     """
 
     def report_context(self, context: dict[str, Any]) -> bool: ...
@@ -99,15 +95,13 @@ def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
 class JSONReporter:
     """Emit a single JSON document modeled on Google Benchmark's own format.
 
-    Buffers context and runs until :meth:`finalize` is called, then serializes
-    a ``{"context": ..., "benchmarks": [...]}`` document.
+    Buffers context and runs until :meth:`finalize`, then serializes a ``{"context": ..., "benchmarks": [...]}`` document.
 
     Parameters
     ----------
     output : Path, TextIO, or None, optional
-        Destination. A :class:`~pathlib.Path` is written via
-        :meth:`Path.write_text`; a text stream is written to directly; ``None``
-        writes to ``sys.stdout``.
+        Destination.
+        A :class:`~pathlib.Path` is written via :meth:`Path.write_text`; a text stream is written directly; ``None`` writes to ``sys.stdout``.
     """
 
     def __init__(self, *, output: Path | TextIO | None = None) -> None:
@@ -140,9 +134,8 @@ class JSONReporter:
             "context": ctx,
             "benchmarks": [_run_to_dict(r) for r in self._runs],
         }
-        # `default=str` keeps non-JSON-native values (Path, datetime, etc.) from
-        # crashing the serializer. Lossy by design — encourage users to put
-        # JSON-friendly values in context.
+        # `default=str` keeps non-JSON-native values (Path, datetime, …) from
+        # crashing the serializer. Lossy by design.
         text = json.dumps(doc, indent=2, default=str)
         if isinstance(self._output, Path):
             self._output.write_text(text + "\n")
@@ -153,23 +146,21 @@ class JSONReporter:
 
 
 class RichReporter:
-    """Stream one row per benchmark family as Google Benchmark completes it.
+    """Stream one row per benchmark to a terminal as runs complete.
 
-    The header is printed before any results land, so the optional-column
-    flags must be passed up front rather than auto-detected from the runs.
+    The header is printed before any results land, so optional-column flags are passed up front rather than auto-detected.
 
     Parameters
     ----------
     console : rich.console.Console, optional
-        Rich console to print to. Defaults to a fresh
-        :class:`~rich.console.Console`.
+        Rich console to print to.
+        Defaults to a fresh :class:`~rich.console.Console`.
     show_memory : bool, default False
-        Add ``Peak Mem`` / ``Total Alloc`` columns and read per-run memory
-        profiles via :class:`~mew._profile.EnrichedRun`.
+        Add ``Peak Mem`` / ``Total Alloc`` columns.
+        Per-run memory profiles are read from :class:`~mew._profile.EnrichedRun`.
     show_cpu : bool, default False
-        Add ``Samples`` / ``Hottest Frame`` columns and read per-run CPU
-        profiles. The CLI wires these flags from
-        ``--profile-memory`` / ``--profile-cpu``.
+        Add ``Samples`` / ``Hottest Frame`` columns.
+        Per-run CPU profiles are read from :class:`~mew._profile.EnrichedRun`.
     """
 
     def __init__(
@@ -277,19 +268,14 @@ class RichReporter:
 class ParquetReporter:
     """Write a Parquet file with one row per benchmark Run.
 
-    The schema is static; arbitrarily-shaped user context is encoded as a
-    JSON string column named ``custom``. Query it from DuckDB with
-    ``json_extract``::
-
-        SELECT name, real_time,
-               counters['rss_kb'] AS rss_kb,
-               json_extract(custom, '$.dataset.size') AS dataset_size
-        FROM 'results.parquet';
+    The schema is static.
+    Arbitrarily-shaped user context is encoded as a JSON string column named ``custom`` (queryable via ``json_extract`` in DuckDB).
 
     Parameters
     ----------
     output : Path
-        Destination Parquet file. Overwritten if it exists.
+        Destination Parquet file.
+        Overwritten if it exists.
 
     Raises
     ------
@@ -356,9 +342,8 @@ class ParquetReporter:
             "label": r.report_label,
             "skipped": r.skipped,
             "skip_message": r.skip_message,
-            # pyarrow.from_pylist accepts a list of (key, value) pairs for
-            # `map_` columns. dict would also work for non-empty maps but
-            # pa rejects {} so a list keeps the empty case clean.
+            # pa rejects `{}` for `map_` columns; a list of (k, v) pairs handles
+            # the empty case cleanly.
             "counters": list(r.counters.items()) if r.counters else [],
             "date": date,
             "host_name": ctx.get("host_name"),
@@ -434,14 +419,13 @@ class Fanout:
     """Broadcast reporter callbacks to a list of underlying reporters.
 
     Used by :func:`mew.run` to multiplex when multiple reporters are passed.
-    ``report_context`` returns ``all(...)`` of the children's responses —
-    Google Benchmark halts when a reporter returns ``False``, so the
-    strictest sub-reporter wins.
+    ``report_context`` returns ``all(...)`` of the children's responses, so the strictest sub-reporter wins.
 
     Parameters
     ----------
     reporters : list[Reporter]
-        Underlying reporters. Calls are dispatched in iteration order.
+        Underlying reporters.
+        Calls are dispatched in iteration order.
     """
 
     def __init__(self, reporters: list[Reporter]) -> None:

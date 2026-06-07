@@ -16,10 +16,8 @@ _VALID_UNITS = frozenset(get_args(TimeUnitStr))
 class Config:
     benchpaths: list[str] = field(default_factory=lambda: ["benchmarks"])
     python_files: list[str] = field(default_factory=lambda: ["bench_*.py", "*_bench.py"])
-    # Default Google Benchmark flags, applied to every `mew run`. Keys are
-    # the short flag name (without the `--benchmark_` prefix); values become
-    # `--benchmark_<key>=<value>` (or `--benchmark_<key>` for bool True).
-    # CLI-supplied flags appear later in argv and take precedence.
+    # Keys are the short flag name (without the `--benchmark_` prefix); values
+    # become `--benchmark_<key>=<value>` (or `--benchmark_<key>` for bool True).
     benchmark_options: dict[str, Any] = field(default_factory=dict)
     project_root: Path | None = None
 
@@ -51,9 +49,8 @@ def load(start: Path | None = None) -> Config:
 def format_benchmark_args(options: dict[str, Any]) -> list[str]:
     """Translate a ``{key: value}`` mapping into Google Benchmark CLI flags.
 
-    Bool ``True`` becomes a bare ``--benchmark_<key>``; ``False`` is omitted
-    (GB's gflags integration treats absence as false). Everything else is
-    serialized as ``--benchmark_<key>=<value>``.
+    Bool ``True`` becomes a bare ``--benchmark_<key>``; ``False`` is omitted.
+    Everything else is serialized as ``--benchmark_<key>=<value>``.
     """
     args: list[str] = []
     for key, value in options.items():

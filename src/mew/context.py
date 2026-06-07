@@ -1,14 +1,8 @@
 """User-defined benchmark context.
 
-A process-global ``dict[str, Any]`` populated via :func:`set_context` /
-:func:`update_context`. Keys containing dots are interpreted as nested paths,
-so ``set_context("dataset.size", 1024)`` ends up as ``{"dataset": {"size":
-1024}}`` — convenient for SQL-style drill-downs (e.g. DuckDB's
-``context.custom.dataset.size``).
-
-A snapshot is merged into the reporter's context dict under ``ctx["custom"]``
-at run time; the snapshot is taken when :func:`mew.run` starts so concurrent
-mutations don't affect the in-flight run.
+A process-global ``dict[str, Any]`` populated via :func:`set_context` and :func:`update_context`.
+Dotted keys nest, so ``set_context("dataset.size", 1024)`` yields ``{"dataset": {"size": 1024}}``.
+A snapshot is merged into the reporter's context dict under ``ctx["custom"]`` when :func:`mew.run` starts.
 """
 
 from __future__ import annotations
@@ -51,17 +45,16 @@ def set_context(key: str, value: Any) -> None:
     Parameters
     ----------
     key : str
-        Context key. Dotted names result in nested dicts
-        (``"dataset.size"`` → ``{"dataset": {"size": ...}}``).
+        Context key.
+        Dotted names result in nested dicts (``"dataset.size"`` → ``{"dataset": {"size": ...}}``).
     value : Any
-        Value to store. Reporters serialize this when emitting context,
-        so JSON-friendly values are preferred.
+        Value to store.
+        Reporters serialize this when emitting context, so JSON-friendly values are preferred.
 
     Raises
     ------
     ValueError
-        If ``key`` is empty, has an empty path segment, or traverses through
-        a non-dict value.
+        If ``key`` is empty, has an empty path segment, or traverses through a non-dict value.
     """
     _set_nested(_CONTEXT, key, value)
 
@@ -69,9 +62,8 @@ def set_context(key: str, value: Any) -> None:
 def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
     """Set many context values at once.
 
-    Positional dicts are applied first, then ``kwargs``. Dotted keys nest in
-    both forms; for dotted keys via splat, use
-    ``update_context(**{"a.b": 1})``.
+    Positional dicts are applied first, then ``kwargs``.
+    Dotted keys nest in both forms; pass them via splat as ``update_context(**{"a.b": 1})``.
 
     Parameters
     ----------
@@ -98,7 +90,8 @@ def get_context() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Independent snapshot — mutating it does not affect future runs.
+        Independent snapshot.
+        Mutating it does not affect future runs.
     """
     return copy.deepcopy(_CONTEXT)
 
@@ -109,7 +102,6 @@ def clear_context() -> None:
 
 
 def _snapshot() -> dict[str, Any]:
-    # Internal: used by the runner to snapshot at run start.
     return copy.deepcopy(_CONTEXT)
 
 

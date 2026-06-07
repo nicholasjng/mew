@@ -26,7 +26,7 @@ from mew import (
 
 
 def _short_first_name(entry: HelpEntry) -> str:
-    """Render option names as `-s, --long`, with shorts before longs."""
+    """Render option names as ``-s, --long``, with shorts before longs."""
     parts = (
         *entry.positive_shorts,
         *entry.positive_names,
@@ -133,14 +133,10 @@ def _build_reporters(
     show_memory: bool = False,
     show_cpu: bool = False,
 ) -> list[Reporter]:
-    """Resolve `-o` sinks into a list of reporters.
+    """Resolve ``-o`` sinks into a list of reporters.
 
-    Sentinels: `-` or `stdout` (terminal, rich) and `*.json` (JSON file).
-    Default when no `-o` is provided is a single rich reporter on stdout.
-
-    Note: cyclopts treats a lone `-` as a flag, so prefer `--output=-` /
-    `-o stdout` from the shell. `stdout` is also accepted to sidestep
-    quoting hassles.
+    Sentinels ``-`` and ``stdout`` map to a rich terminal reporter; ``*.json`` and ``*.parquet`` map to file reporters.
+    Defaults to a single rich reporter on stdout when no ``-o`` is provided.
     """
     if not outputs:
         return [RichReporter(show_memory=show_memory, show_cpu=show_cpu)]
@@ -259,8 +255,8 @@ def run(
         print("no benchmarks found", file=sys.stderr)
         raise SystemExit(1)
 
-    # Config defaults go in first so CLI flags (later) override them via
-    # gflags' last-wins semantics. `--gb` passthrough is last for full control.
+    # Config defaults first so CLI flags (later) override them via gflags'
+    # last-wins semantics.
     argv: list[str] = ["mew", *_config.format_benchmark_args(_config.load().benchmark_options)]
     if min_time is not None:
         argv.append(f"--benchmark_min_time={min_time}")

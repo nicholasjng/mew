@@ -22,13 +22,8 @@ if TYPE_CHECKING:
 def _silence_native_stderr() -> Iterator[None]:
     """Redirect OS-level fd 2 to /dev/null around the C++ call.
 
-    Google Benchmark's init writes platform diagnostics ("Unable to determine
-    clock rate", thread affinity warnings, etc.) straight to fd 2, bypassing
-    Python's sys.stderr. Python-level redirection won't catch them.
-
-    User-facing benchmark errors don't go through fd 2: `skip_with_error`
-    routes through the reporter callback, and Python exceptions raised inside
-    benchmark callbacks propagate normally.
+    Google Benchmark's init writes platform diagnostics straight to fd 2, bypassing Python's ``sys.stderr``.
+    User-facing benchmark errors route through the reporter callback or as Python exceptions, not fd 2.
     """
     sys.stderr.flush()
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -76,24 +71,21 @@ def run(
     Parameters
     ----------
     entries : Sequence[Entry], optional
-        Benchmarks to run. ``None`` (default) runs everything in the global
-        registry. Pass a filtered subset (e.g. from
-        ``REGISTRY.filter(pattern)``) to scope a run.
+        Benchmarks to run.
+        ``None`` runs everything in the global registry; pass a filtered subset (e.g. from :meth:`Registry.filter`) to scope a run.
     argv : Sequence[str], optional
-        Argv forwarded to Google Benchmark's ``Initialize``. Defaults to
-        ``["mew"]``. Use this to pass flags like ``--benchmark_min_time``.
+        Argv forwarded to Google Benchmark's ``Initialize``.
+        Defaults to ``["mew"]``.
     reporter : Reporter, Iterable[Reporter], or None, optional
-        A single reporter, an iterable of reporters (multiplexed via
-        :class:`Fanout`), or ``None`` for Google Benchmark's default console
-        reporter.
+        A single reporter, an iterable of reporters (multiplexed via :class:`Fanout`), or ``None`` for Google Benchmark's default console reporter.
     filter : str, optional
         Regex forwarded to Google Benchmark as ``--benchmark_filter=``.
 
     Returns
     -------
     int
-        The number of benchmarks Google Benchmark executed. ``0`` if no
-        entries were selected.
+        Number of benchmarks Google Benchmark executed.
+        ``0`` if no entries were selected.
     """
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
@@ -103,16 +95,13 @@ def run(
     if filter:
         cli.append(f"--benchmark_filter={filter}")
 
-    # Clear the C++ side before registering so a second mew.run() in the
-    # same process doesn't double-register entries from a previous call.
-    # We rely on atexit (registered in mew/__init__.py) for shutdown.
+    # Clear before registering so a second mew.run() in the same process
+    # doesn't double-register entries.
     _core.clear_registered_benchmarks()
     for entry in selected:
         handle = _core.register_benchmark(entry.name, entry.fn)
         _apply_options(handle, entry.options)
         if entry.case_labels is not None:
-            # Drive Google Benchmark's family bookkeeping via an index axis;
-            # the trampoline in entry.fn looks up the real kwargs by index.
             handle.dense_range(0, len(entry.case_labels) - 1)
             handle.arg_name("case")
 
@@ -127,7 +116,7 @@ def run(
 def _to_single_reporter(
     reporter: Reporter | Iterable[Reporter] | None,
 ) -> Reporter | None:
-    """Accept a reporter, an iterable of reporters, or None."""
+    """Normalize the reporter argument to a single :class:`Reporter` or ``None``."""
     if reporter is None:
         return None
     # Treat anything with the reporter callbacks as a single reporter, even if

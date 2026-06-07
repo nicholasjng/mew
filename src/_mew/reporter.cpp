@@ -43,10 +43,8 @@ nb::dict build_context_dict(const Context& ctx) {
 class PyReporter : public BenchmarkReporter {
    public:
     nb::object py;
-    // First Python exception raised by any reporter callback. Stashed (not
-    // logged) so `run_benchmarks` can re-throw it after the benchmark loop
-    // returns — Google Benchmark's reporter interface is noexcept, so we
-    // can't let it propagate from inside the callback.
+    // GB's reporter interface is noexcept, so callback exceptions are stashed
+    // here and rethrown from `run_benchmarks` after the loop returns.
     std::exception_ptr pending_exception;
 
     explicit PyReporter(nb::object obj) : py(std::move(obj)) {}
@@ -116,8 +114,9 @@ void register_reporter(nb::module_& m) {
         .def("__str__", &benchmark::BenchmarkName::str);
 
     nb::class_<Run>(m, "Run",
-                    "A single benchmark run report. Times are in seconds (accumulated across "
-                    "iterations); use `adjusted_real_time()` for per-iteration averages.")
+                    "A single benchmark run report.\n"
+                    "Times are in seconds (accumulated across iterations); use "
+                    "`adjusted_real_time()` for per-iteration averages.")
         .def_ro("run_name", &Run::run_name)
         .def("benchmark_name", &Run::benchmark_name)
         .def_ro("family_index", &Run::family_index)
@@ -169,10 +168,8 @@ void register_reporter(nb::module_& m) {
 
             int argc = static_cast<int>(argp.size());
             // Re-parse flags on every call so different argv per call (e.g.
-            // distinct --benchmark_filter values across tests) actually take
-            // effect. Initialize is safe to call repeatedly; the only
-            // user-visible footgun is that `--help` in argv triggers exit(0),
-            // which is documented Google Benchmark behavior.
+            // distinct --benchmark_filter values across tests) take effect.
+            // `--help` in argv still triggers exit(0) — documented GB behavior.
             benchmark::Initialize(&argc, argp.data());
 
             std::unique_ptr<PyReporter> pr;
@@ -187,24 +184,20 @@ void register_reporter(nb::module_& m) {
                            : benchmark::RunSpecifiedBenchmarks();
             }
 
-            // We deliberately do NOT call ClearRegisteredBenchmarks here.
-            // Callers (mew.runner.run) clear *before* registering so a
-            // second run doesn't double up, and atexit handles teardown on
-            // interpreter shutdown so memory tools see a clean exit. This
-            // also means BenchmarkHandle objects stay valid past a run, up
-            // to the next clear.
+            // Do NOT clear here: callers clear before registering, and atexit
+            // handles teardown. This keeps BenchmarkHandle objects valid past
+            // a run, up to the next clear.
 
-            // Surface the first Python exception raised by any reporter
-            // callback. Rethrowing a `python_error` captured via
-            // `current_exception` works because nanobind's binding trampoline
-            // catches it and restores the Python error indicator for us.
+            // Rethrow the first reporter-callback exception. nanobind's
+            // binding trampoline restores the Python error indicator from the
+            // captured `python_error`.
             if (pr && pr->pending_exception) {
                 std::rethrow_exception(pr->pending_exception);
             }
             return count;
         },
         "argv"_a, "reporter"_a = nb::none(),
-        "Initialize Google Benchmark with `argv`, run all registered benchmarks, "
-        "then clear the registry. Returns the number of benchmarks run. Pass a "
-        "Fanout reporter from Python to multiplex into multiple sinks.");
+        "Initialize Google Benchmark with `argv` and run all registered benchmarks.\n"
+        "Returns the number of benchmarks run.\n"
+        "Pass a `Fanout` reporter to multiplex into multiple sinks.");
 }

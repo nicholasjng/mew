@@ -13,8 +13,7 @@ from pathlib import Path
 class Selector:
     """One CLI argument decomposed into a filesystem path and an optional filter.
 
-    `benchmarks/bench_sort.py::quicksort` -> path=benchmarks/bench_sort.py,
-    filter='quicksort' (matched as a substring against the full benchmark name).
+    The filter is matched as a substring against the full benchmark name (e.g. ``benchmarks/bench_sort.py::quicksort``).
     """
 
     path: Path
@@ -54,7 +53,10 @@ def collect_files(
 
 
 def import_file(path: Path) -> None:
-    """Import `path` as a module; decorator side-effects populate REGISTRY."""
+    """Import ``path`` as a module.
+
+    Decorator side-effects populate :data:`REGISTRY`.
+    """
     # Stable module name derived from the resolved path so reimports are cheap.
     mod_name = f"mew._bench_{abs(hash(path.resolve()))}"
     if mod_name in sys.modules:

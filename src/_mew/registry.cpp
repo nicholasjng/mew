@@ -26,13 +26,10 @@ benchmark::TimeUnit parse_unit(const std::string& u) {
 void register_registry(nb::module_& m) {
     nb::class_<benchmark::Benchmark>(
         m, "BenchmarkHandle",
-        "Handle to a registered Google Benchmark. Methods return the same handle "
-        "so options can be chained.\n\n"
-        "Lifetime: valid until the next `clear_registered_benchmarks()` call "
-        "(which mew.run() performs before re-registering) or interpreter "
-        "shutdown. Holding a handle past either point and calling a method on "
-        "it is undefined behaviour, as Google Benchmark deletes the underlying "
-        "object on clear.")
+        "Handle to a registered Google Benchmark.\n"
+        "Methods return the same handle so options can be chained.\n"
+        "Invalidated by the next `clear_registered_benchmarks()` call or "
+        "interpreter shutdown; using a stale handle is undefined behaviour.")
         .def("min_time", &benchmark::Benchmark::MinTime, "seconds"_a, nb::rv_policy::reference)
         .def("min_warmup_time", &benchmark::Benchmark::MinWarmUpTime, "seconds"_a,
              nb::rv_policy::reference)

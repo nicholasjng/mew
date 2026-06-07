@@ -10,10 +10,8 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 namespace {
-// Python context manager wrapping benchmark::ScopedPauseTiming. The guard is
-// constructed on __enter__ (which calls PauseTiming) and destroyed on __exit__
-// (which calls ResumeTiming). ScopedPauseTiming is non-movable, so we hold it
-// behind a unique_ptr to defer construction until __enter__.
+// ScopedPauseTiming is non-movable, so hold it behind a unique_ptr to defer
+// construction until __enter__.
 struct PauseScope {
     benchmark::State* state;
     std::unique_ptr<benchmark::ScopedPauseTiming> guard;
@@ -22,8 +20,8 @@ struct PauseScope {
 
 void register_state(nb::module_& m) {
     nb::enum_<benchmark::Counter::Flags>(m, "CounterFlags", nb::is_arithmetic(),
-                                         "Flags forwarded to `benchmark::Counter`. OR them "
-                                         "together to combine (e.g. `kIsRate | kInvert`).")
+                                         "Flags forwarded to `benchmark::Counter`.\n"
+                                         "OR together to combine (e.g. `kIsRate | kInvert`).")
         .value("kDefaults", benchmark::Counter::kDefaults)
         .value("kIsRate", benchmark::Counter::kIsRate)
         .value("kAvgThreads", benchmark::Counter::kAvgThreads)
@@ -50,15 +48,14 @@ void register_state(nb::module_& m) {
             nb::sig("def __exit__(self, exc_type: type[BaseException] | None, exc_value: "
                     "BaseException | None, traceback: types.TracebackType | None) -> None"));
 
-    nb::class_<benchmark::State>(
-        m, "State", "Active microbenchmark state. Iterate with `for _ in state:` to time the body.")
+    nb::class_<benchmark::State>(m, "State",
+                                 "Active microbenchmark state.\n"
+                                 "Iterate with `for _ in state:` to time the body.")
         .def(
             "__iter__", [](benchmark::State& self) -> benchmark::State& { return self; },
             nb::rv_policy::reference_internal)
         .def("__next__",
              [](benchmark::State& self) {
-                 // KeepRunning() lazily starts the timer on first call, decrements the
-                 // internal counter, and calls FinishKeepRunning when the budget is spent.
                  if (!self.KeepRunning()) throw nb::stop_iteration();
              })
         .def(

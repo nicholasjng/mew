@@ -26,14 +26,10 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# AddressSanitizer build. Driven by -DMEW_ASAN=ON (or MEW_ASAN=1 in the env
-# from scikit-build-core). The flag goes onto the _core target's COMPILE_OPTIONS
-# / LINK_OPTIONS (not CMAKE_CXX_FLAGS) so nanobind's stubgen sanitizer-detector
-# (nanobind PR #1000) finds it and preloads libclang_rt.asan via DYLD_INSERT_LIBRARIES
-# when importing _core during stub generation — putting the flag on the global
-# CMAKE_CXX_FLAGS works for the compiler but not for the detector, which walks
-# per-target properties only. add_compile_options also covers the fetched
-# googlebenchmark target so its objects stay ASAN-instrumented.
+# AddressSanitizer build, driven by -DMEW_ASAN=ON or MEW_ASAN=1 in the env.
+# `add_compile_options` covers the fetched googlebenchmark target so its
+# objects stay instrumented; the per-target repeat below is required for
+# nanobind's stubgen sanitizer detector.
 option(MEW_ASAN "Build with AddressSanitizer" OFF)
 if(DEFINED ENV{MEW_ASAN} AND NOT MEW_ASAN)
     set(MEW_ASAN ON)
@@ -96,12 +92,9 @@ target_compile_definitions(_core PRIVATE
     MEW_BENCHMARK_COMMIT="${MEW_BENCHMARK_COMMIT}"
 )
 
-# Repeat -fsanitize=address on the _core target itself: add_compile_options sets
-# the *directory*'s COMPILE_OPTIONS, but nanobind's stubgen sanitizer detector
-# (PR #1000, see nanobind_sanitizer_preload_env in nanobind-config.cmake) only
-# scans per-target COMPILE_OPTIONS / LINK_OPTIONS. Without this, the detector
-# concludes "no sanitizer" and runs stubgen without preloading libclang_rt.asan,
-# which then aborts at `import _core` with "Interceptors are not working".
+# Repeat the sanitizer flag on _core itself: nanobind's stubgen detector only
+# scans per-target COMPILE_OPTIONS / LINK_OPTIONS. Without this it skips
+# preloading libclang_rt.asan and stubgen aborts on `import _core`.
 if(MEW_ASAN)
     target_compile_options(_core PRIVATE -fsanitize=address -fno-omit-frame-pointer)
     target_link_options(_core PRIVATE -fsanitize=address)
@@ -109,12 +102,8 @@ endif()
 
 install(TARGETS _core LIBRARY DESTINATION mew)
 
-# Generate a .pyi stub for the compiled module alongside the Python package
-# source so IDEs and type checkers (Zed/ty/Pyright) pick it up without
-# inspecting the installed wheel — the src/-layout otherwise wins over
-# site-packages when resolving `mew._core`. The stub is regenerated on every
-# build and committed to version control; scikit-build-core packs it into
-# the wheel automatically via `wheel.packages`.
+# Emit the .pyi stub next to the Python sources so IDEs and type checkers
+# pick it up via the src/-layout (which shadows site-packages for `mew._core`).
 nanobind_add_stub(
     _core_stub
     MODULE _core
@@ -123,9 +112,8 @@ nanobind_add_stub(
     DEPENDS _core
 )
 
-# Run `ruff format` on the freshly-generated stub so it matches the rest of
-# the codebase's style. Skipped silently if ruff isn't available (e.g. when
-# building from an sdist without dev extras).
+# Run `ruff format` on the freshly-generated stub. Skipped if ruff isn't
+# available (e.g. building from an sdist without dev extras).
 execute_process(
     COMMAND ${Python_EXECUTABLE} -m ruff --version
     RESULT_VARIABLE _ruff_available

@@ -55,8 +55,8 @@ def _rows_from_parquet(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]
 def _session_key(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, str]:
     """Identify which session a row belongs to.
 
-    Parquet rows carry session columns per-row; JSON rows inherit the file's
-    single top-level context block via *file_ctx*.
+    Parquet rows carry session columns per-row.
+    JSON rows inherit the file's single top-level context block via ``file_ctx``.
     """
     date = row.get("date") or file_ctx.get("date") or ""
     host = row.get("host_name") or file_ctx.get("host_name") or ""
@@ -160,7 +160,31 @@ def compare(
     regressions: RegressionConfig | None = None,
     console: Console | None = None,
 ) -> int:
-    """Render a comparison table; returns a process exit code."""
+    """Compare benchmark result files and render a comparison table.
+
+    The first file is the baseline; later files are reported as percent deltas and speedups.
+
+    Parameters
+    ----------
+    files : list[Path]
+        Result files (JSON or Parquet); the first is treated as the baseline.
+    metric : str, default "real_time"
+        Metric to compare.
+        One of ``"real_time"``, ``"cpu_time"``, ``"iterations"``.
+    pattern : str, optional
+        Substring filter applied to benchmark names.
+    show_stddev : bool, default False
+        Add per-file stddev columns when stddev data is present.
+    regressions : RegressionConfig, optional
+        If given, gate the second file against the baseline and append a regression panel.
+    console : rich.console.Console, optional
+        Output console; defaults to a fresh :class:`~rich.console.Console`.
+
+    Returns
+    -------
+    int
+        Process exit code: ``0`` on success, ``1`` for no overlap, ``2`` if the regression gate fails.
+    """
     if metric not in _METRICS:
         raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
     if len(files) < 2:

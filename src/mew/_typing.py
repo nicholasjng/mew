@@ -13,9 +13,8 @@ TimeUnitStr = Literal["ns", "us", "ms", "s"]
 class BenchmarkOptions(TypedDict, total=False):
     """Per-benchmark Google Benchmark options accepted by the decorators.
 
-    All keys are optional; omit a key to fall back to Google Benchmark's
-    default. Used as ``**options: Unpack[BenchmarkOptions]`` in
-    :func:`mew.benchmark` and :func:`mew.parametrize`.
+    All keys are optional.
+    Omit a key to fall back to Google Benchmark's default.
     """
 
     min_time: float
@@ -33,10 +32,8 @@ class BenchmarkOptions(TypedDict, total=False):
 class State(Protocol):
     """Structural state passed into benchmark targets.
 
-    Matched by the C++ `_core.State` exposed via nanobind, and by `_MockState`
-    used for out-of-loop profile passes (memory, CPU). Covers the surface
-    benchmark bodies actually call: iteration, timing control, counters,
-    labels, and range/thread accessors.
+    Matched by the C++ ``_core.State`` and the ``_MockState`` used for out-of-loop profile passes.
+    Covers iteration, timing control, counters, labels, and range/thread accessors.
     """
 
     range_size: int
@@ -67,14 +64,8 @@ class State(Protocol):
 class BenchmarkFn(Protocol):
     """A callable benchmark target.
 
-    Bound to Google Benchmark via the `@benchmark` / `@parametrize` / `@product`
-    decorators. The first positional argument is a `State` (structural);
-    parametrized families may take additional keyword arguments that get bound
-    at variant construction time.
-
-    Declaring `__name__` / `__qualname__` on the protocol lets the registration
-    code read those attributes directly instead of going through `getattr` or
-    narrowing to `types.FunctionType`.
+    Bound to Google Benchmark via the ``@benchmark`` / ``@parametrize`` / ``@product`` decorators.
+    The first positional argument is a :class:`State`; parametrized families bind additional kwargs at variant construction time.
     """
 
     __name__: str

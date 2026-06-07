@@ -1,7 +1,6 @@
-"""Module-level registry that @benchmark / @parametrize populate.
+"""Module-level registry that ``@benchmark`` / ``@parametrize`` populate.
 
-The registry is process-global so benchmark files imported from anywhere
-(pytest-style discovery, manual import, REPL) accumulate into one place.
+Process-global so benchmark files imported from anywhere (pytest-style discovery, manual import, REPL) accumulate into one place.
 """
 
 from __future__ import annotations
@@ -20,11 +19,7 @@ class Entry:
     file: str | None = None
     options: BenchmarkOptions = field(default_factory=lambda: BenchmarkOptions())
     tags: frozenset[str] = field(default_factory=frozenset)
-    # When set, this entry is a parametrized family: `fn` is a trampoline that
-    # reads state.range(0), indexes into the case list captured in its closure,
-    # sets a per-case label, and dispatches. The runner registers the family
-    # with `.dense_range(0, len(case_labels) - 1)` so Google Benchmark's
-    # family_index / per_family_instance_index machinery counts the cases.
+    # Set on parametrized families: `fn` is a trampoline keyed by state.range(0).
     case_labels: list[str] | None = None
 
 
@@ -47,11 +42,10 @@ class Registry:
         *,
         tags: Iterable[str] | None = None,
     ) -> list[Entry]:
-        """Filter by `pattern` (pytest-style `-k` substring) and/or `tags`.
+        """Filter by ``pattern`` (pytest-style ``-k`` substring) and/or ``tags``.
 
-        Tags use OR semantics: an entry passes when it has any of the
-        requested tags. An entry with no tags is always excluded when `tags`
-        is non-empty.
+        Tags use OR semantics: an entry passes when it has any of the requested tags.
+        Entries with no tags are excluded whenever ``tags`` is non-empty.
         """
         out = list(self._entries)
         if pattern:

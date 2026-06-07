@@ -1,8 +1,8 @@
 """Shared infrastructure for profile-based extensions (memory, CPU, ...).
 
-`_MockState` runs a benchmark body outside Google Benchmark's iteration loop.
-`EnrichedRun` proxies a C++ Run while carrying optional profile attachments.
-`_ProfileEnriching` wraps a reporter to attach those profiles by benchmark name.
+``_MockState`` runs a benchmark body outside Google Benchmark's iteration loop.
+``EnrichedRun`` proxies a C++ Run while carrying optional profile attachments.
+``_ProfileEnriching`` wraps a reporter to attach those profiles by benchmark name.
 """
 
 from __future__ import annotations
@@ -18,10 +18,9 @@ if TYPE_CHECKING:
 
 
 class _MockState:
-    """Stand-in for _core.State that runs the loop body `n_iterations` times.
+    """Stand-in for ``_core.State`` that runs the loop body ``n_iterations`` times.
 
-    Memory profiling needs one iteration (one allocation pattern); sampling
-    CPU profilers need many to accumulate samples.
+    Memory profiling needs one iteration; sampling CPU profilers need many to accumulate samples.
     """
 
     range_size: int = 0
@@ -83,8 +82,7 @@ class _MockState:
 class EnrichedRun:
     """Wraps a C++ Run and carries optional profile attachments.
 
-    All Run fields are forwarded explicitly so type checkers see the full
-    public surface (rather than going through a dynamic ``__getattr__``).
+    Run fields are forwarded explicitly so type checkers see the full public surface.
     """
 
     run: Run = field(repr=False)

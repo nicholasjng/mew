@@ -35,10 +35,19 @@ def profile(
     *,
     flamegraph: Path | None = None,
 ) -> dict[str, MemoryProfile]:
-    """Profile each entry once with memray and return per-entry MemoryProfiles.
+    """Profile each entry once with memray.
 
-    If *flamegraph* is given, also runs a combined pass over all entries and
-    writes an HTML flame graph to that path.
+    Parameters
+    ----------
+    entries : list[Entry]
+        Benchmarks to profile.
+    flamegraph : Path, optional
+        If given, additionally writes a combined HTML flame graph to this path.
+
+    Returns
+    -------
+    dict[str, MemoryProfile]
+        Per-entry profiles keyed by ``entry.name``.
     """
     _ensure_memray()
     profiles = _collect_stats(entries)
