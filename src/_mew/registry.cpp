@@ -27,43 +27,35 @@ void register_registry(nb::module_& m) {
     nb::class_<benchmark::Benchmark>(
         m, "BenchmarkHandle",
         "Handle to a registered Google Benchmark. Methods return the same handle "
-        "so options can be chained.")
-        .def(
-            "min_time", [](benchmark::Benchmark& b, double t) { return b.MinTime(t); }, "seconds"_a,
-            nb::rv_policy::reference)
-        .def(
-            "min_warmup_time", [](benchmark::Benchmark& b, double t) { return b.MinWarmUpTime(t); },
-            "seconds"_a, nb::rv_policy::reference)
-        .def(
-            "iterations", [](benchmark::Benchmark& b, int64_t n) { return b.Iterations(n); }, "n"_a,
-            nb::rv_policy::reference)
-        .def(
-            "repetitions", [](benchmark::Benchmark& b, int n) { return b.Repetitions(n); }, "n"_a,
-            nb::rv_policy::reference)
+        "so options can be chained.\n\n"
+        "Lifetime: valid until the next `clear_registered_benchmarks()` call "
+        "(which mew.run() performs before re-registering) or interpreter "
+        "shutdown. Holding a handle past either point and calling a method on "
+        "it is undefined behaviour, as Google Benchmark deletes the underlying "
+        "object on clear.")
+        .def("min_time", &benchmark::Benchmark::MinTime, "seconds"_a, nb::rv_policy::reference)
+        .def("min_warmup_time", &benchmark::Benchmark::MinWarmUpTime, "seconds"_a,
+             nb::rv_policy::reference)
+        .def("iterations", &benchmark::Benchmark::Iterations, "n"_a, nb::rv_policy::reference)
+        .def("repetitions", &benchmark::Benchmark::Repetitions, "n"_a, nb::rv_policy::reference)
         .def(
             "unit",
             [](benchmark::Benchmark& b, const std::string& u) { return b.Unit(parse_unit(u)); },
             "unit"_a, nb::rv_policy::reference,
             nb::sig(
                 "def unit(self, unit: typing.Literal['ns', 'us', 'ms', 's']) -> BenchmarkHandle"))
-        .def(
-            "use_real_time", [](benchmark::Benchmark& b) { return b.UseRealTime(); },
-            nb::rv_policy::reference)
-        .def(
-            "use_manual_time", [](benchmark::Benchmark& b) { return b.UseManualTime(); },
-            nb::rv_policy::reference)
-        .def(
-            "measure_process_cpu_time",
-            [](benchmark::Benchmark& b) { return b.MeasureProcessCPUTime(); },
-            nb::rv_policy::reference)
-        .def(
-            "report_aggregates_only",
-            [](benchmark::Benchmark& b, bool v) { return b.ReportAggregatesOnly(v); },
-            "value"_a = true, nb::rv_policy::reference)
-        .def(
-            "display_aggregates_only",
-            [](benchmark::Benchmark& b, bool v) { return b.DisplayAggregatesOnly(v); },
-            "value"_a = true, nb::rv_policy::reference)
+        .def("unit", &benchmark::Benchmark::Unit, "unit"_a, nb::rv_policy::reference)
+        .def("use_real_time", &benchmark::Benchmark::UseRealTime, nb::rv_policy::reference)
+        .def("use_manual_time", &benchmark::Benchmark::UseManualTime, nb::rv_policy::reference)
+        .def("measure_process_cpu_time", &benchmark::Benchmark::MeasureProcessCPUTime,
+             nb::rv_policy::reference)
+        .def("report_aggregates_only", &benchmark::Benchmark::ReportAggregatesOnly,
+             "value"_a = true, nb::rv_policy::reference)
+        .def("display_aggregates_only", &benchmark::Benchmark::DisplayAggregatesOnly,
+             "value"_a = true, nb::rv_policy::reference)
+        .def("dense_range", &benchmark::Benchmark::DenseRange, "start"_a, "limit"_a, "step"_a = 1,
+             nb::rv_policy::reference)
+        .def("arg_name", &benchmark::Benchmark::ArgName, "name"_a, nb::rv_policy::reference)
         .def_prop_ro("name", [](benchmark::Benchmark& b) { return std::string(b.GetName()); });
 
     m.def(
