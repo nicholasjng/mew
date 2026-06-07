@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
 
+from mew._core import TimeUnit
+
 TimeUnitStr = Literal["ns", "us", "ms", "s"]
 
 
@@ -20,7 +22,7 @@ class BenchmarkOptions(TypedDict, total=False):
     min_warmup_time: float
     iterations: int
     repetitions: int
-    unit: TimeUnitStr
+    unit: TimeUnitStr | TimeUnit
     use_real_time: bool
     use_manual_time: bool
     measure_process_cpu_time: bool

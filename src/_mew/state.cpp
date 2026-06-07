@@ -21,6 +21,19 @@ struct PauseScope {
 }  // namespace
 
 void register_state(nb::module_& m) {
+    nb::enum_<benchmark::Counter::Flags>(m, "CounterFlags", nb::is_arithmetic(),
+                                         "Flags forwarded to `benchmark::Counter`. OR them "
+                                         "together to combine (e.g. `kIsRate | kInvert`).")
+        .value("kDefaults", benchmark::Counter::kDefaults)
+        .value("kIsRate", benchmark::Counter::kIsRate)
+        .value("kAvgThreads", benchmark::Counter::kAvgThreads)
+        .value("kAvgThreadsRate", benchmark::Counter::kAvgThreadsRate)
+        .value("kIsIterationInvariant", benchmark::Counter::kIsIterationInvariant)
+        .value("kIsIterationInvariantRate", benchmark::Counter::kIsIterationInvariantRate)
+        .value("kAvgIterations", benchmark::Counter::kAvgIterations)
+        .value("kAvgIterationsRate", benchmark::Counter::kAvgIterationsRate)
+        .value("kInvert", benchmark::Counter::kInvert);
+
     nb::class_<PauseScope>(m, "PauseScope",
                            "Context manager that pauses State timing within a scope.")
         .def(
@@ -50,6 +63,7 @@ void register_state(nb::module_& m) {
              })
         .def(
             "pause", [](benchmark::State& self) { return PauseScope{&self, nullptr}; },
+            nb::keep_alive<0, 1>(),
             "Return a context manager that pauses timing for the duration of the `with` block.")
         .def("skip_with_error", &benchmark::State::SkipWithError, "msg"_a)
         .def("skip_with_message", &benchmark::State::SkipWithMessage, "msg"_a)
@@ -59,10 +73,11 @@ void register_state(nb::module_& m) {
         .def("set_bytes_processed", &benchmark::State::SetBytesProcessed, "n_bytes"_a)
         .def(
             "set_counter",
-            [](benchmark::State& self, const std::string& name, double value) {
-                self.counters[name] = benchmark::Counter(value);
+            [](benchmark::State& self, const std::string& name, double value,
+               benchmark::Counter::Flags flags) {
+                self.counters[name] = benchmark::Counter(value, flags);
             },
-            "name"_a, "value"_a)
+            "name"_a, "value"_a, "flags"_a = benchmark::Counter::kDefaults)
         .def("range", &benchmark::State::range, "pos"_a = 0)
         .def_prop_ro("range_size", &benchmark::State::range_size)
         .def_prop_ro("iterations", &benchmark::State::iterations)
