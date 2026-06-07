@@ -7,7 +7,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
-#include <iostream>
+#include <exception>
 #include <memory>
 #include <string>
 #include <vector>
@@ -43,6 +43,11 @@ nb::dict build_context_dict(const Context& ctx) {
 class PyReporter : public BenchmarkReporter {
    public:
     nb::object py;
+    // First Python exception raised by any reporter callback. Stashed (not
+    // logged) so `run_benchmarks` can re-throw it after the benchmark loop
+    // returns — Google Benchmark's reporter interface is noexcept, so we
+    // can't let it propagate from inside the callback.
+    std::exception_ptr pending_exception;
 
     explicit PyReporter(nb::object obj) : py(std::move(obj)) {}
 
@@ -57,8 +62,8 @@ class PyReporter : public BenchmarkReporter {
             auto res = py.attr("report_context")(build_context_dict(ctx));
             if (res.is_none()) return true;
             return nb::cast<bool>(res);
-        } catch (nb::python_error& e) {
-            std::cerr << "[mew] reporter.report_context raised: " << e.what() << std::endl;
+        } catch (...) {
+            if (!pending_exception) pending_exception = std::current_exception();
             return false;
         }
     }
@@ -71,8 +76,8 @@ class PyReporter : public BenchmarkReporter {
                 py_runs.append(nb::cast(r, nb::rv_policy::copy));
             }
             py.attr("report_runs")(py_runs);
-        } catch (nb::python_error& e) {
-            std::cerr << "[mew] reporter.report_runs raised: " << e.what() << std::endl;
+        } catch (...) {
+            if (!pending_exception) pending_exception = std::current_exception();
         }
     }
 
@@ -80,8 +85,8 @@ class PyReporter : public BenchmarkReporter {
         nb::gil_scoped_acquire gil;
         try {
             if (nb::hasattr(py, "finalize")) py.attr("finalize")();
-        } catch (nb::python_error& e) {
-            std::cerr << "[mew] reporter.finalize raised: " << e.what() << std::endl;
+        } catch (...) {
+            if (!pending_exception) pending_exception = std::current_exception();
         }
     }
 };
@@ -163,6 +168,11 @@ void register_reporter(nb::module_& m) {
             for (auto& v : storage) argp.push_back(v.data());
 
             int argc = static_cast<int>(argp.size());
+            // Re-parse flags on every call so different argv per call (e.g.
+            // distinct --benchmark_filter values across tests) actually take
+            // effect. Initialize is safe to call repeatedly; the only
+            // user-visible footgun is that `--help` in argv triggers exit(0),
+            // which is documented Google Benchmark behavior.
             benchmark::Initialize(&argc, argp.data());
 
             std::unique_ptr<PyReporter> pr;
@@ -177,7 +187,20 @@ void register_reporter(nb::module_& m) {
                            : benchmark::RunSpecifiedBenchmarks();
             }
 
-            benchmark::ClearRegisteredBenchmarks();
+            // We deliberately do NOT call ClearRegisteredBenchmarks here.
+            // Callers (mew.runner.run) clear *before* registering so a
+            // second run doesn't double up, and atexit handles teardown on
+            // interpreter shutdown so memory tools see a clean exit. This
+            // also means BenchmarkHandle objects stay valid past a run, up
+            // to the next clear.
+
+            // Surface the first Python exception raised by any reporter
+            // callback. Rethrowing a `python_error` captured via
+            // `current_exception` works because nanobind's binding trampoline
+            // catches it and restores the Python error indicator for us.
+            if (pr && pr->pending_exception) {
+                std::rethrow_exception(pr->pending_exception);
+            }
             return count;
         },
         "argv"_a, "reporter"_a = nb::none(),
