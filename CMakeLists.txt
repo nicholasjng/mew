@@ -56,6 +56,10 @@ find_package(nanobind CONFIG REQUIRED)
 # --- Google Benchmark ---------------------------------------------------------
 include(FetchContent)
 
+set(MEW_BENCHMARK_COMMIT
+    "a8460680f0df91fd26205e0931708a26c3b4094d"
+    CACHE STRING "Google Benchmark commit SHA to fetch")
+
 set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
@@ -64,26 +68,12 @@ set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     googlebenchmark
     GIT_REPOSITORY https://github.com/google/benchmark.git
-    GIT_TAG main
+    GIT_TAG ${MEW_BENCHMARK_COMMIT}
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(googlebenchmark)
 
-# Capture the commit hash of the fetched googlebenchmark checkout so it can
-# be reported from Python — useful when diagnosing bugs that turn out to
-# depend on a particular GB revision.
-execute_process(
-    COMMAND git rev-parse HEAD
-    WORKING_DIRECTORY ${googlebenchmark_SOURCE_DIR}
-    OUTPUT_VARIABLE _benchmark_commit
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-    RESULT_VARIABLE _benchmark_commit_rv
-)
-if(NOT _benchmark_commit_rv EQUAL 0 OR NOT _benchmark_commit)
-    set(_benchmark_commit "unknown")
-endif()
-message(STATUS "Google Benchmark commit: ${_benchmark_commit}")
+message(STATUS "Google Benchmark commit: ${MEW_BENCHMARK_COMMIT}")
 
 # --- _core extension ----------------------------------------------------------
 set(_MEW_SOURCES
@@ -103,7 +93,7 @@ nanobind_add_module(
 target_include_directories(_core PRIVATE src/_mew)
 target_link_libraries(_core PRIVATE benchmark::benchmark)
 target_compile_definitions(_core PRIVATE
-    MEW_BENCHMARK_COMMIT="${_benchmark_commit}"
+    MEW_BENCHMARK_COMMIT="${MEW_BENCHMARK_COMMIT}"
 )
 
 # Repeat -fsanitize=address on the _core target itself: add_compile_options sets
