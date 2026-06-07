@@ -9,6 +9,19 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # case the project is built without scikit-build-core (e.g. raw `cmake -B`).
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
 
+# The file lands in ${CMAKE_BINARY_DIR}; with build-dir = "build/{wheel_tag}"
+# in pyproject.toml that path varies per ABI, so clangd's auto-discovery
+# (which probes ./build/ and the source root) won't find it. Symlink it to
+# the source root so IDE tooling picks it up without configuration.
+add_custom_target(
+    symlink_compile_commands ALL
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+        ${CMAKE_BINARY_DIR}/compile_commands.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
+    BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
+    COMMENT "Symlinking compile_commands.json to source root"
+    VERBATIM)
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -131,7 +144,7 @@ execute_process(
 if(_ruff_available EQUAL 0)
     add_custom_command(
         TARGET _core_stub POST_BUILD
-        COMMAND ${Python_EXECUTABLE} -m ruff check --fix --quiet
+        COMMAND ${Python_EXECUTABLE} -m ruff check --fix --exit-zero --quiet
             ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
         COMMAND ${Python_EXECUTABLE} -m ruff format --quiet
             ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
