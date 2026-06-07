@@ -8,8 +8,8 @@ from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from mew import _core
-from mew import context as _context
+import mew._core as _core
+import mew.context as _context
 from mew._registry import REGISTRY, Entry
 from mew.reporter import Reporter
 
@@ -103,9 +103,18 @@ def run(
     if filter:
         cli.append(f"--benchmark_filter={filter}")
 
+    # Clear the C++ side before registering so a second mew.run() in the
+    # same process doesn't double-register entries from a previous call.
+    # We rely on atexit (registered in mew/__init__.py) for shutdown.
+    _core.clear_registered_benchmarks()
     for entry in selected:
         handle = _core.register_benchmark(entry.name, entry.fn)
         _apply_options(handle, entry.options)
+        if entry.case_labels is not None:
+            # Drive Google Benchmark's family bookkeeping via an index axis;
+            # the trampoline in entry.fn looks up the real kwargs by index.
+            handle.dense_range(0, len(entry.case_labels) - 1)
+            handle.arg_name("case")
 
     rep = _to_single_reporter(reporter)
     custom = _context._snapshot()

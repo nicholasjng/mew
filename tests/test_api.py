@@ -56,15 +56,15 @@ def test_custom_name_override():
 # ---------- @parametrize ----------------------------------------------------
 
 
-def test_parametrize_registers_one_per_variant():
+def test_parametrize_registers_one_family_entry():
     @mew.parametrize([{"n": 1}, {"n": 10}, {"n": 100}])
     def bench_x(state, n):
         for _ in state:
             assert n in (1, 10, 100)
 
-    names = [e.name for e in REGISTRY.all()]
-    assert len(names) == 3
-    assert all("[n=" in n for n in names)
+    entries = REGISTRY.all()
+    assert len(entries) == 1
+    assert entries[0].case_labels == ["n=1", "n=10", "n=100"]
 
 
 def test_parametrize_multi_kwarg_dict():
@@ -78,10 +78,9 @@ def test_parametrize_multi_kwarg_dict():
         for _ in state:
             pass
 
-    names = sorted(e.name for e in REGISTRY.all())
-    assert len(names) == 2
-    labels = [n.split("[", 1)[1].rstrip("]") for n in names]
-    assert set(labels) == {"n=1-algo=a", "n=10-algo=b"}
+    entries = REGISTRY.all()
+    assert len(entries) == 1
+    assert entries[0].case_labels == ["n=1-algo=a", "n=10-algo=b"]
 
 
 def test_parametrize_options_apply_to_all_variants():
@@ -100,9 +99,9 @@ def test_parametrize_custom_ids():
         for _ in state:
             pass
 
-    names = [e.name for e in REGISTRY.all()]
-    assert any(n.endswith("[small]") for n in names)
-    assert any(n.endswith("[big]") for n in names)
+    entries = REGISTRY.all()
+    assert len(entries) == 1
+    assert entries[0].case_labels == ["small", "big"]
 
 
 def test_parametrize_ids_length_mismatch():
@@ -120,23 +119,35 @@ def test_parametrize_accepts_generator():
         for _ in state:
             pass
 
-    assert len(REGISTRY.all()) == 3
+    entries = REGISTRY.all()
+    assert len(entries) == 1
+    assert entries[0].case_labels == ["n=0", "n=1", "n=2"]
 
 
-def test_variant_passes_kwargs_through():
+def test_trampoline_dispatches_by_state_range():
     seen = []
+    labels_set = []
 
     @mew.parametrize([{"n": 7}, {"n": 9}])
     def bench_capture(state, n):
         seen.append(n)
-        _ = state.name
 
     class DummyState:
-        name = "dummy"
+        def __init__(self, idx):
+            self._idx = idx
 
-    for entry in REGISTRY.all():
-        entry.fn(DummyState())  # ty: ignore[invalid-argument-type]
-    assert sorted(seen) == [7, 9]
+        def range(self, _pos):
+            return self._idx
+
+        def set_label(self, label):
+            labels_set.append(label)
+
+    (entry,) = REGISTRY.all()
+    assert entry.case_labels is not None
+    for i in range(len(entry.case_labels)):
+        entry.fn(DummyState(i))  # ty: ignore[invalid-argument-type]
+    assert seen == [7, 9]
+    assert labels_set == ["n=7", "n=9"]
 
 
 # ---------- @product --------------------------------------------------------
@@ -148,10 +159,9 @@ def test_product_cartesian():
         for _ in state:
             pass
 
-    names = sorted(e.name for e in REGISTRY.all())
-    assert len(names) == 4
-    labels = [n.split("[", 1)[1].rstrip("]") for n in names]
-    assert set(labels) == {
+    (entry,) = REGISTRY.all()
+    assert entry.case_labels is not None
+    assert set(entry.case_labels) == {
         "n=1-algo=a",
         "n=1-algo=b",
         "n=2-algo=a",
@@ -165,10 +175,10 @@ def test_product_pulls_options_out_of_kwargs():
         for _ in state:
             pass
 
-    entries = REGISTRY.all()
-    assert len(entries) == 2  # only 2 variants — min_time/unit are options
-    assert all(e.options["min_time"] == 0.05 for e in entries)
-    assert all(e.options["unit"] == "us" for e in entries)
+    (entry,) = REGISTRY.all()
+    assert entry.case_labels == ["n=1", "n=2"]  # min_time/unit are options
+    assert entry.options["min_time"] == 0.05
+    assert entry.options["unit"] == "us"
 
 
 def test_product_needs_at_least_one_iterable():

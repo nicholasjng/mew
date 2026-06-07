@@ -9,13 +9,20 @@ from typing import Annotated
 from cyclopts import App, Parameter
 from cyclopts.help import ColumnSpec, DefaultFormatter, HelpEntry
 
-from mew import __version__ as _mew_version
-from mew import config as _config
-from mew import discovery, runner
-from mew._core import BENCHMARK_COMMIT as _gb_commit
-from mew._core import BENCHMARK_VERSION as _gb_version
-from mew._registry import REGISTRY, Entry
-from mew.reporter import JSONReporter, ParquetReporter, Reporter, RichReporter
+import mew.config as _config
+import mew.discovery as _discovery
+from mew import (
+    BENCHMARK_COMMIT as _gb_commit,
+    BENCHMARK_VERSION as _gb_version,
+    REGISTRY,
+    Entry,
+    JSONReporter,
+    ParquetReporter,
+    Reporter,
+    RichReporter,
+    __version__ as _mew_version,
+    run as _run,
+)
 
 
 def _short_first_name(entry: HelpEntry) -> str:
@@ -58,12 +65,12 @@ def _collect(
     if not paths:
         paths = list(cfg.benchpaths)
 
-    selectors = [discovery.parse(p) for p in paths]
-    files = discovery.collect_files(selectors, file_patterns=cfg.python_files)
+    selectors = [_discovery.parse(p) for p in paths]
+    files = _discovery.collect_files(selectors, file_patterns=cfg.python_files)
 
     REGISTRY.clear()
     for f in files:
-        discovery.import_file(f)
+        _discovery.import_file(f)
 
     # Per-selector filter is OR'd with the global -k pattern.
     filters = [s.filter for s in selectors if s.filter]
@@ -291,7 +298,7 @@ def run(
             for r in reporters
         ]
 
-    runner.run(entries, argv=argv, reporter=reporters)
+    _run(entries, argv=argv, reporter=reporters)
 
 
 @app.command

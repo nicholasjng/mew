@@ -20,6 +20,12 @@ class Entry:
     file: str | None = None
     options: BenchmarkOptions = field(default_factory=lambda: BenchmarkOptions())
     tags: frozenset[str] = field(default_factory=frozenset)
+    # When set, this entry is a parametrized family: `fn` is a trampoline that
+    # reads state.range(0), indexes into the case list captured in its closure,
+    # sets a per-case label, and dispatches. The runner registers the family
+    # with `.dense_range(0, len(case_labels) - 1)` so Google Benchmark's
+    # family_index / per_family_instance_index machinery counts the cases.
+    case_labels: list[str] | None = None
 
 
 class Registry:
