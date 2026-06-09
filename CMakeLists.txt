@@ -65,7 +65,6 @@ FetchContent_Declare(
     googlebenchmark
     GIT_REPOSITORY https://github.com/google/benchmark.git
     GIT_TAG ${MEW_BENCHMARK_COMMIT}
-    GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(googlebenchmark)
 
