@@ -36,9 +36,6 @@ def _write_json(path: Path, benches: list[dict]) -> None:
     path.write_text(json.dumps({"context": {}, "benchmarks": benches}))
 
 
-# --- evaluate ---------------------------------------------------------------
-
-
 def test_evaluate_within_threshold() -> None:
     cfg = RegressionConfig(default_threshold_pct=5.0)
     v = cfg.evaluate("b", 3.0)
@@ -86,9 +83,6 @@ def test_first_matching_rule_wins() -> None:
     v = cfg.evaluate("bench_x", 50.0)
     assert v.verdict is Verdict.IGNORED
     assert v.rule is a
-
-
-# --- config loading ---------------------------------------------------------
 
 
 def test_load_config_from_pyproject(tmp_path: Path) -> None:
@@ -160,9 +154,6 @@ def test_inline_allow_bad_threshold() -> None:
         _parse_inline("bench_x:not_a_number")
 
 
-# --- panel rendering --------------------------------------------------------
-
-
 def test_render_panel_exit_codes() -> None:
     rule = AllowRule(pattern="x", reason="r", threshold_pct=99.0)
     # Pure OK: no panel, exit 0.
@@ -183,9 +174,6 @@ def test_render_panel_exit_codes() -> None:
     )
     assert "⚠️" in text
     assert code == 0
-
-
-# --- end-to-end via mew.compare.compare -------------------------------------
 
 
 def test_compare_passes_when_under_threshold(tmp_path: Path) -> None:

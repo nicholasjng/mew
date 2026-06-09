@@ -7,8 +7,6 @@ import pytest
 import mew
 from mew._registry import REGISTRY
 
-# ---------- @benchmark ------------------------------------------------------
-
 
 def test_bare_decorator_registers_one_entry():
     @mew.benchmark
@@ -51,9 +49,6 @@ def test_custom_name_override():
             pass
 
     assert REGISTRY.all()[0].name == "my/custom/name"
-
-
-# ---------- @parametrize ----------------------------------------------------
 
 
 def test_parametrize_registers_one_family_entry():
@@ -150,9 +145,6 @@ def test_trampoline_dispatches_by_state_range():
     assert labels_set == ["n=7", "n=9"]
 
 
-# ---------- @product --------------------------------------------------------
-
-
 def test_product_cartesian():
     @mew.product(n=[1, 2], algo=["a", "b"])
     def bench_x(state, n, algo):
@@ -190,9 +182,6 @@ def test_product_needs_at_least_one_iterable():
                 pass
 
 
-# ---------- composition guard ----------------------------------------------
-
-
 def test_double_registration_raises():
     with pytest.raises(RuntimeError, match="already registered"):
 
@@ -201,9 +190,6 @@ def test_double_registration_raises():
         def _bench(state, n):
             for _ in state:
                 pass
-
-
-# ---------- tags -----------------------------------------------------------
 
 
 def test_benchmark_tags_propagate():

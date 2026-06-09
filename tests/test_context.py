@@ -12,8 +12,6 @@ import pytest
 import mew
 from mew.reporter import JSONReporter
 
-# ---------- set / update / get ---------------------------------------------
-
 
 def test_set_flat_key():
     mew.set_context("commit", "abc123")
@@ -100,9 +98,6 @@ def test_get_context_returns_a_snapshot():
     snap["a"]["nested"] = 999
     snap["new"] = "value"
     assert mew.get_context() == {"a": {"nested": 1}}
-
-
-# ---------- integration with reporter --------------------------------------
 
 
 class _Capture:

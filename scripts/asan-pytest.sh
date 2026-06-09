@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 #
 # Run pytest under AddressSanitizer on macOS.
-
+#
 # Prerequisites:
-#   - The uv-managed venv is activated in the current shell (so VIRTUAL_ENV is
-#     set), e.g. via `source .venv/bin/activate` or whatever your shell hook
-#     does on `cd`.
-#   - The ASAN editable install is current:
-#         MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
-#     A plain `uv sync` afterwards re-points the editable install at the
-#     Release build/ dir; re-run the MEW_ASAN sync to switch back.
+#   - Activate the uv-managed venv (VIRTUAL_ENV set).
+#   - Build the ASAN editable install:
+#         DUCKY_ASAN=1 uv sync --all-groups --reinstall-package=ducky
 #
 # Usage: scripts/asan-pytest.sh [pytest args]
 
