@@ -89,7 +89,7 @@ target-version = "py311"
 extend-select = ["I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.isort]
-# Merge `from x import y` and `from x import z as _z` into one statement
+# Merge `from x import y` and `from x import z as z` into one statement
 # instead of leaving the aliased form on its own line.
 combine-as-imports = true
 

@@ -107,9 +107,6 @@ def _make_family_trampoline(
     return trampoline
 
 
-# ---------- @benchmark ------------------------------------------------------
-
-
 @overload
 def benchmark(fn: BenchmarkFn, /) -> BenchmarkFn: ...
 @overload
@@ -188,9 +185,6 @@ def benchmark(
     if fn is not None:
         return deco(fn)
     return deco
-
-
-# ---------- @parametrize / @product -----------------------------------------
 
 
 def _register_family(
