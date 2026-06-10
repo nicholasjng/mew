@@ -99,7 +99,11 @@ def list_(
     *,
     pattern: Annotated[
         str | None,
-        Parameter(name=["-k", "--pattern"], help="List all benchmarks matching the given pattern."),
+        Parameter(
+            name=["-k", "--pattern"],
+            help="List benchmarks whose name *contains* this substring (not a regex). "
+            "Parametrize case labels are not part of the name and won't match.",
+        ),
     ] = None,
     tag: Annotated[
         list[str],
@@ -113,16 +117,17 @@ def list_(
     ] = False,
 ) -> None:
     """List discovered benchmarks without running them."""
-    entries = _collect(paths, pattern=pattern, tags=tag or None)
-    if not entries:
-        print("no benchmarks found", file=sys.stderr)
-        raise SystemExit(1)
-    for e in entries:
-        if show_tags:
-            tags_str = ",".join(sorted(e.tags)) if e.tags else "-"
-            print(f"{e.name}\t[{tags_str}]")
-        else:
-            print(e.name)
+    with _discovery.discovered():
+        entries = _collect(paths, pattern=pattern, tags=tag or None)
+        if not entries:
+            print("no benchmarks found", file=sys.stderr)
+            raise SystemExit(1)
+        for e in entries:
+            if show_tags:
+                tags_str = ",".join(sorted(e.tags)) if e.tags else "-"
+                print(f"{e.name}\t[{tags_str}]")
+            else:
+                print(e.name)
 
 
 _STDOUT_SENTINELS = frozenset({"-", "stdout"})
@@ -133,6 +138,7 @@ def _build_reporters(
     *,
     show_memory: bool = False,
     show_cpu: bool = False,
+    show_label: bool = False,
 ) -> list[Reporter]:
     """Resolve ``-o`` sinks into a list of reporters.
 
@@ -185,7 +191,12 @@ def run(
     *,
     pattern: Annotated[
         str | None,
-        Parameter(name=["-k", "--pattern"], help="Only run benchmarks matching the given pattern."),
+        Parameter(
+            name=["-k", "--pattern"],
+            help="Only run benchmarks whose name *contains* this substring (not a "
+            "regex). Matches the registered name (`file.py::func`); parametrize "
+            "case labels like `n=10000` are not part of the name and won't match.",
+        ),
     ] = None,
     tag: Annotated[
         list[str],
@@ -258,51 +269,55 @@ def run(
     ] = None,
 ) -> None:
     """Discover and run benchmarks."""
-    entries = _collect(paths, pattern=pattern, tags=tag or None)
-    if not entries:
-        print("no benchmarks found", file=sys.stderr)
-        raise SystemExit(1)
+    # discovered(): bench modules stay live for the run, cleaned up at the boundary.
+    with _discovery.discovered():
+        entries = _collect(paths, pattern=pattern, tags=tag or None)
+        if not entries:
+            print("no benchmarks found", file=sys.stderr)
+            raise SystemExit(1)
 
-    # Config defaults first so CLI flags (later) override them via gflags'
-    # last-wins semantics.
-    argv: list[str] = ["mew", *_config.format_benchmark_args(_config.load().benchmark_options)]
-    if min_time is not None:
-        argv.append(f"--benchmark_min_time={min_time}")
-    if repetitions is not None:
-        argv.append(f"--benchmark_repetitions={repetitions}")
-    argv.extend(extra)
+        # Config defaults first so CLI flags (later) override them via gflags'
+        # last-wins semantics.
+        argv: list[str] = ["mew", *_config.format_benchmark_args(_config.load().benchmark_options)]
+        if min_time is not None:
+            argv.append(f"--benchmark_min_time={min_time}")
+        if repetitions is not None:
+            argv.append(f"--benchmark_repetitions={repetitions}")
+        argv.extend(extra)
 
-    reporters = _build_reporters(
-        output,
-        show_memory=profile_memory or flamegraph is not None,
-        show_cpu=profile_cpu or cpu_output is not None,
-    )
-
-    memory_profiles = None
-    cpu_profiles = None
-    if profile_memory or flamegraph is not None:
-        from mew.memory import profile as _profile_mem
-
-        memory_profiles = _profile_mem(entries, flamegraph=flamegraph)
-    if profile_cpu or cpu_output is not None:
-        from mew.cpu import profile as _profile_cpu
-
-        cpu_profiles = _profile_cpu(
-            entries,
-            output=cpu_output,
-            interval=cpu_interval,
-            inner_iterations=cpu_iterations,
+        reporters = _build_reporters(
+            output,
+            show_memory=profile_memory or flamegraph is not None,
+            show_cpu=profile_cpu or cpu_output is not None,
+            # Label column distinguishes family case rows from the truncated name.
+            show_label=any(e.case_labels for e in entries),
         )
 
-    if memory_profiles is not None or cpu_profiles is not None:
-        from mew._profile import _ProfileEnriching
+        memory_profiles = None
+        cpu_profiles = None
+        if profile_memory or flamegraph is not None:
+            from mew.memory import profile as _profile_mem
 
-        reporters = [
-            _ProfileEnriching(r, memory_profiles=memory_profiles, cpu_profiles=cpu_profiles)
-            for r in reporters
-        ]
+            memory_profiles = _profile_mem(entries, flamegraph=flamegraph)
+        if profile_cpu or cpu_output is not None:
+            from mew.cpu import profile as _profile_cpu
 
-    _run(entries, argv=argv, reporter=reporters)
+            cpu_profiles = _profile_cpu(
+                entries,
+                output=cpu_output,
+                interval=cpu_interval,
+                inner_iterations=cpu_iterations,
+            )
+
+        if memory_profiles is not None or cpu_profiles is not None:
+            from mew._profile import _ProfileEnriching
+
+            reporters = [
+                _ProfileEnriching(r, memory_profiles=memory_profiles, cpu_profiles=cpu_profiles)
+                for r in reporters
+            ]
+
+        _run(entries, argv=argv, reporter=reporters)
 
 
 @app.command

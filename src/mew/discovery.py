@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+# Tracked so unload() drops exactly what import_file added — and nothing else.
+_loaded_modules: list[str] = []
+_inserted_paths: list[str] = []
 
 
 @dataclass(slots=True)
@@ -53,14 +59,20 @@ def collect_files(
 
 
 def import_file(path: Path) -> None:
-    """Import ``path`` as a module.
+    """Import ``path`` as a module; decorator side-effects populate :data:`REGISTRY`.
 
-    Decorator side-effects populate :data:`REGISTRY`.
+    Prepends the parent dir to ``sys.path`` (pytest ``prepend`` mode) so a bench file
+    can import a sibling; left in place so run-time-deferred imports still resolve.
     """
-    # Stable module name derived from the resolved path so reimports are cheap.
-    mod_name = f"mew._bench_{abs(hash(path.resolve()))}"
+    # Stable module name from the resolved path so reimports are cheap.
+    resolved = path.resolve()
+    mod_name = f"mew._bench_{abs(hash(resolved))}"
     if mod_name in sys.modules:
         return
+    parent = str(resolved.parent)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+        _inserted_paths.append(parent)
     spec = importlib.util.spec_from_file_location(mod_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"could not load benchmark module from {path}")
@@ -71,3 +83,37 @@ def import_file(path: Path) -> None:
     except Exception:
         sys.modules.pop(mod_name, None)
         raise
+    _loaded_modules.append(mod_name)
+
+
+def unload() -> None:
+    """Drop the synthetic bench modules and ``sys.path`` entries import_file added.
+
+    Safe post-*run*: each ``Entry.fn`` keeps its namespace alive via ``__globals__``,
+    so the pop doesn't break execution. Sibling/third-party modules are left alone —
+    pruning them from ``sys.modules`` risks half-initialized-module bugs.
+    """
+    while _loaded_modules:
+        sys.modules.pop(_loaded_modules.pop(), None)
+    while _inserted_paths:
+        with contextlib.suppress(ValueError):
+            sys.path.remove(_inserted_paths.pop())
+
+
+@contextmanager
+def discovered() -> Iterator[None]:
+    """Unload whatever was imported in the block at exit.
+
+    Wrap collection *and the run* so modules stay live during execution, then get
+    cleaned up at the boundary. Only additions made inside the block are undone.
+    """
+    mod_mark = len(_loaded_modules)
+    path_mark = len(_inserted_paths)
+    try:
+        yield
+    finally:
+        while len(_loaded_modules) > mod_mark:
+            sys.modules.pop(_loaded_modules.pop(), None)
+        while len(_inserted_paths) > path_mark:
+            with contextlib.suppress(ValueError):
+                sys.path.remove(_inserted_paths.pop())
