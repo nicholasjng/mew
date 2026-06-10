@@ -277,15 +277,16 @@ def test_cpu_profile_excludes_paused_regions():
     def bench_paused(state):
         for _ in state:
             with state.pause():
-                burn(0.02)  # excluded: must not dominate the profile
+                burn(0.2)  # excluded; ~100x the measured burn
             burn(0.002)  # measured
 
     name = mew.REGISTRY.all()[0].name
     profiles = cpu_profile(mew.REGISTRY.all(), inner_iterations=1)
     prof = profiles[name]
-    # The paused 20ms burn is ~10x the measured one; if it were sampled it would
-    # dominate wall_time. Suspending the sampler keeps the profile to the ~2ms.
-    assert prof.wall_time < 0.015
+    # If the pause didn't suspend sampling, wall_time would include the 200ms burn.
+    # Threshold sits well below 200ms but well above Windows' ~15.6ms process_time
+    # granularity (which inflates the "2ms" measured burn to one clock tick).
+    assert prof.wall_time < 0.1
 
 
 def test_json_reporter_emits_memory_and_cpu_blocks(tmp_path):
