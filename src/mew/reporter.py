@@ -51,6 +51,7 @@ def _fmt_bytes(n: int) -> str:
 
 
 def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
+    counters = r.counters  # hot path on C++ Run: each access rebuilds the dict
     d: dict[str, Any] = {
         "name": r.benchmark_name(),
         "run_name": str(r.run_name),
@@ -70,7 +71,7 @@ def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
         "label": r.report_label,
         "skipped": r.skipped,
         "skip_message": r.skip_message,
-        "counters": dict(r.counters) if r.counters else {},
+        "counters": counters if counters else {},
     }
     mem: MemoryProfile | None = getattr(r, "memory", None)
     if mem is not None:
@@ -323,6 +324,7 @@ class ParquetReporter:
         ctx = self._context
         mem: MemoryProfile | None = getattr(r, "memory", None)
         cpu: CPUProfile | None = getattr(r, "cpu", None)
+        counters = r.counters  # hot path on C++ Run: each access rebuilds the dict
         return {
             "name": r.benchmark_name(),
             "run_name": str(r.run_name),
@@ -344,7 +346,7 @@ class ParquetReporter:
             "skip_message": r.skip_message,
             # pa rejects `{}` for `map_` columns; a list of (k, v) pairs handles
             # the empty case cleanly.
-            "counters": list(r.counters.items()) if r.counters else [],
+            "counters": list(counters.items()) if counters else [],
             "date": date,
             "host_name": ctx.get("host_name"),
             "executable": ctx.get("executable"),
