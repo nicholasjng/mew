@@ -12,8 +12,7 @@ from cyclopts.help import ColumnSpec, DefaultFormatter, HelpEntry
 import mew.config as _config
 import mew.discovery as _discovery
 from mew import (
-    BENCHMARK_COMMIT as _gb_commit,
-    BENCHMARK_VERSION as _gb_version,
+    BENCHMARK_VERSION,
     REGISTRY,
     Entry,
     JSONLReporter,
@@ -48,7 +47,7 @@ def _param_columns(console, options, entries):  # noqa: ARG001
 app = App(
     name="mew",
     help="Microbenchmarking for Python via Google Benchmark.",
-    version=f"mew {_mew_version} (Google Benchmark {_gb_version}@{_gb_commit[:8]})",
+    version=f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})",
     # Suppress auto-generated `--empty-<arg>` flags for list-typed parameters.
     default_parameter=Parameter(negative_bool=(), negative_iterable=()),
     help_formatter=DefaultFormatter(column_specs=_param_columns),
