@@ -10,6 +10,8 @@ BENCHMARK_COMMIT: str = "a8460680f0df91fd26205e0931708a26c3b4094d"
 BENCHMARK_VERSION: str = "v1.9.5"
 
 class TimeUnit(enum.Enum):
+    """Time unit used for reported per-iteration durations."""
+
     ns = 0
 
     us = 1
@@ -19,6 +21,10 @@ class TimeUnit(enum.Enum):
     s = 3
 
 class RunType(enum.Enum):
+    """
+    Distinguishes per-repetition runs from aggregate (mean / median / stddev) rows.
+    """
+
     iteration = 0
 
     aggregate = 1
@@ -87,7 +93,9 @@ class Run:
 
 def run_benchmarks(argv: Sequence[str], reporter: object | None = None) -> int:
     """
-    Initialize Google Benchmark with `argv`, run all registered benchmarks, then clear the registry. Returns the number of benchmarks run. Pass a Fanout reporter from Python to multiplex into multiple sinks.
+    Initialize Google Benchmark with `argv` and run all registered benchmarks.
+    Returns the number of benchmarks run.
+    Pass a `Fanout` reporter to multiplex into multiple sinks.
     """
 
 class CounterFlags(enum.IntEnum):
@@ -126,7 +134,8 @@ class PauseScope:
 
 class State:
     """
-    Active microbenchmark state. Iterate with `for _ in state:` to time the body.
+    Active microbenchmark state.
+    Iterate with `for _ in state:` to time the body.
     """
 
     def __iter__(self) -> State: ...
@@ -165,9 +174,9 @@ class State:
 
 class BenchmarkHandle:
     """
-    Handle to a registered Google Benchmark. Methods return the same handle so options can be chained.
-
-    Lifetime: valid until the next `clear_registered_benchmarks()` call (which mew.run() performs before re-registering) or interpreter shutdown. Holding a handle past either point and calling a method on it is undefined behaviour — Google Benchmark deletes the underlying object on clear.
+    Handle to a registered Google Benchmark.
+    Methods return the same handle so options can be chained.
+    Invalidated by the next `clear_registered_benchmarks()` call or interpreter shutdown; using a stale handle is undefined behaviour.
     """
 
     def min_time(self, seconds: float) -> BenchmarkHandle: ...

@@ -53,7 +53,7 @@ void register_registry(nb::module_& m) {
         .def("dense_range", &benchmark::Benchmark::DenseRange, "start"_a, "limit"_a, "step"_a = 1,
              nb::rv_policy::reference)
         .def("arg_name", &benchmark::Benchmark::ArgName, "name"_a, nb::rv_policy::reference)
-        .def_prop_ro("name", [](benchmark::Benchmark& b) { return std::string(b.GetName()); });
+        .def_prop_ro("name", &benchmark::Benchmark::GetName);
 
     m.def(
         "register_benchmark",
@@ -66,7 +66,11 @@ void register_registry(nb::module_& m) {
                 try {
                     (*holder)(nb::cast(&s, nb::rv_policy::reference));
                 } catch (nb::python_error& e) {
+                    // SkipWithError captures the formatted traceback. Discard the
+                    // Python error so its destructor doesn't restore it to the
+                    // indicator and leak into the next benchmark.
                     s.SkipWithError(e.what());
+                    e.discard_as_unraisable(*holder);
                 } catch (std::exception& e) {
                     s.SkipWithError(e.what());
                 }

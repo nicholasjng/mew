@@ -33,7 +33,12 @@ nb::dict build_context_dict(const Context& ctx) {
     else if (cpu.scaling == benchmark::CPUInfo::DISABLED)
         scaling = "disabled";
     d["cpu_scaling"] = scaling;
-    d["library_build_type"] = std::string(benchmark::GetBenchmarkVersion());
+    d["library_build_type"] =
+#ifdef NDEBUG
+        "release";
+#else
+        "debug";
+#endif
     d["host_name"] = sys.name;
     d["executable"] =
         Context::executable_name ? std::string(Context::executable_name) : std::string();
@@ -92,13 +97,16 @@ class PyReporter : public BenchmarkReporter {
 }  // namespace
 
 void register_reporter(nb::module_& m) {
-    nb::enum_<benchmark::TimeUnit>(m, "TimeUnit")
+    nb::enum_<benchmark::TimeUnit>(m, "TimeUnit",
+                                   "Time unit used for reported per-iteration durations.")
         .value("ns", benchmark::kNanosecond)
         .value("us", benchmark::kMicrosecond)
         .value("ms", benchmark::kMillisecond)
         .value("s", benchmark::kSecond);
 
-    nb::enum_<Run::RunType>(m, "RunType")
+    nb::enum_<Run::RunType>(m, "RunType",
+                            "Distinguishes per-repetition runs from aggregate "
+                            "(mean / median / stddev) rows.")
         .value("iteration", Run::RT_Iteration)
         .value("aggregate", Run::RT_Aggregate);
 
@@ -149,24 +157,13 @@ void register_reporter(nb::module_& m) {
     m.def(
         "run_benchmarks",
         [](std::vector<std::string> argv, nb::object reporter) {
-            // Stable mutable storage for argv strings; benchmark::Initialize
-            // may rearrange or strip arguments in-place.
-            std::vector<std::vector<char>> storage;
-            storage.reserve(std::max<size_t>(argv.size(), 1));
+            // GB only shuffles the char** array, never writes into the strings.
+            if (argv.empty()) argv.emplace_back("mew");
             std::vector<char*> argp;
-            argp.reserve(std::max<size_t>(argv.size(), 1));
+            argp.reserve(argv.size());
+            for (auto& s : argv) argp.push_back(s.data());
 
-            if (argv.empty()) {
-                storage.emplace_back(std::vector<char>{'m', 'e', 'w', '\0'});
-            } else {
-                for (auto& s : argv) {
-                    storage.emplace_back(s.begin(), s.end());
-                    storage.back().push_back('\0');
-                }
-            }
-            for (auto& v : storage) argp.push_back(v.data());
-
-            int argc = static_cast<int>(argp.size());
+            int argc = (int)argp.size();
             // Re-parse flags on every call so different argv per call (e.g.
             // distinct --benchmark_filter values across tests) take effect.
             // `--help` in argv still triggers exit(0) — documented GB behavior.
