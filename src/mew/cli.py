@@ -16,6 +16,7 @@ from mew import (
     BENCHMARK_VERSION as _gb_version,
     REGISTRY,
     Entry,
+    JSONLReporter,
     JSONReporter,
     ParquetReporter,
     Reporter,
@@ -135,11 +136,12 @@ def _build_reporters(
 ) -> list[Reporter]:
     """Resolve ``-o`` sinks into a list of reporters.
 
-    Sentinels ``-`` and ``stdout`` map to a rich terminal reporter; ``*.json`` and ``*.parquet`` map to file reporters.
+    Sentinels ``-`` and ``stdout`` map to a rich terminal reporter; ``*.json``,
+    ``*.jsonl``, and ``*.parquet`` map to file reporters.
     Defaults to a single rich reporter on stdout when no ``-o`` is provided.
     """
     if not outputs:
-        return [RichReporter(show_memory=show_memory, show_cpu=show_cpu)]
+        return [RichReporter(show_memory=show_memory, show_cpu=show_cpu, show_label=show_label)]
 
     reps: list[Reporter] = []
     seen_stdout = False
@@ -150,7 +152,9 @@ def _build_reporters(
                 print("duplicate stdout sink", file=sys.stderr)
                 raise SystemExit(2)
             seen_stdout = True
-            reps.append(RichReporter(show_memory=show_memory, show_cpu=show_cpu))
+            reps.append(
+                RichReporter(show_memory=show_memory, show_cpu=show_cpu, show_label=show_label)
+            )
             continue
         path = Path(raw).resolve()
         if path in seen_files:
@@ -160,11 +164,14 @@ def _build_reporters(
         suffix = path.suffix.lower()
         if suffix == ".json":
             reps.append(JSONReporter(output=Path(raw)))
+        elif suffix == ".jsonl":
+            reps.append(JSONLReporter(output=Path(raw)))
         elif suffix in (".parquet", ".pq"):
             reps.append(ParquetReporter(output=Path(raw)))
         else:
             print(
-                f"unsupported output format: {raw} (use `-`/`stdout`, *.json, *.parquet, or *.pq)",
+                f"unsupported output format: {raw} "
+                "(use `-`/`stdout`, *.json, *.jsonl, *.parquet, or *.pq)",
                 file=sys.stderr,
             )
             raise SystemExit(2)
@@ -192,7 +199,8 @@ def run(
         Parameter(
             name=["-o", "--output"],
             help="Output sink, repeatable: `-` for a rich terminal table, "
-            "`<path>.{json,parquet}` for a JSON/Parquet file. Default: `-`.",
+            "`<path>.{json,jsonl,parquet}` for a JSON / streaming-JSONL / Parquet "
+            "file. Default: `-`.",
         ),
     ] = [],
     min_time: Annotated[
