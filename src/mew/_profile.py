@@ -1,27 +1,53 @@
 """Shared infrastructure for profile-based extensions (memory, CPU, ...).
 
-``_MockState`` runs a benchmark body outside Google Benchmark's iteration loop.
+``_ProfileState`` runs a benchmark body outside Google Benchmark's iteration loop.
 ``EnrichedRun`` proxies a C++ Run while carrying optional profile attachments.
 ``_ProfileEnriching`` wraps a reporter to attach those profiles by benchmark name.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from mew._core import BenchmarkName, Run, RunType, TimeUnit
+    from mew._registry import Entry
     from mew.cpu import CPUProfile
     from mew.memory import MemoryProfile
 
 
-class _MockState:
-    """Stand-in for ``_core.State`` that runs the loop body ``n_iterations`` times.
+def _profile_key(function_name: str, args: str) -> str:
+    """Profile lookup key from GB's *structured* name parts.
 
-    Memory profiling needs one iteration; sampling CPU profilers need many to accumulate samples.
+    Survives the ``/min_time:…``/aggregate suffixes on ``benchmark_name()``;
+    yields ``entry.name/case:<i>`` for a family, ``entry.name`` otherwise.
+    """
+    return f"{function_name}/{args}" if args else function_name
+
+
+def iter_entry_cases(entry: Entry) -> Iterator[tuple[str, int]]:
+    """Yield ``(profile_key, range_value)`` per case an entry expands to.
+
+    Families yield one pair per case so a profiler drives each variant via
+    ``_ProfileState(range_value=i)`` under the key the reporter looks up.
+    """
+    if entry.case_labels is None:
+        yield _profile_key(entry.name, ""), 0
+    else:
+        for i in range(len(entry.case_labels)):
+            yield _profile_key(entry.name, f"case:{i}"), i
+
+
+class _ProfileState:
+    """``_core.State`` stand-in for the out-of-loop profiling passes.
+
+    Runs the body ``n_iterations`` times (memory: 1; sampling CPU: many).
+    ``range_value`` feeds ``range(0)`` so a family trampoline runs per case.
+    ``pause`` is a context-manager factory (CPU injects one that suspends sampling);
+    ``None`` makes :meth:`pause` a no-op, so memory still measures the region.
     """
 
     range_size: int = 0
@@ -31,9 +57,16 @@ class _MockState:
     skipped: bool = False
     error_occurred: bool = False
 
-    def __init__(self, n_iterations: int = 1) -> None:
+    def __init__(
+        self,
+        n_iterations: int = 1,
+        range_value: int = 0,
+        pause: Callable[[], AbstractContextManager[None]] | None = None,
+    ) -> None:
         self._n = n_iterations
         self._i = 0
+        self._range = range_value
+        self._pause = pause
 
     @property
     def iterations(self) -> int:
@@ -43,7 +76,7 @@ class _MockState:
     def max_iterations(self) -> int:
         return self._n
 
-    def __iter__(self) -> _MockState:
+    def __iter__(self) -> _ProfileState:
         return self
 
     def __next__(self) -> None:
@@ -62,7 +95,8 @@ class _MockState:
             yield n
 
     def pause(self) -> AbstractContextManager[None]:
-        return nullcontext()
+        # Injected factory (CPU suspends sampling); None → no-op (memory measures setup).
+        return self._pause() if self._pause is not None else nullcontext()
 
     def set_counter(self, name: str, value: float) -> None:
         pass
@@ -86,7 +120,7 @@ class _MockState:
         pass
 
     def range(self, pos: int = 0) -> int:
-        return 0
+        return self._range
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,16 +230,14 @@ class _ProfileEnriching:
         return self._inner.report_context(context)
 
     def report_runs(self, runs: list[Any]) -> None:
-        self._inner.report_runs(
-            [
-                EnrichedRun(
-                    r,
-                    memory=self._mem.get(r.benchmark_name()),
-                    cpu=self._cpu.get(r.benchmark_name()),
-                )
-                for r in runs
-            ]
-        )
+        enriched = []
+        for r in runs:
+            # Match structured parts, not benchmark_name(): its `/min_time:…`/aggregate
+            # suffixes aren't in the key and would miss every parametrize case.
+            name = r.run_name
+            key = _profile_key(name.function_name, name.args)
+            enriched.append(EnrichedRun(r, memory=self._mem.get(key), cpu=self._cpu.get(key)))
+        self._inner.report_runs(enriched)
 
     def finalize(self) -> None:
         if fn := getattr(self._inner, "finalize", None):

@@ -33,7 +33,7 @@ class BenchmarkOptions(TypedDict, total=False):
 class State(Protocol):
     """Structural state passed into benchmark targets.
 
-    Matched by the C++ ``_core.State`` and the ``_MockState`` used for out-of-loop profile passes.
+    Matched by the C++ ``_core.State`` and the ``_ProfileState`` used for out-of-loop profile passes.
     Covers iteration, timing control, counters, labels, and range/thread accessors.
     """
 
