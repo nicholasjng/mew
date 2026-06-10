@@ -60,10 +60,9 @@ aborts at the first import of an ASAN-built extension. Preload it explicitly:
 # otherwise its container-overflow annotations don't line up with the
 # instrumented build and ASAN reports false positives.
 MEW_ASAN=1 LD_PRELOAD="$(clang -print-file-name=libclang_rt.asan.so) $(clang -print-file-name=libc++.so)" \
-    ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" uv run --all-groups pytest
+    ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" uv run --all-groups pytest --capture no
 
-# macOS: use the wrapper script (dyld drops DYLD_INSERT_LIBRARIES across the
-# Homebrew python shim, so the script re-execs the real interpreter directly).
+# for macOS, there's a wrapper script to work around SIP.
 scripts/asan-pytest.sh
 ```
 

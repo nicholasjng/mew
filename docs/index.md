@@ -60,6 +60,8 @@ regression gates with an allowlist.
 
 ::::
 
+## Table of Contents
+
 ```{toctree}
 :caption: Getting started
 :maxdepth: 1
