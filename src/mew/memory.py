@@ -8,7 +8,7 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from mew._profile import _MockState
+from mew._profile import _ProfileState, iter_entry_cases
 
 if TYPE_CHECKING:
     from mew._registry import Entry
@@ -16,6 +16,18 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class MemoryProfile:
+    """Per-(case) memory summary captured by memray.
+
+    Attributes
+    ----------
+    peak_bytes : int
+        Peak resident set size (``metadata.peak_memory``).
+    total_bytes : int
+        Tracked heap live at the high-water mark, *not* the cumulative sum.
+    total_allocations : int
+        Cumulative allocation count (``metadata.total_allocations``).
+    """
+
     profiler: str
     peak_bytes: int
     total_bytes: int
@@ -47,7 +59,8 @@ def profile(
     Returns
     -------
     dict[str, MemoryProfile]
-        Per-entry profiles keyed by ``entry.name``.
+        Per-case profiles keyed by ``entry.name`` (or ``entry.name/case:<i>`` for
+        each variant of a parametrized family).
     """
     _ensure_memray()
     profiles = _collect_stats(entries)
@@ -62,25 +75,28 @@ def _collect_stats(entries: list[Entry]) -> dict[str, MemoryProfile]:
     profiles: dict[str, MemoryProfile] = {}
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
-        for i, entry in enumerate(entries):
-            dest = root / f"capture-{i}.bin"
-            with memray.Tracker(dest):
-                entry.fn(_MockState())
-            reader = memray.FileReader(dest)
-            records = list(reader.get_allocation_records())
-            total_bytes = sum(r.size for r in records if r.size > 0)
-            total_allocs = sum(r.n_allocations for r in records if r.size > 0)
-            try:
-                snapshots = list(reader.get_memory_snapshots())
-                peak = max((s.rss for s in snapshots), default=0) or total_bytes
-            except Exception:
-                peak = total_bytes
-            profiles[entry.name] = MemoryProfile(
-                profiler="memray",
-                peak_bytes=peak,
-                total_bytes=total_bytes,
-                total_allocations=total_allocs,
-            )
+        i = 0
+        for entry in entries:
+            for key, rng in iter_entry_cases(entry):
+                dest = root / f"capture-{i}.bin"
+                i += 1
+                with memray.Tracker(dest):
+                    entry.fn(_ProfileState(range_value=rng))
+                reader = memray.FileReader(dest)
+                meta = reader.metadata
+                # From metadata, not get_allocation_records(): that scan is O(every
+                # allocation) — minutes and gigabytes on an allocation-heavy body.
+                peak = meta.peak_memory
+                total_allocs = meta.total_allocations
+                # Live bytes at the high-water mark: bounded by peak concurrent allocs.
+                hwm = reader.get_high_watermark_allocation_records(merge_threads=True)
+                total_bytes = sum(r.size for r in hwm)
+                profiles[key] = MemoryProfile(
+                    profiler="memray",
+                    peak_bytes=peak,
+                    total_bytes=total_bytes,
+                    total_allocations=total_allocs,
+                )
     return profiles
 
 
@@ -92,7 +108,8 @@ def _write_flamegraph(entries: list[Entry], path: Path) -> None:
         combined = Path(tmpdir) / "combined.bin"
         with memray.Tracker(combined):
             for entry in entries:
-                entry.fn(_MockState())
+                for _, rng in iter_entry_cases(entry):
+                    entry.fn(_ProfileState(range_value=rng))
         reader = memray.FileReader(combined)
         reporter = FlameGraphReporter.from_snapshot(
             reader.get_high_watermark_allocation_records(merge_threads=True),
