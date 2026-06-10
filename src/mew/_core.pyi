@@ -7,7 +7,7 @@ from typing import Literal, overload
 
 BENCHMARK_COMMIT: str = "a8460680f0df91fd26205e0931708a26c3b4094d"
 
-BENCHMARK_VERSION: str = "v1.9.5"
+BENCHMARK_VERSION: str = "v1.9.5-74-ga8460680"
 
 class TimeUnit(enum.Enum):
     """Time unit used for reported per-iteration durations."""
