@@ -107,6 +107,7 @@ nanobind_add_stub(
     _core_stub
     MODULE _core
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
+    PATTERN_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/_mew/stubgen.pat
     PYTHON_PATH $<TARGET_FILE_DIR:_core>
     DEPENDS _core
 )

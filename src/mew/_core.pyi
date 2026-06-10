@@ -50,7 +50,8 @@ class BenchmarkName:
 
 class Run:
     """
-    A single benchmark run report. Times are in seconds (accumulated across iterations); use `adjusted_real_time()` for per-iteration averages.
+    A single benchmark run report.
+    Times are in seconds (accumulated across iterations); use `adjusted_real_time()` for per-iteration averages.
     """
 
     @property
@@ -98,10 +99,14 @@ def run_benchmarks(argv: Sequence[str], reporter: object | None = None) -> int:
     Pass a `Fanout` reporter to multiplex into multiple sinks.
     """
 
-class CounterFlags(enum.IntEnum):
+class CounterFlags(enum.IntFlag):
     """
-    Flags forwarded to `benchmark::Counter`. OR them together to combine (e.g. `kIsRate | kInvert`).
+    Flags forwarded to `benchmark::Counter`.
+    OR together to combine (e.g. `kIsRate | kInvert`).
     """
+
+    def __repr__(self, /):
+        """Return repr(self)."""
 
     kDefaults = 0
 
