@@ -16,7 +16,14 @@ from mew._registry import REGISTRY, Entry, Registry
 from mew._typing import BenchmarkFn, State
 from mew.api import benchmark, parametrize, product
 from mew.context import clear_context, get_context, set_context, update_context
-from mew.reporter import Fanout, JSONReporter, ParquetReporter, Reporter, RichReporter
+from mew.reporter import (
+    Fanout,
+    JSONLReporter,
+    JSONReporter,
+    ParquetReporter,
+    Reporter,
+    RichReporter,
+)
 from mew.runner import run
 
 try:
@@ -33,6 +40,7 @@ __all__ = [
     "BenchmarkHandle",
     "Entry",
     "Fanout",
+    "JSONLReporter",
     "JSONReporter",
     "ParquetReporter",
     "REGISTRY",

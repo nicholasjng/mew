@@ -50,6 +50,27 @@ def _fmt_bytes(n: int) -> str:
     return f"{n} B"
 
 
+def _build_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Project the raw C++ context dict into the serialized ``context`` block.
+
+    Shared by :class:`JSONReporter` and :class:`JSONLReporter` so both emit the
+    same shape. ``date`` is stamped at call time.
+    """
+    ctx: dict[str, Any] = {
+        "date": datetime.now(UTC).isoformat(),
+        "host_name": context.get("host_name"),
+        "executable": context.get("executable"),
+        "num_cpus": context.get("num_cpus"),
+        "mhz_per_cpu": context.get("mhz_per_cpu"),
+        "cpu_scaling_enabled": context.get("cpu_scaling") == "enabled",
+        "library_build_type": context.get("library_build_type"),
+    }
+    custom = context.get("custom")
+    if custom:
+        ctx["custom"] = custom
+    return ctx
+
+
 def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
     counters = r.counters  # hot path on C++ Run: each access rebuilds the dict
     d: dict[str, Any] = {
@@ -93,75 +114,151 @@ def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
     return d
 
 
-class JSONReporter:
-    """Emit a single JSON document modeled on Google Benchmark's own format.
+# Closing `]}` of the streamed doc, rewritten over itself each flush so the file
+# stays valid JSON.
+_JSON_CLOSER = "\n  ]\n}\n"
 
-    Buffers context and runs until :meth:`finalize`, then serializes a ``{"context": ..., "benchmarks": [...]}`` document.
+
+def _indent_block(text: str, spaces: int) -> str:
+    """Re-indent every line after the first by ``spaces`` (json.dumps indents from col 0)."""
+    return text.replace("\n", "\n" + " " * spaces)
+
+
+def _open_sink(output: Path | TextIO | None) -> tuple[TextIO, bool]:
+    """Resolve ``output`` to ``(file, owns_it)``: a Path is opened (owned), ``None`` → stdout, a stream is used as-is."""
+    if isinstance(output, Path):
+        return output.open("w"), True
+    if output is None:
+        return sys.stdout, False
+    return output, False
+
+
+def _close_sink(fh: TextIO | None, owns_fh: bool) -> None:
+    """Close ``fh`` only if this reporter opened it."""
+    if owns_fh and fh is not None:
+        fh.close()
+
+
+class JSONReporter:
+    """Emit a single ``{"context": ..., "benchmarks": [...]}`` document, GB-style.
+
+    To a **seekable** sink (a file) it streams: writes context + empty array up
+    front, then each :meth:`report_runs` seeks over the closing ``]}`` and re-writes
+    it, so the file is valid JSON after every flush (survives Ctrl-C). A non-seekable
+    sink (stdout, pipe) can't be rewritten, so it buffers and writes once at :meth:`finalize`.
 
     Parameters
     ----------
     output : Path, TextIO, or None, optional
-        Destination.
-        A :class:`~pathlib.Path` is written via :meth:`Path.write_text`; a text stream is written directly; ``None`` writes to ``sys.stdout``.
+        Destination. A Path is opened and closed here; a stream is written directly;
+        ``None`` writes to ``sys.stdout``.
     """
 
     def __init__(self, *, output: Path | TextIO | None = None) -> None:
         self._output = output
         self._context: dict[str, Any] = {}
-        self._runs: list[Run] = []
+        self._runs: list[Run] = []  # buffered (non-seekable) path only
+        self._fh: TextIO | None = None
+        self._owns_fh = False
+        self._streaming = False
+        # Byte offset of the closer, i.e. where the next row gets written.
+        self._reopen_pos = 0
+        self._first_row = True
 
     def report_context(self, context: dict[str, Any]) -> bool:
         self._context = dict(context)
+        self._fh, self._owns_fh = _open_sink(self._output)
+        self._streaming = self._fh.seekable()
+        if self._streaming:
+            # default=str: don't crash on Path/datetime; lossy by design.
+            ctx = _indent_block(json.dumps(_build_context(context), indent=2, default=str), 2)
+            self._fh.write('{\n  "context": ' + ctx + ',\n  "benchmarks": [')
+            self._reopen_pos = self._fh.tell()
+            self._fh.write(_JSON_CLOSER)
+            self._fh.flush()
         return True
 
     def report_runs(self, runs: list[Run]) -> None:
-        self._runs.extend(runs)
+        if not self._streaming:
+            self._runs.extend(runs)
+            return
+        assert self._fh is not None  # report_context runs first, always
+        # Overwrite the closer with the rows, then re-close. Rows are >> the closer,
+        # so no stale bytes; empty `runs` just rewrites it in place.
+        self._fh.seek(self._reopen_pos)
+        for r in runs:
+            prefix = "" if self._first_row else ","
+            self._first_row = False
+            row = _indent_block(json.dumps(_run_to_dict(r), indent=2, default=str), 4)
+            self._fh.write(f"{prefix}\n    {row}")
+        self._reopen_pos = self._fh.tell()
+        self._fh.write(_JSON_CLOSER)
+        self._fh.flush()
 
     def finalize(self) -> None:
-        ctx: dict[str, Any] = {
-            "date": datetime.now(UTC).isoformat(),
-            "host_name": self._context.get("host_name"),
-            "executable": self._context.get("executable"),
-            "num_cpus": self._context.get("num_cpus"),
-            "mhz_per_cpu": self._context.get("mhz_per_cpu"),
-            "cpu_scaling_enabled": self._context.get("cpu_scaling") == "enabled",
-            "library_build_type": self._context.get("library_build_type"),
-        }
-        custom = self._context.get("custom")
-        if custom:
-            ctx["custom"] = custom
+        if not self._streaming:
+            # Non-seekable sink: emit the whole document in one shot.
+            assert self._fh is not None
+            doc = {
+                "context": _build_context(self._context),
+                "benchmarks": [_run_to_dict(r) for r in self._runs],
+            }
+            self._fh.write(json.dumps(doc, indent=2, default=str) + "\n")
+        _close_sink(self._fh, self._owns_fh)
 
-        doc = {
-            "context": ctx,
-            "benchmarks": [_run_to_dict(r) for r in self._runs],
-        }
-        # `default=str` keeps non-JSON-native values (Path, datetime, …) from
-        # crashing the serializer. Lossy by design.
-        text = json.dumps(doc, indent=2, default=str)
-        if isinstance(self._output, Path):
-            self._output.write_text(text + "\n")
-        elif self._output is None:
-            sys.stdout.write(text + "\n")
-        else:
-            self._output.write(text + "\n")
+
+class JSONLReporter:
+    """Stream one JSON object per Run, one per line, flushed as runs land.
+
+    Append-only (works on pipes), so a long suite leaves a growing, ``tail``-able
+    file that survives interruption. Line 1 is a ``{"context": {...}}`` header; each
+    later line is one benchmark record. Consumers skip line 1 / branch on ``context``.
+
+    Parameters
+    ----------
+    output : Path, TextIO, or None, optional
+        Destination. A Path is opened and closed here; a stream is written directly;
+        ``None`` writes to ``sys.stdout``.
+    """
+
+    def __init__(self, *, output: Path | TextIO | None = None) -> None:
+        self._output = output
+        self._fh: TextIO | None = None
+        self._owns_fh = False
+
+    def report_context(self, context: dict[str, Any]) -> bool:
+        self._fh, self._owns_fh = _open_sink(self._output)
+        # Header first so provenance lands before any rows.
+        self._fh.write(json.dumps({"context": _build_context(context)}, default=str) + "\n")
+        self._fh.flush()
+        return True
+
+    def report_runs(self, runs: list[Run]) -> None:
+        assert self._fh is not None  # report_context runs first, always
+        for r in runs:
+            self._fh.write(json.dumps(_run_to_dict(r), default=str) + "\n")
+        self._fh.flush()
+
+    def finalize(self) -> None:
+        _close_sink(self._fh, self._owns_fh)
 
 
 class RichReporter:
     """Stream one row per benchmark to a terminal as runs complete.
 
-    The header is printed before any results land, so optional-column flags are passed up front rather than auto-detected.
+    The header prints before any results land, so optional-column flags are passed up front.
 
     Parameters
     ----------
     console : rich.console.Console, optional
-        Rich console to print to.
-        Defaults to a fresh :class:`~rich.console.Console`.
+        Console to print to. Defaults to a fresh one.
     show_memory : bool, default False
         Add ``Peak Mem`` / ``Total Alloc`` columns.
-        Per-run memory profiles are read from :class:`~mew._profile.EnrichedRun`.
     show_cpu : bool, default False
         Add ``Samples`` / ``Hottest Frame`` columns.
-        Per-run CPU profiles are read from :class:`~mew._profile.EnrichedRun`.
+    show_label : bool, default False
+        Add a ``Label`` column (the parametrize case id). Pass for families, where
+        the case is otherwise indistinguishable from the truncated name.
     """
 
     def __init__(
@@ -170,10 +267,12 @@ class RichReporter:
         console: Console | None = None,
         show_memory: bool = False,
         show_cpu: bool = False,
+        show_label: bool = False,
     ) -> None:
         self._console = console or Console()
         self._show_memory = show_memory
         self._show_cpu = show_cpu
+        self._show_label = show_label
         self._context: dict[str, Any] = {}
         self._widths: dict[str, int] = {}
 
@@ -209,6 +308,8 @@ class RichReporter:
             "real": 14,
             "cpu": 14,
         }
+        if self._show_label:
+            fixed["label"] = 20
         if self._show_memory:
             fixed["peak"] = 10
             fixed["alloc"] = 12
@@ -223,8 +324,10 @@ class RichReporter:
 
     def _print_header(self) -> None:
         w = self._widths
-        cells = [
-            "Benchmark".ljust(w["name"]),
+        cells = ["Benchmark".ljust(w["name"])]
+        if self._show_label:
+            cells.append("Label".ljust(w["label"]))
+        cells += [
             "Iters".rjust(w["iters"]),
             "Real".rjust(w["real"]),
             "CPU".rjust(w["cpu"]),
@@ -243,11 +346,17 @@ class RichReporter:
         w = self._widths
         unit = r.time_unit.name
         name = r.benchmark_name()
+        # Left-ellipsize: keep the disambiguating function suffix / case:N tail.
         if len(name) > w["name"]:
-            name = name[: w["name"] - 1] + "…"
+            name = "…" + name[-(w["name"] - 1) :]
 
-        cells = [
-            name.ljust(w["name"]),
+        cells = [name.ljust(w["name"])]
+        if self._show_label:
+            label = r.report_label
+            if len(label) > w["label"]:
+                label = label[: w["label"] - 1] + "…"
+            cells.append(label.ljust(w["label"]))
+        cells += [
             f"{r.iterations:,}".rjust(w["iters"]),
             f"{r.adjusted_real_time():.2f} {unit}".rjust(w["real"]),
             f"{r.adjusted_cpu_time():.2f} {unit}".rjust(w["cpu"]),
@@ -269,14 +378,13 @@ class RichReporter:
 class ParquetReporter:
     """Write a Parquet file with one row per benchmark Run.
 
-    The schema is static.
-    Arbitrarily-shaped user context is encoded as a JSON string column named ``custom`` (queryable via ``json_extract`` in DuckDB).
+    Static schema; user context goes in a JSON string column ``custom`` (query via
+    ``json_extract`` in DuckDB).
 
     Parameters
     ----------
     output : Path
-        Destination Parquet file.
-        Overwritten if it exists.
+        Destination file, overwritten if it exists.
 
     Raises
     ------
@@ -450,6 +558,7 @@ class Fanout:
 
 __all__ = [
     "Fanout",
+    "JSONLReporter",
     "JSONReporter",
     "ParquetReporter",
     "Reporter",
