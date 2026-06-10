@@ -19,7 +19,7 @@ struct PauseScope {
 }  // namespace
 
 void register_state(nb::module_& m) {
-    nb::enum_<benchmark::Counter::Flags>(m, "CounterFlags", nb::is_arithmetic(),
+    nb::enum_<benchmark::Counter::Flags>(m, "CounterFlags", nb::is_arithmetic(), nb::is_flag(),
                                          "Flags forwarded to `benchmark::Counter`.\n"
                                          "OR together to combine (e.g. `kIsRate | kInvert`).")
         .value("kDefaults", benchmark::Counter::kDefaults)
