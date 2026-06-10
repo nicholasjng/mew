@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -49,6 +50,16 @@ class _MockState:
         if self._i >= self._n:
             raise StopIteration
         self._i += 1
+
+    def keep_running_batch(self, n: int) -> bool:
+        if self._i < self._n:
+            self._i += n
+            return True
+        return False
+
+    def batches(self, n: int) -> Iterator[int]:
+        while self.keep_running_batch(n):
+            yield n
 
     def pause(self) -> AbstractContextManager[None]:
         return nullcontext()

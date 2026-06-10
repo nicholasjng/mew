@@ -8,6 +8,31 @@ for _ in state:
     do_work()
 ```
 
+## Batched iteration for very fast bodies
+
+Each `for _ in state` step crosses the Python→C boundary via `__next__`.
+For sub-100 ns bodies that dispatch is a meaningful share of the measured time.
+`State.batches(n)` yields `n` once per batch, letting the inner loop run as pure-Python `for _ in range(n)`:
+
+```python
+@mew.benchmark
+def bench_tight(state):
+    a, b = 1, 2
+    for n in state.batches(1024):
+        for _ in range(n):
+            a + b
+```
+
+:::{warning}
+Batched and naive (`for _ in state`) timings are **not directly comparable** — the batched form removes per-iter dispatch overhead from the measurement.
+Pick one style per benchmark and don't switch back and forth across releases.
+A consistent `tags=("batched",)` is a good way to flag these runs for downstream comparison.
+:::
+
+The last batch may overshoot `max_iterations` by up to `n - 1` body executions.
+GB reports the actual iteration count and divides by it, so the per-iter time is accurate — just expect a slightly higher total wall time when the body has visible side effects.
+Keep `n` well below `max_iterations` (1024 is a reasonable default).
+
 ## Pausing the timer
 
 {meth}`State.pause()` is a context manager that excludes its body from the measured region.

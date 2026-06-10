@@ -177,3 +177,36 @@ def test_run_with_no_entries_returns_zero():
     cap = Capture()
     assert mew.run(argv=_argv_fast(), reporter=cap) == 0
     assert cap.runs == []
+
+
+def test_state_batches_drives_body_in_multiples_of_n():
+    body_calls: list[int] = []
+
+    @mew.benchmark(iterations=10)
+    def bench_batched(state):
+        for n in state.batches(4):
+            for _ in range(n):
+                body_calls.append(1)
+
+    cap = Capture()
+    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    # 3 batches × 4 = 12 body calls; GB reports the actual count, not the cap.
+    assert cap.runs[0].iterations == 12
+    assert len(body_calls) == 12
+
+
+def test_state_batches_rejects_non_positive_n():
+    seen: list[type] = []
+
+    @mew.benchmark(iterations=1)
+    def bench_bad(state):
+        try:
+            state.batches(0)
+        except ValueError as e:
+            seen.append(type(e))
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    assert seen == [ValueError]

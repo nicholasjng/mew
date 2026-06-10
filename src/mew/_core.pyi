@@ -126,6 +126,12 @@ class CounterFlags(enum.IntFlag):
 
     kInvert = -2147483648
 
+class BatchIter:
+    """Iterator yielding batch sizes from `State.batches`."""
+
+    def __iter__(self) -> BatchIter: ...
+    def __next__(self) -> int: ...
+
 class PauseScope:
     """Context manager that pauses State timing within a scope."""
 
@@ -145,6 +151,19 @@ class State:
 
     def __iter__(self) -> State: ...
     def __next__(self) -> None: ...
+    def keep_running_batch(self, n: int) -> bool:
+        """
+        Advance the iteration counter by `n`; return whether the budget permits another batch.
+        Prefer `State.batches` for the idiomatic loop form.
+        """
+
+    def batches(self, n: int) -> BatchIter:
+        """
+        Return an iterator yielding `n` once per batch until the budget is spent.
+        Use with a nested `for _ in range(n)` to amortize `__next__` dispatch for very fast bodies.
+        Reported times include a small per-batch overshoot; do not mix with `for _ in state` results.
+        """
+
     def pause(self) -> PauseScope:
         """
         Return a context manager that pauses timing for the duration of the `with` block.
