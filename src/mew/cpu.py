@@ -2,18 +2,48 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from mew._profile import _MockState
+from mew._profile import _ProfileState, iter_entry_cases
 
 if TYPE_CHECKING:
+    from pyinstrument import Profiler
     from pyinstrument.frame import Frame
     from pyinstrument.session import Session
 
     from mew._registry import Entry
+
+
+def _sampling_pause(
+    prof: Profiler,
+) -> Callable[[], AbstractContextManager[None]]:
+    """``state.pause()`` factory that suspends ``prof``'s sampling for the block.
+
+    pyinstrument accumulates across ``stop()``/``start()`` and drops the gap. The
+    depth counter keeps only the outermost pause toggling it, since unbalanced
+    start/stop raises.
+    """
+    depth = 0
+
+    @contextmanager
+    def pause() -> Iterator[None]:
+        nonlocal depth
+        if depth == 0:
+            prof.stop()
+        depth += 1
+        try:
+            yield
+        finally:
+            depth -= 1
+            if depth == 0:
+                prof.start()
+
+    return pause
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +87,13 @@ def profile(
     Returns
     -------
     dict[str, CPUProfile]
-        Per-entry profiles keyed by ``entry.name``.
+        Per-case profiles keyed by ``entry.name`` (or ``entry.name/case:<i>`` for
+        each variant of a parametrized family).
+
+    Notes
+    -----
+    ``state.pause()`` regions are excluded: the pause suspends the sampler, as
+    ``pause()`` excludes setup from a timed run.
     """
     _ensure_pyinstrument()
     profiles = _collect_stats(entries, interval, inner_iterations)
@@ -75,13 +111,20 @@ def _collect_stats(
 
     profiles: dict[str, CPUProfile] = {}
     for entry in entries:
-        prof = pyinstrument.Profiler(interval=interval, async_mode="disabled")
-        with prof:
-            entry.fn(_MockState(n_iterations=inner_iterations))
-        session = prof.last_session
-        # set on context manager exit, always present.
-        assert session is not None
-        profiles[entry.name] = _summarize(session)
+        for key, rng in iter_entry_cases(entry):
+            prof = pyinstrument.Profiler(interval=interval, async_mode="disabled")
+            with prof:
+                entry.fn(
+                    _ProfileState(
+                        n_iterations=inner_iterations,
+                        range_value=rng,
+                        pause=_sampling_pause(prof),
+                    )
+                )
+            session = prof.last_session
+            # set on context manager exit, always present.
+            assert session is not None
+            profiles[key] = _summarize(session)
     return profiles
 
 
@@ -94,9 +137,11 @@ def _write_html(
     import pyinstrument
 
     prof = pyinstrument.Profiler(interval=interval, async_mode="disabled")
+    pause = _sampling_pause(prof)
     with prof:
         for entry in entries:
-            entry.fn(_MockState(n_iterations=inner_iterations))
+            for _, rng in iter_entry_cases(entry):
+                entry.fn(_ProfileState(n_iterations=inner_iterations, range_value=rng, pause=pause))
     path.write_text(prof.output_html())
 
 
