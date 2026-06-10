@@ -16,6 +16,11 @@ struct PauseScope {
     benchmark::State* state;
     std::unique_ptr<benchmark::ScopedPauseTiming> guard;
 };
+
+struct BatchIter {
+    benchmark::State* state;
+    int64_t n;
+};
 }  // namespace
 
 void register_state(nb::module_& m) {
@@ -31,6 +36,15 @@ void register_state(nb::module_& m) {
         .value("kAvgIterations", benchmark::Counter::kAvgIterations)
         .value("kAvgIterationsRate", benchmark::Counter::kAvgIterationsRate)
         .value("kInvert", benchmark::Counter::kInvert);
+
+    nb::class_<BatchIter>(m, "BatchIter", "Iterator yielding batch sizes from `State.batches`.")
+        .def(
+            "__iter__", [](BatchIter& self) -> BatchIter& { return self; },
+            nb::rv_policy::reference_internal)
+        .def("__next__", [](BatchIter& self) {
+            if (!self.state->KeepRunningBatch(self.n)) throw nb::stop_iteration();
+            return self.n;
+        });
 
     nb::class_<PauseScope>(m, "PauseScope",
                            "Context manager that pauses State timing within a scope.")
@@ -58,6 +72,28 @@ void register_state(nb::module_& m) {
              [](benchmark::State& self) {
                  if (!self.KeepRunning()) throw nb::stop_iteration();
              })
+        .def(
+            "keep_running_batch",
+            [](benchmark::State& self, int64_t n) {
+                if (n <= 0) throw nb::value_error("batch size must be positive");
+                return self.KeepRunningBatch(n);
+            },
+            "n"_a,
+            "Advance the iteration counter by `n`; return whether the budget permits another "
+            "batch.\n"
+            "Prefer `State.batches` for the idiomatic loop form.")
+        .def(
+            "batches",
+            [](benchmark::State& self, int64_t n) {
+                if (n <= 0) throw nb::value_error("batch size must be positive");
+                return BatchIter{&self, n};
+            },
+            nb::keep_alive<0, 1>(), "n"_a,
+            "Return an iterator yielding `n` once per batch until the budget is spent.\n"
+            "Use with a nested `for _ in range(n)` to amortize `__next__` dispatch for very fast "
+            "bodies.\n"
+            "Reported times include a small per-batch overshoot; do not mix with `for _ in state` "
+            "results.")
         .def(
             "pause", [](benchmark::State& self) { return PauseScope{&self, nullptr}; },
             nb::keep_alive<0, 1>(),
