@@ -84,6 +84,7 @@ guide/cli
 guide/reporters
 guide/profiling-cpu
 guide/profiling-memory
+guide/profiling-native
 guide/regressions
 ```
 
