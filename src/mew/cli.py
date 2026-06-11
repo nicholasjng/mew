@@ -320,6 +320,104 @@ def run(
         _run(entries, argv=argv, reporter=reporters)
 
 
+@app.command(usage="Usage: mew profile [OPTIONS] [PATHS]")
+def profile(
+    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],
+    /,
+    *,
+    pattern: Annotated[
+        str | None,
+        Parameter(
+            name=["-k", "--pattern"],
+            help="Only profile benchmarks whose name *contains* this substring.",
+        ),
+    ] = None,
+    tag: Annotated[
+        list[str],
+        Parameter(
+            name=["-t", "--tag"],
+            help="Filter benchmarks by tag. Can be repeated, uses OR semantics.",
+        ),
+    ] = [],
+    profiler: Annotated[
+        str,
+        Parameter(
+            name=["-p", "--profiler"],
+            help="Backend: `auto` (the platform's native profiler), `xctrace` "
+            "(macOS), `py-spy` (Linux/Windows), or `perf` (Linux).",
+        ),
+    ] = "auto",
+    output_dir: Annotated[
+        Path,
+        Parameter(
+            name=["-o", "--output-dir"],
+            help="Directory for the recorded artifact(s). Default: `./.mew-traces`.",
+        ),
+    ] = Path(".mew-traces"),
+    template: Annotated[
+        str,
+        Parameter(
+            help="(xctrace only) Instruments template name (see `xctrace list "
+            "templates`) or a path to a `.tracetemplate`. Default: `Time Profiler`.",
+        ),
+    ] = "Time Profiler",
+    iterations: Annotated[
+        int,
+        Parameter(
+            help="Times the body runs per case under the sampler (default 100000). "
+            "Out-of-process samplers run at ~1 kHz, so fast benchmarks need many reps.",
+        ),
+    ] = 100_000,
+    time_limit: Annotated[
+        str | None,
+        Parameter(help="Hard cap on each recording, e.g. `10s`. Bounds a runaway body."),
+    ] = None,
+    separate: Annotated[
+        bool,
+        Parameter(
+            name="--separate",
+            help="(xctrace only) Write one `<case>.trace` per case instead of a "
+            "single combined bundle with one run per case.",
+        ),
+    ] = False,
+    open_app: Annotated[
+        bool,
+        Parameter(name="--open", help="Open the resulting artifact(s) in their viewer."),
+    ] = False,
+) -> None:
+    """Profile benchmarks out-of-process, capturing native C frames.
+
+    Picks a native-frame profiler (xctrace on macOS, py-spy/perf on Linux) and
+    records an artifact you open in its viewer. For in-process Python-level
+    sampling instead, use `mew run --sample`.
+    """
+    from mew import profilers
+
+    backend = profilers.select(profiler)
+
+    with _discovery.discovered():
+        entries = _collect(paths, pattern=pattern, tags=tag or None)
+        if not entries:
+            print("no benchmarks found", file=sys.stderr)
+            raise SystemExit(1)
+        artifacts = backend.run(
+            entries,
+            output_dir=output_dir,
+            iterations=iterations,
+            time_limit=time_limit,
+            template=template,
+            separate=separate,
+        )
+
+    for key, path in artifacts.items():
+        print(f"{key}\t{path}")
+    if open_app:
+        for path in dict.fromkeys(artifacts.values()):
+            backend.open_artifact(path)
+    if artifacts:
+        print(f"Open in {backend.viewer_hint}.", file=sys.stderr)
+
+
 @app.command
 def compare(
     files: list[Path],
