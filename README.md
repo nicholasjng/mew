@@ -26,7 +26,7 @@ benchmarks/bench_sort.py::bench_sorted │ 1,000,000 │   32.10 ns │   32.05 
 
 - **Decorate**: `@mew.benchmark`, `@mew.parametrize`, `@mew.product` register one benchmark or a benchmark family.
 - **Run**: `mew run` discovers `bench_*.py` files, streams results to a rich table, JSON, or Parquet.
-- **Profiling**: `--profile-cpu` (pyinstrument flame graphs) and `--profile-memory` (memray allocations) in the same run.
+- **Profiling**: `mew run --sample` (in-process pyinstrument) and `--profile-memory` (memray allocations) in the same run; `mew profile` for native C frames via xctrace / py-spy / perf.
 - **Compare**: `mew compare baseline.json head.json --fail-on-regression 5` for CI jobs.
 
 ## Installation

@@ -238,32 +238,33 @@ def run(
             help="Write an HTML flame graph containing allocation data to this path. Implies `--profile-memory`.",
         ),
     ] = None,
-    profile_cpu: Annotated[
+    sample: Annotated[
         bool,
         Parameter(
-            name="--profile-cpu",
-            help="Profile CPU time with `pyinstrument` before the timing run.",
+            name="--sample",
+            help="Sample CPU time in-process with `pyinstrument` before the timing run. "
+            "Python frames only — for native/C frames use `mew profile`.",
         ),
     ] = False,
-    cpu_interval: Annotated[
+    sample_interval: Annotated[
         float,
         Parameter(
-            name="--cpu-interval",
+            name="--sample-interval",
             help="`pyinstrument` sampling interval in seconds (default 1e-4).",
         ),
     ] = 1e-4,
-    cpu_iterations: Annotated[
+    sample_iterations: Annotated[
         int,
         Parameter(
-            name="--cpu-iterations",
+            name="--sample-iterations",
             help="Iterations of the body per benchmark under the sampler (default 1000).",
         ),
     ] = 1000,
-    cpu_output: Annotated[
+    sample_html: Annotated[
         Path | None,
         Parameter(
-            name="--cpu-output",
-            help="Write a pyinstrument HTML report to this path. Implies `--profile-cpu`",
+            name="--sample-html",
+            help="Write a pyinstrument HTML report to this path. Implies `--sample`.",
         ),
     ] = None,
 ) -> None:
@@ -287,7 +288,7 @@ def run(
         reporters = _build_reporters(
             output,
             show_memory=profile_memory or flamegraph is not None,
-            show_cpu=profile_cpu or cpu_output is not None,
+            show_cpu=sample or sample_html is not None,
             # Label column distinguishes family case rows from the truncated name.
             show_label=any(e.case_labels for e in entries),
         )
@@ -298,14 +299,14 @@ def run(
             from mew.memory import profile as _profile_mem
 
             memory_profiles = _profile_mem(entries, flamegraph=flamegraph)
-        if profile_cpu or cpu_output is not None:
+        if sample or sample_html is not None:
             from mew.cpu import profile as _profile_cpu
 
             cpu_profiles = _profile_cpu(
                 entries,
-                output=cpu_output,
-                interval=cpu_interval,
-                inner_iterations=cpu_iterations,
+                output=sample_html,
+                interval=sample_interval,
+                inner_iterations=sample_iterations,
             )
 
         if memory_profiles is not None or cpu_profiles is not None:

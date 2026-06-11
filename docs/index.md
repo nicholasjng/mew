@@ -47,8 +47,8 @@ streams results to the terminal, JSON, or Parquet.
 :::{grid-item-card} Profile
 :link: guide/profiling-cpu
 :link-type: doc
-`--profile-cpu` for `pyinstrument` flame graphs, `--profile-memory` for
-`memray` allocation reports — same run, same registry.
+`--sample` for `pyinstrument` CPU sampling, `--profile-memory` for `memray`
+allocations, or `mew profile` for native C frames via Instruments / py-spy / perf.
 :::
 
 :::{grid-item-card} Compare
