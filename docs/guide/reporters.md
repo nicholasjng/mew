@@ -11,7 +11,7 @@ The C++ runner calls them in the main thread with the GIL held.
   `mew run` when no `-o` is given. Optional columns: `Peak Mem` /
   `Total Alloc` (via `show_memory=True`) and `Samples` / `Hottest Frame`
   (via `show_cpu=True`). The CLI exposes those options via
-  `--profile-memory` / `--profile-cpu`.
+  `--profile-memory` / `--sample`.
 
 {class}`~mew.JSONReporter`
 : Emits a single `{"context": ..., "benchmarks": [...]}` document, shaped

@@ -34,7 +34,7 @@ The following extras are available for extra CLI features:
 
 | Extra      | Pulls in                  | Enables                                                  |
 | ---------- | ------------------------- | -------------------------------------------------------- |
-| `cpu`      | `pyinstrument`            | `mew run --profile-cpu`, `--cpu-output report.html`      |
+| `cpu`      | `pyinstrument`            | `mew run --sample`, `--sample-html report.html`          |
 | `memory`   | `memray` (non-Windows)    | `mew run --profile-memory`, `--flamegraph alloc.html`    |
 | `dev`      | `pytest`, `ruff`, `pyarrow`, `duckdb`, build deps | Local development and Parquet output |
 
