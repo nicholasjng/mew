@@ -15,7 +15,6 @@ from mew._session import new_session_id
 from mew.reporter import Reporter
 
 if TYPE_CHECKING:
-    from mew._core import Run
     from mew._typing import BenchmarkOptions
 
 
@@ -122,15 +121,18 @@ def run(
             handle.arg_name("case")
 
     rep = _to_single_reporter(reporter)
+    # Provenance is overlaid onto the GB context by the binding (run_benchmarks
+    # merges extra_context before calling report_context), so every reporter —
+    # built-in or user-supplied — sees session identity without a wrapper.
+    extra_context: dict[str, Any] = {}
     if rep is not None:
-        rep = _ContextInjecting(
-            rep,
-            custom=_context._snapshot(),
-            session_id=new_session_id(),
-            session_tag=session_tag,
-        )
+        extra_context["session_id"] = new_session_id()
+        if session_tag:
+            extra_context["session_tag"] = session_tag
+        if custom := _context._snapshot():
+            extra_context["custom"] = custom
     with _silence_native_stderr():
-        return _core.run_benchmarks(cli, rep)
+        return _core.run_benchmarks(cli, rep, extra_context)
 
 
 def _to_single_reporter(
@@ -151,42 +153,3 @@ def _to_single_reporter(
     if len(reps) == 1:
         return reps[0]
     return Fanout(reps)
-
-
-class _ContextInjecting:
-    """Reporter wrapper that injects session identity and user context.
-
-    ``session_id``/``session_tag`` land as top-level context keys; user context
-    goes under ``ctx['custom']`` (only when non-empty, preserving the bare
-    GB-context shape for runs that never call :func:`mew.set_context`).
-    """
-
-    def __init__(
-        self,
-        inner: Reporter,
-        *,
-        custom: dict[str, Any],
-        session_id: str,
-        session_tag: str | None = None,
-    ) -> None:
-        self._inner = inner
-        self._custom = custom
-        self._session_id = session_id
-        self._session_tag = session_tag
-
-    def report_context(self, context: dict[str, Any]) -> bool:
-        merged = dict(context)
-        merged["session_id"] = self._session_id
-        if self._session_tag:
-            merged["session_tag"] = self._session_tag
-        if self._custom:
-            merged["custom"] = self._custom
-        return self._inner.report_context(merged)
-
-    def report_runs(self, runs: list[Run]) -> None:
-        self._inner.report_runs(runs)
-
-    def finalize(self) -> None:
-        fn = getattr(self._inner, "finalize", None)
-        if callable(fn):
-            fn()

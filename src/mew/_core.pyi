@@ -52,6 +52,7 @@ class Run:
     """
     A single benchmark run report.
     Times are in seconds (accumulated across iterations); use `adjusted_real_time()` for per-iteration averages.
+    Carries a `__dict__` (dynamic_attr) so out-of-loop profile passes can attach `.memory` / `.cpu` to a row in place.
     """
 
     @property
@@ -92,10 +93,13 @@ class Run:
     @property
     def skipped(self) -> bool: ...
 
-def run_benchmarks(argv: Sequence[str], reporter: object | None = None) -> int:
+def run_benchmarks(
+    argv: Sequence[str], reporter: object | None = None, extra_context: dict = {}
+) -> int:
     """
     Initialize Google Benchmark with `argv` and run all registered benchmarks.
     Returns the number of benchmarks run.
+    `extra_context` keys are overlaid onto the context dict passed to the reporter's `report_context` (session id/tag, user context).
     Pass a `Fanout` reporter to multiplex into multiple sinks.
     """
 
@@ -217,6 +221,7 @@ class BenchmarkHandle:
     def report_aggregates_only(self, value: bool = True) -> BenchmarkHandle: ...
     def display_aggregates_only(self, value: bool = True) -> BenchmarkHandle: ...
     def dense_range(self, start: int, limit: int, step: int = 1) -> BenchmarkHandle: ...
+    def arg(self, value: int) -> BenchmarkHandle: ...
     def arg_name(self, name: str) -> BenchmarkHandle: ...
     @property
     def name(self) -> str: ...

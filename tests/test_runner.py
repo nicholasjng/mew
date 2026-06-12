@@ -47,6 +47,37 @@ def test_run_single_benchmark_captures_one_run():
     assert cap.context["num_cpus"] >= 1
 
 
+def test_run_benchmarks_extra_context_overlays_onto_report_context():
+    """The binding merges `extra_context` into the GB context, last-wins.
+
+    Exercises the `run_benchmarks(..., extra_context=...)` parameter directly:
+    overlaid keys reach `report_context`, override GB-provided keys, and the
+    untouched GB keys still come through.
+    """
+    from mew import _core
+
+    def bench(state):
+        for _ in state:
+            pass
+
+    _core.clear_registered_benchmarks()
+    _core.register_benchmark("bench_overlay", bench)
+    try:
+        cap = Capture()
+        extra = {"session_id": "sid-123", "host_name": "overridden", "custom": {"k": "v"}}
+        _core.run_benchmarks(_argv_fast(), cap, extra)
+    finally:
+        _core.clear_registered_benchmarks()
+
+    assert cap.context is not None
+    assert cap.context["session_id"] == "sid-123"
+    assert cap.context["custom"] == {"k": "v"}
+    # Overlay wins over the value GB put in the context...
+    assert cap.context["host_name"] == "overridden"
+    # ...while GB keys absent from extra_context pass through untouched.
+    assert cap.context["num_cpus"] >= 1
+
+
 def test_run_parametrize_emits_one_run_per_variant():
     @mew.parametrize([{"n": 1}, {"n": 2}, {"n": 3}])
     def bench_x(state, n):
