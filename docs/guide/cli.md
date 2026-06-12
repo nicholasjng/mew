@@ -36,6 +36,8 @@ Pass `-o` (repeatable):
 
 Duplicate sinks (two stdout sinks, or two writers pointing at the same path) are an error.
 
+`--append` adds the run as a new session to an existing `.jsonl` / `.parquet` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually — see [](regressions.md#comparing-sessions-in-one-file).
+
 ### Profiling flags
 
 These attach **in-process** measurements to the timing table. For native (C/C++)
