@@ -8,6 +8,7 @@ invoking any external profiler, since those need full Xcode / Linux tooling.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import textwrap
@@ -217,3 +218,44 @@ def test_pyspy_unavailable_on_macos(monkeypatch):
     reason = profilers._BACKENDS["py-spy"].unavailable_reason()
     assert reason is not None
     assert "macOS" in reason
+
+
+# --- empty-artifact guards ---------------------------------------------------
+# `py-spy record` / `perf record` exit 0 even when the launched worker died, so a
+# failed bench would otherwise leave an empty artifact that reads as success.
+
+
+def test_pyspy_require_samples_rejects_empty_profile(tmp_path):
+    from mew.profilers.pyspy import _require_samples
+
+    dest = tmp_path / "empty.speedscope.json"
+    dest.write_text(json.dumps({"shared": {"frames": []}, "profiles": []}))
+    with pytest.raises(SystemExit, match="no samples"):
+        _require_samples(dest, "bench.py::f")
+
+
+def test_pyspy_require_samples_accepts_real_profile(tmp_path):
+    from mew.profilers.pyspy import _require_samples
+
+    dest = tmp_path / "ok.speedscope.json"
+    dest.write_text(
+        json.dumps({"shared": {"frames": [{"name": "f"}]}, "profiles": [{"samples": [[0]]}]})
+    )
+    _require_samples(dest, "bench.py::f")  # no raise
+
+
+def test_perf_require_samples_rejects_empty_script(tmp_path):
+    from mew.profilers.perf import _require_samples
+
+    dest = tmp_path / "empty.perf.txt"
+    dest.write_text("   \n")
+    with pytest.raises(SystemExit, match="no samples"):
+        _require_samples(dest, "bench.py::f")
+
+
+def test_perf_require_samples_accepts_nonempty_script(tmp_path):
+    from mew.profilers.perf import _require_samples
+
+    dest = tmp_path / "ok.perf.txt"
+    dest.write_text("python 1234 [000] 0.1: cycles:\n\t  ffff _start\n")
+    _require_samples(dest, "bench.py::f")  # no raise
