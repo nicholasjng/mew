@@ -1,0 +1,18 @@
+# Keep the build context to source only. Honored by both `docker build` and
+# Apple `container build` (BuildKit). Critically, the host `.venv` is macOS/wrong
+# -arch and would corrupt the in-container `uv sync` — never copy it in.
+.venv/
+.venv-ft/
+build/
+.git/
+.jj/
+docs/_build/
+
+# Caches and local artifacts — irrelevant to the build.
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.ruff_cache/
+.mew-traces/
+*.trace/
+.DS_Store
