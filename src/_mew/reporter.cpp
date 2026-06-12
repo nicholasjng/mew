@@ -48,21 +48,30 @@ nb::dict build_context_dict(const Context& ctx) {
 class PyReporter : public BenchmarkReporter {
    public:
     nb::object py;
+    // Caller-supplied keys (session id/tag, user context) overlaid onto the
+    // GB-built context before the Python reporter sees it. Empty for direct
+    // `run_benchmarks` calls that pass no provenance.
+    nb::dict extra_context;
     // GB's reporter interface is noexcept, so callback exceptions are stashed
     // here and rethrown from `run_benchmarks` after the loop returns.
     std::exception_ptr pending_exception;
 
-    explicit PyReporter(nb::object obj) : py(std::move(obj)) {}
+    PyReporter(nb::object obj, nb::dict extra)
+        : py(std::move(obj)), extra_context(std::move(extra)) {}
 
     ~PyReporter() override {
         nb::gil_scoped_acquire gil;
         py.reset();
+        extra_context.reset();
     }
 
     bool ReportContext(const Context& ctx) override {
         nb::gil_scoped_acquire gil;
         try {
-            auto res = py.attr("report_context")(build_context_dict(ctx));
+            nb::dict ctx_dict = build_context_dict(ctx);
+            // Overlay caller keys last so provenance wins over GB defaults.
+            for (auto [k, v] : extra_context) ctx_dict[k] = v;
+            auto res = py.attr("report_context")(ctx_dict);
             if (res.is_none()) return true;
             return nb::cast<bool>(res);
         } catch (...) {
@@ -124,7 +133,10 @@ void register_reporter(nb::module_& m) {
     nb::class_<Run>(m, "Run",
                     "A single benchmark run report.\n"
                     "Times are in seconds (accumulated across iterations); use "
-                    "`adjusted_real_time()` for per-iteration averages.")
+                    "`adjusted_real_time()` for per-iteration averages.\n"
+                    "Carries a `__dict__` (dynamic_attr) so out-of-loop profile "
+                    "passes can attach `.memory` / `.cpu` to a row in place.",
+                    nb::dynamic_attr())
         .def_ro("run_name", &Run::run_name)
         .def("benchmark_name", &Run::benchmark_name)
         .def_ro("family_index", &Run::family_index)
@@ -156,7 +168,7 @@ void register_reporter(nb::module_& m) {
 
     m.def(
         "run_benchmarks",
-        [](std::vector<std::string> argv, nb::object reporter) {
+        [](std::vector<std::string> argv, nb::object reporter, nb::dict extra_context) {
             // GB only shuffles the char** array, never writes into the strings.
             if (argv.empty()) argv.emplace_back("mew");
             std::vector<char*> argp;
@@ -171,7 +183,7 @@ void register_reporter(nb::module_& m) {
 
             std::unique_ptr<PyReporter> pr;
             if (!reporter.is_none()) {
-                pr = std::make_unique<PyReporter>(reporter);
+                pr = std::make_unique<PyReporter>(reporter, extra_context);
             }
 
             size_t count;
@@ -193,8 +205,10 @@ void register_reporter(nb::module_& m) {
             }
             return count;
         },
-        "argv"_a, "reporter"_a = nb::none(),
+        "argv"_a, "reporter"_a = nb::none(), "extra_context"_a = nb::dict(),
         "Initialize Google Benchmark with `argv` and run all registered benchmarks.\n"
         "Returns the number of benchmarks run.\n"
+        "`extra_context` keys are overlaid onto the context dict passed to the "
+        "reporter's `report_context` (session id/tag, user context).\n"
         "Pass a `Fanout` reporter to multiplex into multiple sinks.");
 }

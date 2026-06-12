@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 from datetime import UTC, datetime
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TextIO, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TextIO, cast, runtime_checkable
 
 from rich.console import Console
 from rich.text import Text
 
 from mew._core import Run
-from mew._profile import EnrichedRun
 
 if TYPE_CHECKING:
     from mew.cpu import CPUProfile
@@ -80,7 +80,7 @@ def _build_context(context: dict[str, Any]) -> dict[str, Any]:
     return ctx
 
 
-def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
+def _run_to_dict(r: Run) -> dict[str, Any]:
     counters = r.counters  # hot path on C++ Run: each access rebuilds the dict
     d: dict[str, Any] = {
         "name": r.benchmark_name(),
@@ -108,21 +108,10 @@ def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
         d["variant"] = variant
     mem: MemoryProfile | None = getattr(r, "memory", None)
     if mem is not None:
-        d["memory"] = {
-            "profiler": mem.profiler,
-            "peak_bytes": mem.peak_bytes,
-            "total_bytes": mem.total_bytes,
-            "total_allocations": mem.total_allocations,
-        }
+        d["memory"] = dataclasses.asdict(mem)
     cpu: CPUProfile | None = getattr(r, "cpu", None)
     if cpu is not None:
-        d["cpu_profile"] = {
-            "profiler": cpu.profiler,
-            "wall_time": cpu.wall_time,
-            "sample_count": cpu.sample_count,
-            "top_function": cpu.top_function,
-            "top_function_total_self_time": cpu.top_function_total_self_time,
-        }
+        d["cpu_profile"] = dataclasses.asdict(cpu)
     return d
 
 
@@ -142,7 +131,7 @@ def _open_sink(output: Path | TextIO | None, mode: str = "w") -> tuple[TextIO, b
     ``mode`` applies only to a Path sink (``"a"`` appends a new segment).
     """
     if isinstance(output, Path):
-        return output.open(mode), True
+        return cast(TextIO, output.open(mode)), True
     if output is None:
         return sys.stdout, False
     return output, False
@@ -371,7 +360,7 @@ class RichReporter:
         self._console.print(Text(line, style="bold"))
         self._console.print(Text("─" * len(line), style="dim"))
 
-    def _print_row(self, r: Run | EnrichedRun) -> None:
+    def _print_row(self, r: Run) -> None:
         w = self._widths
         unit = r.time_unit.name
         name = r.benchmark_name()
@@ -472,7 +461,7 @@ class ParquetReporter:
             table = pa.concat_tables([existing, table], promote_options="default")
         pq.write_table(table, str(self._output))
 
-    def _row(self, r: Run | EnrichedRun, date: datetime, custom_json: str | None) -> dict[str, Any]:
+    def _row(self, r: Run, date: datetime, custom_json: str | None) -> dict[str, Any]:
         ctx = self._context
         mem: MemoryProfile | None = getattr(r, "memory", None)
         cpu: CPUProfile | None = getattr(r, "cpu", None)
@@ -510,27 +499,8 @@ class ParquetReporter:
             "cpu_scaling_enabled": ctx.get("cpu_scaling") == "enabled",
             "library_build_type": ctx.get("library_build_type"),
             "custom": custom_json,
-            "memory": json.dumps(
-                {
-                    "profiler": mem.profiler,
-                    "peak_bytes": mem.peak_bytes,
-                    "total_bytes": mem.total_bytes,
-                    "total_allocations": mem.total_allocations,
-                }
-            )
-            if mem is not None
-            else None,
-            "cpu_profile": json.dumps(
-                {
-                    "profiler": cpu.profiler,
-                    "wall_time": cpu.wall_time,
-                    "sample_count": cpu.sample_count,
-                    "top_function": cpu.top_function,
-                    "top_function_total_self_time": cpu.top_function_total_self_time,
-                }
-            )
-            if cpu is not None
-            else None,
+            "memory": json.dumps(dataclasses.asdict(mem)) if mem is not None else None,
+            "cpu_profile": json.dumps(dataclasses.asdict(cpu)) if cpu is not None else None,
         }
 
 
@@ -593,7 +563,7 @@ class Fanout:
 
     def report_context(self, context: dict[str, Any]) -> bool:
         results = [r.report_context(context) for r in self._reporters]
-        return all(results) if results else True
+        return all(results)
 
     def report_runs(self, runs: list[Run]) -> None:
         for r in self._reporters:
