@@ -26,30 +26,6 @@ DEFAULT_TEMPLATE = "Time Profiler"
 COMBINED_NAME = "mew.trace"
 
 
-def _record_command(
-    exe: str,
-    *,
-    template: str,
-    dest: Path,
-    append: bool,
-    time_limit: str | None,
-    file: str,
-    entry_name: str,
-    case: int,
-    iterations: int,
-) -> list[str]:
-    """Build the ``xctrace record ... --launch -- <worker>`` argv for one case."""
-    cmd = [exe, "record", "--template", template, "--output", str(dest)]
-    if append:
-        # Add this case as another run inside the existing bundle.
-        cmd.append("--append-run")
-    if time_limit:
-        cmd += ["--time-limit", time_limit]
-    cmd += ["--target-stdout", "-", "--launch", "--"]
-    cmd += worker_argv(file=file, entry_name=entry_name, case=case, iterations=iterations)
-    return cmd
-
-
 class XctraceProfiler:
     """Records Instruments traces via ``xctrace`` (macOS only)."""
 
@@ -97,7 +73,7 @@ class XctraceProfiler:
             if entry.file is None:
                 print(f"mew: skipping {entry.name}: no source file to launch", file=sys.stderr)
                 continue
-            for key, rng in iter_entry_cases(entry):
+            for key, case in iter_entry_cases(entry):
                 if separate:
                     dest = output_dir / f"{slug(key)}.trace"
                     if dest.exists():
@@ -107,18 +83,20 @@ class XctraceProfiler:
                     dest = combined
                     append = combined_started
                     combined_started = True
-                cmd = _record_command(
-                    exe,
-                    template=template,
-                    dest=dest,
-                    append=append,
-                    time_limit=time_limit,
-                    file=entry.file,
-                    entry_name=entry.name,
-                    case=rng,
-                    iterations=iterations,
+
+                cmd = [exe, "record", "--template", template, "--output", str(dest)]
+                if append:
+                    # Add this case as another run inside the existing bundle.
+                    cmd.append("--append-run")
+                if time_limit:
+                    cmd += ["--time-limit", time_limit]
+
+                cmd += ["--target-stdout", "-", "--launch", "--"]
+                cmd += worker_argv(
+                    file=entry.file, entry_name=entry.name, case=case, iterations=iterations
                 )
                 subprocess.run(cmd, check=True)
+
                 artifacts[key] = dest
         return artifacts
 

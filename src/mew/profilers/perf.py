@@ -19,24 +19,16 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mew.profilers.base import Capabilities, each_case, parse_seconds, worker_argv
+from mew.profilers.base import (
+    Capabilities,
+    each_case,
+    open_speedscope_artifact,
+    parse_seconds,
+    worker_argv,
+)
 
 if TYPE_CHECKING:
     from mew._registry import Entry
-
-
-def _require_samples(dest: Path, key: str) -> None:
-    """Fail loudly if `perf script` produced no samples.
-
-    A worker that died (e.g. the bench failed to import) or ran too briefly to
-    sample leaves an empty script, which would otherwise read as success.
-    """
-    if not dest.read_text().strip():
-        raise SystemExit(
-            f"mew: perf recorded no samples for {key!r}. The benchmark likely "
-            f"failed to run (check the output above) or was too short to sample "
-            f"(raise --iterations / --rate). Artifact: {dest}"
-        )
 
 
 class PerfProfiler:
@@ -107,12 +99,16 @@ class PerfProfiler:
             # `perf script` text is loadable as-is by speedscope.app.
             with open(dest, "w") as fh:
                 subprocess.run([perf, "script", "-i", str(data)], check=True, stdout=fh)
-            _require_samples(dest, key)
+
+            if not dest.read_text().strip():
+                raise SystemExit(
+                    f"mew: perf recorded no samples for {key!r}. The benchmark likely "
+                    f"failed to run (check the output above) or was too short to sample "
+                    f"(raise --iterations / --rate). Artifact: {dest}"
+                )
             artifacts[key] = dest
+
         return artifacts
 
     def open_artifact(self, path: Path) -> None:
-        if shutil.which("speedscope"):
-            subprocess.run(["speedscope", str(path)], check=False)
-        else:
-            print(f"mew: open {path} at https://speedscope.app", file=sys.stderr)
+        open_speedscope_artifact(path)

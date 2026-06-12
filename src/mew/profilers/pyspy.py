@@ -16,29 +16,16 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from mew.profilers.base import Capabilities, each_case, parse_seconds, worker_argv
+from mew.profilers.base import (
+    Capabilities,
+    each_case,
+    open_speedscope_artifact,
+    parse_seconds,
+    worker_argv,
+)
 
 if TYPE_CHECKING:
     from mew._registry import Entry
-
-
-def _require_samples(dest: Path, key: str) -> None:
-    """Fail loudly if py-spy wrote an empty profile.
-
-    `py-spy record` exits 0 even when the launched worker died (e.g. the bench
-    failed to import) or ran too briefly to sample, leaving a frames-less
-    speedscope file that otherwise reads as success. Catch that here.
-    """
-    try:
-        doc = json.loads(dest.read_text())
-    except (OSError, json.JSONDecodeError):
-        doc = {}
-    if not (doc.get("shared", {}).get("frames") and doc.get("profiles")):
-        raise SystemExit(
-            f"mew: py-spy captured no samples for {key!r}. The benchmark likely "
-            f"failed to run (check the traceback above) or was too short to sample "
-            f"(raise --iterations). Artifact: {dest}"
-        )
 
 
 class PySpyProfiler:
@@ -85,13 +72,20 @@ class PySpyProfiler:
             cmd += ["--"]
             cmd += worker_argv(file=file, entry_name=name, case=case, iterations=iterations)
             subprocess.run(cmd, check=True)
-            _require_samples(dest, key)
+
+            try:
+                doc = json.loads(dest.read_text())
+            except (OSError, json.JSONDecodeError):
+                doc = {}
+            if not (doc.get("shared", {}).get("frames") and doc.get("profiles")):
+                raise SystemExit(
+                    f"mew: py-spy captured no samples for {key!r}. The benchmark likely "
+                    f"failed to run (check the traceback above) or was too short to sample "
+                    f"(raise --iterations). Artifact: {dest}"
+                )
             artifacts[key] = dest
+
         return artifacts
 
     def open_artifact(self, path: Path) -> None:
-        # `npx speedscope <file>` opens the browser viewer; otherwise point at the web app.
-        if shutil.which("speedscope"):
-            subprocess.run(["speedscope", str(path)], check=False)
-        else:
-            print(f"mew: open {path} at https://speedscope.app", file=sys.stderr)
+        open_speedscope_artifact(path)
