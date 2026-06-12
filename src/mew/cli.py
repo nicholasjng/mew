@@ -23,6 +23,7 @@ from mew import (
     __version__ as _mew_version,
     run as _run,
 )
+from mew._registry import compile_name_filter, narrow_entry
 
 
 def _short_first_name(entry: HelpEntry) -> str:
@@ -72,13 +73,20 @@ def _collect(
     for f in files:
         _discovery.import_file(f)
 
-    # Per-selector filter is OR'd with the global -k pattern.
-    filters = [s.filter for s in selectors if s.filter]
-    entries = REGISTRY.all()
-    if filters:
-        entries = [e for e in entries if any(f in e.name for f in filters)]
-    if pattern:
-        entries = [e for e in entries if pattern in e.name]
+    # Per-selector filter is OR'd with the global -k pattern. Both are regexes
+    # (re.search), compiled up front so a bad pattern fails before any run. A
+    # pattern that hits only some cases of a family narrows it to those cases.
+    try:
+        selector_res = [compile_name_filter(s.filter) for s in selectors if s.filter]
+        pattern_re = compile_name_filter(pattern) if pattern else None
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        raise SystemExit(2) from e
+    entries = [
+        narrowed
+        for e in REGISTRY.all()
+        if (narrowed := narrow_entry(e, any_of=selector_res, all_of=pattern_re)) is not None
+    ]
     if tags:
         wanted = set(tags)
         entries = [e for e in entries if wanted.intersection(e.tags)]
@@ -100,8 +108,9 @@ def list_(
         str | None,
         Parameter(
             name=["-k", "--pattern"],
-            help="List benchmarks whose name *contains* this substring (not a regex). "
-            "Parametrize case labels are not part of the name and won't match.",
+            help="List benchmarks whose name matches this regex (re.search, "
+            "unanchored). A plain word still works as a substring. Parametrize "
+            "case labels are not part of the name and won't match.",
         ),
     ] = None,
     tag: Annotated[
@@ -122,11 +131,14 @@ def list_(
             print("no benchmarks found", file=sys.stderr)
             raise SystemExit(1)
         for e in entries:
-            if show_tags:
-                tags_str = ",".join(sorted(e.tags)) if e.tags else "-"
-                print(f"{e.name}\t[{tags_str}]")
+            tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
+            # When -k narrowed a family to a subset, list those cases by label so
+            # the output reflects exactly what `mew run` would execute.
+            if e.case_labels is not None and e.cases is not None:
+                for i in e.cases:
+                    print(f"{e.name}[{e.case_labels[i]}]{tags_suffix}")
             else:
-                print(e.name)
+                print(f"{e.name}{tags_suffix}")
 
 
 _STDOUT_SENTINELS = frozenset({"-", "stdout"})
@@ -216,6 +228,21 @@ def _parse_variants(specs: list[str]) -> dict[str, Path]:
     return parsed
 
 
+def _load_config_and_session_tag(session_tag: str | None) -> tuple[_config.Config, str | None]:
+    """Load the project config and fill in the session tag from git when unset.
+
+    The ``--session-tag``-less default is ``git describe`` (unless disabled via
+    ``[tool.mew] auto_session_tag = false``); shared by the plain and ``--variant``
+    run paths so the fallback rule lives in one place.
+    """
+    cfg = _config.load()
+    if session_tag is None and cfg.auto_session_tag:
+        from mew._session import derive_session_tag
+
+        session_tag = derive_session_tag()
+    return cfg, session_tag
+
+
 def _run_variants_cmd(
     specs: list[str],
     *,
@@ -239,11 +266,7 @@ def _run_variants_cmd(
         raise SystemExit(2)
 
     variants = _parse_variants(specs)
-    cfg = _config.load()
-    if session_tag is None and cfg.auto_session_tag:
-        from mew._session import derive_session_tag
-
-        session_tag = derive_session_tag()
+    cfg, session_tag = _load_config_and_session_tag(session_tag)
 
     # Repetitions are realized as separate child invocations, so they are NOT
     # forwarded as a GB flag; min_time and raw options are.
@@ -278,9 +301,10 @@ def run(
         str | None,
         Parameter(
             name=["-k", "--pattern"],
-            help="Only run benchmarks whose name *contains* this substring (not a "
-            "regex). Matches the registered name (`file.py::func`); parametrize "
-            "case labels like `n=10000` are not part of the name and won't match.",
+            help="Only run benchmarks whose name matches this regex (re.search, "
+            "unanchored; a plain word works as a substring). Matches the registered "
+            "name (`file.py::func`); parametrize case labels like `n=10000` are not "
+            "part of the name and won't match.",
         ),
     ] = None,
     tag: Annotated[
@@ -409,11 +433,7 @@ def run(
             print("no benchmarks found", file=sys.stderr)
             raise SystemExit(1)
 
-        cfg = _config.load()
-        if session_tag is None and cfg.auto_session_tag:
-            from mew._session import derive_session_tag
-
-            session_tag = derive_session_tag()
+        cfg, session_tag = _load_config_and_session_tag(session_tag)
 
         # Config defaults first so CLI flags (later) override them via gflags'
         # last-wins semantics.
@@ -449,15 +469,19 @@ def run(
                 inner_iterations=sample_iterations,
             )
 
+        reporter: Reporter | list[Reporter] = reporters
         if memory_profiles is not None or cpu_profiles is not None:
             from mew._profile import _ProfileEnriching
+            from mew.reporter import Fanout
 
-            reporters = [
-                _ProfileEnriching(r, memory_profiles=memory_profiles, cpu_profiles=cpu_profiles)
-                for r in reporters
-            ]
+            # Enrich once: attach profiles onto each Run before fan-out, not once
+            # per sink. Fanout broadcasts the already-enriched rows.
+            inner = reporters[0] if len(reporters) == 1 else Fanout(reporters)
+            reporter = _ProfileEnriching(
+                inner, memory_profiles=memory_profiles, cpu_profiles=cpu_profiles
+            )
 
-        _run(entries, argv=argv, reporter=reporters, session_tag=session_tag)
+        _run(entries, argv=argv, reporter=reporter, session_tag=session_tag)
 
 
 @app.command(usage="Usage: mew profile [OPTIONS] [PATHS]")
@@ -469,7 +493,7 @@ def profile(
         str | None,
         Parameter(
             name=["-k", "--pattern"],
-            help="Only profile benchmarks whose name *contains* this substring.",
+            help="Only profile benchmarks whose name matches this regex (re.search).",
         ),
     ] = None,
     tag: Annotated[
@@ -589,7 +613,7 @@ def compare(
         ),
     ] = "name",
     pattern: Annotated[
-        str | None, Parameter(name=["--pattern", "-k"], help="substring filter")
+        str | None, Parameter(name=["--pattern", "-k"], help="regex filter (re.search)")
     ] = None,
     stddev: Annotated[
         bool,

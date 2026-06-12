@@ -8,7 +8,6 @@ import pytest
 
 import mew
 from mew._profile import (
-    EnrichedRun,
     _profile_key,
     _ProfileEnriching,
     _ProfileState,
@@ -93,42 +92,6 @@ def test_iter_entry_cases_drives_distinct_cases():
     assert runs == [10, 20, 30]
 
 
-def test_enriched_run_forwards_run_fields_and_carries_profiles():
-    class FakeRun:
-        iterations = 7
-        threads = 2
-        real_accumulated_time = 0.5
-
-        def benchmark_name(self) -> str:
-            return "bench_x"
-
-        def adjusted_real_time(self) -> float:
-            return 0.25
-
-    er = EnrichedRun(FakeRun(), memory=_fake_mem(), cpu=_fake_cpu())  # ty: ignore[invalid-argument-type]
-    # Explicit forwards reach into the wrapped run.
-    assert er.benchmark_name() == "bench_x"
-    assert er.adjusted_real_time() == 0.25
-    assert er.iterations == 7
-    assert er.threads == 2
-    assert er.real_accumulated_time == 0.5
-    # Profile attachments are first-class fields.
-    assert er.memory is not None
-    assert er.memory.peak_bytes == 1024
-    assert er.cpu is not None
-    assert er.cpu.sample_count == 500
-
-
-def test_enriched_run_handles_missing_profiles():
-    class FakeRun:
-        def benchmark_name(self) -> str:
-            return "bench_x"
-
-    er = EnrichedRun(FakeRun())  # ty: ignore[invalid-argument-type]
-    assert er.memory is None
-    assert er.cpu is None
-
-
 def test_profile_enriching_attaches_by_benchmark_name():
     seen = {}
 
@@ -138,7 +101,9 @@ def test_profile_enriching_attaches_by_benchmark_name():
 
         def report_runs(self, runs):
             for r in runs:
-                seen[r.benchmark_name()] = (r.memory, r.cpu)
+                # Read like the real reporters: profiles are dynamic attrs,
+                # absent when no profile was attached for that case.
+                seen[r.benchmark_name()] = (getattr(r, "memory", None), getattr(r, "cpu", None))
 
         def finalize(self):
             pass
@@ -161,7 +126,8 @@ def test_profile_enriching_attaches_by_benchmark_name():
         memory_profiles={"a": _fake_mem()},
         cpu_profiles={"b": _fake_cpu()},
     )
-    wrapped.report_runs([FakeRun("a"), FakeRun("b"), FakeRun("c")])
+    runs = [FakeRun("a"), FakeRun("b"), FakeRun("c")]
+    wrapped.report_runs(runs)  # ty: ignore[invalid-argument-type]
 
     assert seen["a"][0] is not None and seen["a"][1] is None
     assert seen["b"][0] is None and seen["b"][1] is not None
@@ -179,7 +145,7 @@ def test_profile_enriching_matches_family_cases_by_structured_name():
 
         def report_runs(self, runs):
             for r in runs:
-                seen[r.benchmark_name()] = r.memory
+                seen[r.benchmark_name()] = getattr(r, "memory", None)
 
         def finalize(self):
             pass
@@ -201,12 +167,11 @@ def test_profile_enriching_matches_family_cases_by_structured_name():
         CapturingReporter(),
         memory_profiles={"bench::f/case:0": _fake_mem(), "bench::f/case:1": _fake_mem()},
     )
-    wrapped.report_runs(
-        [
-            FakeRun("bench::f", "case:0", "/min_time:0.200"),
-            FakeRun("bench::f", "case:1", "/min_time:0.200"),
-        ]
-    )
+    runs = [
+        FakeRun("bench::f", "case:0", "/min_time:0.200"),
+        FakeRun("bench::f", "case:1", "/min_time:0.200"),
+    ]
+    wrapped.report_runs(runs)  # ty: ignore[invalid-argument-type]
 
     assert seen["bench::f/case:0/min_time:0.200"] is not None
     assert seen["bench::f/case:1/min_time:0.200"] is not None
@@ -293,8 +258,13 @@ def test_memory_profile_closes_tracker_when_body_raises(tmp_path):
 
     with pytest.raises(RuntimeError, match="boom"):
         _capture_case(exploding, 0, tmp_path / "boom.bin")
+
     # The tracker was closed on the way out: a fresh tracker can start.
-    assert _capture_case(lambda state: [None for _ in state], 0, tmp_path / "next.bin")
+    def drain(state):
+        for _ in state:
+            pass
+
+    assert _capture_case(drain, 0, tmp_path / "next.bin")
 
 
 def test_profilestate_loop_hooks_fire_once_around_the_loop():
