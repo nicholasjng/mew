@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+from mew._profile import iter_entry_cases
 
 if TYPE_CHECKING:
     from mew._registry import Entry
@@ -79,3 +82,36 @@ def worker_argv(*, file: str, entry_name: str, case: int, iterations: int) -> li
 def slug(key: str) -> str:
     """Filesystem-safe stem for a profile key like ``bench.py::f/case:0``."""
     return re.sub(r"[^A-Za-z0-9._-]+", "-", key).strip("-") or "bench"
+
+
+def each_case(
+    entries: list[Entry],
+    *,
+    output_dir: Path,
+    ext: str,
+) -> Iterator[tuple[str, str, str, int, Path]]:
+    """Yield ``(key, file, entry_name, case, dest)`` per case for one-artifact-per-case backends.
+
+    Creates ``output_dir`` and skips entries with no source file (nothing to launch).
+    ``dest`` is ``output_dir/<slug(key)><ext>``.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for entry in entries:
+        if entry.file is None:
+            print(f"mew: skipping {entry.name}: no source file to launch", file=sys.stderr)
+            continue
+        for key, rng in iter_entry_cases(entry):
+            yield key, entry.file, entry.name, rng, output_dir / f"{slug(key)}{ext}"
+
+
+def parse_seconds(dur: str) -> float:
+    """``'10s'`` / ``'500ms'`` / ``'5'`` → float seconds.
+
+    For backends without a native duration flag (perf wraps the worker in ``timeout``;
+    py-spy takes integer ``--duration`` seconds). xctrace passes its ``--time-limit``
+    string through unparsed.
+    """
+    dur = dur.strip()
+    if dur.endswith("ms"):
+        return float(dur[:-2]) / 1000
+    return float(dur[:-1] if dur.endswith("s") else dur)

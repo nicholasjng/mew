@@ -372,6 +372,12 @@ def profile(
         str | None,
         Parameter(help="Hard cap on each recording, e.g. `10s`. Bounds a runaway body."),
     ] = None,
+    rate: Annotated[
+        int,
+        Parameter(
+            help="(py-spy/perf) Sampling frequency in Hz (default 1000). Ignored by xctrace.",
+        ),
+    ] = 1000,
     separate: Annotated[
         bool,
         Parameter(
@@ -405,6 +411,7 @@ def profile(
             output_dir=output_dir,
             iterations=iterations,
             time_limit=time_limit,
+            rate=rate,
             template=template,
             separate=separate,
         )
