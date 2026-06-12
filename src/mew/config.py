@@ -19,6 +19,8 @@ class Config:
     # Keys are the short flag name (without the `--benchmark_` prefix); values
     # become `--benchmark_<key>=<value>` (or `--benchmark_<key>` for bool True).
     benchmark_options: dict[str, Any] = field(default_factory=dict)
+    # Derive a session tag from `git describe` when --session-tag is not given.
+    auto_session_tag: bool = True
     project_root: Path | None = None
 
 
@@ -41,6 +43,7 @@ def load(start: Path | None = None) -> Config:
             benchpaths=list(tool.get("benchpaths", ["benchmarks"])),
             python_files=list(tool.get("python_files", ["bench_*.py", "*_bench.py"])),
             benchmark_options=benchmark_options,
+            auto_session_tag=bool(tool.get("auto_session_tag", True)),
             project_root=parent,
         )
     return Config()

@@ -19,6 +19,8 @@ Reporters receive it under `ctx["custom"]`:
   "context": {
     "date": "2026-05-19T10:00:00+00:00",
     "host_name": "laptop",
+    "session_id": "01975f2e-9c40-7b31-a1d4-8f0e2c5b7a90",
+    "session_tag": "v0.3.1-12-gabc123",
     "custom": {
       "git_sha": "abc123",
       "dataset": {"name": "uniform-1k", "size": 1000}
@@ -27,6 +29,15 @@ Reporters receive it under `ctx["custom"]`:
   "benchmarks": [...]
 }
 ```
+
+## Session identity
+
+Every {func}`mew.run` invocation is one *session* and gets a generated `session_id` (a time-ordered UUIDv7), persisted in the context block (JSON/JSONL) or as per-row columns (Parquet).
+This keeps runs distinguishable when several land in one archive — even two runs in the same wall-clock second.
+
+`session_tag` is the human label next to it: pass `mew run --session-tag before` (or `session_tag=` on {func}`mew.run`).
+When no tag is given, the CLI derives one from `git describe --always --dirty`; opt out with `auto_session_tag = false` under `[tool.mew]`.
+Note `--session-tag` labels the run's *output* — it is unrelated to `-t/--tag`, which selects which benchmarks run.
 
 ## Dotted keys
 
