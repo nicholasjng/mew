@@ -37,7 +37,11 @@ def main(argv: list[str] | None = None) -> int:
 
     REGISTRY.clear()
     _discovery.import_file(ns.file)
-    entries = REGISTRY.filter(ns.pattern, tags=ns.tag or None)
+    try:
+        entries = REGISTRY.filter(ns.pattern, tags=ns.tag or None)
+    except ValueError as e:
+        print(f"mew: {e}", file=sys.stderr)
+        return 1
     if not entries:
         print(f"mew: no benchmarks in {ns.file}", file=sys.stderr)
         return 1
