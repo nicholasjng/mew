@@ -230,9 +230,9 @@ def test_memory_profile_expands_family_keyed_per_case():
 
     @mew.parametrize([{"n": 8}, {"n": 4_000_000}])
     def bench_alloc(state, n):
-        data = bytearray(n)
+        data = None
         for _ in state:
-            pass
+            data = bytearray(n)
         del data
 
     entries = mew.REGISTRY.all()
@@ -245,6 +245,80 @@ def test_memory_profile_expands_family_keyed_per_case():
     # Driving range_value per case actually changes behavior: case 1 holds a
     # multi-MB buffer live at the high-water mark, case 0 a few bytes.
     assert profiles[f"{name}/case:1"].total_bytes > profiles[f"{name}/case:0"].total_bytes
+
+
+def test_memory_profile_excludes_setup_allocations():
+    """The capture is scoped to the timing loop: a large fixture allocated before
+    the loop must not appear in the tracked stats."""
+    pytest.importorskip("memray")
+    from mew.memory import profile as mem_profile
+
+    setup_bytes = 50_000_000
+
+    @mew.benchmark
+    def bench_setup_heavy(state):
+        fixture = bytearray(setup_bytes)  # setup: outside the capture window
+        data = None
+        for _ in state:
+            data = bytearray(10_000)
+        del fixture, data
+
+    name = mew.REGISTRY.all()[0].name
+    prof = mem_profile(mew.REGISTRY.all())[name]
+    # Tracked high-water-mark bytes reflect the loop's ~10 KB, not the 50 MB fixture.
+    assert prof.total_bytes < setup_bytes / 10
+    assert prof.total_allocations < 1000
+
+
+def test_memory_profile_skips_body_that_never_iterates(capsys):
+    pytest.importorskip("memray")
+    from mew.memory import profile as mem_profile
+
+    @mew.benchmark
+    def bench_no_loop(state):
+        pass
+
+    profiles = mem_profile(mew.REGISTRY.all())
+    assert profiles == {}
+    assert "never iterated" in capsys.readouterr().err
+
+
+def test_memory_profile_closes_tracker_when_body_raises(tmp_path):
+    pytest.importorskip("memray")
+    from mew.memory import _capture_case
+
+    def exploding(state):
+        for _ in state:
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _capture_case(exploding, 0, tmp_path / "boom.bin")
+    # The tracker was closed on the way out: a fresh tracker can start.
+    assert _capture_case(lambda state: [None for _ in state], 0, tmp_path / "next.bin")
+
+
+def test_profilestate_loop_hooks_fire_once_around_the_loop():
+    events = []
+    state = _ProfileState(
+        n_iterations=3,
+        on_loop_start=lambda: events.append("start"),
+        on_loop_end=lambda: events.append("end"),
+    )
+    for _ in state:
+        events.append("iter")
+    assert events == ["start", "iter", "iter", "iter", "end"]
+
+
+def test_profilestate_loop_hooks_fire_for_batches():
+    events = []
+    state = _ProfileState(
+        n_iterations=4,
+        on_loop_start=lambda: events.append("start"),
+        on_loop_end=lambda: events.append("end"),
+    )
+    for n in state.batches(2):
+        events.append(f"batch:{n}")
+    assert events == ["start", "batch:2", "batch:2", "end"]
 
 
 def test_cpu_profile_expands_family_keyed_per_case():

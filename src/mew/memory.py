@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 from dataclasses import dataclass
 from importlib.util import find_spec
@@ -12,16 +13,21 @@ from mew._profile import _ProfileState, iter_entry_cases
 
 if TYPE_CHECKING:
     from mew._registry import Entry
+    from mew._typing import BenchmarkFn
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryProfile:
     """Per-(case) memory summary captured by memray.
 
+    The capture is scoped to the benchmark's timing loop (``for _ in state``);
+    fixture/setup allocations made before the loop are not tracked, so
+    cross-suite comparisons reflect the workload, not the setup strategy.
+
     Attributes
     ----------
     peak_bytes : int
-        Peak resident set size (``metadata.peak_memory``).
+        Peak memory during the timing loop (``metadata.peak_memory``).
     total_bytes : int
         Tracked heap live at the high-water mark, *not* the cumulative sum.
     total_allocations : int
@@ -69,6 +75,39 @@ def profile(
     return profiles
 
 
+def _capture_case(fn: BenchmarkFn, rng: int, dest: Path) -> bool:
+    """Run one case with the memray capture scoped to the timing loop.
+
+    The tracker starts at the first state iteration and stops when the loop
+    ends, so fixture/setup allocations don't pollute the stats — without this,
+    cross-suite allocation comparisons mostly compare setup strategies.
+    Returns False when the body never iterated its state (nothing captured).
+    """
+    import memray
+
+    tracker = memray.Tracker(dest)
+    entered = exited = False
+
+    def start() -> None:
+        nonlocal entered
+        entered = True
+        tracker.__enter__()
+
+    def stop() -> None:
+        nonlocal exited
+        exited = True
+        tracker.__exit__(None, None, None)
+
+    try:
+        fn(_ProfileState(range_value=rng, on_loop_start=start, on_loop_end=stop))
+    finally:
+        # A body that raises mid-loop leaves the tracker open; close it so the
+        # capture file is readable and the next case can start its own tracker.
+        if entered and not exited:
+            tracker.__exit__(None, None, None)
+    return entered
+
+
 def _collect_stats(entries: list[Entry]) -> dict[str, MemoryProfile]:
     import memray
 
@@ -80,8 +119,12 @@ def _collect_stats(entries: list[Entry]) -> dict[str, MemoryProfile]:
             for key, rng in iter_entry_cases(entry):
                 dest = root / f"capture-{i}.bin"
                 i += 1
-                with memray.Tracker(dest):
-                    entry.fn(_ProfileState(range_value=rng))
+                if not _capture_case(entry.fn, rng, dest):
+                    print(
+                        f"warning: {key}: body never iterated its state; skipping memory capture",
+                        file=sys.stderr,
+                    )
+                    continue
                 reader = memray.FileReader(dest)
                 meta = reader.metadata
                 # From metadata, not get_allocation_records(): that scan is O(every

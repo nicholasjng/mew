@@ -48,6 +48,9 @@ class _ProfileState:
     ``range_value`` feeds ``range(0)`` so a family trampoline runs per case.
     ``pause`` is a context-manager factory (CPU injects one that suspends sampling);
     ``None`` makes :meth:`pause` a no-op, so memory still measures the region.
+    ``on_loop_start`` / ``on_loop_end`` fire once when the body enters and leaves
+    its ``for _ in state`` loop, so a profiler can scope its capture to the timed
+    region and exclude fixture/setup work.
     """
 
     range_size: int = 0
@@ -62,11 +65,29 @@ class _ProfileState:
         n_iterations: int = 1,
         range_value: int = 0,
         pause: Callable[[], AbstractContextManager[None]] | None = None,
+        on_loop_start: Callable[[], None] | None = None,
+        on_loop_end: Callable[[], None] | None = None,
     ) -> None:
         self._n = n_iterations
         self._i = 0
         self._range = range_value
         self._pause = pause
+        self._on_loop_start = on_loop_start
+        self._on_loop_end = on_loop_end
+        self._loop_started = False
+        self._loop_ended = False
+
+    def _loop_begin(self) -> None:
+        if not self._loop_started:
+            self._loop_started = True
+            if self._on_loop_start is not None:
+                self._on_loop_start()
+
+    def _loop_finish(self) -> None:
+        if self._loop_started and not self._loop_ended:
+            self._loop_ended = True
+            if self._on_loop_end is not None:
+                self._on_loop_end()
 
     @property
     def iterations(self) -> int:
@@ -81,13 +102,17 @@ class _ProfileState:
 
     def __next__(self) -> None:
         if self._i >= self._n:
+            self._loop_finish()
             raise StopIteration
+        self._loop_begin()
         self._i += 1
 
     def keep_running_batch(self, n: int) -> bool:
         if self._i < self._n:
+            self._loop_begin()
             self._i += n
             return True
+        self._loop_finish()
         return False
 
     def batches(self, n: int) -> Iterator[int]:
