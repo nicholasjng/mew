@@ -28,6 +28,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from mew._registry import compile_name_filter
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
 from mew.reporter import _fmt_bytes
 
@@ -87,6 +88,21 @@ class SessionData:
         return self.key[2] or None
 
 
+def _decode_json_str(value: Any) -> Any:
+    """Parse a JSON string into its value; pass non-strings through unchanged.
+
+    Parquet stores nested blocks (``custom``, ``memory``) as JSON string columns,
+    so reading them back means decoding on the fly. Returns ``None`` on malformed
+    JSON so callers can treat "absent" and "unparseable" alike.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return None
+
+
 def _is_aggregate_row(row: dict[str, Any]) -> bool:
     return bool(row.get("aggregate_name"))
 
@@ -123,27 +139,36 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     file_ctx: dict[str, Any] = {}
     current: dict[str, Any] = {}
-    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"{path}:{lineno}: invalid JSON: {e}") from e
-        if not isinstance(obj, dict):
-            raise ValueError(f"{path}:{lineno}: expected a JSON object per line")
-        if "name" in obj:
-            for fld in _SEGMENT_FIELDS:
-                obj.setdefault(fld, current.get(fld))
-            if "custom" not in obj and current.get("custom") is not None:
-                obj["custom"] = current["custom"]
-            rows.append(obj)
-        else:
-            # mew's own sink writes `{"context": {...}}` on line 1; also accept
-            # a bare context object (any line without a benchmark name).
-            current = obj.get("context", obj) or {}
-            file_ctx = current
+    # Stream line-by-line: a growing --append archive can be large, and
+    # read_text().splitlines() would hold the whole file plus a list of every
+    # line in memory at once, on top of the parsed rows.
+    with path.open() as fh:
+        for lineno, line in enumerate(fh, start=1):
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path}:{lineno}: invalid JSON: {e}") from e
+            if not isinstance(obj, dict):
+                raise ValueError(f"{path}:{lineno}: expected a JSON object per line")
+            if "name" in obj:
+                for fld in _SEGMENT_FIELDS:
+                    obj.setdefault(fld, current.get(fld))
+                if "custom" not in obj and current.get("custom") is not None:
+                    obj["custom"] = current["custom"]
+                rows.append(obj)
+            else:
+                # mew's own sink writes `{"context": {...}}` on line 1; also accept
+                # a bare context object (any line without a benchmark name).
+                current = obj.get("context", obj) or {}
+                file_ctx = current
     return rows, file_ctx
+
+
+# Columns the Parquet writer serializes as JSON strings (nested blocks that don't
+# fit a flat schema), decoded back to dicts on read.
+_PARQUET_JSON_COLUMNS = ("custom", "memory", "cpu_profile")
 
 
 def _rows_from_parquet(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -155,29 +180,16 @@ def _rows_from_parquet(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]
     import pyarrow.parquet as pq
 
     rows = pq.read_table(path).to_pylist()
-    return rows, _ctx_from_parquet_rows(rows)
-
-
-def _ctx_from_parquet_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Reconstruct a context block from Parquet's per-row session columns."""
-    if not rows:
-        return {}
-    r = rows[0]
-    ctx: dict[str, Any] = {
-        "date": r.get("date"),
-        "host_name": r.get("host_name"),
-        "num_cpus": r.get("num_cpus"),
-        "cpu_scaling_enabled": r.get("cpu_scaling_enabled"),
-    }
-    custom = r.get("custom")
-    if isinstance(custom, str):
-        try:
-            custom = json.loads(custom)
-        except json.JSONDecodeError:
-            custom = None
-    if custom:
-        ctx["custom"] = custom
-    return ctx
+    # Parquet stores nested blocks as JSON-string columns; decode them once at this
+    # read boundary so the rest of the module sees native dicts regardless of the
+    # source format (JSON/JSONL already carry dicts).
+    for row in rows:
+        for col in _PARQUET_JSON_COLUMNS:
+            if isinstance(row.get(col), str):
+                row[col] = _decode_json_str(row[col])
+    # Parquet has no file-level context block; rebuild one from the per-row
+    # session columns of the first row (same projection every session row carries).
+    return rows, _session_context(rows[0] if rows else {}, {})
 
 
 def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -185,20 +197,14 @@ def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[
 
     Per-row identity (Parquet columns, enriched JSONL segments) wins; single-doc
     JSON has identity only in ``file_ctx``, so the row contributes nothing and
-    the block stands. Parquet stores ``custom`` as a JSON string, so parse it.
+    the block stands. ``custom`` arrives already decoded (see :func:`_read_rows`).
     """
     ctx = dict(file_ctx)
     for fld in _SEGMENT_FIELDS:
         v = rep_row.get(fld)
         if v is not None:
             ctx[fld] = v
-    custom = rep_row.get("custom")
-    if isinstance(custom, str):
-        try:
-            custom = json.loads(custom)
-        except json.JSONDecodeError:
-            custom = None
-    if custom:
+    if custom := rep_row.get("custom"):
         ctx["custom"] = custom
     return ctx
 
@@ -221,21 +227,14 @@ def _session_key(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, st
 def _metric_value(row: dict[str, Any], metric: str) -> Any:
     """Look up ``metric`` in a row; dotted metrics traverse one nested level.
 
-    Parquet stores the ``memory`` block as a JSON string column, so a string
-    at the head of a dotted path is parsed before traversal.
+    Nested blocks (e.g. ``memory``) are already decoded to dicts at the read
+    boundary (see :func:`_read_rows`), so a dotted path just traverses.
     """
     head, sep, tail = metric.partition(".")
     value = row.get(head)
     if not sep:
         return value
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return None
-    if isinstance(value, dict):
-        return value.get(tail)
-    return None
+    return value.get(tail) if isinstance(value, dict) else None
 
 
 def _aggregate_group(rows: list[dict[str, Any]], metric: str) -> tuple[float, float | None]:
@@ -330,6 +329,25 @@ def _samples_from_groups(
     return samples
 
 
+def _group_by_session(
+    rows: list[dict[str, Any]], file_ctx: dict[str, Any]
+) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+    """Bucket benchmark rows by session key, dropping non-benchmark and GB aggregate rows.
+
+    The shared front half of both load paths: :func:`_load_sessions` sub-groups
+    each bucket by name, while :func:`_load_variant_columns` keeps the latest
+    bucket whole and pivots it by variant. Aggregate rows are dropped because we
+    recompute statistics ourselves, so results are consistent whether a file was
+    produced with ``--repetitions=1`` or N.
+    """
+    by_session: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for r in rows:
+        if not isinstance(r.get("name"), str) or _is_aggregate_row(r):
+            continue
+        by_session.setdefault(_session_key(r, file_ctx), []).append(r)
+    return by_session
+
+
 def _load_sessions(path: Path, metric: str) -> list[SessionData]:
     """Load every session in a result file, sorted by ascending date.
 
@@ -338,23 +356,14 @@ def _load_sessions(path: Path, metric: str) -> list[SessionData]:
     """
     rows, file_ctx = _read_rows(path)
 
-    # Group per-repetition rows by (session, name). GB-emitted aggregate rows
-    # are dropped — we recompute statistics ourselves so the result is
-    # consistent whether the file was produced with --repetitions=1 or N.
-    by_session: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
-    for r in rows:
-        name = r.get("name")
-        if not isinstance(name, str) or _is_aggregate_row(r):
-            continue
-        canon = _canonical_name(name, r.get("label"))
-        groups = by_session.setdefault(_session_key(r, file_ctx), {})
-        groups.setdefault(canon, []).append(r)
-
     sessions: list[SessionData] = []
     # ISO-8601 dates sort lexicographically in chronological order.
-    for skey in sorted(by_session):
-        samples = _samples_from_groups(by_session[skey], metric, skey[0] or None)
-        first_group = next(iter(by_session[skey].values()), [])
+    for skey, session_rows in sorted(_group_by_session(rows, file_ctx).items()):
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for r in session_rows:
+            groups.setdefault(_canonical_name(r["name"], r.get("label")), []).append(r)
+        samples = _samples_from_groups(groups, metric, skey[0] or None)
+        first_group = next(iter(groups.values()), [])
         ctx = _session_context(first_group[0] if first_group else {}, file_ctx)
         sessions.append(
             SessionData(key=skey, context=ctx, samples=samples, session_tag=ctx.get("session_tag"))
@@ -373,11 +382,7 @@ def _load_variant_columns(
     declared/baseline-first order the orchestrator writes.
     """
     rows, file_ctx = _read_rows(path)
-    by_session: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-    for r in rows:
-        if not isinstance(r.get("name"), str) or _is_aggregate_row(r):
-            continue
-        by_session.setdefault(_session_key(r, file_ctx), []).append(r)
+    by_session = _group_by_session(rows, file_ctx)
     if not by_session:
         return []
 
@@ -620,7 +625,7 @@ def _render(
     columns: list[_Column],
     *,
     metric: str,
-    pattern: str | None,
+    pattern: re.Pattern[str] | None,
     show_stddev: bool,
     regressions: RegressionConfig | None,
     console: Console | None,
@@ -632,8 +637,8 @@ def _render(
     with contexts (files, sessions, variant groups) compares the same way.
     """
     all_names: set[str] = set().union(*(c.samples.keys() for c in columns))
-    if pattern:
-        all_names = {n for n in all_names if pattern in n}
+    if pattern is not None:
+        all_names = {n for n in all_names if pattern.search(n)}
 
     shared = set.intersection(*(set(c.samples.keys()) for c in columns)) & all_names
     if not shared:
@@ -772,7 +777,7 @@ def compare(
         registered name; ``"func"`` strips the ``file.py::`` prefix so suites
         in different files with matching function names line up (A/B suites).
     pattern : str, optional
-        Substring filter applied to benchmark names.
+        Regex (``re.search``) filter applied to benchmark names.
     show_stddev : bool, default False
         Add per-file stddev columns when stddev data is present.
     by : str, optional
@@ -795,6 +800,10 @@ def compare(
         raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
     if key not in _KEYS:
         raise SystemExit(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
+    try:
+        name_filter = compile_name_filter(pattern) if pattern else None
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
 
     if by == "variant":
         if len(files) != 1:
@@ -823,7 +832,7 @@ def compare(
     return _render(
         columns,
         metric=metric,
-        pattern=pattern,
+        pattern=name_filter,
         show_stddev=show_stddev,
         regressions=regressions,
         console=console,
