@@ -20,11 +20,14 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from mew._session import new_session_id
 from mew.reporter import Reporter
 from mew.runner import _to_single_reporter
+
+if TYPE_CHECKING:
+    from mew._core import Run
 
 
 class _Enumish:
@@ -189,8 +192,13 @@ def run_variants(
                     return failures + 1
                 started = True
             if reporter is not None:
+                # _DictRun is a structural Run stand-in (see its docstring); the
+                # reporters only touch the duck-typed surface it re-exposes.
                 reporter.report_runs(
-                    [_DictRun(row, variant=name, repetition_index=rep) for row in rows]
+                    cast(
+                        "list[Run]",
+                        [_DictRun(row, variant=name, repetition_index=rep) for row in rows],
+                    )
                 )
 
     if started and reporter is not None and (fn := getattr(reporter, "finalize", None)):

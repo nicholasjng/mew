@@ -38,7 +38,18 @@ def test_derive_session_tag_in_a_repo(tmp_path: Path):
         pytest.skip("git not available")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"],
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
         cwd=tmp_path,
         check=True,
     )
@@ -147,7 +158,11 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path):
             pass
 
     out = tmp_path / "acc.jsonl"
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=JSONLReporter(output=out), session_tag="before")
+    mew.run(
+        argv=["mew", "--benchmark_min_time=1x"],
+        reporter=JSONLReporter(output=out),
+        session_tag="before",
+    )
     mew.run(
         argv=["mew", "--benchmark_min_time=1x"],
         reporter=JSONLReporter(output=out, append=True),
@@ -173,7 +188,11 @@ def test_parquet_append_concatenates_sessions(tmp_path: Path):
             pass
 
     out = tmp_path / "acc.parquet"
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=ParquetReporter(output=out), session_tag="before")
+    mew.run(
+        argv=["mew", "--benchmark_min_time=1x"],
+        reporter=ParquetReporter(output=out),
+        session_tag="before",
+    )
     mew.run(
         argv=["mew", "--benchmark_min_time=1x"],
         reporter=ParquetReporter(output=out, append=True),

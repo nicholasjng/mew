@@ -8,9 +8,11 @@ import sys
 import textwrap
 from importlib.util import find_spec
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from mew._core import Run
 from mew._variants import _DictRun, _pseudo_raw_context
 from mew.cli import _parse_variants, _run_variants_cmd
 from mew.reporter import _run_to_dict
@@ -41,7 +43,7 @@ def test_dictrun_round_trips_through_run_to_dict() -> None:
         "counters": {"items": 5.0},
     }
     run = _DictRun(row, variant="engine-a", repetition_index=3)
-    out = _run_to_dict(run)
+    out = _run_to_dict(cast(Run, run))
     assert out["name"] == "bench.py::f"
     assert out["real_time"] == 12.5
     assert out["time_unit"] == "ns"
@@ -193,7 +195,9 @@ def test_run_variant_end_to_end(tmp_path: Path, variant_files: tuple[Path, Path]
 def test_run_variant_reports_failed_child(tmp_path: Path, variant_files: tuple[Path, Path]) -> None:
     a, _ = variant_files
     missing = tmp_path / "does_not_exist.py"
-    res = _mew("run", f"--variant=a={a}", f"--variant=bad={missing}", "--min-time=10x", cwd=tmp_path)
+    res = _mew(
+        "run", f"--variant=a={a}", f"--variant=bad={missing}", "--min-time=10x", cwd=tmp_path
+    )
     # The good variant still ran (rows on stdout); the bad one warned; exit nonzero.
     assert res.returncode != 0
     assert "bench_work" in res.stdout
@@ -208,7 +212,9 @@ def test_run_variant_parquet_has_variant_column(
 
     a, b = variant_files
     out = tmp_path / "r.parquet"
-    res = _mew("run", f"--variant=a={a}", f"--variant=b={b}", "--min-time=10x", f"-o={out}", cwd=tmp_path)
+    res = _mew(
+        "run", f"--variant=a={a}", f"--variant=b={b}", "--min-time=10x", f"-o={out}", cwd=tmp_path
+    )
     assert res.returncode == 0, res.stderr
     variants = {row["variant"] for row in pq.read_table(out).to_pylist()}
     assert variants == {"a", "b"}
