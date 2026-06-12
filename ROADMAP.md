@@ -91,7 +91,99 @@ Legend: ✅ shipped · 🟡 partially shipped · ⬜ not started.
   when `-k` matches a family) would expose the case axis to discovery
   without forcing the registry back into N entries per family.
 
+- ⬜ **Lifecycle trace reporter (Chrome trace-event JSON).** A reporter that
+  emits mew's own execution *structure* as a timeline — warmup vs. measured
+  phases, per-repetition spans, `state.pause()` regions, counters over time —
+  in the Chrome Trace Event format (`{"traceEvents": [...]}`). That format is
+  plain JSON (no protobuf, no SDK/daemon) and loads directly in both the
+  Perfetto UI and `chrome://tracing`, so it's a small reporter, not a
+  dependency on a tracing stack. **Explicitly not a sampling profiler:** this
+  answers "what was the shape of this run — where did warmup end, which
+  repetition was the outlier, what did the pause regions cost," which is a
+  distinct view from `mew profile`'s "where did the CPU time go." Keeping that
+  line bright is the point — Perfetto is a great viewer for *this* (timeline
+  data), and a poor fit for hot-loop CPU sampling, where speedscope/pprof win.
+  The open design question is how much structure the C++ `Run` stream exposes
+  to the reporter today (phase boundaries, per-rep timestamps) versus what
+  would need new plumbing through `PyReporter::ReportRuns`.
+
+## Profiling
+
+`mew profile` writes speedscope-readable artifacts today (xctrace `.trace` for
+macOS Instruments; py-spy speedscope JSON and `perf script` text on Linux, both
+loadable at speedscope.app). speedscope is the zero-install common format and the
+default; the items here are opt-in additions, not replacements.
+
+- ⬜ **`--format pprof` for the perf (and py-spy) backend.** pprof's payoff is
+  not a prettier flamegraph — speedscope already covers that — it's
+  `pprof -http=:8080 -diff_base=baseline.pb.gz head.pb.gz`, a *sample-level diff*
+  that complements `mew compare`: compare tells you a benchmark regressed, the
+  pprof diff shows where the extra samples went. Two implementation notes decide
+  whether it's worth it: (1) pprof does **not** read `perf.data` or `perf script`
+  directly — the canonical path is Google's `perf_to_profile`
+  (`perf_data_converter`), a Bazel-built C++ binary that is not pip-installable
+  and rarely present, so depending on it would undercut the clean install story.
+  Prefer generating `profile.proto` ourselves from collapsed stacks (~100 lines,
+  no external binary); fall back to `perf_to_profile` only if it happens to be on
+  PATH. (2) Neither py-spy nor xctrace emit pprof, so this is perf-mostly and does
+  not unify the backends — it's a second, optional format axis, which is why it
+  stays opt-in behind a flag rather than becoming a default. Non-blocking today:
+  we already keep the raw `perf.data` next to each artifact, so a motivated user
+  can run `perf_to_profile` + pprof by hand right now; building it in only buys
+  convenience and a wired-up diff workflow.
+
+- ⬜ **Regression-triggered differential profiling.** Wire profiling into the
+  compare story: when `mew compare --fail-on-regression` flags a benchmark,
+  capture baseline-vs-head profiles for *just that benchmark* and diff them, so
+  the gate that says "this regressed" also shows *where the time went*. This is
+  the natural consumer of the `--format pprof` item above (`pprof -diff_base`
+  for the sample-level diff), and it answers the user's actual next question
+  after a red gate. Scope decisions: it needs both revisions' code available
+  (a CI two-checkout or two-artifact flow, not a single working tree), so the
+  first cut is likely a documented recipe — `mew profile -k <regressed>` on each
+  side, then diff — before any built-in `--profile-regressions` flag. Keep it
+  opt-in: profiling every regressed benchmark on every red gate is expensive
+  (see selective profiling below).
+
+- ⬜ **Native memory profiling.** Today memory is only `mew run --profile-memory`
+  (memray, in-process, Python-level allocations). The out-of-process path can
+  see C-extension `malloc` that memray misses. On macOS this is *already
+  reachable* — the xctrace backend is template-driven, so `mew profile --template
+  Allocations` (or `Leaks`) records a native allocations trace today; it only
+  needs documenting and a friendlier alias. The Linux parallel is a **heaptrack**
+  backend, shaped like the perf/py-spy backends (launch the worker under
+  `heaptrack`, emit its data file). That rounds `mew profile` out to memory, not
+  just CPU. Open question: whether to surface this as `mew profile --what
+  {cpu,memory}` or leave it as raw `--template`/backend selection.
+
+- ⬜ **Selective profiling (`--slowest N` / only-regressed).** Profiling a whole
+  suite is expensive, and most of it is uninteresting. A selector that profiles
+  only the top-N slowest benchmarks (from a prior timing run or a result file),
+  or only those a compare flagged, makes "profile the suite" affordable instead
+  of all-or-nothing. This is the cost lever the two items above lean on —
+  regression-triggered profiling is only practical if it profiles the few
+  benchmarks that moved, not the hundred that didn't.
+
 ## Comparison story
+
+- ⬜ **Deterministic instruction-count metric as a low-noise gate.** Wall-clock
+  and even CPU-time are noisy, which is what makes `--fail-on-regression` flaky:
+  a 3% threshold trips on scheduler jitter, not real regressions. A
+  **callgrind/cachegrind** (valgrind) pass counts retired instructions
+  *deterministically* — same code yields the same count run-to-run and
+  machine-to-machine — so it gates on actual work done, not timing weather. It's
+  the model `iai`/`iai-callgrind` use in Rust. Two properties make it the right
+  fit here: it's pure software simulation, so it works in **containers and cloud
+  CI** where hardware PMUs are unavailable (unlike `perf stat` counters, which
+  need PMU access most cloud runners don't expose); and the count is stable
+  enough to gate on a *tight* threshold. Cost is the ~20–50× slowdown, so this is
+  a separate measurement mode, not part of the timing run: a `callgrind` backend
+  that emits an `instructions` metric per benchmark, which `mew compare -m
+  instructions --fail-on-regression` then gates on. The number is also a clean
+  cross-machine baseline for archived comparisons, since it doesn't drift with
+  the host. Note: this is *measurement*, not profiling — but callgrind also
+  produces a call graph (`callgrind_annotate` / KCachegrind / pprof can read it),
+  so the same pass doubles as a profile artifact when you want one.
 
 - ⬜ **Session-addressable comparisons inside a single file.** Today
   `mew compare` only takes the cross-file shape (`mew compare a.parquet
