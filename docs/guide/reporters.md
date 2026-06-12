@@ -23,7 +23,9 @@ The C++ runner calls them in the main thread with the GIL held.
 : One row per Run, static schema, user context flattened. Requires
   `pyarrow` (`pip install 'mew[dev]'` or `pip install pyarrow`). Counters
   are a `MAP<string, double>`. The user-defined context goes into a JSON
-  string column named `custom` — query with e.g. DuckDB's `json_extract`.
+  string column named `custom` — query with e.g. DuckDB's `json_extract`;
+  session identity lands as `session_id` / `session_tag` string columns
+  (see [](context.md)).
 
 {class}`~mew.Fanout`
 : Broadcasts each callback to a list of reporters. Used internally by

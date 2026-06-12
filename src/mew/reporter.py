@@ -65,6 +65,15 @@ def _build_context(context: dict[str, Any]) -> dict[str, Any]:
         "cpu_scaling_enabled": context.get("cpu_scaling") == "enabled",
         "library_build_type": context.get("library_build_type"),
     }
+    # Session identity is injected by mew.run; reporters driven directly
+    # (or by GB itself) have none, and then the keys are simply absent.
+    if session_id := context.get("session_id"):
+        ctx["session_id"] = session_id
+    if session_tag := context.get("session_tag"):
+        ctx["session_tag"] = session_tag
+    # Declared variant order (baseline first), set by the --variant orchestrator.
+    if variants := context.get("variants"):
+        ctx["variants"] = variants
     custom = context.get("custom")
     if custom:
         ctx["custom"] = custom
@@ -456,6 +465,8 @@ class ParquetReporter:
             # the empty case cleanly.
             "counters": list(counters.items()) if counters else [],
             "date": date,
+            "session_id": ctx.get("session_id"),
+            "session_tag": ctx.get("session_tag"),
             "host_name": ctx.get("host_name"),
             "executable": ctx.get("executable"),
             "num_cpus": ctx.get("num_cpus"),
@@ -512,6 +523,8 @@ def _parquet_schema() -> Any:
             ("skip_message", pa.string()),
             ("counters", pa.map_(pa.string(), pa.float64())),
             ("date", pa.timestamp("us", tz="UTC")),
+            ("session_id", pa.string()),
+            ("session_tag", pa.string()),
             ("host_name", pa.string()),
             ("executable", pa.string()),
             ("num_cpus", pa.int64()),

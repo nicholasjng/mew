@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import mew._core as _core
 import mew.context as _context
 from mew._registry import REGISTRY, Entry
+from mew._session import new_session_id
 from mew.reporter import Reporter
 
 if TYPE_CHECKING:
@@ -65,8 +66,13 @@ def run(
     argv: Sequence[str] | None = None,
     reporter: Reporter | Iterable[Reporter] | None = None,
     filter: str | None = None,
+    session_tag: str | None = None,
 ) -> int:
     """Run benchmarks via the C++ Google Benchmark backend.
+
+    Each call is one *session*: a fresh time-ordered ``session_id`` is stamped
+    into the reporter context, so result files stay addressable when several
+    runs land in one archive.
 
     Parameters
     ----------
@@ -80,6 +86,9 @@ def run(
         A single reporter, an iterable of reporters (multiplexed via :class:`Fanout`), or ``None`` for Google Benchmark's default console reporter.
     filter : str, optional
         Regex forwarded to Google Benchmark as ``--benchmark_filter=``.
+    session_tag : str, optional
+        Human label for this session (e.g. ``"before"``), persisted next to
+        ``session_id`` in the reporter context.
 
     Returns
     -------
@@ -106,9 +115,13 @@ def run(
             handle.arg_name("case")
 
     rep = _to_single_reporter(reporter)
-    custom = _context._snapshot()
-    if custom and rep is not None:
-        rep = _ContextInjecting(rep, custom)
+    if rep is not None:
+        rep = _ContextInjecting(
+            rep,
+            custom=_context._snapshot(),
+            session_id=new_session_id(),
+            session_tag=session_tag,
+        )
     with _silence_native_stderr():
         return _core.run_benchmarks(cli, rep)
 
@@ -134,15 +147,33 @@ def _to_single_reporter(
 
 
 class _ContextInjecting:
-    """Reporter wrapper that injects user-defined context under ctx['custom']."""
+    """Reporter wrapper that injects session identity and user context.
 
-    def __init__(self, inner: Reporter, custom: dict[str, Any]) -> None:
+    ``session_id``/``session_tag`` land as top-level context keys; user context
+    goes under ``ctx['custom']`` (only when non-empty, preserving the bare
+    GB-context shape for runs that never call :func:`mew.set_context`).
+    """
+
+    def __init__(
+        self,
+        inner: Reporter,
+        *,
+        custom: dict[str, Any],
+        session_id: str,
+        session_tag: str | None = None,
+    ) -> None:
         self._inner = inner
         self._custom = custom
+        self._session_id = session_id
+        self._session_tag = session_tag
 
     def report_context(self, context: dict[str, Any]) -> bool:
         merged = dict(context)
-        merged["custom"] = self._custom
+        merged["session_id"] = self._session_id
+        if self._session_tag:
+            merged["session_tag"] = self._session_tag
+        if self._custom:
+            merged["custom"] = self._custom
         return self._inner.report_context(merged)
 
     def report_runs(self, runs: list[Run]) -> None:

@@ -220,6 +220,37 @@ def run(
         ),
     ] = None,
     repetitions: Annotated[int | None, Parameter(help="Repeat each benchmark N times.")] = None,
+    session_tag: Annotated[
+        str | None,
+        Parameter(
+            name="--session-tag",
+            help="Label this run's output as a session (e.g. `before`), persisted "
+            "next to the generated session id. Defaults to `git describe --always "
+            "--dirty` inside a checkout; disable the fallback with `[tool.mew] "
+            "auto_session_tag = false`. Unrelated to `-t/--tag`, which selects "
+            "which benchmarks run.",
+        ),
+    ] = None,
+    append: Annotated[
+        bool,
+        Parameter(
+            name="--append",
+            help="Append this run as a new session to existing `.jsonl` / `.parquet` "
+            "sinks instead of overwriting. Pair with `--session-tag` and select "
+            "sessions later via `mew compare file@<tag>`.",
+        ),
+    ] = False,
+    variant: Annotated[
+        list[str],
+        Parameter(
+            name="--variant",
+            help="Run a `name=path` variant in its own subprocess, repeatable. For "
+            "suites that can't share an interpreter (rival engines, GIL vs "
+            "free-threaded, …). Rows are tagged with the variant name; compare "
+            "with `mew compare <file> --by variant`. Mutually exclusive with "
+            "positional paths.",
+        ),
+    ] = [],
     extra: Annotated[
         list[str],
         Parameter(name="--benchmark-option", help="raw arguments forwarded to Google Benchmark"),
@@ -276,9 +307,15 @@ def run(
             print("no benchmarks found", file=sys.stderr)
             raise SystemExit(1)
 
+        cfg = _config.load()
+        if session_tag is None and cfg.auto_session_tag:
+            from mew._session import derive_session_tag
+
+            session_tag = derive_session_tag()
+
         # Config defaults first so CLI flags (later) override them via gflags'
         # last-wins semantics.
-        argv: list[str] = ["mew", *_config.format_benchmark_args(_config.load().benchmark_options)]
+        argv: list[str] = ["mew", *_config.format_benchmark_args(cfg.benchmark_options)]
         if min_time is not None:
             argv.append(f"--benchmark_min_time={min_time}")
         if repetitions is not None:
@@ -317,7 +354,7 @@ def run(
                 for r in reporters
             ]
 
-        _run(entries, argv=argv, reporter=reporters)
+        _run(entries, argv=argv, reporter=reporters, session_tag=session_tag)
 
 
 @app.command(usage="Usage: mew profile [OPTIONS] [PATHS]")
