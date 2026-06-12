@@ -59,6 +59,30 @@ def test_run_parametrize_emits_one_run_per_variant():
     assert len(names) == 3
 
 
+def test_run_registers_only_selected_cases_of_a_family():
+    """A -k-narrowed family (entry.cases set) runs exactly those cases, with the
+    right kwargs bound via the case index → state.range(0) → trampoline path."""
+    seen_n = []
+
+    @mew.parametrize([{"n": 1}, {"n": 10}, {"n": 100}], ids=["small", "mid", "big"])
+    def bench_fam(state, n):
+        seen_n.append(n)
+        for _ in state:
+            pass
+
+    # Select small (case 0) and big (case 2) by label; mid is dropped.
+    narrowed = mew.REGISTRY.filter(r"small|big")
+    cap = Capture()
+    mew.run(entries=narrowed, argv=_argv_fast(), reporter=cap)
+
+    case_names = [r.benchmark_name() for r in cap.runs]
+    assert all("bench_fam" in n for n in case_names)
+    # Exactly cases 0 and 2 ran — mid (case 1) was dropped by the filter.
+    assert sorted(n.split("/case:")[1] for n in case_names) == ["0", "2"]
+    # The trampoline bound the kwargs for exactly cases 0 and 2 (n=1, n=100).
+    assert sorted(seen_n) == [1, 100]
+
+
 def test_run_multiple_reporters_fan_out():
     @mew.benchmark
     def bench_x(state):

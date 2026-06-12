@@ -134,6 +134,29 @@ def test_compare_pattern_filter(tmp_path: Path) -> None:
     assert "beta" not in out
 
 
+def test_compare_pattern_is_regex(tmp_path: Path) -> None:
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    _write_json(base, [_row("alpha", 10.0), _row("beta", 20.0), _row("gamma", 30.0)])
+    _write_json(other, [_row("alpha", 5.0), _row("beta", 40.0), _row("gamma", 15.0)])
+    console = Console(record=True, width=200)
+    # Alternation selects two of the three; the third is filtered out.
+    assert compare([base, other], pattern="alpha|gamma", console=console) == 0
+    out = console.export_text()
+    assert "alpha" in out
+    assert "gamma" in out
+    assert "beta" not in out
+
+
+def test_compare_invalid_pattern_errors(tmp_path: Path) -> None:
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    _write_json(base, [_row("alpha", 10.0)])
+    _write_json(other, [_row("alpha", 5.0)])
+    with pytest.raises(SystemExit, match="invalid benchmark filter pattern"):
+        compare([base, other], pattern="foo(", console=Console(record=True))
+
+
 def test_compare_requires_two_files(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="at least two"):
         compare([tmp_path / "a.json"])

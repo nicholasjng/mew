@@ -70,6 +70,44 @@ def test_list_no_matches_exits_nonzero(benchdir, tmp_path):
     assert res.returncode == 1
 
 
+def test_list_pattern_is_regex(benchdir, tmp_path):
+    # Alternation matches both fixture benchmarks; anchoring narrows to one.
+    res = _mew("list", str(benchdir), "-k", "bench_(one|two)", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    names = [n for n in res.stdout.splitlines() if n.strip()]
+    assert len(names) == 2
+
+    res = _mew("list", str(benchdir), "-k", "bench_one$", cwd=tmp_path)
+    names = [n for n in res.stdout.splitlines() if n.strip()]
+    assert len(names) == 1 and names[0].endswith("::bench_one")
+
+
+def test_run_invalid_pattern_errors(benchdir, tmp_path):
+    res = _mew("run", str(benchdir), "--min-time", "1x", "-k", "foo(", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "invalid benchmark filter pattern" in res.stderr
+
+
+def test_run_k_selects_single_family_case(benchdir, tmp_path):
+    # bench_two is parametrized [{n:1},{n:2}]; `n=2` addresses case index 1 only.
+    out = tmp_path / "results.json"
+    res = _mew("run", str(benchdir), "--min-time", "1x", "-k", "n=2", "-o", str(out), cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    benches = json.loads(out.read_text())["benchmarks"]
+    assert len(benches) == 1
+    assert "bench_two" in benches[0]["name"]
+    assert "/case:1" in benches[0]["name"]
+
+
+def test_list_k_shows_narrowed_family_cases(benchdir, tmp_path):
+    res = _mew("list", str(benchdir), "-k", "n=2", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    names = [n for n in res.stdout.splitlines() if n.strip()]
+    # The narrowed case is listed by label; the family and bench_one are gone.
+    assert len(names) == 1
+    assert names[0].endswith("::bench_two[n=2]")
+
+
 def test_run_json_to_file(benchdir, tmp_path):
     out = tmp_path / "results.json"
     res = _mew(

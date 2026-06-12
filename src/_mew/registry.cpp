@@ -52,6 +52,7 @@ void register_registry(nb::module_& m) {
              "value"_a = true, nb::rv_policy::reference)
         .def("dense_range", &benchmark::Benchmark::DenseRange, "start"_a, "limit"_a, "step"_a = 1,
              nb::rv_policy::reference)
+        .def("arg", &benchmark::Benchmark::Arg, "value"_a, nb::rv_policy::reference)
         .def("arg_name", &benchmark::Benchmark::ArgName, "name"_a, nb::rv_policy::reference)
         .def_prop_ro("name", &benchmark::Benchmark::GetName);
 
