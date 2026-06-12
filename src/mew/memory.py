@@ -40,14 +40,6 @@ class MemoryProfile:
     total_allocations: int
 
 
-def _ensure_memray() -> None:
-    if find_spec("memray") is None:
-        raise SystemExit(
-            "memray is required for memory profiling. "
-            "Install it with: uv add --optional memory memray"
-        )
-
-
 def profile(
     entries: list[Entry],
     *,
@@ -68,7 +60,11 @@ def profile(
         Per-case profiles keyed by ``entry.name`` (or ``entry.name/case:<i>`` for
         each variant of a parametrized family).
     """
-    _ensure_memray()
+    if find_spec("memray") is None:
+        raise SystemExit(
+            "memray is required for memory profiling. "
+            "Install it with: uv add --optional memory memray"
+        )
     profiles = _collect_stats(entries)
     if flamegraph is not None:
         _write_flamegraph(entries, flamegraph)

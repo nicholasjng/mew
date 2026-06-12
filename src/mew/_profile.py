@@ -1,19 +1,18 @@
 """Shared infrastructure for profile-based extensions (memory, CPU, ...).
 
 ``_ProfileState`` runs a benchmark body outside Google Benchmark's iteration loop.
-``EnrichedRun`` proxies a C++ Run while carrying optional profile attachments.
-``_ProfileEnriching`` wraps a reporter to attach those profiles by benchmark name.
+``_ProfileEnriching`` wraps a reporter to attach memory/CPU profiles onto each Run
+by benchmark name (the C++ Run carries them as dynamic attributes).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from mew._core import BenchmarkName, Run, RunType, TimeUnit
+    from mew._core import Run
     from mew._registry import Entry
     from mew.cpu import CPUProfile
     from mew.memory import MemoryProfile
@@ -32,12 +31,14 @@ def iter_entry_cases(entry: Entry) -> Iterator[tuple[str, int]]:
     """Yield ``(profile_key, range_value)`` per case an entry expands to.
 
     Families yield one pair per case so a profiler drives each variant via
-    ``_ProfileState(range_value=i)`` under the key the reporter looks up.
+    ``_ProfileState(range_value=i)`` under the key the reporter looks up. A
+    family narrowed by a ``-k`` filter (``entry.cases``) yields only those cases.
     """
     if entry.case_labels is None:
         yield _profile_key(entry.name, ""), 0
     else:
-        for i in range(len(entry.case_labels)):
+        indices = entry.cases if entry.cases is not None else range(len(entry.case_labels))
+        for i in indices:
             yield _profile_key(entry.name, f"case:{i}"), i
 
 
@@ -148,97 +149,14 @@ class _ProfileState:
         return self._range
 
 
-@dataclass(frozen=True, slots=True)
-class EnrichedRun:
-    """Wraps a C++ Run and carries optional profile attachments.
-
-    Run fields are forwarded explicitly so type checkers see the full public surface.
-    """
-
-    run: Run = field(repr=False)
-    memory: MemoryProfile | None = None
-    cpu: CPUProfile | None = None
-
-    def benchmark_name(self) -> str:
-        return self.run.benchmark_name()
-
-    def adjusted_real_time(self) -> float:
-        return self.run.adjusted_real_time()
-
-    def adjusted_cpu_time(self) -> float:
-        return self.run.adjusted_cpu_time()
-
-    @property
-    def run_name(self) -> BenchmarkName:
-        return self.run.run_name
-
-    @property
-    def family_index(self) -> int:
-        return self.run.family_index
-
-    @property
-    def per_family_instance_index(self) -> int:
-        return self.run.per_family_instance_index
-
-    @property
-    def run_type(self) -> RunType:
-        return self.run.run_type
-
-    @property
-    def aggregate_name(self) -> str:
-        return self.run.aggregate_name
-
-    @property
-    def report_label(self) -> str:
-        return self.run.report_label
-
-    @property
-    def skip_message(self) -> str:
-        return self.run.skip_message
-
-    @property
-    def iterations(self) -> int:
-        return self.run.iterations
-
-    @property
-    def threads(self) -> int:
-        return self.run.threads
-
-    @property
-    def repetition_index(self) -> int:
-        return self.run.repetition_index
-
-    @property
-    def repetitions(self) -> int:
-        return self.run.repetitions
-
-    @property
-    def time_unit(self) -> TimeUnit:
-        return self.run.time_unit
-
-    @property
-    def real_accumulated_time(self) -> float:
-        return self.run.real_accumulated_time
-
-    @property
-    def cpu_accumulated_time(self) -> float:
-        return self.run.cpu_accumulated_time
-
-    @property
-    def complexity_n(self) -> int:
-        return self.run.complexity_n
-
-    @property
-    def counters(self) -> dict[str, float]:
-        return self.run.counters
-
-    @property
-    def skipped(self) -> bool:
-        return self.run.skipped
-
-
 class _ProfileEnriching:
-    """Reporter wrapper that attaches per-entry profiles to each Run by name."""
+    """Reporter wrapper that attaches per-entry profiles to each Run by name.
+
+    The C++ ``Run`` is bound with ``dynamic_attr``, so the out-of-loop profile
+    passes attach ``.memory`` / ``.cpu`` directly onto the row (reporters read
+    them back via ``getattr``); no wrapper object per run. Wrap a reporter once —
+    a Run is a fresh per-callback copy, so the mutation is local to this run.
+    """
 
     def __init__(
         self,
@@ -254,15 +172,17 @@ class _ProfileEnriching:
     def report_context(self, context: dict[str, Any]) -> bool:
         return self._inner.report_context(context)
 
-    def report_runs(self, runs: list[Any]) -> None:
-        enriched = []
+    def report_runs(self, runs: list[Run]) -> None:
         for r in runs:
             # Match structured parts, not benchmark_name(): its `/min_time:…`/aggregate
             # suffixes aren't in the key and would miss every parametrize case.
             name = r.run_name
             key = _profile_key(name.function_name, name.args)
-            enriched.append(EnrichedRun(r, memory=self._mem.get(key), cpu=self._cpu.get(key)))
-        self._inner.report_runs(enriched)
+            if (mem := self._mem.get(key)) is not None:
+                setattr(r, "memory", mem)  # noqa: B010 — dynamic_attr on the C++ Run
+            if (cpu := self._cpu.get(key)) is not None:
+                setattr(r, "cpu", cpu)  # noqa: B010
+        self._inner.report_runs(runs)
 
     def finalize(self) -> None:
         if fn := getattr(self._inner, "finalize", None):

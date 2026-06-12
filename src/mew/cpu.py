@@ -55,14 +55,6 @@ class CPUProfile:
     top_function_total_self_time: float
 
 
-def _ensure_pyinstrument() -> None:
-    if find_spec("pyinstrument") is None:
-        raise SystemExit(
-            "pyinstrument is required for CPU profiling. "
-            "Install it with: uv add --optional cpu pyinstrument"
-        )
-
-
 def profile(
     entries: list[Entry],
     *,
@@ -95,7 +87,11 @@ def profile(
     ``state.pause()`` regions are excluded: the pause suspends the sampler, as
     ``pause()`` excludes setup from a timed run.
     """
-    _ensure_pyinstrument()
+    if find_spec("pyinstrument") is None:
+        raise SystemExit(
+            "pyinstrument is required for CPU profiling. "
+            "Install it with: uv add --optional cpu pyinstrument"
+        )
     profiles = _collect_stats(entries, interval, inner_iterations)
     if output is not None:
         _write_html(entries, output, interval, inner_iterations)

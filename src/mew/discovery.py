@@ -19,7 +19,8 @@ _inserted_paths: list[str] = []
 class Selector:
     """One CLI argument decomposed into a filesystem path and an optional filter.
 
-    The filter is matched as a substring against the full benchmark name (e.g. ``benchmarks/bench_sort.py::quicksort``).
+    The filter is a regex (``re.search``) matched against the full benchmark name
+    (e.g. ``benchmarks/bench_sort.py::quicksort``).
     """
 
     path: Path
