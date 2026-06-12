@@ -68,7 +68,26 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googlebenchmark)
 
-message(STATUS "Google Benchmark commit: ${MEW_BENCHMARK_COMMIT}")
+# Report the commit FetchContent actually checked out, not just the requested
+# tag. A stale or diverged `_deps` checkout (e.g. a CMake cache that kept an old
+# pin) would otherwise make BENCHMARK_COMMIT lie about what was really built.
+# Falls back to the requested pin when there is no `.git` (vendored sdist).
+find_package(Git QUIET)
+set(MEW_BENCHMARK_BUILT_COMMIT "${MEW_BENCHMARK_COMMIT}")
+if(Git_FOUND AND IS_DIRECTORY "${googlebenchmark_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${googlebenchmark_SOURCE_DIR}" rev-parse HEAD
+        OUTPUT_VARIABLE MEW_BENCHMARK_BUILT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _mew_rev_parse_status
+        ERROR_QUIET)
+    if(NOT _mew_rev_parse_status EQUAL 0)
+        set(MEW_BENCHMARK_BUILT_COMMIT "${MEW_BENCHMARK_COMMIT}")
+    endif()
+endif()
+
+message(STATUS "Google Benchmark requested: ${MEW_BENCHMARK_COMMIT}")
+message(STATUS "Google Benchmark built:     ${MEW_BENCHMARK_BUILT_COMMIT}")
 
 # --- _core extension ----------------------------------------------------------
 set(_MEW_SOURCES
@@ -88,7 +107,7 @@ nanobind_add_module(
 target_include_directories(_core PRIVATE src/_mew)
 target_link_libraries(_core PRIVATE benchmark::benchmark)
 target_compile_definitions(_core PRIVATE
-    MEW_BENCHMARK_COMMIT="${MEW_BENCHMARK_COMMIT}"
+    MEW_BENCHMARK_COMMIT="${MEW_BENCHMARK_BUILT_COMMIT}"
 )
 
 # Repeat the sanitizer flag on _core itself: nanobind's stubgen detector only
