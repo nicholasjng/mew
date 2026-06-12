@@ -3,6 +3,9 @@
 `--profile-memory` runs each selected benchmark under [memray](https://bloomberg.github.io/memray/) once,
 separately from the timing pass, and attaches peak memory, total memory usage, and allocation count metadata to each run.
 
+The capture is scoped to the benchmark's timing loop: tracking starts at the first `for _ in state` iteration and stops when the loop ends.
+Fixture and setup allocations made before the loop are excluded, so the numbers describe the workload — and stay comparable across suites with different setup strategies.
+
 ## Prerequisites
 
 ```console
@@ -36,3 +39,4 @@ The resulting flame graph is a self-contained HTML page, and can be inspected di
 - Like CPU profiling, the memory pass is **separate** from the timing pass.
 Don't expect the memory column to line up with the iteration count from the timing column.
 - Memray's tracker has measurable overhead. Treat allocations as approximate when they're already small.
+- The loop-scoped capture applies to the stats columns. The `--flamegraph` capture wraps whole bodies (one tracker across all selected benchmarks), so setup allocations do appear there — useful when the fixture itself is the thing you're hunting.
