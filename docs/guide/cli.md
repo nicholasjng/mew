@@ -93,12 +93,13 @@ Exit code `1` if nothing matches.
 
 ## `mew compare`
 
-Compare two or more result files. The first is the baseline; subsequent files are diffed against it.
+Compare two or more result files (`.json`, `.jsonl`, or `.parquet`). The first is the baseline; subsequent files are diffed against it.
 
 ```console
 $ mew compare baseline.json head.json
 $ mew compare --metric cpu_time --pattern 'sort' a.json b.json
+$ mew compare --key func suite_a.jsonl suite_b.jsonl   # match by function name
 $ mew compare --fail-on-regression 5 baseline.json head.json
 ```
 
-See [](regressions.md) for the regression gate and allowlist.
+See [](regressions.md) for matching, metrics, the regression gate, and allowlist.

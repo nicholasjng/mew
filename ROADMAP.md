@@ -166,6 +166,46 @@ default; the items here are opt-in additions, not replacements.
 
 ## Comparison story
 
+- ⬜ **Variant orchestration for mutually-incompatible processes.** "Same
+  logical suite, N processes that cannot share an interpreter" is a recurring
+  shape: two engines statically linking the same library (the ducky-vs-duckdb
+  case in `notes/cross-engine-comparison.md`), GIL vs free-threaded
+  interpreters, Python versions, ASAN vs Release builds. Sketch:
+
+  ```console
+  $ mew run --variant ducky=benchmarks/bench_ducky.py \
+            --variant duckdb=benchmarks/bench_duckdb.py \
+            -o results.jsonl && mew compare results.jsonl --by variant
+  ```
+
+  One subprocess per variant; rows tagged with the variant name as a
+  context/column dimension, *not* part of the benchmark name (`compare --key
+  func` already covers the name-matching half). `compare --by variant` pivots
+  a single file into baseline-vs-others instead of requiring N files. The big
+  win once the orchestrator owns scheduling: **interleave repetitions across
+  variants** (A B A B … instead of all-A then all-B) so thermal/load drift
+  decorrelates from the variant axis — with process isolation each repetition
+  is its own subprocess invocation anyway, so this falls out naturally. The
+  `_subprocess_worker` machinery from `mew profile` is the likely launch
+  vehicle. Depends on the session-identity work below for clean row tagging;
+  the combined design is sketched in `notes/sessions-and-variants.md`.
+
+- ⬜ **Noise instrumentation in `run` output.** A background compile during
+  one run once turned a 4.6 ms benchmark into 8.9 ms and nothing flagged it.
+  `compare` now marks high-CV rows with `±N% (!)`; the remaining pieces are
+  run-side and statistical:
+  - Surface per-benchmark CV in the rich reporter when `repetitions > 1`,
+    with the same unreliability marker.
+  - Record load average (and macOS thermal pressure) at run start/end into
+    the context block; warn on a large delta — that's the "something else was
+    running" tripwire.
+  - With per-repetition rows available, add a significance marker to
+    `compare` (Mann-Whitney U, like Google Benchmark's own
+    `tools/compare.py`) so a 5% delta reads as "real" or "noise" rather than
+    just a colored number. Pairs with the deterministic instruction-count
+    item below: one attacks noise statistically, the other removes it from
+    the measurement.
+
 - ⬜ **Deterministic instruction-count metric as a low-noise gate.** Wall-clock
   and even CPU-time are noisy, which is what makes `--fail-on-regression` flaky:
   a 3% threshold trips on scheduler jitter, not real regressions. A
@@ -185,7 +225,9 @@ default; the items here are opt-in additions, not replacements.
   produces a call graph (`callgrind_annotate` / KCachegrind / pprof can read it),
   so the same pass doubles as a profile artifact when you want one.
 
-- ⬜ **Session-addressable comparisons inside a single file.** Today
+- ⬜ **Session-addressable comparisons inside a single file.** (Implementation
+  sketch, including how this layers under variant orchestration:
+  `notes/sessions-and-variants.md`.) Today
   `mew compare` only takes the cross-file shape (`mew compare a.parquet
   b.parquet`); within a single file, `compare._load` collapses sessions to
   the latest by `(date, host_name)` and warns about discards. That breaks
