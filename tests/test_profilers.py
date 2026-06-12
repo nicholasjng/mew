@@ -17,8 +17,29 @@ from pathlib import Path
 import pytest
 
 from mew import profilers
-from mew.profilers import base
-from mew.profilers.xctrace import XctraceProfiler, _record_command
+from mew._registry import Entry
+from mew.profilers import base, perf, pyspy, xctrace
+from mew.profilers.perf import PerfProfiler
+from mew.profilers.pyspy import PySpyProfiler
+from mew.profilers.xctrace import XctraceProfiler
+
+
+def _entry(name: str = "bench_x.py::bench_a", *, case_labels: list[str] | None = None) -> Entry:
+    """A registry Entry with a source file so each_case yields (the fn is never run:
+    the profiler subprocess is mocked)."""
+    return Entry(name=name, fn=lambda s: None, file="bench_x.py", case_labels=case_labels)
+
+
+def _recording_runner() -> tuple[list[list[str]], object]:
+    """A subprocess.run stand-in that records argv and reports success."""
+    calls: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    return calls, run
+
 
 _BENCH_SRC = textwrap.dedent(
     """
@@ -145,42 +166,37 @@ def test_slug_is_filesystem_safe():
     assert base.slug("///") == "bench"
 
 
-# --- xctrace argv builder ----------------------------------------------------
+# --- xctrace argv (recorded from a mocked subprocess) ------------------------
+# `_record_command` is inlined into run(); we drive run() with subprocess.run
+# mocked and assert on the argv it would have launched — no real xctrace needed.
 
 
-def test_record_command_combined_appends_after_first():
-    common = dict(
-        template="Time Profiler",
-        time_limit=None,
-        file="/b/bench.py",
-        entry_name="bench.py::f",
-        case=0,
+def test_xctrace_combined_run_appends_after_first_case(tmp_path, monkeypatch):
+    calls, runner = _recording_runner()
+    monkeypatch.setattr(xctrace.subprocess, "run", runner)
+
+    # One family, two cases → two `xctrace record` invocations into one bundle.
+    XctraceProfiler().run(
+        [_entry("bench.py::f", case_labels=["n=1", "n=2"])],
+        output_dir=tmp_path,
         iterations=1000,
     )
-    first = _record_command("xctrace", dest=Path("o/mew.trace"), append=False, **common)  # ty: ignore[invalid-argument-type]
-    later = _record_command("xctrace", dest=Path("o/mew.trace"), append=True, **common)  # ty: ignore[invalid-argument-type]
-
-    assert first[:2] == ["xctrace", "record"]
-    assert "--append-run" not in first
-    assert "--append-run" in later
+    first, later = calls
+    assert Path(first[0]).name == "xctrace" and first[1] == "record"
+    assert "--append-run" not in first  # first case starts the bundle
+    assert "--append-run" in later  # second case appends a run
     # The worker invocation is wired through after `--launch --`.
     tail = first[first.index("--") + 1 :]
     assert tail[:3] == [sys.executable, "-m", "mew._subprocess_worker"]
     assert "bench.py::f" in tail
 
 
-def test_record_command_includes_time_limit():
-    cmd = _record_command(
-        "xctrace",
-        template="Time Profiler",
-        dest=Path("o/mew.trace"),
-        append=False,
-        time_limit="10s",
-        file="/b/bench.py",
-        entry_name="bench.py::f",
-        case=0,
-        iterations=1000,
-    )
+def test_xctrace_run_passes_time_limit(tmp_path, monkeypatch):
+    calls, runner = _recording_runner()
+    monkeypatch.setattr(xctrace.subprocess, "run", runner)
+
+    XctraceProfiler().run([_entry()], output_dir=tmp_path, iterations=1000, time_limit="10s")
+    (cmd,) = calls
     assert cmd[cmd.index("--time-limit") + 1] == "10s"
 
 
@@ -220,42 +236,60 @@ def test_pyspy_unavailable_on_macos(monkeypatch):
     assert "macOS" in reason
 
 
-# --- empty-artifact guards ---------------------------------------------------
+# --- empty-artifact guards (driven through run() with a mocked subprocess) ---
 # `py-spy record` / `perf record` exit 0 even when the launched worker died, so a
-# failed bench would otherwise leave an empty artifact that reads as success.
+# failed bench would otherwise leave an empty artifact that reads as success. The
+# guard is inlined in run(); we mock the profiler subprocess to fabricate the
+# artifact (empty vs real) and assert run() rejects the empty one.
 
 
-def test_pyspy_require_samples_rejects_empty_profile(tmp_path):
-    from mew.profilers.pyspy import _require_samples
+def _pyspy_runner(doc: dict) -> object:
+    """subprocess.run stand-in writing `doc` as the speedscope `--output` file."""
 
-    dest = tmp_path / "empty.speedscope.json"
-    dest.write_text(json.dumps({"shared": {"frames": []}, "profiles": []}))
-    with pytest.raises(SystemExit, match="no samples"):
-        _require_samples(dest, "bench.py::f")
+    def run(cmd, **kwargs):
+        dest = Path(cmd[cmd.index("--output") + 1])
+        dest.write_text(json.dumps(doc))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    return run
 
 
-def test_pyspy_require_samples_accepts_real_profile(tmp_path):
-    from mew.profilers.pyspy import _require_samples
-
-    dest = tmp_path / "ok.speedscope.json"
-    dest.write_text(
-        json.dumps({"shared": {"frames": [{"name": "f"}]}, "profiles": [{"samples": [[0]]}]})
+def test_pyspy_run_rejects_empty_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        pyspy.subprocess, "run", _pyspy_runner({"shared": {"frames": []}, "profiles": []})
     )
-    _require_samples(dest, "bench.py::f")  # no raise
-
-
-def test_perf_require_samples_rejects_empty_script(tmp_path):
-    from mew.profilers.perf import _require_samples
-
-    dest = tmp_path / "empty.perf.txt"
-    dest.write_text("   \n")
     with pytest.raises(SystemExit, match="no samples"):
-        _require_samples(dest, "bench.py::f")
+        PySpyProfiler().run([_entry()], output_dir=tmp_path, iterations=1)
 
 
-def test_perf_require_samples_accepts_nonempty_script(tmp_path):
-    from mew.profilers.perf import _require_samples
+def test_pyspy_run_accepts_real_profile(tmp_path, monkeypatch):
+    doc = {"shared": {"frames": [{"name": "f"}]}, "profiles": [{"samples": [[0]]}]}
+    monkeypatch.setattr(pyspy.subprocess, "run", _pyspy_runner(doc))
+    artifacts = PySpyProfiler().run([_entry()], output_dir=tmp_path, iterations=1)
+    assert len(artifacts) == 1
 
-    dest = tmp_path / "ok.perf.txt"
-    dest.write_text("python 1234 [000] 0.1: cycles:\n\t  ffff _start\n")
-    _require_samples(dest, "bench.py::f")  # no raise
+
+def _perf_runner(script: str) -> object:
+    """subprocess.run stand-in: `perf script` writes `script` to its stdout file."""
+
+    def run(cmd, **kwargs):
+        # The `perf script` call passes stdout=<open dest>; `perf record` does not.
+        out = kwargs.get("stdout")
+        if out is not None:
+            out.write(script)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    return run
+
+
+def test_perf_run_rejects_empty_script(tmp_path, monkeypatch):
+    monkeypatch.setattr(perf.subprocess, "run", _perf_runner("   \n"))
+    with pytest.raises(SystemExit, match="no samples"):
+        PerfProfiler().run([_entry()], output_dir=tmp_path, iterations=1)
+
+
+def test_perf_run_accepts_nonempty_script(tmp_path, monkeypatch):
+    script = "python 1234 [000] 0.1: cycles:\n\t  ffff _start\n"
+    monkeypatch.setattr(perf.subprocess, "run", _perf_runner(script))
+    artifacts = PerfProfiler().run([_entry()], output_dir=tmp_path, iterations=1)
+    assert len(artifacts) == 1
