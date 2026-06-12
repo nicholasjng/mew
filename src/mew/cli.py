@@ -574,9 +574,20 @@ def compare(
         str,
         Parameter(
             name=["--metric", "-m"],
-            help="metric to compare: real_time, cpu_time, or iterations",
+            help="metric to compare: real_time, cpu_time, iterations, or (for "
+            "--profile-memory results) memory.peak_bytes, memory.total_bytes, "
+            "memory.total_allocations",
         ),
     ] = "real_time",
+    key: Annotated[
+        str,
+        Parameter(
+            name="--key",
+            help="how benchmarks are matched across files: `name` (full registered "
+            "name) or `func` (strip the `file.py::` prefix, for A/B suites in "
+            "different files with matching function names)",
+        ),
+    ] = "name",
     pattern: Annotated[
         str | None, Parameter(name=["--pattern", "-k"], help="substring filter")
     ] = None,
@@ -584,6 +595,21 @@ def compare(
         bool,
         Parameter(name="--stddev", help="show stddev columns if present in the result files"),
     ] = False,
+    by: Annotated[
+        str | None,
+        Parameter(
+            name="--by",
+            help="pivot dimension: `variant` compares the variants within one "
+            "`mew run --variant` result file (one column each) instead of files",
+        ),
+    ] = None,
+    baseline: Annotated[
+        str | None,
+        Parameter(
+            name="--baseline",
+            help="with `--by variant`, the baseline variant (default: first written)",
+        ),
+    ] = None,
     fail_on_regression: Annotated[
         float | None,
         Parameter(
@@ -619,7 +645,16 @@ def compare(
             inline_allows=allow,
         )
 
-    code = _compare(files, metric=metric, pattern=pattern, show_stddev=stddev, regressions=cfg)
+    code = _compare(
+        files,
+        metric=metric,
+        key=key,
+        pattern=pattern,
+        show_stddev=stddev,
+        by=by,
+        baseline=baseline,
+        regressions=cfg,
+    )
     if code:
         raise SystemExit(code)
 
