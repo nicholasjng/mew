@@ -138,15 +138,28 @@ def _build_reporters(
     show_memory: bool = False,
     show_cpu: bool = False,
     show_label: bool = False,
+    show_variant: bool = False,
+    append: bool = False,
 ) -> list[Reporter]:
     """Resolve ``-o`` sinks into a list of reporters.
 
     Sentinels ``-`` and ``stdout`` map to a rich terminal reporter; ``*.json``,
     ``*.jsonl``, and ``*.parquet`` map to file reporters.
     Defaults to a single rich reporter on stdout when no ``-o`` is provided.
+    ``append`` adds the run as a new session to existing ``.jsonl`` / ``.parquet``
+    sinks (rejected for ``.json``, which is a single streamed document).
     """
+
+    def _rich() -> RichReporter:
+        return RichReporter(
+            show_memory=show_memory,
+            show_cpu=show_cpu,
+            show_label=show_label,
+            show_variant=show_variant,
+        )
+
     if not outputs:
-        return [RichReporter(show_memory=show_memory, show_cpu=show_cpu, show_label=show_label)]
+        return [_rich()]
 
     reps: list[Reporter] = []
     seen_stdout = False
@@ -157,9 +170,7 @@ def _build_reporters(
                 print("duplicate stdout sink", file=sys.stderr)
                 raise SystemExit(2)
             seen_stdout = True
-            reps.append(
-                RichReporter(show_memory=show_memory, show_cpu=show_cpu, show_label=show_label)
-            )
+            reps.append(_rich())
             continue
         path = Path(raw).resolve()
         if path in seen_files:
@@ -168,11 +179,18 @@ def _build_reporters(
         seen_files.add(path)
         suffix = path.suffix.lower()
         if suffix == ".json":
+            if append:
+                print(
+                    f"--append is not supported for the JSON sink {raw} "
+                    "(a single streamed document); use *.jsonl or *.parquet",
+                    file=sys.stderr,
+                )
+                raise SystemExit(2)
             reps.append(JSONReporter(output=Path(raw)))
         elif suffix == ".jsonl":
-            reps.append(JSONLReporter(output=Path(raw)))
+            reps.append(JSONLReporter(output=Path(raw), append=append))
         elif suffix in (".parquet", ".pq"):
-            reps.append(ParquetReporter(output=Path(raw)))
+            reps.append(ParquetReporter(output=Path(raw), append=append))
         else:
             print(
                 f"unsupported output format: {raw} "
@@ -181,6 +199,74 @@ def _build_reporters(
             )
             raise SystemExit(2)
     return reps
+
+
+def _parse_variants(specs: list[str]) -> dict[str, Path]:
+    """Parse repeated ``name=path`` ``--variant`` specs, erroring on malformed/dup names."""
+    parsed: dict[str, Path] = {}
+    for spec in specs:
+        name, sep, path = spec.partition("=")
+        if not sep or not name or not path:
+            print(f"invalid --variant {spec!r}; expected name=path", file=sys.stderr)
+            raise SystemExit(2)
+        if name in parsed:
+            print(f"duplicate variant name: {name!r}", file=sys.stderr)
+            raise SystemExit(2)
+        parsed[name] = Path(path)
+    return parsed
+
+
+def _run_variants_cmd(
+    specs: list[str],
+    *,
+    output: list[str],
+    pattern: str | None,
+    tags: list[str] | None,
+    min_time: str | None,
+    repetitions: int | None,
+    extra: list[str],
+    paths: list[str],
+    session_tag: str | None,
+    append: bool,
+    profiling: bool,
+) -> None:
+    """Run the ``--variant`` path: validate, then hand off to the orchestrator."""
+    if paths:
+        print("--variant and positional paths are mutually exclusive", file=sys.stderr)
+        raise SystemExit(2)
+    if profiling:
+        print("profiling flags are not supported with --variant", file=sys.stderr)
+        raise SystemExit(2)
+
+    variants = _parse_variants(specs)
+    cfg = _config.load()
+    if session_tag is None and cfg.auto_session_tag:
+        from mew._session import derive_session_tag
+
+        session_tag = derive_session_tag()
+
+    # Repetitions are realized as separate child invocations, so they are NOT
+    # forwarded as a GB flag; min_time and raw options are.
+    gb_args = _config.format_benchmark_args(cfg.benchmark_options)
+    if min_time is not None:
+        gb_args.append(f"--benchmark_min_time={min_time}")
+    gb_args.extend(extra)
+
+    reporters = _build_reporters(output, show_variant=True, append=append)
+
+    from mew._variants import run_variants
+
+    failures = run_variants(
+        variants,
+        reporters=reporters,
+        gb_args=gb_args,
+        pattern=pattern,
+        tags=tags,
+        repetitions=repetitions or 1,
+        session_tag=session_tag,
+    )
+    if failures:
+        raise SystemExit(1)
 
 
 @app.command(usage="Usage: mew run [OPTIONS] [PATHS]")
@@ -300,6 +386,22 @@ def run(
     ] = None,
 ) -> None:
     """Discover and run benchmarks."""
+    if variant:
+        _run_variants_cmd(
+            variant,
+            output=output,
+            pattern=pattern,
+            tags=tag or None,
+            min_time=min_time,
+            repetitions=repetitions,
+            extra=extra,
+            paths=paths,
+            session_tag=session_tag,
+            append=append,
+            profiling=profile_memory or flamegraph is not None or sample or sample_html is not None,
+        )
+        return
+
     # discovered(): bench modules stay live for the run, cleaned up at the boundary.
     with _discovery.discovered():
         entries = _collect(paths, pattern=pattern, tags=tag or None)
@@ -328,6 +430,7 @@ def run(
             show_cpu=sample or sample_html is not None,
             # Label column distinguishes family case rows from the truncated name.
             show_label=any(e.case_labels for e in entries),
+            append=append,
         )
 
         memory_profiles = None

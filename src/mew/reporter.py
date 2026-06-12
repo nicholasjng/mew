@@ -103,6 +103,9 @@ def _run_to_dict(r: Run | EnrichedRun) -> dict[str, Any]:
         "skip_message": r.skip_message,
         "counters": counters if counters else {},
     }
+    # Present only under --variant; absent keeps the GB-shaped row unchanged.
+    if (variant := getattr(r, "variant", None)) is not None:
+        d["variant"] = variant
     mem: MemoryProfile | None = getattr(r, "memory", None)
     if mem is not None:
         d["memory"] = {
@@ -133,10 +136,13 @@ def _indent_block(text: str, spaces: int) -> str:
     return text.replace("\n", "\n" + " " * spaces)
 
 
-def _open_sink(output: Path | TextIO | None) -> tuple[TextIO, bool]:
-    """Resolve ``output`` to ``(file, owns_it)``: a Path is opened (owned), ``None`` → stdout, a stream is used as-is."""
+def _open_sink(output: Path | TextIO | None, mode: str = "w") -> tuple[TextIO, bool]:
+    """Resolve ``output`` to ``(file, owns_it)``: a Path is opened (owned), ``None`` → stdout, a stream is used as-is.
+
+    ``mode`` applies only to a Path sink (``"a"`` appends a new segment).
+    """
     if isinstance(output, Path):
-        return output.open("w"), True
+        return output.open(mode), True
     if output is None:
         return sys.stdout, False
     return output, False
@@ -228,15 +234,20 @@ class JSONLReporter:
     output : Path, TextIO, or None, optional
         Destination. A Path is opened and closed here; a stream is written directly;
         ``None`` writes to ``sys.stdout``.
+    append : bool, default False
+        Open a Path sink in append mode, adding this run as a new
+        context-header + rows *segment* to an existing file (one more session).
+        Ignored for stream / stdout sinks.
     """
 
-    def __init__(self, *, output: Path | TextIO | None = None) -> None:
+    def __init__(self, *, output: Path | TextIO | None = None, append: bool = False) -> None:
         self._output = output
+        self._append = append
         self._fh: TextIO | None = None
         self._owns_fh = False
 
     def report_context(self, context: dict[str, Any]) -> bool:
-        self._fh, self._owns_fh = _open_sink(self._output)
+        self._fh, self._owns_fh = _open_sink(self._output, "a" if self._append else "w")
         # Header first so provenance lands before any rows.
         self._fh.write(json.dumps({"context": _build_context(context)}, default=str) + "\n")
         self._fh.flush()
@@ -268,6 +279,9 @@ class RichReporter:
     show_label : bool, default False
         Add a ``Label`` column (the parametrize case id). Pass for families, where
         the case is otherwise indistinguishable from the truncated name.
+    show_variant : bool, default False
+        Add a ``Variant`` column (the ``--variant`` name). Pass when rows from
+        several variants stream into one table, so they stay distinguishable.
     """
 
     def __init__(
@@ -277,11 +291,13 @@ class RichReporter:
         show_memory: bool = False,
         show_cpu: bool = False,
         show_label: bool = False,
+        show_variant: bool = False,
     ) -> None:
         self._console = console or Console()
         self._show_memory = show_memory
         self._show_cpu = show_cpu
         self._show_label = show_label
+        self._show_variant = show_variant
         self._context: dict[str, Any] = {}
         self._widths: dict[str, int] = {}
 
@@ -317,6 +333,8 @@ class RichReporter:
             "real": 14,
             "cpu": 14,
         }
+        if self._show_variant:
+            fixed["variant"] = 16
         if self._show_label:
             fixed["label"] = 20
         if self._show_memory:
@@ -334,6 +352,8 @@ class RichReporter:
     def _print_header(self) -> None:
         w = self._widths
         cells = ["Benchmark".ljust(w["name"])]
+        if self._show_variant:
+            cells.append("Variant".ljust(w["variant"]))
         if self._show_label:
             cells.append("Label".ljust(w["label"]))
         cells += [
@@ -360,6 +380,11 @@ class RichReporter:
             name = "…" + name[-(w["name"] - 1) :]
 
         cells = [name.ljust(w["name"])]
+        if self._show_variant:
+            variant = getattr(r, "variant", None) or "-"
+            if len(variant) > w["variant"]:
+                variant = variant[: w["variant"] - 1] + "…"
+            cells.append(variant.ljust(w["variant"]))
         if self._show_label:
             label = r.report_label
             if len(label) > w["label"]:
@@ -394,6 +419,10 @@ class ParquetReporter:
     ----------
     output : Path
         Destination file, overwritten if it exists.
+    append : bool, default False
+        If the file exists, concatenate this run's rows onto it (one more
+        session) instead of overwriting. Per-row ``session_id`` columns keep
+        the sessions distinct.
 
     Raises
     ------
@@ -401,7 +430,7 @@ class ParquetReporter:
         From :meth:`finalize` when ``pyarrow`` is not installed.
     """
 
-    def __init__(self, *, output: Path) -> None:
+    def __init__(self, *, output: Path, append: bool = False) -> None:
         if sys.platform == "win32" and find_spec("tzdata") is None:
             raise RuntimeError(
                 "ParquetReporter on Windows requires the `tzdata` package "
@@ -409,6 +438,7 @@ class ParquetReporter:
                 "`pip install tzdata`."
             )
         self._output = Path(output)
+        self._append = append
         self._context: dict[str, Any] = {}
         self._runs: list[Run] = []
 
@@ -435,6 +465,11 @@ class ParquetReporter:
 
         rows = [self._row(r, date, custom_json) for r in self._runs]
         table = pa.Table.from_pylist(rows, schema=_parquet_schema())
+        if self._append and self._output.exists():
+            # promote_options fills columns absent from an older file with nulls,
+            # so appending across a schema bump (e.g. pre-session files) works.
+            existing = pq.read_table(self._output)
+            table = pa.concat_tables([existing, table], promote_options="default")
         pq.write_table(table, str(self._output))
 
     def _row(self, r: Run | EnrichedRun, date: datetime, custom_json: str | None) -> dict[str, Any]:
@@ -464,6 +499,7 @@ class ParquetReporter:
             # pa rejects `{}` for `map_` columns; a list of (k, v) pairs handles
             # the empty case cleanly.
             "counters": list(counters.items()) if counters else [],
+            "variant": getattr(r, "variant", None),
             "date": date,
             "session_id": ctx.get("session_id"),
             "session_tag": ctx.get("session_tag"),
@@ -522,6 +558,7 @@ def _parquet_schema() -> Any:
             ("skipped", pa.bool_()),
             ("skip_message", pa.string()),
             ("counters", pa.map_(pa.string(), pa.float64())),
+            ("variant", pa.string()),
             ("date", pa.timestamp("us", tz="UTC")),
             ("session_id", pa.string()),
             ("session_tag", pa.string()),
