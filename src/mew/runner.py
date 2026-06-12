@@ -111,7 +111,14 @@ def run(
         handle = _core.register_benchmark(entry.name, entry.fn)
         _apply_options(handle, entry.options)
         if entry.case_labels is not None:
-            handle.dense_range(0, len(entry.case_labels) - 1)
+            if entry.cases is None:
+                handle.dense_range(0, len(entry.case_labels) - 1)
+            else:
+                # A name filter narrowed the family: register only those case
+                # indices. The arg value is the case index the trampoline reads
+                # via state.range(0), so the right kwargs/label still bind.
+                for i in entry.cases:
+                    handle.arg(i)
             handle.arg_name("case")
 
     rep = _to_single_reporter(reporter)
