@@ -9,6 +9,7 @@ containers (see docker/profile.Dockerfile).
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,25 @@ from mew.profilers.base import Capabilities, each_case, parse_seconds, worker_ar
 
 if TYPE_CHECKING:
     from mew._registry import Entry
+
+
+def _require_samples(dest: Path, key: str) -> None:
+    """Fail loudly if py-spy wrote an empty profile.
+
+    `py-spy record` exits 0 even when the launched worker died (e.g. the bench
+    failed to import) or ran too briefly to sample, leaving a frames-less
+    speedscope file that otherwise reads as success. Catch that here.
+    """
+    try:
+        doc = json.loads(dest.read_text())
+    except (OSError, json.JSONDecodeError):
+        doc = {}
+    if not (doc.get("shared", {}).get("frames") and doc.get("profiles")):
+        raise SystemExit(
+            f"mew: py-spy captured no samples for {key!r}. The benchmark likely "
+            f"failed to run (check the traceback above) or was too short to sample "
+            f"(raise --iterations). Artifact: {dest}"
+        )
 
 
 class PySpyProfiler:
@@ -65,6 +85,7 @@ class PySpyProfiler:
             cmd += ["--"]
             cmd += worker_argv(file=file, entry_name=name, case=case, iterations=iterations)
             subprocess.run(cmd, check=True)
+            _require_samples(dest, key)
             artifacts[key] = dest
         return artifacts
 

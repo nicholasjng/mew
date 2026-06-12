@@ -25,6 +25,20 @@ if TYPE_CHECKING:
     from mew._registry import Entry
 
 
+def _require_samples(dest: Path, key: str) -> None:
+    """Fail loudly if `perf script` produced no samples.
+
+    A worker that died (e.g. the bench failed to import) or ran too briefly to
+    sample leaves an empty script, which would otherwise read as success.
+    """
+    if not dest.read_text().strip():
+        raise SystemExit(
+            f"mew: perf recorded no samples for {key!r}. The benchmark likely "
+            f"failed to run (check the output above) or was too short to sample "
+            f"(raise --iterations / --rate). Artifact: {dest}"
+        )
+
+
 class PerfProfiler:
     name = "perf"
     capabilities = Capabilities(native_frames=True, platforms=frozenset({"linux"}))
@@ -93,6 +107,7 @@ class PerfProfiler:
             # `perf script` text is loadable as-is by speedscope.app.
             with open(dest, "w") as fh:
                 subprocess.run([perf, "script", "-i", str(data)], check=True, stdout=fh)
+            _require_samples(dest, key)
             artifacts[key] = dest
         return artifacts
 
