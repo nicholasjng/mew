@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import time
 import uuid
@@ -11,7 +12,7 @@ from pathlib import Path
 import pytest
 
 import mew
-from mew._session import derive_session_tag, new_session_id
+from mew._session import _git_describe, derive_session_tag, new_session_id
 from mew.reporter import JSONLReporter, JSONReporter
 
 
@@ -34,7 +35,7 @@ def test_derive_session_tag_outside_a_repo(tmp_path: Path):
 
 
 def test_derive_session_tag_in_a_repo(tmp_path: Path):
-    if subprocess.run(["git", "--version"], capture_output=True, check=False).returncode != 0:
+    if not shutil.which("git"):
         pytest.skip("git not available")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(
@@ -54,7 +55,17 @@ def test_derive_session_tag_in_a_repo(tmp_path: Path):
         check=True,
     )
     tag = derive_session_tag(cwd=tmp_path)
-    assert tag  # at minimum the short commit hash from --always
+    assert tag  # plain git repo (no jj): the short commit hash from --always
+
+
+def test_derive_session_tag_prefers_jj(tmp_path: Path):
+    if not shutil.which("jj"):
+        pytest.skip("jj not available")
+    # In a jj repo the tag comes from jj, not git. `jj git init` (not --colocate)
+    # also leaves no usable git HEAD, so git is empty here regardless.
+    subprocess.run(["jj", "git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    assert _git_describe(tmp_path) is None
+    assert derive_session_tag(cwd=tmp_path)  # supplied by jj
 
 
 def _run_to_jsonl(tmp_path: Path, name: str, **run_kwargs) -> dict:
