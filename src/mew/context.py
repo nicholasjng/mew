@@ -45,11 +45,9 @@ def set_context(key: str, value: Any) -> None:
     Parameters
     ----------
     key : str
-        Context key.
-        Dotted names result in nested dicts (``"dataset.size"`` → ``{"dataset": {"size": ...}}``).
+        Context key. Dotted names nest (``"dataset.size"`` → ``{"dataset": {"size": ...}}``).
     value : Any
-        Value to store.
-        Reporters serialize this when emitting context, so JSON-friendly values are preferred.
+        Value to store. Reporters serialize this, so JSON-friendly values are preferred.
 
     Raises
     ------
@@ -90,8 +88,7 @@ def get_context() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Independent snapshot.
-        Mutating it does not affect future runs.
+        Independent snapshot; mutating it does not affect future runs.
     """
     return copy.deepcopy(_CONTEXT)
 

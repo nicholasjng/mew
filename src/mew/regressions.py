@@ -1,8 +1,9 @@
 """Regression gating for ``mew compare``.
 
-A *regression* is a benchmark whose delta against the baseline exceeds a threshold in the slower direction.
-For ``real_time`` / ``cpu_time`` larger is worse; for ``iterations`` smaller is worse.
-Per-benchmark allowlist rules can ignore a benchmark or raise its threshold, matched against the full name via :func:`fnmatch.fnmatchcase`.
+A *regression* is a benchmark whose delta against the baseline exceeds a threshold
+in the slower direction (larger for ``real_time`` / ``cpu_time``, smaller for
+``iterations``). Per-benchmark allowlist rules can ignore a benchmark or raise its
+threshold, matched against the full name via :func:`fnmatch.fnmatchcase`.
 """
 
 from __future__ import annotations
@@ -21,22 +22,13 @@ class Verdict(Enum):
     """Within the active threshold; does not contribute to gate failure."""
 
     REGRESSED = "regressed"
-    """Slower than the default threshold and not covered by any allow rule.
-
-    Causes the gate to fail (exit code 2).
-    """
+    """Slower than the default threshold, no allow rule. Fails the gate (exit code 2)."""
 
     ALLOWED_OVER = "allowed_over"
-    """Over the default threshold but inside a rule-supplied threshold.
-
-    Surfaced as a soft warning for periodic review.
-    """
+    """Over the default threshold but inside a rule-supplied one; soft warning."""
 
     IGNORED = "ignored"
-    """Out-of-scope per a matching ``ignore=true`` rule.
-
-    Listed in the panel so the allowlist stays visible.
-    """
+    """Out-of-scope per a matching ``ignore=true`` rule. Listed to keep the allowlist visible."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,8 +73,8 @@ class RegressionConfig:
         name : str
             Full benchmark name (matched against ``rule.pattern``).
         delta_pct : float
-            Signed percent change vs baseline.
-            For ``real_time`` / ``cpu_time`` positive means slower; for ``iterations`` use ``higher_is_better=True``.
+            Signed percent change vs baseline. Positive means slower for
+            ``real_time`` / ``cpu_time``; for ``iterations`` use ``higher_is_better=True``.
         higher_is_better : bool
             Invert the sign when computing the regression magnitude.
 
@@ -95,8 +87,8 @@ class RegressionConfig:
         if rule is not None and rule.ignore:
             return BenchmarkVerdict(name, delta_pct, Verdict.IGNORED, rule)
 
-        # Magnitude in the "worse" direction. Positive = slower for time
-        # metrics; for iterations a negative delta (fewer iters) is worse.
+        # Magnitude in the "worse" direction: slower for time metrics, fewer
+        # iters (negative delta) for iterations.
         magnitude = -delta_pct if higher_is_better else delta_pct
         threshold = (
             rule.threshold_pct
@@ -148,8 +140,9 @@ def load_config(
 ) -> RegressionConfig:
     """Build a :class:`RegressionConfig`.
 
-    Reads ``[tool.mew.regressions]`` from ``path`` (or ``pyproject.toml`` in the cwd when ``path`` is ``None``).
-    Inline ``--allow`` strings from the CLI are appended after file rules; both lists are searched in order.
+    Reads ``[tool.mew.regressions]`` from ``path`` (or ``pyproject.toml`` in the cwd
+    when ``path`` is ``None``). Inline ``--allow`` strings are appended after file
+    rules; both lists are searched in order.
     """
     rules: list[AllowRule] = []
     threshold = default_threshold_pct
@@ -178,8 +171,8 @@ def load_config(
 def _parse_inline(spec: str) -> AllowRule:
     """Parse a ``PATTERN[:PCT]`` string from the CLI.
 
-    Bare pattern → ``ignore=true``; ``PATTERN:5`` → ``threshold_pct=5.0``.
-    Inline rules are for ad-hoc use; persistent allowlisting belongs in ``pyproject.toml``.
+    Bare pattern → ``ignore=true``; ``PATTERN:5`` → ``threshold_pct=5.0``. Inline
+    rules are ad-hoc; persistent allowlisting belongs in ``pyproject.toml``.
     """
     if ":" in spec:
         pattern, _, pct = spec.rpartition(":")

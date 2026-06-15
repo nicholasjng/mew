@@ -18,10 +18,8 @@ from pathlib import Path
 def new_session_id() -> str:
     """A UUIDv7 (RFC 9562) string: 48-bit unix-ms timestamp, then random bits.
 
-    Time-ordered by construction, so the lexicographically greatest id in a
-    file is the latest session — the same trick compare already plays with
-    ISO-8601 dates. Stdlib ``uuid.uuid7`` arrives in Python 3.14; this is the
-    same layout, hand-rolled for 3.12/3.13.
+    Time-ordered by construction, so the lexicographically greatest id in a file is the
+    latest session. Stdlib ``uuid.uuid7`` arrives in 3.14; hand-rolled here for 3.12/3.13.
     """
     unix_ms = time.time_ns() // 1_000_000
     rand_a = int.from_bytes(os.urandom(2)) & 0x0FFF
@@ -39,9 +37,8 @@ def new_session_id() -> str:
 def derive_session_tag(cwd: Path | None = None) -> str | None:
     """``git describe --always --dirty``, or None outside a work tree.
 
-    The label a benchmark archive almost always wants is "what code was this";
-    derive it instead of making every pipeline spell it out. Works in
-    jj-colocated checkouts too (a ``.git`` is present).
+    The label an archive almost always wants is "what code was this", so derive it instead
+    of making every pipeline spell it out. Works in jj-colocated checkouts (a ``.git`` is present).
     """
     try:
         proc = subprocess.run(

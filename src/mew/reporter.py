@@ -2,30 +2,26 @@
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import re
 import sys
 from datetime import UTC, datetime
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TextIO, cast, runtime_checkable
+from typing import Any, Protocol, TextIO, cast, runtime_checkable
 
 from rich.console import Console
 from rich.text import Text
 
 from mew._core import Run
-
-if TYPE_CHECKING:
-    from mew.cpu import CPUProfile
-    from mew.memory import MemoryProfile
+from mew._typing import RunRow
 
 
 @runtime_checkable
 class Reporter(Protocol):
     """Duck-typed reporter interface consumed by the C++ runner.
 
-    Implementations must provide ``report_context`` and ``report_runs``; ``finalize`` is optional.
+    ``report_context`` and ``report_runs`` are required; ``finalize`` is optional.
     All callbacks run on the main thread with the GIL held.
 
     Methods
@@ -34,11 +30,13 @@ class Reporter(Protocol):
         Called once before any runs with the C++ context dict.
         Returning ``False`` aborts the Google Benchmark run.
     report_runs(runs)
-        Called one or more times with completed :class:`~mew._core.Run` objects.
+        Called one or more times with a list of :class:`~mew._typing.RunRow`
+        dicts (runs projected from the C++ ``Run``).
     """
 
-    def report_context(self, context: dict[str, Any]) -> bool: ...
-    def report_runs(self, runs: list[Run]) -> None: ...
+    # Positional-only: the C++ runner calls these positionally.
+    def report_context(self, context: dict[str, Any], /) -> bool: ...
+    def report_runs(self, runs: list[RunRow], /) -> None: ...
 
 
 _COL_SEP = " │ "
@@ -65,9 +63,9 @@ def canonical_name(name: str, label: Any) -> str:
     """Strip GB option suffixes and render a parametrize case by its human label.
 
     ``bench.py::f/case:0/min_time:0.200`` with label ``n=10000`` becomes
-    ``bench.py::f[n=10000]``. Shared by the live :class:`RichReporter` table and
-    :mod:`mew.compare` so both surfaces show the same human name; the stored
-    ``name`` field stays the raw GB name (compare canonicalizes on read).
+    ``bench.py::f[n=10000]``. Shared by :class:`RichReporter` and :mod:`mew.compare`
+    so both show the same name; the stored ``name`` field stays the raw GB name
+    (compare canonicalizes on read).
     """
     name = _OPTION_SUFFIXES_RE.sub("", name)
     if label and isinstance(label, str):
@@ -80,8 +78,8 @@ def canonical_name(name: str, label: Any) -> str:
 def _build_context(context: dict[str, Any]) -> dict[str, Any]:
     """Project the raw C++ context dict into the serialized ``context`` block.
 
-    Shared by :class:`JSONReporter` and :class:`JSONLReporter` so both emit the
-    same shape. ``date`` is stamped at call time.
+    Shared by :class:`JSONReporter` and :class:`JSONLReporter`. ``date`` is
+    stamped at call time.
     """
     ctx: dict[str, Any] = {
         "date": datetime.now(UTC).isoformat(),
@@ -93,7 +91,7 @@ def _build_context(context: dict[str, Any]) -> dict[str, Any]:
         "library_build_type": context.get("library_build_type"),
     }
     # Session identity is injected by mew.run; reporters driven directly
-    # (or by GB itself) have none, and then the keys are simply absent.
+    # (or by GB) have none, leaving these keys absent.
     if session_id := context.get("session_id"):
         ctx["session_id"] = session_id
     if session_tag := context.get("session_tag"):
@@ -107,9 +105,14 @@ def _build_context(context: dict[str, Any]) -> dict[str, Any]:
     return ctx
 
 
-def _run_to_dict(r: Run) -> dict[str, Any]:
+def _run_to_dict(r: Run) -> RunRow:
+    """Project a C++ ``Run`` to a base :class:`~mew._typing.RunRow`.
+
+    Overlay keys (``variant`` / ``custom`` / ``memory`` / ``cpu_profile``) are
+    added downstream, not read off the ``Run``.
+    """
     counters = r.counters  # hot path on C++ Run: each access rebuilds the dict
-    d: dict[str, Any] = {
+    return {
         "name": r.benchmark_name(),
         "run_name": str(r.run_name),
         "family_index": r.family_index,
@@ -130,22 +133,6 @@ def _run_to_dict(r: Run) -> dict[str, Any]:
         "skip_message": r.skip_message,
         "counters": counters if counters else {},
     }
-    # Present only under --variant; absent keeps the GB-shaped row unchanged.
-    if (variant := getattr(r, "variant", None)) is not None:
-        d["variant"] = variant
-    # Per-row custom context: stamped by the --variant orchestrator so each
-    # variant carries its own set_context() values into the merged file (the
-    # single top-level context block can hold only one variant's). Absent on
-    # plain runs, where custom lives in the context block.
-    if (custom := getattr(r, "custom", None)) is not None:
-        d["custom"] = custom
-    mem: MemoryProfile | None = getattr(r, "memory", None)
-    if mem is not None:
-        d["memory"] = dataclasses.asdict(mem)
-    cpu: CPUProfile | None = getattr(r, "cpu", None)
-    if cpu is not None:
-        d["cpu_profile"] = dataclasses.asdict(cpu)
-    return d
 
 
 # Closing `]}` of the streamed doc, rewritten over itself each flush so the file
@@ -159,9 +146,10 @@ def _indent_block(text: str, spaces: int) -> str:
 
 
 def _open_sink(output: Path | TextIO | None, mode: str = "w") -> tuple[TextIO, bool]:
-    """Resolve ``output`` to ``(file, owns_it)``: a Path is opened (owned), ``None`` → stdout, a stream is used as-is.
+    """Resolve ``output`` to ``(file, owns_it)``.
 
-    ``mode`` applies only to a Path sink (``"a"`` appends a new segment).
+    A Path is opened (owned), ``None`` → stdout, a stream is used as-is. ``mode``
+    applies only to a Path sink (``"a"`` appends a new segment).
     """
     if isinstance(output, Path):
         return cast(TextIO, output.open(mode)), True
@@ -181,7 +169,7 @@ class JSONReporter:
 
     To a **seekable** sink (a file) it streams: writes context + empty array up
     front, then each :meth:`report_runs` seeks over the closing ``]}`` and re-writes
-    it, so the file is valid JSON after every flush (survives Ctrl-C). A non-seekable
+    it, so the file stays valid JSON after every flush (survives Ctrl-C). A non-seekable
     sink (stdout, pipe) can't be rewritten, so it buffers and writes once at :meth:`finalize`.
 
     Parameters
@@ -194,7 +182,7 @@ class JSONReporter:
     def __init__(self, *, output: Path | TextIO | None = None) -> None:
         self._output = output
         self._context: dict[str, Any] = {}
-        self._runs: list[Run] = []  # buffered (non-seekable) path only
+        self._runs: list[RunRow] = []  # buffered (non-seekable) path only
         self._fh: TextIO | None = None
         self._owns_fh = False
         self._streaming = False
@@ -215,19 +203,19 @@ class JSONReporter:
             self._fh.flush()
         return True
 
-    def report_runs(self, runs: list[Run]) -> None:
+    def report_runs(self, runs: list[RunRow]) -> None:
         if not self._streaming:
             self._runs.extend(runs)
             return
         assert self._fh is not None  # report_context runs first, always
-        # Overwrite the closer with the rows, then re-close. Rows are >> the closer,
+        # Overwrite the closer with rows, then re-close. Rows are >> the closer,
         # so no stale bytes; empty `runs` just rewrites it in place.
         self._fh.seek(self._reopen_pos)
-        for r in runs:
+        for row in runs:
             prefix = "" if self._first_row else ","
             self._first_row = False
-            row = _indent_block(json.dumps(_run_to_dict(r), indent=2, default=str), 4)
-            self._fh.write(f"{prefix}\n    {row}")
+            rendered = _indent_block(json.dumps(row, indent=2, default=str), 4)
+            self._fh.write(f"{prefix}\n    {rendered}")
         self._reopen_pos = self._fh.tell()
         self._fh.write(_JSON_CLOSER)
         self._fh.flush()
@@ -238,7 +226,7 @@ class JSONReporter:
             assert self._fh is not None
             doc = {
                 "context": _build_context(self._context),
-                "benchmarks": [_run_to_dict(r) for r in self._runs],
+                "benchmarks": self._runs,
             }
             self._fh.write(json.dumps(doc, indent=2, default=str) + "\n")
         _close_sink(self._fh, self._owns_fh)
@@ -247,9 +235,9 @@ class JSONReporter:
 class JSONLReporter:
     """Stream one JSON object per Run, one per line, flushed as runs land.
 
-    Append-only (works on pipes), so a long suite leaves a growing, ``tail``-able
-    file that survives interruption. Line 1 is a ``{"context": {...}}`` header; each
-    later line is one benchmark record. Consumers skip line 1 / branch on ``context``.
+    Append-only (works on pipes): a long suite leaves a growing, ``tail``-able file
+    that survives interruption. Line 1 is a ``{"context": {...}}`` header; each later
+    line is one benchmark record. Consumers skip line 1 / branch on ``context``.
 
     Parameters
     ----------
@@ -258,8 +246,8 @@ class JSONLReporter:
         ``None`` writes to ``sys.stdout``.
     append : bool, default False
         Open a Path sink in append mode, adding this run as a new
-        context-header + rows *segment* to an existing file (one more session).
-        Ignored for stream / stdout sinks.
+        context-header + rows *segment* (one more session). Ignored for
+        stream / stdout sinks.
     """
 
     def __init__(self, *, output: Path | TextIO | None = None, append: bool = False) -> None:
@@ -275,10 +263,10 @@ class JSONLReporter:
         self._fh.flush()
         return True
 
-    def report_runs(self, runs: list[Run]) -> None:
+    def report_runs(self, runs: list[RunRow]) -> None:
         assert self._fh is not None  # report_context runs first, always
-        for r in runs:
-            self._fh.write(json.dumps(_run_to_dict(r), default=str) + "\n")
+        for row in runs:
+            self._fh.write(json.dumps(row, default=str) + "\n")
         self._fh.flush()
 
     def finalize(self) -> None:
@@ -303,7 +291,7 @@ class RichReporter:
         the case is otherwise indistinguishable from the truncated name.
     show_variant : bool, default False
         Add a ``Variant`` column (the ``--variant`` name). Pass when rows from
-        several variants stream into one table, so they stay distinguishable.
+        several variants stream into one table.
     """
 
     def __init__(
@@ -330,9 +318,9 @@ class RichReporter:
         self._print_header()
         return True
 
-    def report_runs(self, runs: list[Run]) -> None:
-        for r in runs:
-            self._print_row(r)
+    def report_runs(self, runs: list[RunRow]) -> None:
+        for row in runs:
+            self._print_row(row)
 
     def finalize(self) -> None:
         pass
@@ -393,40 +381,40 @@ class RichReporter:
         self._console.print(Text(line, style="bold"))
         self._console.print(Text("─" * len(line), style="dim"))
 
-    def _print_row(self, r: Run) -> None:
+    def _print_row(self, row: RunRow) -> None:
         w = self._widths
-        unit = r.time_unit.name
+        unit = row["time_unit"]
+        label = row["label"]
         # Canonical `file.py::f[label]` form (no `/case:N/min_time:…` noise), so
         # the live table reads the same as `mew compare`.
-        name = canonical_name(r.benchmark_name(), r.report_label)
+        name = canonical_name(row["name"], label)
         # Left-ellipsize: keep the disambiguating function suffix / case:N tail.
         if len(name) > w["name"]:
             name = "…" + name[-(w["name"] - 1) :]
 
         cells = [name.ljust(w["name"])]
         if self._show_variant:
-            variant = getattr(r, "variant", None) or "-"
+            variant = row.get("variant") or "-"
             if len(variant) > w["variant"]:
                 variant = variant[: w["variant"] - 1] + "…"
             cells.append(variant.ljust(w["variant"]))
         if self._show_label:
-            label = r.report_label
             if len(label) > w["label"]:
                 label = label[: w["label"] - 1] + "…"
             cells.append(label.ljust(w["label"]))
         cells += [
-            f"{r.iterations:,}".rjust(w["iters"]),
-            f"{r.adjusted_real_time():.2f} {unit}".rjust(w["real"]),
-            f"{r.adjusted_cpu_time():.2f} {unit}".rjust(w["cpu"]),
+            f"{row['iterations']:,}".rjust(w["iters"]),
+            f"{row['real_time']:.2f} {unit}".rjust(w["real"]),
+            f"{row['cpu_time']:.2f} {unit}".rjust(w["cpu"]),
         ]
         if self._show_memory:
-            mem: MemoryProfile | None = getattr(r, "memory", None)
-            cells.append((_fmt_bytes(mem.peak_bytes) if mem else "-").rjust(w["peak"]))
-            cells.append((_fmt_bytes(mem.total_bytes) if mem else "-").rjust(w["alloc"]))
+            mem = row.get("memory")
+            cells.append((_fmt_bytes(mem["peak_bytes"]) if mem else "-").rjust(w["peak"]))
+            cells.append((_fmt_bytes(mem["total_bytes"]) if mem else "-").rjust(w["alloc"]))
         if self._show_cpu:
-            cpu: CPUProfile | None = getattr(r, "cpu", None)
-            cells.append((f"{cpu.sample_count:,}" if cpu else "-").rjust(w["samples"]))
-            top = cpu.top_function if cpu else "-"
+            cpu = row.get("cpu_profile")
+            cells.append((f"{cpu['sample_count']:,}" if cpu else "-").rjust(w["samples"]))
+            top = cpu["top_function"] if cpu else "-"
             if len(top) > w["hottest_frame"]:
                 top = top[: w["hottest_frame"] - 1] + "…"
             cells.append(top.ljust(w["hottest_frame"]))
@@ -446,7 +434,7 @@ class ParquetReporter:
     append : bool, default False
         If the file exists, concatenate this run's rows onto it (one more
         session) instead of overwriting. Per-row ``session_id`` columns keep
-        the sessions distinct.
+        sessions distinct.
 
     Raises
     ------
@@ -464,13 +452,13 @@ class ParquetReporter:
         self._output = Path(output)
         self._append = append
         self._context: dict[str, Any] = {}
-        self._runs: list[Run] = []
+        self._runs: list[RunRow] = []
 
     def report_context(self, context: dict[str, Any]) -> bool:
         self._context = dict(context)
         return True
 
-    def report_runs(self, runs: list[Run]) -> None:
+    def report_runs(self, runs: list[RunRow]) -> None:
         self._runs.extend(runs)
 
     def finalize(self) -> None:
@@ -492,39 +480,38 @@ class ParquetReporter:
             table = pa.concat_tables([existing, table], promote_options="default")
         pq.write_table(table, str(self._output))
 
-    def _row(self, r: Run, date: datetime) -> dict[str, Any]:
+    def _row(self, row: RunRow, date: datetime) -> dict[str, Any]:
         ctx = self._context
-        mem: MemoryProfile | None = getattr(r, "memory", None)
-        cpu: CPUProfile | None = getattr(r, "cpu", None)
-        # A Run carrying its own custom (the --variant orchestrator stamps it)
-        # wins over the shared context block, which holds only one variant's.
-        run_custom = getattr(r, "custom", None)
+        mem = row.get("memory")
+        cpu = row.get("cpu_profile")
+        # A row's own custom (set per variant) wins over the shared context block.
+        run_custom = row.get("custom")
         custom = run_custom if run_custom is not None else ctx.get("custom")
         custom_json = json.dumps(custom, default=str) if custom else None
-        counters = r.counters  # hot path on C++ Run: each access rebuilds the dict
+        counters = row["counters"]
         return {
-            "name": r.benchmark_name(),
-            "run_name": str(r.run_name),
-            "family_index": r.family_index,
-            "per_family_instance_index": r.per_family_instance_index,
-            "run_type": r.run_type.name,
-            "aggregate_name": r.aggregate_name,
-            "repetitions": r.repetitions,
-            "repetition_index": r.repetition_index,
-            "threads": r.threads,
-            "iterations": r.iterations,
-            "real_time": r.adjusted_real_time(),
-            "cpu_time": r.adjusted_cpu_time(),
-            "real_accumulated_time": r.real_accumulated_time,
-            "cpu_accumulated_time": r.cpu_accumulated_time,
-            "time_unit": r.time_unit.name,
-            "label": r.report_label,
-            "skipped": r.skipped,
-            "skip_message": r.skip_message,
+            "name": row["name"],
+            "run_name": row["run_name"],
+            "family_index": row["family_index"],
+            "per_family_instance_index": row["per_family_instance_index"],
+            "run_type": row["run_type"],
+            "aggregate_name": row["aggregate_name"],
+            "repetitions": row["repetitions"],
+            "repetition_index": row["repetition_index"],
+            "threads": row["threads"],
+            "iterations": row["iterations"],
+            "real_time": row["real_time"],
+            "cpu_time": row["cpu_time"],
+            "real_accumulated_time": row["real_accumulated_time"],
+            "cpu_accumulated_time": row["cpu_accumulated_time"],
+            "time_unit": row["time_unit"],
+            "label": row["label"],
+            "skipped": row["skipped"],
+            "skip_message": row["skip_message"],
             # pa rejects `{}` for `map_` columns; a list of (k, v) pairs handles
             # the empty case cleanly.
             "counters": list(counters.items()) if counters else [],
-            "variant": getattr(r, "variant", None),
+            "variant": row.get("variant"),
             "date": date,
             "session_id": ctx.get("session_id"),
             "session_tag": ctx.get("session_tag"),
@@ -535,8 +522,8 @@ class ParquetReporter:
             "cpu_scaling_enabled": ctx.get("cpu_scaling") == "enabled",
             "library_build_type": ctx.get("library_build_type"),
             "custom": custom_json,
-            "memory": json.dumps(dataclasses.asdict(mem)) if mem is not None else None,
-            "cpu_profile": json.dumps(dataclasses.asdict(cpu)) if cpu is not None else None,
+            "memory": json.dumps(mem) if mem is not None else None,
+            "cpu_profile": json.dumps(cpu) if cpu is not None else None,
         }
 
 
@@ -584,14 +571,13 @@ def _parquet_schema() -> Any:
 class Fanout:
     """Broadcast reporter callbacks to a list of underlying reporters.
 
-    Used by :func:`mew.run` to multiplex when multiple reporters are passed.
-    ``report_context`` returns ``all(...)`` of the children's responses, so the strictest sub-reporter wins.
+    Used by :func:`mew.run` to multiplex multiple reporters. ``report_context``
+    returns ``all(...)`` of the children's responses, so the strictest sub-reporter wins.
 
     Parameters
     ----------
     reporters : list[Reporter]
-        Underlying reporters.
-        Calls are dispatched in iteration order.
+        Underlying reporters, called in iteration order.
     """
 
     def __init__(self, reporters: list[Reporter]) -> None:
@@ -601,7 +587,7 @@ class Fanout:
         results = [r.report_context(context) for r in self._reporters]
         return all(results)
 
-    def report_runs(self, runs: list[Run]) -> None:
+    def report_runs(self, runs: list[RunRow]) -> None:
         for r in self._reporters:
             r.report_runs(runs)
 

@@ -1,6 +1,7 @@
 """Module-level registry that ``@benchmark`` / ``@parametrize`` populate.
 
-Process-global so benchmark files imported from anywhere (pytest-style discovery, manual import, REPL) accumulate into one place.
+Process-global so files imported from anywhere (discovery, manual import, REPL)
+accumulate into one place.
 """
 
 from __future__ import annotations
@@ -16,11 +17,9 @@ from mew._typing import BenchmarkFn, BenchmarkOptions
 def compile_name_filter(pattern: str) -> re.Pattern[str]:
     """Compile a benchmark-name filter into an unanchored regex.
 
-    Matched with ``re.search`` (matches anywhere, like the old substring test
-    and like Google Benchmark's own ``--benchmark_filter``), so a plain literal
-    like ``bench_sort`` keeps behaving as before while ``bench_(sort|search)``
-    now works too. Raises :class:`ValueError` with a readable message on a
-    malformed pattern.
+    Matched with ``re.search`` (like Google Benchmark's own ``--benchmark_filter``),
+    so a plain literal like ``bench_sort`` works as a substring while
+    ``bench_(sort|search)`` also works. Raises :class:`ValueError` on a malformed pattern.
     """
     try:
         return re.compile(pattern)
@@ -39,8 +38,8 @@ class Entry:
     # Set on parametrized families: `fn` is a trampoline keyed by state.range(0).
     case_labels: list[str] | None = None
     # Case indices a name filter narrowed the family to. ``None`` runs every case
-    # (the only value the registry itself ever stores); a subset is produced by
-    # :func:`narrow_entry` as a transient view, never registered.
+    # (the only value the registry stores); a subset is a transient view from
+    # :func:`narrow_entry`, never registered.
     cases: list[int] | None = None
 
 
@@ -117,11 +116,10 @@ def narrow_entry(
 ) -> Entry | None:
     """Apply name filters to an entry, returning a (possibly case-narrowed) view or ``None``.
 
-    ``any_of`` is an OR group (the per-path ``file.py::filter`` selectors);
-    ``all_of`` is an additional AND constraint (the global ``-k``). A family
-    whose own name matches keeps all its cases; otherwise the regexes select
-    individual cases via :func:`case_names`. Returns ``None`` when nothing
-    matches, the entry unchanged when all cases survive, or a
+    ``any_of`` is an OR group (the per-path ``file.py::filter`` selectors); ``all_of`` is an
+    additional AND constraint (the global ``-k``). A family whose own name matches keeps all
+    its cases; otherwise the regexes select individual cases via :func:`case_names`. Returns
+    ``None`` when nothing matches, the entry unchanged when all cases survive, or a
     ``dataclasses.replace`` copy with ``cases`` set for a strict subset.
     """
     match = _CaseMatch.all()

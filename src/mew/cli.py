@@ -78,8 +78,8 @@ def _collect(
         _discovery.import_file(f)
 
     # Per-selector filter is OR'd with the global -k pattern. Both are regexes
-    # (re.search), compiled up front so a bad pattern fails before any run. A
-    # pattern that hits only some cases of a family narrows it to those cases.
+    # compiled up front so a bad pattern fails before any run; a partial match
+    # on a family narrows it to the matching cases.
     try:
         selector_res = [compile_name_filter(s.filter) for s in selectors if s.filter]
         pattern_re = compile_name_filter(pattern) if pattern else None
@@ -136,8 +136,7 @@ def list_(
             raise SystemExit(1)
         for e in entries:
             tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
-            # When -k narrowed a family to a subset, list those cases by label so
-            # the output reflects exactly what `mew run` would execute.
+            # List narrowed family cases by label, matching what `mew run` executes.
             if e.case_labels is not None and e.cases is not None:
                 for i in e.cases:
                     print(f"{e.name}[{e.case_labels[i]}]{tags_suffix}")
@@ -159,11 +158,10 @@ def _build_reporters(
 ) -> list[Reporter]:
     """Resolve ``-o`` sinks into a list of reporters.
 
-    Sentinels ``-`` and ``stdout`` map to a rich terminal reporter; ``*.json``,
-    ``*.jsonl``, and ``*.parquet`` map to file reporters.
-    Defaults to a single rich reporter on stdout when no ``-o`` is provided.
-    ``append`` adds the run as a new session to existing ``.jsonl`` / ``.parquet``
-    sinks (rejected for ``.json``, which is a single streamed document).
+    ``-``/``stdout`` map to a rich terminal reporter; ``*.json``/``*.jsonl``/
+    ``*.parquet`` to file reporters. Defaults to one rich reporter when no ``-o``
+    is given. ``append`` adds the run as a new session to existing ``.jsonl`` /
+    ``.parquet`` sinks (rejected for ``.json``, a single streamed document).
     """
 
     def _rich() -> RichReporter:
@@ -233,11 +231,10 @@ def _parse_variants(specs: list[str]) -> dict[str, Path]:
 
 
 def _load_config_and_session_tag(session_tag: str | None) -> tuple[_config.Config, str | None]:
-    """Load the project config and fill in the session tag from git when unset.
+    """Load the project config and default the session tag from git when unset.
 
-    The ``--session-tag``-less default is ``git describe`` (unless disabled via
-    ``[tool.mew] auto_session_tag = false``); shared by the plain and ``--variant``
-    run paths so the fallback rule lives in one place.
+    Default is ``git describe`` unless disabled via ``[tool.mew]
+    auto_session_tag = false``. Shared by the plain and ``--variant`` run paths.
     """
     cfg = _config.load()
     if session_tag is None and cfg.auto_session_tag:
@@ -272,8 +269,8 @@ def _run_variants_cmd(
     variants = _parse_variants(specs)
     cfg, session_tag = _load_config_and_session_tag(session_tag)
 
-    # Repetitions are realized as separate child invocations, so they are NOT
-    # forwarded as a GB flag; min_time and raw options are.
+    # Repetitions become separate child invocations, so they are NOT forwarded
+    # as a GB flag; min_time and raw options are.
     gb_args = _config.format_benchmark_args(cfg.benchmark_options)
     if min_time is not None:
         gb_args.append(f"--benchmark_min_time={min_time}")
@@ -455,7 +452,7 @@ def run(
         )
         return
 
-    # discovered(): bench modules stay live for the run, cleaned up at the boundary.
+    # discovered(): bench modules stay live for the run, cleaned up at exit.
     with _discovery.discovered():
         entries = _collect(paths, pattern=pattern, tags=tag or None)
         if not entries:
@@ -464,8 +461,7 @@ def run(
 
         cfg, session_tag = _load_config_and_session_tag(session_tag)
 
-        # Config defaults first so CLI flags (later) override them via gflags'
-        # last-wins semantics.
+        # Config defaults first so later CLI flags win via gflags' last-wins rule.
         argv: list[str] = ["mew", *_config.format_benchmark_args(cfg.benchmark_options)]
         if min_time is not None:
             argv.append(f"--benchmark_min_time={min_time}")
@@ -500,19 +496,15 @@ def run(
                 inner_iterations=sample_iterations,
             )
 
-        reporter: Reporter | list[Reporter] = reporters
-        if memory_profiles is not None or cpu_profiles is not None:
-            from mew._profile import _ProfileEnriching
-            from mew.reporter import Fanout
-
-            # Enrich once: attach profiles onto each Run before fan-out, not once
-            # per sink. Fanout broadcasts the already-enriched rows.
-            inner = reporters[0] if len(reporters) == 1 else Fanout(reporters)
-            reporter = _ProfileEnriching(
-                inner, memory_profiles=memory_profiles, cpu_profiles=cpu_profiles
-            )
-
-        _run(entries, argv=argv, reporter=reporter, session_tag=session_tag)
+        # `run`'s projector attaches the profiles onto each RunRow before fan-out.
+        _run(
+            entries,
+            argv=argv,
+            reporter=reporters,
+            session_tag=session_tag,
+            memory_profiles=memory_profiles,
+            cpu_profiles=cpu_profiles,
+        )
 
 
 @app.command(usage="Usage: mew profile [OPTIONS] [PATHS]")

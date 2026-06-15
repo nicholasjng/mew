@@ -73,8 +73,8 @@ def profile(
     interval : float, default 1e-4
         Pyinstrument's sampling period in seconds.
     inner_iterations : int, default 1000
-        Times the benchmark body runs under the sampler per entry.
-        Fast benchmarks need many iterations to accumulate samples.
+        Times the benchmark body runs under the sampler per entry. Fast
+        benchmarks need many iterations to accumulate samples.
 
     Returns
     -------
@@ -118,7 +118,7 @@ def _collect_stats(
                     )
                 )
             session = prof.last_session
-            # set on context manager exit, always present.
+            # Set on context-manager exit; always present here.
             assert session is not None
             profiles[key] = _summarize(session)
     return profiles

@@ -40,7 +40,7 @@ def _default_id(kwargs: dict[str, Any]) -> str:
 def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
     """Pytest-style nodeid: ``path/to/bench_foo.py::bench_name``.
 
-    Falls back to the function's module + qualname when the source file can't be resolved.
+    Falls back to module + qualname when the source file can't be resolved.
     """
     qualname = fn.__qualname__
     if file:
@@ -93,7 +93,7 @@ def _make_family_trampoline(
 ) -> BenchmarkFn:
     """Wrap ``fn`` as a Google Benchmark family driven by an index axis.
 
-    The trampoline reads ``state.range(0)`` to look up the variant kwargs and label, then dispatches.
+    The trampoline reads ``state.range(0)`` to look up variant kwargs and label, then dispatches.
     """
 
     @functools.wraps(fn, assigned=("__module__", "__doc__"))
@@ -133,17 +133,14 @@ def benchmark(
     Parameters
     ----------
     fn : BenchmarkFn, optional
-        The benchmark function.
-        When passed positionally (bare ``@benchmark``), registration happens immediately.
-        Omit to apply options first (``@benchmark(min_time=...)``).
+        The benchmark function. Passed positionally (bare ``@benchmark``) registers
+        immediately; omit to apply options first (``@benchmark(min_time=...)``).
     name : str, optional
         Override the auto-derived ``path/to/file.py::qualname`` registration name.
     tags : Iterable[str] or str, optional
-        Labels used by ``mew run --tag <name>`` for filtering.
-        A single string is treated as one tag.
+        Labels used by ``mew run --tag <name>`` for filtering. A single string is one tag.
     **options
-        Google Benchmark options.
-        See :class:`~mew._typing.BenchmarkOptions` for the accepted keys.
+        Google Benchmark options; see :class:`~mew._typing.BenchmarkOptions` for the keys.
 
     Returns
     -------
@@ -241,24 +238,22 @@ def parametrize(
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a parametrized benchmark family.
 
-    One benchmark is registered per item in ``parameters``.
-    Each variant binds its kwargs into the wrapped function and appends a ``[label]`` suffix to the registration name.
+    Registers one benchmark per item in ``parameters``; each variant binds its kwargs
+    into the wrapped function and appends a ``[label]`` suffix to the registration name.
 
     Parameters
     ----------
     parameters : Iterable[dict[str, Any]]
-        One dict of kwargs per variant.
-        Snapshotted eagerly, so generators are fine.
+        One dict of kwargs per variant. Snapshotted eagerly, so generators are fine.
     name : str, optional
         Override the auto-derived base name.
     ids : Sequence[str], optional
-        Explicit labels (one per variant).
-        Defaults to labels derived from the kwargs (e.g. ``n=10-algo=merge``).
+        Explicit labels (one per variant). Defaults to kwarg-derived labels
+        (e.g. ``n=10-algo=merge``).
     tags : Iterable[str] or str, optional
         Labels applied to every variant.
     **options
-        Google Benchmark options applied to every variant.
-        Same keys as :func:`benchmark`.
+        Google Benchmark options applied to every variant. Same keys as :func:`benchmark`.
 
     Returns
     -------
@@ -320,7 +315,7 @@ def product(
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a benchmark family from the cartesian product of iterables.
 
-    One benchmark is registered per tuple in the cartesian product over ``**iterables``.
+    Registers one benchmark per tuple in the cartesian product over ``**iterables``.
 
     Parameters
     ----------

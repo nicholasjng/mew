@@ -1,12 +1,14 @@
 """Shared infrastructure for profile-based extensions (memory, CPU, ...).
 
 ``_ProfileState`` runs a benchmark body outside Google Benchmark's iteration loop.
-``_ProfileEnriching`` wraps a reporter to attach memory/CPU profiles onto each Run
-by benchmark name (the C++ Run carries them as dynamic attributes).
+``_RunProjector`` wraps a reporter: it projects each C++ ``Run`` to a ``RunRow``
+(the single binding-boundary projection) and attaches memory/CPU profiles onto
+the row by benchmark name.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from typing import TYPE_CHECKING, Any
@@ -14,8 +16,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from mew._core import Run
     from mew._registry import Entry
+    from mew._typing import RunRow
     from mew.cpu import CPUProfile
     from mew.memory import MemoryProfile
+    from mew.reporter import Reporter
 
 
 def _profile_key(function_name: str, args: str) -> str:
@@ -149,18 +153,17 @@ class _ProfileState:
         return self._range
 
 
-class _ProfileEnriching:
-    """Reporter wrapper that attaches per-entry profiles to each Run by name.
+class _RunProjector:
+    """Reporter wrapper: project each C++ ``Run`` to a ``RunRow``, attaching profiles.
 
-    The C++ ``Run`` is bound with ``dynamic_attr``, so the out-of-loop profile
-    passes attach ``.memory`` / ``.cpu`` directly onto the row (reporters read
-    them back via ``getattr``); no wrapper object per run. Wrap a reporter once —
-    a Run is a fresh per-callback copy, so the mutation is local to this run.
+    :func:`mew.run` always wraps the user's reporter in one, so reporters only
+    see :class:`~mew._typing.RunRow` dicts. Memory/CPU profiles are attached onto
+    the row, not the ``Run``.
     """
 
     def __init__(
         self,
-        inner: Any,
+        inner: Reporter,
         *,
         memory_profiles: dict[str, MemoryProfile] | None = None,
         cpu_profiles: dict[str, CPUProfile] | None = None,
@@ -173,16 +176,20 @@ class _ProfileEnriching:
         return self._inner.report_context(context)
 
     def report_runs(self, runs: list[Run]) -> None:
+        from mew.reporter import _run_to_dict
+
+        rows: list[RunRow] = []
         for r in runs:
-            # Match structured parts, not benchmark_name(): its `/min_time:…`/aggregate
-            # suffixes aren't in the key and would miss every parametrize case.
+            row = _run_to_dict(r)
+            # Key on structured name parts: benchmark_name()'s suffixes aren't in it.
             name = r.run_name
             key = _profile_key(name.function_name, name.args)
             if (mem := self._mem.get(key)) is not None:
-                setattr(r, "memory", mem)  # noqa: B010 — dynamic_attr on the C++ Run
+                row["memory"] = dataclasses.asdict(mem)
             if (cpu := self._cpu.get(key)) is not None:
-                setattr(r, "cpu", cpu)  # noqa: B010
-        self._inner.report_runs(runs)
+                row["cpu_profile"] = dataclasses.asdict(cpu)
+            rows.append(row)
+        self._inner.report_runs(rows)
 
     def finalize(self) -> None:
         if fn := getattr(self._inner, "finalize", None):

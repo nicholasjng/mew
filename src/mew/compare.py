@@ -98,9 +98,8 @@ class SessionData:
 def _decode_json_str(value: Any) -> Any:
     """Parse a JSON string into its value; pass non-strings through unchanged.
 
-    Parquet stores nested blocks (``custom``, ``memory``) as JSON string columns,
-    so reading them back means decoding on the fly. Returns ``None`` on malformed
-    JSON so callers can treat "absent" and "unparseable" alike.
+    Parquet stores nested blocks (``custom``, ``memory``) as JSON string columns.
+    Returns ``None`` on malformed JSON so callers treat "absent" and "unparseable" alike.
     """
     if not isinstance(value, str):
         return value
@@ -139,14 +138,13 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Read the streaming sink: a ``{"context": ...}`` header line, then one row per line.
 
     A file written with ``mew run --append`` has several header/rows *segments*.
-    Each benchmark row inherits its segment's identity (so rows land in the
-    right session); ``file_ctx`` is the last segment's context, a fallback for
-    callers that want a single block.
+    Each row inherits its segment's identity (so rows land in the right session);
+    ``file_ctx`` is the last segment's context, a single-block fallback.
     """
     rows: list[dict[str, Any]] = []
     file_ctx: dict[str, Any] = {}
     current: dict[str, Any] = {}
-    # Stream line-by-line: a growing --append archive can be large, and
+    # Stream line-by-line: a growing --append archive can be large;
     # read_text().splitlines() would hold the whole file plus a list of every
     # line in memory at once, on top of the parsed rows.
     with path.open() as fh:
@@ -187,9 +185,8 @@ def _rows_from_parquet(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]
     import pyarrow.parquet as pq
 
     rows = pq.read_table(path).to_pylist()
-    # Parquet stores nested blocks as JSON-string columns; decode them once at this
-    # read boundary so the rest of the module sees native dicts regardless of the
-    # source format (JSON/JSONL already carry dicts).
+    # Decode JSON-string columns once at this read boundary so the rest of the
+    # module sees native dicts regardless of source format (JSON/JSONL already do).
     for row in rows:
         for col in _PARQUET_JSON_COLUMNS:
             if isinstance(row.get(col), str):
@@ -203,8 +200,8 @@ def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[
     """Build one session's context from a representative row over the file block.
 
     Per-row identity (Parquet columns, enriched JSONL segments) wins; single-doc
-    JSON has identity only in ``file_ctx``, so the row contributes nothing and
-    the block stands. ``custom`` arrives already decoded (see :func:`_read_rows`).
+    JSON has identity only in ``file_ctx``, so the block stands. ``custom`` arrives
+    already decoded (see :func:`_read_rows`).
     """
     ctx = dict(file_ctx)
     for fld in _SEGMENT_FIELDS:
@@ -219,11 +216,10 @@ def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[
 def _session_key(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, str, str]:
     """Identify which session a row belongs to.
 
-    Parquet rows carry session columns per-row.
-    JSON rows inherit the file's single top-level context block via ``file_ctx``.
-    The persisted ``session_id`` keeps two runs distinct even when they share a
-    wall-clock second on one host; files predating it fall back to (date, host).
-    Date stays the leading component so chronological sort still holds.
+    Parquet rows carry session columns per-row; JSON rows inherit the file's single
+    top-level context block via ``file_ctx``. ``session_id`` keeps two runs distinct
+    even when they share a wall-clock second on one host; files predating it fall back
+    to (date, host). Date leads so chronological sort still holds.
     """
     date = row.get("date") or file_ctx.get("date") or ""
     host = row.get("host_name") or file_ctx.get("host_name") or ""
@@ -235,7 +231,7 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
     """Look up ``metric`` in a row; dotted metrics traverse one nested level.
 
     Nested blocks (e.g. ``memory``) are already decoded to dicts at the read
-    boundary (see :func:`_read_rows`), so a dotted path just traverses.
+    boundary (see :func:`_read_rows`).
     """
     head, sep, tail = metric.partition(".")
     value = row.get(head)
@@ -316,11 +312,10 @@ def _group_by_session(
 ) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
     """Bucket benchmark rows by session key, dropping non-benchmark and GB aggregate rows.
 
-    The shared front half of both load paths: :func:`_load_sessions` sub-groups
-    each bucket by name, while :func:`_load_variant_columns` keeps the latest
-    bucket whole and pivots it by variant. Aggregate rows are dropped because we
-    recompute statistics ourselves, so results are consistent whether a file was
-    produced with ``--repetitions=1`` or N.
+    Shared front half of both load paths: :func:`_load_sessions` sub-groups each
+    bucket by name, :func:`_load_variant_columns` keeps the latest bucket whole and
+    pivots it by variant. Aggregate rows are dropped because we recompute statistics
+    ourselves, so results are consistent whether a file used ``--repetitions=1`` or N.
     """
     by_session: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for r in rows:
@@ -333,8 +328,8 @@ def _group_by_session(
 def _load_sessions(path: Path, metric: str) -> list[SessionData]:
     """Load every session in a result file, sorted by ascending date.
 
-    Nothing is discarded here; collapsing to one sample set per file is the
-    select stage's job (:func:`_select_latest` today, ``path@…`` selectors later).
+    Nothing is discarded here; collapsing to one sample set per file is the select
+    stage's job (:func:`_select_latest` today, ``path@…`` selectors later).
     """
     rows, file_ctx = _read_rows(path)
 
@@ -358,10 +353,9 @@ def _load_variant_columns(
 ) -> list[tuple[str, dict[str, Sample], dict[str, Any]]]:
     """Pivot one file's latest session into ``(variant, samples, context)`` columns.
 
-    Variants and sessions are orthogonal: this picks the latest session (the
-    common case is a single ``--variant`` run), then groups its rows by the
-    ``variant`` field. Variant order follows first encounter, which is the
-    declared/baseline-first order the orchestrator writes.
+    Variants and sessions are orthogonal: pick the latest session (commonly a single
+    ``--variant`` run), then group its rows by ``variant``. Variant order follows first
+    encounter, which is the declared/baseline-first order the orchestrator writes.
     """
     rows, file_ctx = _read_rows(path)
     by_session = _group_by_session(rows, file_ctx)
@@ -392,8 +386,8 @@ def _select_latest(
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
     """Default session selection: per name, the latest session that has it wins.
 
-    Warns per benchmark when older sessions are discarded, so concatenated
-    archives don't silently compare stale numbers.
+    Warns per benchmark when older sessions are discarded, so concatenated archives
+    don't silently compare stale numbers.
     """
     if not sessions:
         return {}, {}
@@ -421,9 +415,9 @@ _MIN_ID_PREFIX = 4
 def _split_selector(raw: str) -> tuple[Path, str | None]:
     """Split ``path@selector`` into its parts.
 
-    A file that exists on disk under the whole argument is an escape hatch for
-    names containing ``@`` (returned as a plain path). Otherwise the part after
-    the last ``@`` is the selector.
+    A file existing on disk under the whole argument is an escape hatch for names
+    containing ``@`` (returned as a plain path). Otherwise the part after the last
+    ``@`` is the selector.
     """
     if Path(raw).exists():
         return Path(raw), None
@@ -484,8 +478,8 @@ def _load(
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
     """Load a result file into one sample set: load → select → re-key.
 
-    Without a selector, sessions are merged latest-wins per name (warning on
-    discards). A selector picks exactly one session, no merge.
+    Without a selector, sessions merge latest-wins per name (warning on discards).
+    A selector picks exactly one session, no merge.
     """
     sessions = _load_sessions(path, metric)
     if selector is None:
@@ -536,8 +530,8 @@ def _ctx_summary(ctx: dict[str, Any]) -> str:
 
 
 def _warn_context_skew(columns: list[_Column]) -> None:
-    """Warn when machine-level context differs across columns — the deltas then
-    compare environments, not just code."""
+    """Warn when machine-level context differs across columns (deltas then compare
+    environments, not just code)."""
     for fld in _CTX_SKEW_FIELDS:
         values = {c.label: c.context.get(fld) for c in columns if c.context}
         if len({v for v in values.values() if v is not None}) > 1:
@@ -617,8 +611,8 @@ def _render(
 ) -> int:
     """Compare the first column against the rest and render the table.
 
-    Column-shaped on purpose: anything that can produce labelled sample sets
-    with contexts (files, sessions, variant groups) compares the same way.
+    Column-shaped on purpose: anything producing labelled sample sets with contexts
+    (files, sessions, variant groups) compares the same way.
     """
     all_names: set[str] = set().union(*(c.samples.keys() for c in columns))
     if pattern is not None:
@@ -740,7 +734,7 @@ def compare(
 ) -> int:
     """Compare benchmark result files and render a comparison table.
 
-    The first file is the baseline; later files show their own value plus percent delta and speedup against it.
+    The first file is the baseline; later files show their value plus percent delta and speedup against it.
 
     Parameters
     ----------
@@ -783,12 +777,11 @@ def compare(
     Returns
     -------
     int
-        Process exit code: ``0`` on success, ``1`` for no overlap, ``2`` if the regression gate fails.
+        Exit code: ``0`` on success, ``1`` for no overlap, ``2`` if the regression gate fails.
     """
     if metric not in _METRICS:
         raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
-    # Variant columns share the file prefix across all variants, so they only
-    # align on the function name; default to that unless the caller is explicit.
+    # Variant columns share the file prefix, so they only align on the func name.
     if key is None:
         key = "func" if by == "variant" else "name"
     if key not in _KEYS:

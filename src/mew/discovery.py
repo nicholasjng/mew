@@ -19,8 +19,8 @@ _inserted_paths: list[str] = []
 class Selector:
     """One CLI argument decomposed into a filesystem path and an optional filter.
 
-    The filter is a regex (``re.search``) matched against the full benchmark name
-    (e.g. ``benchmarks/bench_sort.py::quicksort``).
+    The filter is a regex (``re.search``) matched against the full benchmark name,
+    e.g. ``benchmarks/bench_sort.py::quicksort``.
     """
 
     path: Path
@@ -65,7 +65,7 @@ def import_file(path: Path) -> None:
     Prepends the parent dir to ``sys.path`` (pytest ``prepend`` mode) so a bench file
     can import a sibling; left in place so run-time-deferred imports still resolve.
     """
-    # Stable module name from the resolved path so reimports are cheap.
+    # Stable module name from the resolved path so reimports are no-ops.
     resolved = path.resolve()
     mod_name = f"mew._bench_{abs(hash(resolved))}"
     if mod_name in sys.modules:
