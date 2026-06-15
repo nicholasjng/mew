@@ -19,14 +19,14 @@ All contributions are welcome.
 ## Tests
 
 `tests/` is the source of truth for behavior.
-When adding a new public API, please add a test that covers the happy path and one for any documented error cases.
+When adding a public API, please add a test covering the happy path and one for any documented error cases.
 
 ### Native profiler backends (py-spy / perf)
 
 `tests/test_profilers_native.py` exercises the out-of-process backends behind
 `mew profile`. They skip unless the tool is actually *usable* on the host, so
-they stay inert in normal runs and on macOS — you opt in by running them where
-the tooling exists. They aren't in CI: the privilege requirements below don't fit
+they stay inert in normal runs and on macOS — opt in by running them where the
+tooling exists. They aren't in CI: the privilege requirements below don't fit
 GitHub-hosted runners, so these backends are validated locally / on a real Linux
 box.
 
@@ -50,7 +50,7 @@ Locked-down hosts can't do that — GitHub-hosted runners ship
 instead via a privileged/capped container (`docker run --cap-add=PERFMON
 --cap-add=SYS_ADMIN`, or `--privileged`). Where neither is possible the perf test
 skips rather than fails: the backend's `unavailable_reason()` probes whether perf
-can actually record and the test reuses that verdict.
+can record, and the test reuses that verdict.
 
 ## Docs
 

@@ -48,7 +48,7 @@ Variants from `@parametrize` / `@product` always get a `[label]` suffix.
 
 ## Tags
 
-Tags are used by `mew run --tag` for filtering.
+`mew run --tag` filters by tag.
 Pass a single string or any iterable:
 
 ```python

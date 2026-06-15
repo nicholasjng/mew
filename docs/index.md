@@ -3,7 +3,7 @@
 > Simple microbenchmarking of Python snippets, powered by [Google Benchmark](https://github.com/google/benchmark).
 
 `mew` is a small Python library and CLI for writing microbenchmarks the way you
-write tests. Decorate a function, run `mew`, get reliable timings — backed by
+write tests: decorate a function, run `mew`, get reliable timings — backed by
 Google Benchmark, built with nanobind.
 
 ```python
@@ -81,6 +81,7 @@ guide/state-and-timing
 guide/context
 guide/configuration
 guide/cli
+guide/variants
 guide/reporters
 guide/profiling-cpu
 guide/profiling-memory

@@ -8,7 +8,7 @@ The variant label is appended to the registration name in brackets: `bench_sort[
 
 ## Registration name
 
-Every benchmark has a name that doubles as its identifier in result files and as the target of `-k`/`--pattern` filters.
+A benchmark's name is its identifier in result files and the target of `-k`/`--pattern` filters.
 By default it follows the pytest convention:
 
 ```
@@ -20,7 +20,7 @@ Variant labels (`[…]`) are always appended for families.
 
 ## `State`
 
-The `State` object that's passed to your function is a thin wrapper around `benchmark::State` from Google Benchmark.
+The `State` object passed to your function is a thin wrapper around Google Benchmark's `benchmark::State`.
 The minimum contract is the iteration loop:
 
 ```python
@@ -54,11 +54,11 @@ run(REGISTRY.all(), reporter=JSONReporter(output=Path("out.json")))
 
 Reporters are duck-typed objects with `report_context()` and `report_runs()` methods.
 Built-ins: {class}`~mew.RichReporter`, {class}`~mew.JSONReporter`, {class}`~mew.ParquetReporter`.
-You can combine multiple reporters using the {class}`~mew.Fanout` class.
-For more information, see [](../guide/reporters.md).
+Combine several with {class}`~mew.Fanout`.
+See [](../guide/reporters.md).
 
 ## Context
 
 `mew.set_context()` and `mew.update_context()` populate a process-global metadata dict that's merged into every reporter's context under the `custom` key.
 Use it to stamp results with a git SHA, dataset identifiers, hardware tags — anything you'd later want to filter on.
-For more information, see [](../guide/context.md).
+See [](../guide/context.md).

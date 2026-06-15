@@ -18,8 +18,7 @@ $ uvx prek install
 ```
 
 `uv sync` builds the C++ extension into the project's `.venv` via scikit-build-core.
-The `[tool.uv]` config in `pyproject.toml` opts the project out of build isolation, so nanobind include paths in`compile_commands.json` survive wheel builds.
-This is useful for C++ language servers like `clangd`.
+The `[tool.uv]` config in `pyproject.toml` opts out of build isolation, so nanobind include paths in `compile_commands.json` survive wheel builds — useful for C++ language servers like `clangd`.
 
 ## Rebuilding after a C++ change
 

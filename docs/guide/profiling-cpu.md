@@ -3,7 +3,7 @@
 `--sample` runs each selected benchmark under [pyinstrument](https://pyinstrument.readthedocs.io/) once, separately from the timing pass, and attaches a summary, including sample count and hottest frame, to each run.
 
 This is **in-process** sampling: it sees Python frames only. To capture native
-(C/C++) frames from a compiled extension, use {doc}`mew profile <profiling-native>` instead.
+(C/C++) frames from a compiled extension, use {doc}`mew profile <profiling-native>`.
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ Write a self-contained HTML report:
 $ mew run --sample --sample-html cpu.html
 ```
 
-This implies `--sample`, so you can drop one flag:
+This implies `--sample`, so you can drop it:
 
 ```console
 $ mew run --sample-html cpu.html
@@ -40,13 +40,12 @@ $ mew run --sample-html cpu.html
 | `--sample-interval F`   | `1e-4`  | Smaller = more samples = higher overhead.               |
 | `--sample-iterations N` | `1000`  | How many times the body runs under the sampler.         |
 
-A profiling pass is **separate** from the timing pass.
-Profiler overhead does not pollute timing numbers, but the profiled iteration count is independent of `min_time`,
-so don't read timings out of the profiling report.
+The profiling pass is **separate** from the timing pass, so profiler overhead doesn't pollute timing numbers.
+But the profiled iteration count is independent of `min_time`, so don't read timings out of the profiling report.
 
 ## What you'll see
 
-`cpu.html` is a single self-contained pyinstrument page with a tree view per benchmark.
+`cpu.html` is a self-contained pyinstrument page with a tree view per benchmark.
 For the example workloads under `benchmarks/bench_cpu.py`:
 
 - `bench_sort_builtin` collapses into a single wide `sorted` C frame.

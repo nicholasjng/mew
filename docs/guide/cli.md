@@ -41,7 +41,7 @@ Duplicate sinks (two stdout sinks, or two writers pointing at the same path) are
 ### Profiling flags
 
 These attach **in-process** measurements to the timing table. For native (C/C++)
-frames, use {doc}`mew profile <profiling-native>` instead.
+frames, use {doc}`mew profile <profiling-native>`.
 
 | Flag                    | Effect                                              |
 | ----------------------- | --------------------------------------------------- |
@@ -50,15 +50,16 @@ frames, use {doc}`mew profile <profiling-native>` instead.
 | `--sample-interval F`   | Sampling interval seconds (default `1e-4`).         |
 | `--sample-iterations N` | Body iterations under the sampler (default `1000`). |
 | `--profile-memory`      | Run each benchmark under `memray`.                  |
+| `--memory-iterations N` | Measured loop passes per case under `--profile-memory` (default `100`, plus warmup); drives `memory.allocations_per_iteration`. |
 | `--flamegraph FILE`     | Write an HTML flame graph with allocation data.     |
 
 `--sample-html`/`--flamegraph` imply `--sample` / `--profile-memory` respectively.
+All of these compose with `--variant`: each variant child runs its own profile pass, so cross-engine memory/CPU comparison works from one `mew run`.
 
 ## `mew profile`
 
 Profile out-of-process to capture native C frames (which `--sample` can't see).
-Picks a native-frame backend — `xctrace` (macOS), `py-spy` (Linux/Windows), or
-`perf` (Linux) — and records an artifact you open in its viewer.
+Picks a backend (`xctrace` (macOS), `py-spy` (Linux/Windows), or `perf` (Linux)), and records an artifact you open in its viewer.
 
 ```console
 $ mew profile                       # auto-select the platform's native profiler

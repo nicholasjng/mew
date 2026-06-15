@@ -7,14 +7,14 @@ installed; otherwise the C++ extension is compiled from source — see
 
 ## Using `uv`
 
-With a `[tool.uv.sources]` entry in your `pyproject.toml`:
+Add a `[tool.uv.sources]` entry to your `pyproject.toml`:
 
 ```toml
 [tool.uv.sources]
 mew = { git = "https://github.com/nicholasjng/mew" }
 ```
 
-Simply run:
+then run:
 
 ```console
 $ uv add mew
@@ -30,7 +30,7 @@ A PyPI release is planned for the future.
 
 ## Optional extras
 
-The following extras are available for extra CLI features:
+Extras enabling additional CLI features:
 
 | Extra      | Pulls in                  | Enables                                                  |
 | ---------- | ------------------------- | -------------------------------------------------------- |
@@ -49,4 +49,4 @@ $ mew --version
 mew 0.1.0 (Google Benchmark v1.9.0@abcdef12)
 ```
 
-The trailing version identifies the last stable version, and which Google Benchmark commit the C++ extension was built against.
+The trailing identifier shows which Google Benchmark commit the C++ extension was built against.
