@@ -609,8 +609,10 @@ def test_completions_bash_functional(tmp_path):
     assert subprocess.run([bash, "-n", str(f)]).returncode == 0  # syntax
 
     def complete(words: str, cword: int) -> list[str]:
+        # Forward-slash, quoted path: a Windows path has backslashes, which bash
+        # would treat as escapes inside `source ...`, silently failing to load.
         probe = (
-            f"source {f}\n"
+            f"source '{f.as_posix()}'\n"
             f"COMP_WORDS=({words}); COMP_CWORD={cword}\n"
             "_mew\n"
             'printf "%s\\n" "${COMPREPLY[@]}"\n'
