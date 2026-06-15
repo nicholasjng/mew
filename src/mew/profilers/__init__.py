@@ -1,11 +1,11 @@
 """Out-of-process, native-frame profiler backends for ``mew profile``.
 
-These capture C/native stacks by sampling the whole process from outside — the
-thing in-process samplers can't do. In-process Python sampling (pyinstrument)
-lives on ``mew run --sample`` instead; it is deliberately *not* a backend here.
+These capture C/native stacks by sampling the whole process from outside — what
+in-process samplers can't do. In-process Python sampling (pyinstrument) lives on
+``mew run --sample`` and is deliberately *not* a backend here.
 
-``select()`` resolves a ``--profiler`` value, including ``auto``, which picks the
-platform's native backend or errors with a pointer to ``mew run --sample``.
+``select()`` resolves a ``--profiler`` value, including ``auto`` (picks the
+platform's native backend or errors with a pointer to ``mew run --sample``).
 """
 
 from __future__ import annotations

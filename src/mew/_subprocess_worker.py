@@ -2,19 +2,19 @@
 
 Profiler-agnostic: xctrace, py-spy, and perf all sample the *whole process* from
 the outside (which is how they capture native C-extension frames that in-process
-samplers like pyinstrument miss), so the benchmark body has to live in a separate
-process they launch. This is that process — each backend wraps the same worker
-argv with its own recording prefix (see :mod:`mew.profilers`).
+samplers like pyinstrument miss), so the body must live in a separate process they
+launch. Each backend wraps this worker's argv with its own recording prefix (see
+:mod:`mew.profilers`).
 
 Invoked as::
 
     python -m mew._subprocess_worker --file F --entry NAME --case I --iterations N
 
 It re-imports the benchmark file (decorator side-effects repopulate
-:data:`REGISTRY`), looks the entry up by name, and drives its body in a tight
-loop via :class:`mew._profile._ProfileState` — the same out-of-loop runner the
-memory/CPU profilers use, so ``state.range``/family trampolines behave
-identically. Runs in a fresh interpreter, so the ``sys.modules`` caching in
+:data:`REGISTRY`), looks the entry up by name, and drives its body via
+:class:`mew._profile._ProfileState` — the same out-of-loop runner the memory/CPU
+profilers use, so ``state.range``/family trampolines behave identically. The fresh
+interpreter means the ``sys.modules`` caching in
 :func:`mew.discovery.import_file` never bites here.
 """
 

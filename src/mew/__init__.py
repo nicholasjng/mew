@@ -13,7 +13,7 @@ from mew._core import (
     clear_registered_benchmarks as _clear_registered_benchmarks,
 )
 from mew._registry import REGISTRY, Entry, Registry
-from mew._typing import BenchmarkFn, State
+from mew._typing import BenchmarkFn, RunRow, State
 from mew.api import benchmark, parametrize, product
 from mew.context import clear_context, get_context, set_context, update_context
 from mew.reporter import (
@@ -48,6 +48,7 @@ __all__ = [
     "Reporter",
     "RichReporter",
     "Run",
+    "RunRow",
     "RunType",
     "State",
     "TimeUnit",

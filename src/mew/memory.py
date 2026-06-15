@@ -18,32 +18,27 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class MemoryProfile:
-    """Per-(case) memory summary captured by memray.
+    """Per-case memory summary captured by memray.
 
-    The capture is scoped to the benchmark's timing loop (``for _ in state``);
-    fixture/setup allocations made before the loop are not tracked, so
-    cross-suite comparisons reflect the workload, not the setup strategy. The
-    loop runs ``iterations`` times after a short warmup, so one-time/first-call
-    allocations don't dominate and ``allocations_per_iteration`` is a steady-state
-    per-call figure — the cross-engine-comparable allocation metric.
+    The capture is scoped to the timing loop (``for _ in state``), so
+    fixture/setup allocations are excluded; ``iterations`` measured passes run
+    after a warmup, making ``allocations_per_iteration`` a steady-state figure.
 
     Attributes
     ----------
     peak_bytes : int
-        Peak memory during the timing loop (``metadata.peak_memory``). A
-        high-water mark, independent of iteration count.
+        Peak memory during the loop (``metadata.peak_memory``); a high-water
+        mark, independent of iteration count.
     total_bytes : int
         Tracked heap live at the high-water mark, *not* the cumulative sum.
     total_allocations : int
-        Cumulative allocation count over the whole capture
-        (``metadata.total_allocations``), i.e. across all ``iterations``. Not
-        comparable across runs of differing iteration count — use
-        ``allocations_per_iteration`` for that.
+        Cumulative allocation count across all ``iterations``. Not comparable
+        across runs of differing iteration count — use ``allocations_per_iteration``.
     iterations : int
         Number of measured timing-loop iterations the capture ran over.
     allocations_per_iteration : float
-        ``total_allocations / iterations`` — the per-call allocation count,
-        comparable across engines regardless of their speed.
+        ``total_allocations / iterations`` — the per-call count, comparable
+        across engines regardless of speed.
     """
 
     profiler: str
@@ -69,10 +64,9 @@ def profile(
     flamegraph : Path, optional
         If given, additionally writes a combined HTML flame graph to this path.
     iterations : int, default 100
-        Measured timing-loop iterations per case (a short warmup runs first,
-        untracked). Counting more than one amortizes one-time/first-call
-        allocations, so ``allocations_per_iteration`` reflects steady-state
-        per-call work and stays comparable across engines.
+        Measured timing-loop passes per case (a warmup runs first, untracked).
+        Many passes amortize one-time allocations, keeping
+        ``allocations_per_iteration`` comparable across engines.
 
     Returns
     -------
@@ -92,19 +86,14 @@ def profile(
 
 
 def _capture_case(fn: BenchmarkFn, rng: int, dest: Path, iterations: int, warmup: int) -> bool:
-    """Run one case with the memray capture scoped to ``iterations`` loop passes.
+    """Capture one case with memray over ``iterations`` loop passes (after ``warmup``).
 
-    A ``warmup`` pass runs first, untracked, so one-time/first-call allocations
-    (lazy init, connection setup) don't dominate the measured count. The tracker
-    then starts at the first measured iteration and stops when the loop ends, so
-    fixture/setup allocations don't pollute the stats either — without this,
-    cross-suite allocation comparisons mostly compare setup strategies. Returns
-    False when the body never iterated its state.
+    The warmup runs untracked so one-time allocations don't dominate; the tracker
+    spans only the measured loop. Returns False when the body never iterated its state.
     """
     import memray
 
-    # Warmup outside the tracker: trigger one-time allocations so the measured
-    # window sees steady-state per-iteration work.
+    # Warmup outside the tracker to trigger one-time allocations.
     if warmup > 0:
         fn(_ProfileState(n_iterations=warmup, range_value=rng))
 
@@ -129,7 +118,7 @@ def _capture_case(fn: BenchmarkFn, rng: int, dest: Path, iterations: int, warmup
         )
     finally:
         # A body that raises mid-loop leaves the tracker open; close it so the
-        # capture file is readable and the next case can start its own tracker.
+        # capture file is readable and the next case can start fresh.
         if entered and not exited:
             tracker.__exit__(None, None, None)
     return entered

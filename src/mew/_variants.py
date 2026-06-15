@@ -1,17 +1,15 @@
 """Orchestrate ``mew run --variant``: one subprocess per (variant × repetition).
 
-The shape this serves: "same logical suite, N mutually-incompatible processes"
-— engines that statically link the same library, GIL vs free-threaded
-interpreters, Python versions, ASAN vs Release builds. Each variant runs in its
-own child (:mod:`mew._variant_worker`); this orchestrator is the single writer.
+For "same logical suite, N mutually-incompatible processes" — rival engines that
+statically link the same library, GIL vs free-threaded interpreters, Python
+versions, ASAN vs Release builds. Each variant runs in its own child
+(:mod:`mew._variant_worker`); this orchestrator is the single writer.
 
-It generates one ``session_id`` for the whole run, then drives children in
-**repetition-major** order (rep0: A B, rep1: A B, …) so thermal/load drift
-decorrelates from the variant axis instead of contaminating it. Each child
-streams JSONL on stdout; the orchestrator re-stamps every row with the shared
-session id, the ``variant`` name, and the repetition index, then fans the rows
-out to the user's real reporters — so the live console, JSON, JSONL, and
-Parquet sinks all work unchanged via :class:`_DictRun`.
+It generates one ``session_id``, drives children in **repetition-major** order
+(rep0: A B, rep1: A B, …) so thermal/load drift decorrelates from the variant
+axis, and re-stamps each child's JSONL rows with the shared session, variant
+name, and repetition index before fanning out to the real reporters. A child row
+already is a :class:`~mew._typing.RunRow`, so the merge is a dict overlay.
 """
 
 from __future__ import annotations
@@ -21,14 +19,12 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from mew._session import new_session_id
+from mew._typing import RunRow
 from mew.reporter import Reporter
 from mew.runner import _to_single_reporter
-
-if TYPE_CHECKING:
-    from mew._core import Run
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,95 +61,23 @@ def _variant_artifact(path: Path | None, variant: str) -> Path | None:
     return path.with_name(f"{path.stem}.{variant}{path.suffix}")
 
 
-class _Enumish:
-    """Stand-in for a C++ enum field: only ``.name`` is read by the reporters."""
+def _merge_row(
+    child_row: RunRow,
+    *,
+    variant: str,
+    repetition_index: int,
+    custom: dict[str, Any] | None,
+) -> RunRow:
+    """Overlay ``variant`` / ``repetition_index`` / ``custom`` onto a child's
+    :class:`~mew._typing.RunRow`.
 
-    __slots__ = ("name",)
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-
-def _as_dataclass(cls: Any, d: dict[str, Any] | None) -> Any:
-    """Rebuild a flat profile dataclass from a child row's serialized block.
-
-    The child emitted ``dataclasses.asdict(profile)`` into its JSONL row; undo
-    that so the parent's reporters re-serialize it the same as a direct run
-    (``_run_to_dict`` / ``ParquetReporter._row`` expect a dataclass, not a dict).
+    The child's ``custom`` preserves each variant's context in the merged file
+    (the single top-level context block holds only one).
     """
-    return cls(**d) if d else None
-
-
-class _DictRun:
-    """A faux :class:`~mew._core.Run` backed by a child's JSONL row dict.
-
-    The child row is exactly :func:`mew.reporter._run_to_dict` output, so this
-    re-exposes the attributes the reporters read, overriding ``variant`` and
-    ``repetition_index`` with the orchestration's values. Lets merged variant
-    rows flow through every existing reporter without a parallel write path.
-    """
-
-    def __init__(
-        self,
-        row: dict[str, Any],
-        *,
-        variant: str,
-        repetition_index: int,
-        custom: dict[str, Any] | None = None,
-    ) -> None:
-        from mew.cpu import CPUProfile
-        from mew.memory import MemoryProfile
-
-        self._d = row
-        self.variant = variant
-        self._rep = repetition_index
-        # The child's per-suite set_context() values, kept per variant so the
-        # merged file records each variant's own engine/version (the single
-        # top-level context block can hold only one).
-        self.custom = custom
-        # Profiles arrive as plain dicts in the child row (--variant + --profile-*);
-        # rebuild the dataclasses so the parent's reporters serialize them natively.
-        self.memory = _as_dataclass(MemoryProfile, row.get("memory"))
-        self.cpu = _as_dataclass(CPUProfile, row.get("cpu_profile"))
-
-    def benchmark_name(self) -> str:
-        return self._d["name"]
-
-    def adjusted_real_time(self) -> float:
-        return self._d["real_time"]
-
-    def adjusted_cpu_time(self) -> float:
-        return self._d["cpu_time"]
-
-    @property
-    def run_name(self) -> str:
-        return self._d["run_name"]
-
-    @property
-    def run_type(self) -> _Enumish:
-        return _Enumish(self._d["run_type"])
-
-    @property
-    def time_unit(self) -> _Enumish:
-        return _Enumish(self._d["time_unit"])
-
-    @property
-    def repetition_index(self) -> int:
-        return self._rep
-
-    @property
-    def counters(self) -> dict[str, float]:
-        return self._d.get("counters") or {}
-
-    def __getattr__(self, name: str) -> Any:
-        # Remaining scalar fields map 1:1 to row keys (family_index, threads,
-        # iterations, aggregate_name, report_label/label, skipped, …).
-        d = self._d
-        if name == "report_label":
-            return d.get("label", "")
-        if name in d:
-            return d[name]
-        raise AttributeError(name)
+    merged: RunRow = {**child_row, "variant": variant, "repetition_index": repetition_index}
+    if custom:
+        merged["custom"] = custom
+    return merged
 
 
 def _pseudo_raw_context(
@@ -213,10 +137,10 @@ def _run_child(
     gb_args: list[str],
     profiling: ProfileConfig,
     variant: str,
-) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+) -> tuple[dict[str, Any], list[RunRow]] | None:
     """Run one variant child; return its (context, rows) or None on failure."""
-    # `--opt=value` form (not `--opt value`): GB args like `--benchmark_min_time=20x`
-    # start with `--`, which argparse would otherwise read as the next option.
+    # `--opt=value` form: GB args like `--benchmark_min_time=20x` start with `--`,
+    # which argparse would otherwise read as the next option.
     cmd = [sys.executable, "-m", "mew._variant_worker", f"--file={file}"]
     if pattern:
         cmd.append(f"--pattern={pattern}")
@@ -231,7 +155,7 @@ def _run_child(
         return None
 
     ctx: dict[str, Any] = {}
-    rows: list[dict[str, Any]] = []
+    rows: list[RunRow] = []
     for line in proc.stdout.splitlines():
         if not line.strip():
             continue
@@ -281,19 +205,13 @@ def run_variants(
                     return failures + 1
                 started = True
             if reporter is not None:
-                # _DictRun is a structural Run stand-in (see its docstring); the
-                # reporters only touch the duck-typed surface it re-exposes. Each
-                # variant's own custom context rides along per row so it survives
-                # the single shared top-level context block.
+                # Overlay variant / rep index and the child's custom context.
                 child_custom = child_ctx.get("custom")
                 reporter.report_runs(
-                    cast(
-                        "list[Run]",
-                        [
-                            _DictRun(row, variant=name, repetition_index=rep, custom=child_custom)
-                            for row in rows
-                        ],
-                    )
+                    [
+                        _merge_row(row, variant=name, repetition_index=rep, custom=child_custom)
+                        for row in rows
+                    ]
                 )
 
     if started and reporter is not None and (fn := getattr(reporter, "finalize", None)):

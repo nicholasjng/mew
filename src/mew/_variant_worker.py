@@ -1,22 +1,15 @@
 """Child entrypoint for ``mew run --variant``: run one variant's suite, emit JSONL on stdout.
 
-Mutually-incompatible variants (engines that statically link the same library,
-GIL vs free-threaded interpreters, …) can't share an interpreter, so each runs
-in its own process. This is that process: it imports one benchmark file, runs
-the real Google Benchmark timing loop via :func:`mew.run`, and streams a
-:class:`~mew.JSONLReporter` document to stdout. The parent
-(:mod:`mew._variants`) is the single writer — it re-stamps each row with the
-shared ``session_id``, the ``variant`` name, and the repetition index, then
-fans out to the user's real sinks. So this worker is deliberately
-variant-unaware: it just measures and prints.
+Mutually-incompatible variants can't share an interpreter, so each runs in its
+own process. This is that process: it imports one benchmark file, runs the
+timing loop via :func:`mew.run`, and streams a :class:`~mew.JSONLReporter`
+document to stdout. The parent (:mod:`mew._variants`) is the single writer, so
+this worker is variant-unaware — it just measures and prints.
 
-Profiling flags (``--profile-memory``, ``--sample`` and friends) mirror
-``mew run``: the worker runs the out-of-loop profile pass and wraps its reporter
-in :class:`~mew._profile._ProfileEnriching`, so each row carries its ``memory`` /
-``cpu_profile`` block. The parent re-emits those per variant, making cross-engine
-memory/CPU comparison work from one ``--variant`` run. Profiling runs once per
-child invocation (i.e. per repetition); any HTML artifact path is already
-suffixed with the variant name by the parent.
+Profiling flags mirror ``mew run``: the worker runs the out-of-loop profile pass
+and hands the results to :func:`mew.run`, whose projector attaches each row's
+``memory`` / ``cpu_profile`` block. Profiling runs once per child invocation; any
+HTML artifact path is already suffixed with the variant name by the parent.
 
 Invoked as::
 
@@ -33,13 +26,12 @@ from pathlib import Path
 
 from mew import discovery as _discovery
 from mew._registry import REGISTRY
-from mew.reporter import JSONLReporter, Reporter
+from mew.reporter import JSONLReporter
 from mew.runner import run as _run
 
 
-def _build_reporter(ns: argparse.Namespace, entries: list) -> Reporter:
-    """JSONL-to-stdout reporter, wrapped to attach profiles when flags are set."""
-    reporter: Reporter = JSONLReporter(output=None)
+def _profiles(ns: argparse.Namespace, entries: list) -> tuple[dict | None, dict | None]:
+    """Run the out-of-loop profile passes the flags ask for, as run() expects them."""
     memory_profiles = None
     cpu_profiles = None
     if ns.profile_memory or ns.flamegraph is not None:
@@ -57,13 +49,7 @@ def _build_reporter(ns: argparse.Namespace, entries: list) -> Reporter:
             interval=ns.sample_interval,
             inner_iterations=ns.sample_iterations,
         )
-    if memory_profiles is not None or cpu_profiles is not None:
-        from mew._profile import _ProfileEnriching
-
-        reporter = _ProfileEnriching(
-            reporter, memory_profiles=memory_profiles, cpu_profiles=cpu_profiles
-        )
-    return reporter
+    return memory_profiles, cpu_profiles
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -92,9 +78,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"mew: no benchmarks in {ns.file}", file=sys.stderr)
         return 1
 
-    # JSONL to stdout (output=None). The parent parses these lines; its own
-    # session id and the variant name are applied there, not here.
-    _run(entries, argv=["mew", *ns.gb], reporter=_build_reporter(ns, entries))
+    # JSONL to stdout (output=None); the parent applies its session id and the
+    # variant name when it parses these lines.
+    memory_profiles, cpu_profiles = _profiles(ns, entries)
+    _run(
+        entries,
+        argv=["mew", *ns.gb],
+        reporter=JSONLReporter(output=None),
+        memory_profiles=memory_profiles,
+        cpu_profiles=cpu_profiles,
+    )
     return 0
 
 

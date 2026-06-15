@@ -44,8 +44,7 @@ class PerfProfiler:
         # Binary present isn't enough: perf_event_paranoid gates recording for
         # processes without CAP_PERFMON/SYS_ADMIN, and locked-down hosts (e.g.
         # GitHub runners, default =4) can't lower it. Probe with a trivial capture
-        # so we fail fast with an actionable message instead of a CalledProcessError
-        # mid-run. `true` is instant; output is swallowed.
+        # to fail fast with an actionable message instead of a mid-run error.
         with tempfile.TemporaryDirectory() as d:
             probe = subprocess.run(
                 ["perf", "record", "-o", f"{d}/probe.data", "--", "true"],

@@ -1,10 +1,10 @@
 """Shared types for out-of-process, native-frame profilers.
 
-These backends (xctrace, py-spy, perf) all launch :mod:`mew._subprocess_worker`
-to drive one benchmark case while sampling it from the outside. They produce an
-artifact (a trace / flamegraph / profile file) rather than the scalar summaries
-that the in-process samplers (pyinstrument via ``mew run --sample``, memray)
-attach to timed ``Run`` rows.
+These backends (xctrace, py-spy, perf) launch :mod:`mew._subprocess_worker` to
+drive one benchmark case while sampling it from the outside. They produce an
+artifact (trace / flamegraph / profile file) rather than the scalar summaries the
+in-process samplers (pyinstrument via ``mew run --sample``, memray) attach to
+timed ``Run`` rows.
 """
 
 from __future__ import annotations
@@ -107,9 +107,9 @@ def each_case(
 
 
 def open_speedscope_artifact(path: Path) -> None:
-    """Open a speedscope artifact: ``npx``-style local viewer if present, else the web app.
+    """Open a speedscope artifact: local viewer if present, else the web app.
 
-    Shared by the backends whose artifact is speedscope-loadable (py-spy, perf).
+    Shared by backends whose artifact is speedscope-loadable (py-spy, perf).
     """
     if shutil.which("speedscope"):
         subprocess.run(["speedscope", str(path)], check=False)
