@@ -5,6 +5,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from mew.config import format_benchmark_args, load
 
 
@@ -16,6 +18,49 @@ def test_load_defaults_when_no_pyproject(tmp_path: Path):
     cfg = load(tmp_path)
     assert cfg.benchpaths == ["benchmarks"]
     assert cfg.benchmark_options == {}
+    assert cfg.session_tag.tool is None  # unset → auto (jj then git)
+
+
+def test_load_kebab_case_keys_coerce_to_snake(tmp_path: Path):
+    _write(
+        tmp_path,
+        """
+        [tool.mew]
+        python-files = ["b_*.py"]
+
+        [tool.mew.benchmark-options]
+        min-time = "2.0"
+        """,
+    )
+    cfg = load(tmp_path)
+    assert cfg.python_files == ["b_*.py"]
+    assert cfg.benchmark_options == {"min_time": "2.0"}
+
+
+def test_load_session_tag_disabled(tmp_path: Path):
+    _write(tmp_path, "[tool.mew.session-tag]\nenabled = false\n")
+    assert load(tmp_path).session_tag.enabled is False
+    assert load(tmp_path).session_tag.tool is None
+
+
+def test_load_session_tag_tool_and_args(tmp_path: Path):
+    _write(
+        tmp_path,
+        """
+        [tool.mew.session-tag]
+        tool = "hg"
+        args = ["id", "-i"]
+        """,
+    )
+    spec = load(tmp_path).session_tag
+    assert spec.tool == "hg"
+    assert spec.args == ["id", "-i"]
+
+
+def test_load_rejects_unknown_session_tag_key(tmp_path: Path):
+    _write(tmp_path, "[tool.mew.session-tag]\ntoll = 'git'\n")  # typo
+    with pytest.raises(ValueError, match="unknown keys in \\[tool.mew.session-tag\\]"):
+        load(tmp_path)
 
 
 def test_load_benchmark_options_table(tmp_path: Path):
