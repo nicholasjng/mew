@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import inspect
 import itertools
 import sys
@@ -96,12 +95,15 @@ def _make_family_trampoline(
     The trampoline reads ``state.range(0)`` to look up variant kwargs and label, then dispatches.
     """
 
-    @functools.wraps(fn, assigned=("__module__", "__doc__"))
+    # Plain function (not functools.wraps): the wrapper type would hide __globals__,
+    # which BenchmarkFn requires. Copy identity attributes by hand instead.
     def trampoline(state, _fn=fn, _cases=cases, _labels=labels):
         idx = state.range(0)
         state.set_label(_labels[idx])
         return _fn(state, **_cases[idx])
 
+    trampoline.__module__ = fn.__module__
+    trampoline.__doc__ = fn.__doc__
     trampoline.__name__ = name
     trampoline.__qualname__ = qualname
     return trampoline
