@@ -12,7 +12,7 @@ $ mew run benchmarks/bench_sort.py         # one file
 $ mew run -k 'sort' -t hot-path            # filter by name + tag (OR within tag)
 $ mew run --min-time 1s --repetitions 5    # variance-friendly run
 $ mew run -o results.json -o -             # JSON file + Rich console
-$ mew run --benchmark-option=--benchmark_color=true   # raw GB passthrough
+$ mew run --benchmark-option=--benchmark_enable_random_interleaving=true   # raw GB passthrough
 ```
 
 ### Path selectors

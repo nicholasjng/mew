@@ -36,7 +36,7 @@ def load(start: Path | None = None) -> Config:
         benchmark_options = dict(tool.get("benchmark_options", {}))
         if (unit := benchmark_options.get("unit")) is not None and unit not in _VALID_UNITS:
             raise ValueError(
-                f"invalid time unit {unit!r} in [tool.mew.benchmark_options]; "
+                f"invalid time unit {unit!r} in [tool.mew.benchmark-options]; "
                 f"expected one of {sorted(_VALID_UNITS)}"
             )
         return Config(

@@ -25,15 +25,15 @@ repetitions = 5
 
 ## `benchmark_options` keys
 
-Keys are the short Google Benchmark flag names, _without_ the `--benchmark_` prefix:
+Keys are the short Google Benchmark flag names (kebab-case here, coerced before the `--benchmark_` flag is built). Only **measurement** flags apply — mew installs its own reporter, so Google Benchmark's *display/output* flags (`format`, `out`, `color`, `display-aggregates-only`) are ignored; some, like `out`, would even write a stray second file in GB's format. Use `--format` for stdout shape and `-o` for output sinks instead.
 
-| Key             | Effect                                            |
-| --------------- | ------------------------------------------------- |
-| `min_time`      | `--benchmark_min_time=<value>`                    |
-| `repetitions`   | `--benchmark_repetitions=<N>`                     |
-| `format`        | `--benchmark_format=json` (etc.)                  |
-| `out`           | `--benchmark_out=<path>`                          |
-| `display_aggregates_only` | Bool flag                                   |
+| Key                      | Effect                                                          |
+| ------------------------ | --------------------------------------------------------------- |
+| `min-time`               | `--benchmark_min_time=<value>` (seconds, or `<N>x` iterations)  |
+| `min-warmup-time`        | Warm up for this long before timing                             |
+| `repetitions`            | Repeat each benchmark N times (variance metrics need ≥ 2)       |
+| `iterations`             | Force a fixed iteration count                                   |
+| `report-aggregates-only` | Emit only aggregate rows (mean/median/stddev), not per-rep ones |
 
 ## Picking sensible defaults
 
