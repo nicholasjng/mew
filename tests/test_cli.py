@@ -286,6 +286,40 @@ def test_run_benchmark_options_from_pyproject(benchdir, tmp_path):
     assert all(b["iterations"] == 1 for b in doc["benchmarks"])
 
 
+def test_run_format_jsonl_streams_to_stdout(benchdir, tmp_path):
+    # Every stdout line is valid JSON (no rich banner) → pipeable to `jq`.
+    res = _mew("run", str(benchdir), "--min-time", "1x", "--format", "jsonl", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    objs = [json.loads(line) for line in res.stdout.splitlines() if line.strip()]
+    names = [o["name"] for o in objs if "name" in o]
+    assert any("bench_one" in n for n in names)
+    assert any("bench_two" in n for n in names)
+
+
+def test_run_format_json_to_stdout(benchdir, tmp_path):
+    res = _mew("run", str(benchdir), "--min-time", "1x", "--format", "json", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    doc = json.loads(res.stdout)  # one well-formed document
+    assert len(doc["benchmarks"]) == 3
+
+
+def test_run_format_unknown_errors(benchdir, tmp_path):
+    res = _mew("run", str(benchdir), "--min-time", "1x", "--format", "yaml", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "unknown --format" in res.stderr
+
+
+def test_run_format_without_stdout_sink_warns(benchdir, tmp_path):
+    # --format only configures stdout; with file-only sinks it has nothing to do.
+    out = tmp_path / "r.json"
+    res = _mew(
+        "run", str(benchdir), "--min-time", "1x", "--format", "jsonl", "-o", str(out), cwd=tmp_path
+    )
+    assert res.returncode == 0, res.stderr
+    assert "no effect without a stdout sink" in res.stderr
+    assert res.stdout.strip() == ""
+
+
 def test_run_filter_by_tag(benchdir, tmp_path):
     out = tmp_path / "results.json"
     res = _mew(

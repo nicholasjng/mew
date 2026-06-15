@@ -202,11 +202,13 @@ def list_(
 
 
 _STDOUT_SENTINELS = frozenset({"-", "stdout"})
+_STDOUT_FORMATS = frozenset({"rich", "json", "jsonl"})
 
 
 def _build_reporters(
     outputs: list[str],
     *,
+    stdout_format: str = "rich",
     show_memory: bool = False,
     show_cpu: bool = False,
     show_label: bool = False,
@@ -215,13 +217,18 @@ def _build_reporters(
 ) -> list[Reporter]:
     """Resolve ``-o`` sinks into a list of reporters.
 
-    ``-``/``stdout`` map to a rich terminal reporter; ``*.json``/``*.jsonl``/
-    ``*.parquet`` to file reporters. Defaults to one rich reporter when no ``-o``
-    is given. ``append`` adds the run as a new session to existing ``.jsonl`` /
+    ``-``/``stdout`` map to a stdout reporter in ``stdout_format`` (``rich`` /
+    ``json`` / ``jsonl``); ``*.json``/``*.jsonl``/``*.parquet`` to file reporters
+    (format by extension). Defaults to one stdout reporter when no ``-o`` is
+    given. ``append`` adds the run as a new session to existing ``.jsonl`` /
     ``.parquet`` sinks (rejected for ``.json``, a single streamed document).
     """
 
-    def _rich() -> RichReporter:
+    def _stdout() -> Reporter:
+        if stdout_format == "json":
+            return JSONReporter(output=None)
+        if stdout_format == "jsonl":
+            return JSONLReporter(output=None)
         return RichReporter(
             show_memory=show_memory,
             show_cpu=show_cpu,
@@ -230,7 +237,7 @@ def _build_reporters(
         )
 
     if not outputs:
-        return [_rich()]
+        return [_stdout()]
 
     reps: list[Reporter] = []
     seen_stdout = False
@@ -241,7 +248,7 @@ def _build_reporters(
                 print("duplicate stdout sink", file=sys.stderr)
                 raise SystemExit(2)
             seen_stdout = True
-            reps.append(_rich())
+            reps.append(_stdout())
             continue
         path = Path(raw).resolve()
         if path in seen_files:
@@ -269,6 +276,12 @@ def _build_reporters(
                 file=sys.stderr,
             )
             raise SystemExit(2)
+    if stdout_format != "rich" and not seen_stdout:
+        print(
+            f"warning: --format {stdout_format} has no effect without a stdout sink "
+            "(every -o target is a file); add `-o -` to also stream to stdout",
+            file=sys.stderr,
+        )
     return reps
 
 
@@ -305,6 +318,7 @@ def _run_variants_cmd(
     specs: list[str],
     *,
     output: list[str],
+    stdout_format: str = "rich",
     pattern: str | None,
     literal: bool = False,
     tags: list[str] | None,
@@ -336,6 +350,7 @@ def _run_variants_cmd(
 
     reporters = _build_reporters(
         output,
+        stdout_format=stdout_format,
         show_variant=True,
         show_memory=profiling.profile_memory or profiling.flamegraph is not None,
         show_cpu=profiling.sample or profiling.sample_html is not None,
@@ -393,11 +408,20 @@ def run(
         list[str],
         Parameter(
             name=["-o", "--output"],
-            help="Output sink, repeatable: `-` for a rich terminal table, "
+            help="Output sink, repeatable: `-`/`stdout` for the terminal, "
             "`<path>.{json,jsonl,parquet}` for a JSON / streaming-JSONL / Parquet "
             "file. Default: `-`.",
         ),
     ] = [],
+    format: Annotated[
+        str,
+        Parameter(
+            name="--format",
+            help="Format of stdout output: `rich` (table), `json`, or `jsonl`. "
+            "Use `json`/`jsonl` to pipe machine-readable rows (e.g. `mew run "
+            "--format jsonl | jq`). File `-o` sinks keep their by-extension format.",
+        ),
+    ] = "rich",
     min_time: Annotated[
         str | None,
         Parameter(
@@ -495,12 +519,21 @@ def run(
     ] = None,
 ) -> None:
     """Discover and run benchmarks."""
+    if format not in _STDOUT_FORMATS:
+        print(
+            f"unknown --format {format!r}; choose from {sorted(_STDOUT_FORMATS)}", file=sys.stderr
+        )
+        raise SystemExit(2)
+    if stdin and variant:
+        print("--stdin and --variant are mutually exclusive", file=sys.stderr)
+        raise SystemExit(2)
     if variant:
         from mew._variants import ProfileConfig
 
         _run_variants_cmd(
             variant,
             output=output,
+            stdout_format=format,
             pattern=pattern,
             literal=literal,
             tags=tag or None,
@@ -541,6 +574,7 @@ def run(
 
         reporters = _build_reporters(
             output,
+            stdout_format=format,
             show_memory=profile_memory or flamegraph is not None,
             show_cpu=sample or sample_html is not None,
             # Label column distinguishes family case rows from the truncated name.
