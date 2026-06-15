@@ -115,6 +115,24 @@ def test_registry_filter_narrows_family():
     assert narrowed.cases == [1]
 
 
+def test_compile_name_filter_literal_escapes_brackets():
+    # As a regex, `[n=10]` is a char class and won't match the literal label;
+    # literal=True escapes it so the displayed name[label] matches as-is.
+    name = "f.py::bench_fam[n=10]"
+    assert compile_name_filter("bench_fam[n=10]").search(name) is None
+    assert compile_name_filter("bench_fam[n=10]", literal=True).search(name) is not None
+
+
+def test_registry_filter_literal_selects_one_case_without_escaping():
+    # The win: an unescaped, pasted `name[label]` selects exactly that case.
+    r = Registry()
+    r.add(_family())
+    (narrowed,) = r.filter("bench_fam[n=10]", literal=True)
+    assert narrowed.cases == [1]
+    # Without literal the bare brackets are a regex char class → no match.
+    assert r.filter("bench_fam[n=10]") == []
+
+
 def test_filter_tags_or_semantics():
     r = Registry()
     r.add(Entry(name="a", fn=lambda s: None, tags=frozenset({"io"})))

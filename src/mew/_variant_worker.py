@@ -56,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="mew._variant_worker")
     ap.add_argument("--file", required=True, type=Path)
     ap.add_argument("--pattern", default=None)
+    ap.add_argument("--literal", action="store_true")
     ap.add_argument("--tag", action="append", default=[])
     ap.add_argument("--gb", action="append", default=[], help="raw Google Benchmark arg")
     ap.add_argument("--profile-memory", action="store_true", dest="profile_memory")
@@ -70,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     REGISTRY.clear()
     _discovery.import_file(ns.file)
     try:
-        entries = REGISTRY.filter(ns.pattern, tags=ns.tag or None)
+        entries = REGISTRY.filter(ns.pattern, tags=ns.tag or None, literal=ns.literal)
     except ValueError as e:
         print(f"mew: {e}", file=sys.stderr)
         return 1

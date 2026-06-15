@@ -133,6 +133,7 @@ def _profile_args(profiling: ProfileConfig, variant: str) -> list[str]:
 def _run_child(
     file: Path,
     pattern: str | None,
+    literal: bool,
     tags: list[str],
     gb_args: list[str],
     profiling: ProfileConfig,
@@ -144,6 +145,8 @@ def _run_child(
     cmd = [sys.executable, "-m", "mew._variant_worker", f"--file={file}"]
     if pattern:
         cmd.append(f"--pattern={pattern}")
+    if literal:
+        cmd.append("--literal")
     cmd += [f"--tag={t}" for t in tags]
     cmd += [f"--gb={g}" for g in gb_args]
     cmd += _profile_args(profiling, variant)
@@ -173,6 +176,7 @@ def run_variants(
     reporters: list[Reporter],
     gb_args: list[str],
     pattern: str | None = None,
+    literal: bool = False,
     tags: list[str] | None = None,
     repetitions: int = 1,
     session_tag: str | None = None,
@@ -194,7 +198,9 @@ def run_variants(
     # Repetition-major: rep0 over all variants, then rep1, … (A B A B …).
     for rep in range(max(1, repetitions)):
         for name in order:
-            result = _run_child(variants[name], pattern, tags or [], gb_args, profiling, name)
+            result = _run_child(
+                variants[name], pattern, literal, tags or [], gb_args, profiling, name
+            )
             if result is None:
                 failures += 1
                 continue
