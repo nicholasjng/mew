@@ -8,6 +8,7 @@ import json
 import pytest
 
 import mew
+from mew import RunRow
 from mew.reporter import JSONReporter, RichReporter
 
 
@@ -49,45 +50,29 @@ def test_json_reporter_writes_to_stream():
     assert doc["benchmarks"][0]["iterations"] >= 1
 
 
-def _fake_run(name: str, label: str = ""):
-    class FakeName:
-        function_name = name
-        args = ""
-
-    class FakeRun:
-        run_name = FakeName()
-        family_index = 0
-        per_family_instance_index = 0
-        aggregate_name = ""
-        repetitions = 1
-        repetition_index = 0
-        threads = 1
-        iterations = 1
-        real_accumulated_time = 0.0
-        cpu_accumulated_time = 0.0
-        report_label = label
-        skipped = False
-        skip_message = ""
-        counters: dict = {}
-
-        def benchmark_name(self):
-            return name
-
-        def adjusted_real_time(self):
-            return 1.0
-
-        def adjusted_cpu_time(self):
-            return 1.0
-
-        @property
-        def run_type(self):
-            return mew.RunType.iteration
-
-        @property
-        def time_unit(self):
-            return mew.TimeUnit.ns
-
-    return FakeRun()
+def _fake_row(name: str, label: str = "") -> RunRow:
+    """A minimal RunRow dict, the shape reporters now consume directly."""
+    return {
+        "name": name,
+        "run_name": name,
+        "family_index": 0,
+        "per_family_instance_index": 0,
+        "run_type": "iteration",
+        "aggregate_name": "",
+        "repetitions": 1,
+        "repetition_index": 0,
+        "threads": 1,
+        "iterations": 1,
+        "real_time": 1.0,
+        "cpu_time": 1.0,
+        "real_accumulated_time": 0.0,
+        "cpu_accumulated_time": 0.0,
+        "time_unit": "ns",
+        "label": label,
+        "skipped": False,
+        "skip_message": "",
+        "counters": {},
+    }
 
 
 def test_json_reporter_file_is_valid_after_each_flush_without_finalize(tmp_path):
@@ -102,12 +87,12 @@ def test_json_reporter_file_is_valid_after_each_flush_without_finalize(tmp_path)
     assert doc["context"]["host_name"] == "h"
     assert doc["benchmarks"] == []
 
-    rep.report_runs([_fake_run("a::one"), _fake_run("a::two")])
+    rep.report_runs([_fake_row("a::one"), _fake_row("a::two")])
     # Still valid mid-run, before finalize() — this is the Ctrl-C survivability.
     doc = json.loads(out.read_text())
     assert [b["name"] for b in doc["benchmarks"]] == ["a::one", "a::two"]
 
-    rep.report_runs([_fake_run("a::three")])
+    rep.report_runs([_fake_row("a::three")])
     doc = json.loads(out.read_text())
     assert [b["name"] for b in doc["benchmarks"]] == ["a::one", "a::two", "a::three"]
 
@@ -282,7 +267,7 @@ def test_rich_reporter_renders_canonical_name():
     buf = io.StringIO()
     rep = RichReporter(console=Console(file=buf, force_terminal=False, width=120))
     rep.report_context({"host_name": "h", "num_cpus": 4, "mhz_per_cpu": 1000, "cpu_scaling": "off"})
-    rep.report_runs([_fake_run("bench.py::bench_x/case:0/min_time:0.200", label="small")])
+    rep.report_runs([_fake_row("bench.py::bench_x/case:0/min_time:0.200", label="small")])
     out = buf.getvalue()
     assert "bench.py::bench_x[small]" in out
     assert "case:0" not in out
@@ -317,7 +302,7 @@ def test_jsonl_reporter_flushes_incrementally(tmp_path):
     rep = JSONLReporter(output=out)
     rep.report_context({})
 
-    rep.report_runs([_fake_run("f::bench")])
+    rep.report_runs([_fake_row("f::bench")])
     # File already holds the context header + the row before finalize() is called.
     lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
     assert len(lines) == 2

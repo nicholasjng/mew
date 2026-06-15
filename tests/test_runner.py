@@ -86,7 +86,7 @@ def test_run_parametrize_emits_one_run_per_variant():
 
     cap = Capture()
     mew.run(argv=_argv_fast(), reporter=cap)
-    names = [r.benchmark_name() for r in cap.runs]
+    names = [r["name"] for r in cap.runs]
     assert len(names) == 3
 
 
@@ -106,7 +106,7 @@ def test_run_registers_only_selected_cases_of_a_family():
     cap = Capture()
     mew.run(entries=narrowed, argv=_argv_fast(), reporter=cap)
 
-    case_names = [r.benchmark_name() for r in cap.runs]
+    case_names = [r["name"] for r in cap.runs]
     assert all("bench_fam" in n for n in case_names)
     # Exactly cases 0 and 2 ran — mid (case 1) was dropped by the filter.
     assert sorted(n.split("/case:")[1] for n in case_names) == ["0", "2"]
@@ -137,7 +137,7 @@ def test_run_options_iterations_applied():
     cap = Capture()
     # When iterations is set on the handle, GB ignores --benchmark_min_time.
     mew.run(argv=["mew"], reporter=cap)
-    assert cap.runs[0].iterations == 42
+    assert cap.runs[0]["iterations"] == 42
 
 
 def test_run_filter_selects_subset():
@@ -153,7 +153,7 @@ def test_run_filter_selects_subset():
 
     cap = Capture()
     mew.run(argv=_argv_fast(), reporter=cap, filter="bench_a")
-    names = [r.benchmark_name() for r in cap.runs]
+    names = [r["name"] for r in cap.runs]
     assert all("bench_a" in n for n in names)
     assert not any("bench_b" in n for n in names)
 
@@ -179,8 +179,8 @@ def test_state_pause_context_manager_excludes_work_from_timing():
 
     cap = Capture()
     mew.run(argv=["mew"], reporter=cap, filter=".*")
-    assert cap.runs[0].iterations == 1
-    assert cap.runs[1].iterations == 1
+    assert cap.runs[0]["iterations"] == 1
+    assert cap.runs[1]["iterations"] == 1
     assert seen == ["inside"]
 
 
@@ -204,8 +204,8 @@ def test_state_pause_excludes_paused_work_from_real_time():
     cap = Capture()
     mew.run(argv=["mew"], reporter=cap, filter=".*")
     unpaused, paused = cap.runs
-    paused_time = paused.real_accumulated_time
-    unpaused_time = unpaused.real_accumulated_time
+    paused_time = paused["real_accumulated_time"]
+    unpaused_time = unpaused["real_accumulated_time"]
     # Generous margin: paused real time should be at least 10x smaller than
     # the work it excluded. In practice it's typically 100x+ smaller.
     assert paused_time < unpaused_time / 10, f"paused={paused}s, unpaused={unpaused}s"
@@ -225,7 +225,7 @@ def test_state_pause_resumes_on_exception():
     # Body completes normally because the exception is swallowed; ScopedPauseTiming's
     # destructor still resumes timing as the with-block unwinds.
     mew.run(argv=["mew"], reporter=cap, filter=".*")
-    assert cap.runs[0].iterations == 1
+    assert cap.runs[0]["iterations"] == 1
 
 
 def test_run_with_no_entries_returns_zero():
@@ -246,7 +246,7 @@ def test_state_batches_drives_body_in_multiples_of_n():
     cap = Capture()
     mew.run(argv=["mew"], reporter=cap, filter=".*")
     # 3 batches × 4 = 12 body calls; GB reports the actual count, not the cap.
-    assert cap.runs[0].iterations == 12
+    assert cap.runs[0]["iterations"] == 12
     assert len(body_calls) == 12
 
 
