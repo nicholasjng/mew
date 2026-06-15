@@ -148,3 +148,41 @@ $ mew compare --fail-on-regression 5 baseline.json head.json
 ```
 
 See [](regressions.md) for matching, metrics, the regression gate, and allowlist.
+
+## `mew completions`
+
+Print a shell-completion script for `bash`, `zsh`, `fish`, or `powershell` to
+stdout. The scripts are generated from the CLI itself, so they stay in sync with
+the commands and flags. They complete subcommands, per-command options, file
+paths for path arguments, and fixed choices (`--format`, `--profiler`, the shell
+list).
+
+The generated scripts are **static** — they never call `mew` at completion time.
+So prefer installing them as a **file**, generated once: shell startup then has
+no dependency on `mew` being importable, which matters when `mew` lives only in a
+virtualenv (e.g. Homebrew Python, where you can't install into the interpreter).
+
+```console
+# bash
+$ mew completions bash > ~/.local/share/bash-completion/completions/mew
+
+# zsh — write a file, then `source ~/.mew-completions.zsh` in ~/.zshrc after compinit
+$ mew completions zsh > ~/.mew-completions.zsh
+
+# fish
+$ mew completions fish > ~/.config/fish/completions/mew.fish
+
+# PowerShell — dot-source the file from $PROFILE
+$ mew completions powershell > ~/.mew-completions.ps1
+```
+
+The `eval` one-liner (`eval "$(mew completions zsh)"` in your rc) also works, but
+it re-runs `mew` at every shell startup — so **guard it**, or you'll get a
+`command not found: mew` on every new shell when no venv is active:
+
+```console
+$ command -v mew >/dev/null 2>&1 && eval "$(mew completions zsh)"
+```
+
+Completion is static — it does not run the suite, so it won't complete benchmark
+*names*. Pipe `mew list --names-only` if you want those.
