@@ -53,6 +53,35 @@ console format while `--benchmark_out` handles files.)
 
 `--append` adds the run as a new session to an existing `.jsonl` / `.parquet` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually — see [](regressions.md#comparing-sessions-in-one-file).
 
+### Selecting from stdin
+
+`--stdin` reads newline-delimited selectors from standard input, so you can pipe
+a filtered `mew list` straight into a run — no `xargs`. Each line is matched
+**literally**, so a displayed `name[label]` (brackets and all) works without
+escaping. Lines come in two shapes:
+
+```console
+$ mew list -k slow | mew run --stdin                    # file.py::name selectors
+$ mew list --show-cases -k 'n=1000' | mew run --stdin   # one case; no -F needed
+```
+
+- A line **with `::`** (`file.py::name`, the default `mew list` output) is a
+  selector: `mew run` imports that path and filters by the name. The path is
+  relative, so run from the directory you listed from.
+- A **path-free** line (`mew list --names-only` output, like `docker ps -q`) is
+  a name *filter*: `mew run` discovers benchmarks its usual way (positional paths
+  or `[tool.mew] benchpaths`) and keeps the ones whose name matches. Because the
+  name carries no path, this round-trips from **any** directory:
+
+```console
+$ mew list --names-only -k slow | mew run benchmarks/ --stdin
+$ mew list --names-only | mew run --stdin       # discovery via benchpaths
+```
+
+A path-free name matches by substring, so a function name shared across files
+selects all of them. (Don't pipe `--show-tags` output; the trailing `[tags]`
+column isn't a selector.)
+
 ### Profiling flags
 
 These attach **in-process** measurements to the timing table. For native (C/C++)
