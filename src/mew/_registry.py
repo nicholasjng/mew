@@ -14,15 +14,17 @@ from dataclasses import dataclass, field
 from mew._typing import BenchmarkFn, BenchmarkOptions
 
 
-def compile_name_filter(pattern: str) -> re.Pattern[str]:
+def compile_name_filter(pattern: str, *, literal: bool = False) -> re.Pattern[str]:
     """Compile a benchmark-name filter into an unanchored regex.
 
     Matched with ``re.search`` (like Google Benchmark's own ``--benchmark_filter``),
     so a plain literal like ``bench_sort`` works as a substring while
-    ``bench_(sort|search)`` also works. Raises :class:`ValueError` on a malformed pattern.
+    ``bench_(sort|search)`` also works. With ``literal=True`` the pattern is
+    :func:`re.escape`-d first, so a displayed ``name[label]`` matches without
+    escaping its brackets. Raises :class:`ValueError` on a malformed pattern.
     """
     try:
-        return re.compile(pattern)
+        return re.compile(re.escape(pattern) if literal else pattern)
     except re.error as e:
         raise ValueError(f"invalid benchmark filter pattern {pattern!r}: {e}") from e
 
@@ -154,18 +156,20 @@ class Registry:
         pattern: str | None = None,
         *,
         tags: Iterable[str] | None = None,
+        literal: bool = False,
     ) -> list[Entry]:
         """Filter by ``pattern`` (a regex matched against the name) and/or ``tags``.
 
         A ``pattern`` that matches only some cases of a parametrized family
-        narrows that family to those cases (see :func:`narrow_entry`). Tags use
-        OR semantics: an entry passes when it has any of the requested tags;
-        entries with no tags are excluded whenever ``tags`` is non-empty.
-        Raises :class:`ValueError` if ``pattern`` is not a valid regex.
+        narrows that family to those cases (see :func:`narrow_entry`). With
+        ``literal=True`` the pattern is matched as a fixed string. Tags use OR
+        semantics: an entry passes when it has any of the requested tags; entries
+        with no tags are excluded whenever ``tags`` is non-empty. Raises
+        :class:`ValueError` if ``pattern`` is not a valid regex.
         """
         out = list(self._entries)
         if pattern:
-            rx = compile_name_filter(pattern)
+            rx = compile_name_filter(pattern, literal=literal)
             out = [n for e in out if (n := narrow_entry(e, all_of=rx)) is not None]
         if tags:
             wanted = set(tags)

@@ -64,25 +64,50 @@ def _collect(
     *,
     pattern: str | None,
     tags: list[str] | None = None,
+    literal: bool = False,
+    stdin: bool = False,
 ) -> list[Entry]:
-    """Resolve CLI path args into a filtered list of registered entries."""
-    cfg = _config.load()
-    if not paths:
-        paths = list(cfg.benchpaths)
+    """Resolve CLI path args into a filtered list of registered entries.
 
-    selectors = [_discovery.parse(p) for p in paths]
-    files = _discovery.collect_files(selectors, file_patterns=cfg.python_files)
+    Each selector is paired with whether its ``::filter`` is literal. Positional
+    args follow ``--literal``. Stdin lines (``--stdin``) are always literal: a
+    line with ``::`` is a ``path::filter`` selector (imports that path); a
+    path-less line (``mew list --names-only`` output) is a name *filter* matched
+    against benchmarks discovered the normal way (positional paths / benchpaths),
+    so it round-trips regardless of cwd.
+    """
+    cfg = _config.load()
+    pairs: list[tuple[_discovery.Selector, bool]] = [(_discovery.parse(p), literal) for p in paths]
+    name_filters: list[str] = []
+    if stdin:
+        for line in sys.stdin.read().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if "::" in line:
+                pairs.append((_discovery.parse(line), True))
+            else:
+                name_filters.append(line)
+    # Need files to import. Positional args and `::` stdin selectors supply them;
+    # otherwise fall back to benchpaths — unless stdin was given but empty, where
+    # an empty pipe should select nothing rather than the whole suite.
+    if not pairs and (name_filters or not stdin):
+        pairs = [(_discovery.parse(p), literal) for p in cfg.benchpaths]
+
+    files = _discovery.collect_files([s for s, _ in pairs], file_patterns=cfg.python_files)
 
     REGISTRY.clear()
     for f in files:
         _discovery.import_file(f)
 
-    # Per-selector filter is OR'd with the global -k pattern. Both are regexes
-    # compiled up front so a bad pattern fails before any run; a partial match
-    # on a family narrows it to the matching cases.
+    # Per-selector filter and each path-less stdin name are OR'd together (and
+    # AND'd with the global -k). Compiled up front (literal where the source says
+    # so) so a bad pattern fails before any run; a partial family match narrows
+    # it to the matching cases.
     try:
-        selector_res = [compile_name_filter(s.filter) for s in selectors if s.filter]
-        pattern_re = compile_name_filter(pattern) if pattern else None
+        selector_res = [compile_name_filter(s.filter, literal=lit) for s, lit in pairs if s.filter]
+        selector_res += [compile_name_filter(n, literal=True) for n in name_filters]
+        pattern_re = compile_name_filter(pattern, literal=literal) if pattern else None
     except ValueError as e:
         print(e, file=sys.stderr)
         raise SystemExit(2) from e
@@ -113,10 +138,20 @@ def list_(
         Parameter(
             name=["-k", "--pattern"],
             help="List benchmarks whose name matches this regex (re.search, "
-            "unanchored). A plain word still works as a substring. Parametrize "
-            "case labels are not part of the name and won't match.",
+            "unanchored). A plain word works as a substring; a family case also "
+            "matches by its `name[label]` form. Pass `--literal` to match `[...]` "
+            "without escaping.",
         ),
     ] = None,
+    literal: Annotated[
+        bool,
+        Parameter(
+            name=["-F", "--literal"],
+            help="Match `-k` as a literal string, not a regex. Lets you paste a "
+            "displayed `name[label]` (e.g. `bench_sort[n=1000]`) without escaping "
+            "its brackets.",
+        ),
+    ] = False,
     tag: Annotated[
         list[str],
         Parameter(
@@ -130,7 +165,7 @@ def list_(
 ) -> None:
     """List discovered benchmarks without running them."""
     with _discovery.discovered():
-        entries = _collect(paths, pattern=pattern, tags=tag or None)
+        entries = _collect(paths, pattern=pattern, tags=tag or None, literal=literal)
         if not entries:
             print("no benchmarks found", file=sys.stderr)
             raise SystemExit(1)
@@ -249,6 +284,7 @@ def _run_variants_cmd(
     *,
     output: list[str],
     pattern: str | None,
+    literal: bool = False,
     tags: list[str] | None,
     min_time: str | None,
     repetitions: int | None,
@@ -289,6 +325,7 @@ def _run_variants_cmd(
         reporters=reporters,
         gb_args=gb_args,
         pattern=pattern,
+        literal=literal,
         tags=tags,
         repetitions=repetitions or 1,
         session_tag=session_tag,
@@ -309,10 +346,20 @@ def run(
             name=["-k", "--pattern"],
             help="Only run benchmarks whose name matches this regex (re.search, "
             "unanchored; a plain word works as a substring). Matches the registered "
-            "name (`file.py::func`); parametrize case labels like `n=10000` are not "
-            "part of the name and won't match.",
+            "name (`file.py::func`); a family case also matches by its `name[label]` "
+            "form (e.g. `bench_sort[n=1000]`) — pass `--literal` to match `[...]` "
+            "without escaping.",
         ),
     ] = None,
+    literal: Annotated[
+        bool,
+        Parameter(
+            name=["-F", "--literal"],
+            help="Match `-k` as a literal string, not a regex. Lets you paste a "
+            "displayed `name[label]` (from `mew list --show-cases`) to run one case "
+            "without escaping its brackets.",
+        ),
+    ] = False,
     tag: Annotated[
         list[str],
         Parameter(
@@ -433,6 +480,7 @@ def run(
             variant,
             output=output,
             pattern=pattern,
+            literal=literal,
             tags=tag or None,
             min_time=min_time,
             repetitions=repetitions,
@@ -640,6 +688,14 @@ def compare(
     pattern: Annotated[
         str | None, Parameter(name=["--pattern", "-k"], help="regex filter (re.search)")
     ] = None,
+    literal: Annotated[
+        bool,
+        Parameter(
+            name=["-F", "--literal"],
+            help="match `-k` as a literal string, not a regex (e.g. a pasted "
+            "`name[label]` with brackets)",
+        ),
+    ] = False,
     stddev: Annotated[
         bool,
         Parameter(name="--stddev", help="show stddev columns if present in the result files"),
@@ -699,6 +755,7 @@ def compare(
         metric=metric,
         key=key,
         pattern=pattern,
+        literal=literal,
         show_stddev=stddev,
         by=by,
         baseline=baseline,

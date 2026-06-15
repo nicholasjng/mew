@@ -726,6 +726,7 @@ def compare(
     metric: str = "real_time",
     key: str | None = None,
     pattern: str | None = None,
+    literal: bool = False,
     show_stddev: bool = False,
     by: str | None = None,
     baseline: str | None = None,
@@ -761,6 +762,9 @@ def compare(
         function name) and ``"name"`` otherwise.
     pattern : str, optional
         Regex (``re.search``) filter applied to benchmark names.
+    literal : bool, default False
+        Match ``pattern`` as a literal string rather than a regex (e.g. to keep
+        a ``name[label]``'s brackets literal).
     show_stddev : bool, default False
         Add per-file stddev columns when stddev data is present.
     by : str, optional
@@ -787,7 +791,7 @@ def compare(
     if key not in _KEYS:
         raise SystemExit(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
     try:
-        name_filter = compile_name_filter(pattern) if pattern else None
+        name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
     except ValueError as e:
         raise SystemExit(str(e)) from e
 
