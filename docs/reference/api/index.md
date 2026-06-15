@@ -15,7 +15,7 @@ regressions
 
 ## Top-level re-exports
 
-The public surface lives at the package root. All names below are
+The public surface lives at the package root — all names below are
 importable from `mew` directly:
 
 ```{eval-rst}

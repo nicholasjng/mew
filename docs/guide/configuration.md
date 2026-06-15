@@ -1,6 +1,6 @@
 # Configuration
 
-`mew` resolves a `[tool.mew]` table from the nearest `pyproject.toml`, all keys are optional.
+`mew` resolves a `[tool.mew]` table from the nearest `pyproject.toml`; all keys are optional.
 
 ```toml
 [tool.mew]
@@ -25,7 +25,7 @@ repetitions = 5
 
 ## `benchmark_options` keys
 
-The keys are the short Google Benchmark flag names, _without_ the `--benchmark_` prefix. Examples:
+Keys are the short Google Benchmark flag names, _without_ the `--benchmark_` prefix:
 
 | Key             | Effect                                            |
 | --------------- | ------------------------------------------------- |

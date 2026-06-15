@@ -30,13 +30,13 @@ A consistent `tags=("batched",)` is a good way to flag these runs for downstream
 :::
 
 The last batch may overshoot `max_iterations` by up to `n - 1` body executions.
-GB reports the actual iteration count and divides by it, so the per-iter time is accurate — just expect a slightly higher total wall time when the body has visible side effects.
+GB reports the actual iteration count and divides by it, so per-iter time stays accurate — just expect a slightly higher total wall time when the body has visible side effects.
 Keep `n` well below `max_iterations` (1024 is a reasonable default).
 
 ## Pausing the timer
 
 {meth}`State.pause()` is a context manager that excludes its body from the measured region.
-Use it when you need to rebuild state every iteration, but don't want the cost to leak into the timing:
+Use it to rebuild state every iteration without leaking the cost into the timing:
 
 ```python
 import random
@@ -66,8 +66,7 @@ sinks.
 
 ## Real vs. CPU time
 
-Reporters print both `Real` and `CPU` columns.
-The difference is informative on its own:
+Reporters print both `Real` and `CPU` columns; the difference is informative:
 
 - `Real == CPU`: single-threaded, CPU-bound work.
 - `Real > CPU`: the benchmark is sleeping, blocking on I/O, or contending on a lock.
@@ -79,4 +78,4 @@ Set `use_real_time=True` if your benchmark's primary metric is wall-clock time.
 
 Some benchmarks need their own clock — e.g. GPU work where the CPU launches the kernel and waits asynchronously.
 Set `use_manual_time=True` and call the state's manual-time setter inside the loop.
-See the Google Benchmark documentation for the exact contract.
+See the Google Benchmark docs for the exact contract.

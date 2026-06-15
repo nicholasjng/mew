@@ -32,12 +32,12 @@ Reporters receive it under `ctx["custom"]`:
 
 ## Session identity
 
-Every {func}`mew.run` invocation is one *session* and gets a generated `session_id` (a time-ordered UUIDv7), persisted in the context block (JSON/JSONL) or as per-row columns (Parquet).
-This keeps runs distinguishable when several land in one archive — even two runs in the same wall-clock second.
+Every {func}`mew.run` invocation is one *session* with a generated `session_id` (a time-ordered UUIDv7), persisted in the context block (JSON/JSONL) or as per-row columns (Parquet).
+This keeps runs distinguishable when several land in one archive — even two in the same wall-clock second.
 
 `session_tag` is the human label next to it: pass `mew run --session-tag before` (or `session_tag=` on {func}`mew.run`).
-When no tag is given, the CLI derives one from `git describe --always --dirty`; opt out with `auto_session_tag = false` under `[tool.mew]`.
-Note `--session-tag` labels the run's *output* — it is unrelated to `-t/--tag`, which selects which benchmarks run.
+With no tag, the CLI derives one from `git describe --always --dirty`; opt out with `auto_session_tag = false` under `[tool.mew]`.
+Note `--session-tag` labels the run's *output* — unrelated to `-t/--tag`, which selects which benchmarks run.
 
 ## Dotted keys
 
@@ -50,7 +50,7 @@ mew.set_context("dataset.kind", "uniform")
 # -> {"dataset": {"size": 1000, "kind": "uniform"}}
 ```
 
-As an example, a DuckDB query on the resulting run data might look like this:
+A DuckDB query on the resulting run data might look like:
 
 ```sql
 SELECT json_extract(custom, '$.dataset.size') AS size, real_time

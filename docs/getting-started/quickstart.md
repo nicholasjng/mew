@@ -16,9 +16,8 @@ def bench_sorted(state: mew.State) -> None:
         sorted(data)
 ```
 
-The contract is the same as Google Benchmark: do setup outside the
-`for _ in state:` loop, do the measured work inside it. `mew` discovers
-files matching `bench_*.py` or `*_bench.py` under `benchmarks/` by default.
+The contract matches Google Benchmark: setup goes outside the `for _ in state:` loop, measured work inside it.
+By default `mew` discovers files matching `bench_*.py` or `*_bench.py` under `benchmarks/`.
 
 ## 2. Run it
 
@@ -42,7 +41,7 @@ $ mew run -o - -o results.json     # fan out to stdout AND a file
 
 ## 4. Parametrize
 
-When you want to benchmark parametric functions for many different inputs, decorate it with `@mew.parametrize`:
+To benchmark a function across many inputs, decorate it with `@mew.parametrize`:
 
 ```python
 @mew.parametrize([{"n": 10}, {"n": 100}, {"n": 1000}])
@@ -52,7 +51,7 @@ def bench_sorted(state: mew.State, n: int) -> None:
         sorted(data)
 ```
 
-Or use a cartesian product for all possible parameter combinations:
+Or use a cartesian product over parameter axes:
 
 ```python
 @mew.product(n=[10, 100, 1000], algo=["timsort", "quick"])

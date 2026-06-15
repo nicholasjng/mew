@@ -1,8 +1,14 @@
 # Reporters
 
-A reporter is a Python class with `report_context(context)` and `report_runs(runs)` methods;
-with an optional `finalize()` API.
+A reporter is a Python class with `report_context(context)` and `report_runs(runs)` methods, plus an optional `finalize()`.
 The C++ runner calls them in the main thread with the GIL held.
+
+`report_runs` receives a list of {class}`~mew.RunRow` dicts — each one a
+completed run projected from the C++ `Run` at the binding boundary, with any
+`memory` / `cpu_profile` blocks already attached. Reporters read dict keys
+(`row["real_time"]`, `row.get("memory")`), so the same reporter serves both
+in-process runs and the `mew run --variant` merge (which only ever has dicts,
+never a live `Run`).
 
 ## Built-ins
 
@@ -44,11 +50,11 @@ The C++ runner calls them in the main thread with the GIL held.
 
 ## Custom reporters
 
-Implementing the protocol is mechanical:
+The protocol is mechanical to implement:
 
 ```python
 from typing import Any
-from mew import Run
+from mew import RunRow
 
 
 class MetricsExporter:
@@ -60,13 +66,18 @@ class MetricsExporter:
         self._context = context
         return True
 
-    def report_runs(self, runs: list[Run]) -> None:
-        for r in runs:
-            self._sink.push(name=r.benchmark_name(), value=r.adjusted_real_time())
+    def report_runs(self, runs: list[RunRow]) -> None:
+        for row in runs:
+            self._sink.push(name=row["name"], value=row["real_time"])
 
     def finalize(self) -> None:
         self._sink.flush()
 ```
+
+Each `row` is a {class}`~mew.RunRow`: the base keys (`name`, `real_time`,
+`cpu_time`, `iterations`, `time_unit`, `label`, `counters`, …) are always
+present; `variant`, `custom`, `memory`, and `cpu_profile` appear only when
+relevant (under `--variant` / `--profile-memory` / `--sample`).
 
 Pass it directly to {func}`mew.run`:
 

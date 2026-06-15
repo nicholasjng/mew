@@ -3,6 +3,9 @@
 ```{eval-rst}
 .. currentmodule:: mew
 
+.. autoclass:: RunRow
+   :no-members:
+
 .. autoclass:: Reporter
    :no-members:
 

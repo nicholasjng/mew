@@ -5,7 +5,7 @@
 the in-process `mew run --sample` ({doc}`profiling-cpu`) cannot see.
 
 It launches a fresh worker process per benchmark case and lets a system profiler
-sample the whole process while that case runs. The deliverable is an artifact you
+sample the whole process while that case runs. The result is an artifact you
 open in the profiler's own viewer, not a column in the results table.
 
 ## Backends
@@ -23,10 +23,9 @@ macOS with only the Command Line Tools and no full Xcode — it tells you so and
 points you to `mew run --sample` for in-process Python sampling.
 
 The `py-spy` and `perf` backends both emit a [speedscope](https://www.speedscope.app/)-readable
-artifact, so a single viewer covers them. `py-spy` needs an extra
-`uv pip install py-spy` for installation and, in containers, `CAP_SYS_PTRACE`. `perf` is a
-system package whose version must match the running kernel, and recording usually
-needs `kernel.perf_event_paranoid` lowered.
+artifact, so one viewer covers both. `py-spy` needs `uv pip install py-spy` and,
+in containers, `CAP_SYS_PTRACE`. `perf` is a system package whose version must
+match the running kernel, and recording usually needs `kernel.perf_event_paranoid` lowered.
 
 ## Basics (xctrace / macOS)
 
@@ -45,7 +44,7 @@ $ mew profile -k bench_sort --open      # filter benchmarks like `mew run`
 ```
 
 By default all cases land in one `mew.trace` bundle with one run per case
-(navigate them with Instruments' run picker). Pass `--separate` for one
+(navigate with Instruments' run picker). Pass `--separate` for one
 `<case>.trace` file each.
 
 ### Templates
@@ -78,14 +77,14 @@ works with no change to mew:
 $ mew profile --template ~/Library/Application\ Support/Instruments/Templates/My.tracetemplate
 ```
 
-**Do you need a custom one?** Almost never. The built-ins cover the axes mew
-cares about, and `xctrace record` can only *use* a template, not author one. You'd
-make your own only for a specific *combination* of instruments (e.g. Time Profiler
-+ Allocations in one recording) or non-default settings (e.g. a higher sampling
-rate) — built in the Instruments GUI via **File → Save As Template**, which writes
+**Do you need a custom one?** Almost never — the built-ins cover the axes mew
+cares about, and `xctrace record` can only *use* a template, not author one. Make
+your own only for a specific *combination* of instruments (e.g. Time Profiler +
+Allocations in one recording) or non-default settings (e.g. a higher sampling
+rate), built in the Instruments GUI via **File → Save As Template**, which writes
 a `.tracetemplate` into `~/Library/Application Support/Instruments/Templates/`.
-Pass that path to `--template`. There's no CLI authoring path, and no reason for
-mew to add one: pass-through already covers it.
+Pass that path to `--template`; pass-through already covers this, so there's no
+CLI authoring path.
 
 ### Native memory and leaks
 
@@ -96,7 +95,7 @@ misses. For a quick leak check without Instruments, the base-system `/usr/bin/le
 for unreferenced blocks; run the target with `MallocStackLogging=1` for allocation
 backtraces (`atos` symbolicates them). Caveat: a single snapshot conflates one-time
 setup (lazy imports, interned strings, allocator arenas) with real leaks, so treat
-the count as a starting point, not a gate.
+the count as a starting point.
 
 ## Basics (py-spy / perf, Linux)
 
@@ -116,14 +115,14 @@ artifact path to drag onto speedscope.app instead.
 
 In-process samplers (pyinstrument, memray) run inside the benchmark interpreter
 and return a small summary that `mew run` staples onto each timed row. A native
-profiler must sample the process from the *outside*, so it can't enrich those
+profiler samples the process from the *outside*, so it can't enrich those
 rows — it produces a trace file instead. Keeping it under `mew profile` makes the
 trade-off explicit: `mew run --sample` for a quick Python-level summary in the
 table, `mew profile` when you need to see into the C.
 
 ## Symbol resolution
 
-Native frames are only readable if the extension carries debug symbols. Build it
+Native frames are readable only if the extension carries debug symbols. Build it
 `RelWithDebInfo` (or at least with `-g`) and keep the `.dSYM` (macOS) /
 unstripped `.so` next to the module. A stripped release build shows
 address-only frames in the native stack.
@@ -141,8 +140,7 @@ read timings out of a profile.
 
 ## What native profiles include (and don't)
 
-Two differences from `mew run --sample` to keep in mind when reading a native
-profile:
+Two differences from `mew run --sample` when reading a native profile:
 
 - **`state.pause()` regions are *not* excluded.** The in-process sampler
   suspends sampling for the duration of a `pause()` block, so setup excluded from

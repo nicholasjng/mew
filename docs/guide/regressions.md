@@ -2,7 +2,7 @@
 
 `mew compare` diffs two or more result files (`.json`, `.jsonl`, or `.parquet` — every sink `mew run -o` writes).
 The first is the baseline; later files are diffed against it.
-With `--fail-on-regression`, the command also acts as a CI gate that returns exit code 2 when any benchmark drifts in the wrong direction by more than the threshold.
+With `--fail-on-regression`, it also acts as a CI gate, returning exit code 2 when any benchmark drifts in the wrong direction by more than the threshold.
 
 ## Basic comparison
 
@@ -15,16 +15,19 @@ $ mew compare --stddev baseline.json head.json    # show stddev cols if present
 
 Supported metrics: `real_time` (default), `cpu_time`, `iterations`.
 For `iterations`, higher is better, so the regression direction is inverted under the hood.
-Files produced with `--profile-memory` additionally support `memory.peak_bytes`, `memory.total_bytes`, and `memory.total_allocations`:
+Files produced with `--profile-memory` additionally support `memory.peak_bytes`, `memory.total_bytes`, `memory.total_allocations`, and `memory.allocations_per_iteration`:
 
 ```console
 $ mew compare -m memory.peak_bytes baseline.json head.json
+$ mew compare -m memory.allocations_per_iteration ducky.jsonl duckdb.jsonl
 ```
+
+Prefer `memory.allocations_per_iteration` for cross-engine / cross-run comparisons: `memory.total_allocations` is cumulative over the (run-dependent) iteration count, so a faster engine reports a higher raw total for the same per-call work. `peak_bytes` is a high-water mark and comparable as-is.
 
 ## Matching benchmarks across suites
 
 By default, benchmarks are matched by their full registered name (`file.py::func`), which is right for before/after comparisons of the same suite.
-For A/B suites that live in different files — two engine bindings, two implementations — the file prefix makes every name unique and nothing overlaps.
+For A/B suites in different files — two engine bindings, two implementations — the file prefix makes every name unique, so nothing overlaps.
 `--key func` matches on the function name alone:
 
 ```console
@@ -34,6 +37,8 @@ $ mew compare --key func ducky.jsonl duckdb.jsonl
 ```
 
 If stripping the prefix makes two benchmarks in one file collide, `compare` exits with an error rather than guessing.
+
+When comparing variants within a single `mew run --variant` result file (`mew compare --by variant results.jsonl`), `--key` defaults to `func` automatically — every variant carries the same file prefix, so matching on the function name is what lines the columns up.
 
 Parametrize cases are rendered and matched by their human id — `bench_udf_scalar[n=10000]` rather than Google Benchmark's raw `bench_udf_scalar/case:0` — and per-benchmark option suffixes like `/min_time:0.200` are ignored for matching, so files run with different options still align.
 
@@ -47,7 +52,7 @@ When a file contains per-repetition rows (`--repetitions N`), rows whose coeffic
 (comparing-sessions-in-one-file)=
 ## Comparing sessions in one file
 
-Each `mew run` is one *session* (see [](context.md#session-identity)). Normally each run writes its own file and you compare files — that stays the recommended shape for CI. But for local before/after experiments it's handy to keep both runs in one file with `--append`, then address them by `path@selector`:
+Each `mew run` is one *session* (see [](context.md#session-identity)). Normally each run writes its own file and you compare files — the recommended shape for CI. For local before/after experiments, though, it's handy to keep both runs in one file with `--append`, then address them by `path@selector`:
 
 ```console
 $ mew run --session-tag before -o results.parquet
@@ -73,9 +78,7 @@ This is deliberately not a query engine over a growing archive — for "the most
 $ mew compare --fail-on-regression 5 baseline.json head.json
 ```
 
-The threshold is in percent.
-With `--fail-on-regression 5`, any benchmark that's more than 5% slower than baseline causes a nonzero exit.
-This way, a CI workflow can be constructed to fail directly from a failed comparison.
+The threshold is in percent: with `--fail-on-regression 5`, any benchmark more than 5% slower than baseline causes a nonzero exit, so a CI workflow fails directly from a failed comparison.
 
 ## Allowlist
 
@@ -134,4 +137,4 @@ The panel printed to stderr surfaces all four buckets; the regressed list drives
   run: mew compare --fail-on-regression 5 baseline.json head.json
 ```
 
-Then, persist `head.json` (e.g. via `actions/cache` keyed on the merged SHA) so the next run on `main` becomes the next baseline.
+Then persist `head.json` (e.g. via `actions/cache` keyed on the merged SHA) so the next run on `main` becomes the next baseline.

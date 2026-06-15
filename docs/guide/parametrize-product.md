@@ -4,7 +4,7 @@ Two decorators register benchmark _families_ — one body, many variants.
 
 ## `@mew.parametrize`
 
-Takes an iterable of keyword argument dicts. One variant per dict is registered:
+Takes an iterable of keyword argument dicts, registering one variant per dict:
 
 ```python
 @mew.parametrize([
@@ -34,7 +34,7 @@ You can override the labels with the `ids` argument:
 def bench(state, n): ...
 ```
 
-If you do this, the length of `ids` **must** be equal to the number of parametrizations.
+The length of `ids` **must** equal the number of parametrizations.
 
 ## `@mew.product`
 
@@ -45,8 +45,8 @@ For when the variants are a cartesian product of independent axes:
 def bench_sort(state, n, algo): ...
 ```
 
-This registers six benchmarks in total.
-Use `ids=` to supply a flat list of labels, length must again equal the product size.
+This registers six benchmarks.
+Use `ids=` to supply a flat list of labels; its length must again equal the product size.
 
 See {func}`mew.parametrize` and {func}`mew.product` for full parameter docs.
 
@@ -65,7 +65,7 @@ $ mew run -k 'algo=quick'
 $ mew run -k 'n=1000'
 ```
 
-You can also apply discovery and filtering in one shot by using the selector form:
+Or combine discovery and filtering with the selector form:
 
 ```console
 $ mew run 'benchmarks/bench_sort.py::n=1000'
