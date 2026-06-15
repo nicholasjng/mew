@@ -168,12 +168,35 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return rows, file_ctx
 
 
-# Columns the Parquet writer serializes as JSON strings (nested blocks that don't
-# fit a flat schema), decoded back to dicts on read.
-_PARQUET_JSON_COLUMNS = ("custom", "memory", "cpu_profile")
+# Identity, grouping, and context columns every comparison needs regardless of
+# metric. Everything else in the schema (run_name, counters, cpu_profile, the
+# extra context fields) is dead weight for a compare — notably the JSON-string
+# `cpu_profile` blob, which is expensive to decode for every row and never read.
+_PARQUET_BASE_COLUMNS = (
+    "name",
+    "label",
+    "aggregate_name",
+    "variant",
+    "time_unit",
+    *_SEGMENT_FIELDS,
+    "custom",
+)
 
 
-def _rows_from_parquet(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _parquet_projection(metric: str) -> list[str]:
+    """The columns a compare on ``metric`` actually reads: base + the metric source.
+
+    A ``memory.*`` metric reads the `memory` JSON blob; a flat metric (real_time /
+    cpu_time / iterations) reads that one column. Both are intersected with the
+    file's real schema by the caller, so older files missing a column don't error.
+    """
+    cols = list(dict.fromkeys(_PARQUET_BASE_COLUMNS))  # de-dup (date etc. via _SEGMENT_FIELDS)
+    head = metric.split(".", 1)[0]
+    cols.append("memory" if head == "memory" else head)
+    return cols
+
+
+def _rows_from_parquet(path: Path, metric: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if find_spec("pyarrow") is None:
         raise SystemExit(
             "pyarrow is required to read Parquet result files. "
@@ -181,11 +204,17 @@ def _rows_from_parquet(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]
         )
     import pyarrow.parquet as pq
 
-    rows = pq.read_table(path).to_pylist()
-    # Decode JSON-string columns once at this read boundary so the rest of the
-    # module sees native dicts regardless of source format (JSON/JSONL already do).
+    # Project to just what `metric` needs, intersected with the file schema so a
+    # missing column (schema evolution) is silently skipped rather than an error.
+    available = set(pq.read_schema(path).names)
+    columns = [c for c in _parquet_projection(metric) if c in available]
+    rows = pq.read_table(path, columns=columns).to_pylist()
+    # Decode the JSON-string columns we actually projected (custom, and memory for
+    # a memory metric) so the rest of the module sees native dicts; `cpu_profile`
+    # is never projected, so its blob is never read or decoded.
+    json_cols = [c for c in ("custom", "memory") if c in columns]
     for row in rows:
-        for col in _PARQUET_JSON_COLUMNS:
+        for col in json_cols:
             if isinstance(row.get(col), str):
                 row[col] = _decode_json_str(row[col])
     # Parquet has no file-level context block; rebuild one from the per-row
@@ -272,15 +301,21 @@ def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dic
     return renamed
 
 
-def _read_rows(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Dispatch on suffix to read ``(rows, file_ctx)`` from a result file."""
+def _read_rows(
+    path: Path, metric: str = "real_time"
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Dispatch on suffix to read ``(rows, file_ctx)`` from a result file.
+
+    ``metric`` lets the Parquet reader project to only the columns that metric needs;
+    JSON/JSONL are already streaming and read every field regardless.
+    """
     suffix = path.suffix.lower()
     if suffix == ".json":
         return _rows_from_json(path)
     if suffix == ".jsonl":
         return _rows_from_jsonl(path)
     if suffix in (".parquet", ".pq"):
-        return _rows_from_parquet(path)
+        return _rows_from_parquet(path, metric)
     raise SystemExit(f"unsupported result file: {path} (use .json, .jsonl, or .parquet)")
 
 
@@ -336,7 +371,7 @@ def _load_sessions(path: Path, metric: str) -> list[SessionData]:
     Nothing is discarded here; collapsing to one sample set per file is the select
     stage's job (:func:`_select_latest` today, ``path@…`` selectors later).
     """
-    rows, file_ctx = _read_rows(path)
+    rows, file_ctx = _read_rows(path, metric)
 
     sessions: list[SessionData] = []
     # ISO-8601 dates sort lexicographically in chronological order.
@@ -360,7 +395,7 @@ def _load_variant_columns(
     ``--variant`` run), then group its rows by ``variant``. Variant order follows first
     encounter, which is the declared/baseline-first order the orchestrator writes.
     """
-    rows, file_ctx = _read_rows(path)
+    rows, file_ctx = _read_rows(path, metric)
     by_session = _group_by_session(rows, file_ctx)
     if not by_session:
         return []

@@ -700,6 +700,46 @@ def test_compare_parquet_memory_metric_parses_json_column(tmp_path: Path) -> Non
 
 
 @pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
+def test_compare_parquet_skips_cpu_profile_column(tmp_path: Path) -> None:
+    """A timing compare must not read/decode `cpu_profile` — it's projected away.
+
+    The blob here is deliberately un-decodable JSON: if the reader ever touched
+    it, `_decode_json_str` would surface garbage (or the column read would bloat
+    memory). The compare succeeding proves the column is never materialized.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from mew.compare import _parquet_projection
+    from mew.reporter import _parquet_schema
+
+    schema = _parquet_schema()
+
+    def write(path: Path, rt: float) -> None:
+        row = {f.name: None for f in schema}
+        row.update(
+            name="pkg::bench_x",
+            aggregate_name="",
+            time_unit="ns",
+            real_time=rt,
+            cpu_time=rt,
+            iterations=1000,
+            counters=[("a", 1.0)],
+            cpu_profile="{ NOT VALID JSON >>>",  # poison: never decoded for a timing metric
+        )
+        pq.write_table(pa.Table.from_pylist([row], schema=schema), path)
+
+    base = tmp_path / "base.parquet"
+    other = tmp_path / "other.parquet"
+    write(base, 100.0)
+    write(other, 50.0)
+    assert "cpu_profile" not in _parquet_projection("real_time")
+    console = Console(record=True, width=200)
+    assert compare([base, other], console=console) == 0
+    assert "×2.000" in console.export_text()
+
+
+@pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
 def test_compare_parquet_roundtrip(tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
