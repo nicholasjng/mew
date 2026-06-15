@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -571,3 +572,66 @@ def test_select_slowest_ranks_family_by_slowest_case(tmp_path):
     f.write_text(json.dumps(doc))
     (top1,) = _select_slowest(entries, 1, rank_from=f)
     assert top1.name == fam
+
+
+# --- shell completions ---
+
+
+def test_completions_unknown_shell_errors(tmp_path):
+    res = _mew("completions", "tcsh", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "invalid choice" in res.stderr
+
+
+@pytest.mark.parametrize(
+    "shell,marker",
+    [
+        ("bash", "complete -F _mew mew"),
+        ("zsh", "compdef _mew mew"),
+        ("fish", "complete -c mew"),
+        ("powershell", "Register-ArgumentCompleter"),
+    ],
+)
+def test_completions_generate(shell, marker, tmp_path):
+    res = _mew("completions", shell, cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert marker in res.stdout
+    assert "run" in res.stdout and "compare" in res.stdout  # commands
+    # a representative flag (fish renders long opts as `-l pattern`, so match the stem)
+    assert "pattern" in res.stdout
+
+
+def test_completions_bash_functional(tmp_path):
+    bash = shutil.which("bash")
+    assert bash, "bash is expected on supported platforms"
+    f = tmp_path / "c.bash"
+    f.write_text(_mew("completions", "bash", cwd=tmp_path).stdout)
+    assert subprocess.run([bash, "-n", str(f)]).returncode == 0  # syntax
+
+    def complete(words: str, cword: int) -> list[str]:
+        probe = (
+            f"source {f}\n"
+            f"COMP_WORDS=({words}); COMP_CWORD={cword}\n"
+            "_mew\n"
+            'printf "%s\\n" "${COMPREPLY[@]}"\n'
+        )
+        return subprocess.run([bash, "-c", probe], capture_output=True, text=True).stdout.split()
+
+    assert "run" in complete("mew ru", 1)  # subcommand
+    assert "--pattern" in complete("mew run --pa", 2)  # option flag
+    assert set(complete("mew run --format ''", 3)) == {"json", "jsonl", "rich"}  # choices
+    assert set(complete("mew completions ''", 2)) == {"bash", "zsh", "fish", "powershell"}
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh not installed")
+def test_completions_zsh_syntax(tmp_path):
+    f = tmp_path / "c.zsh"
+    f.write_text(_mew("completions", "zsh", cwd=tmp_path).stdout)
+    assert subprocess.run(["zsh", "-n", str(f)]).returncode == 0
+
+
+@pytest.mark.skipif(not shutil.which("fish"), reason="fish not installed")
+def test_completions_fish_syntax(tmp_path):
+    f = tmp_path / "c.fish"
+    f.write_text(_mew("completions", "fish", cwd=tmp_path).stdout)
+    assert subprocess.run(["fish", "--no-execute", str(f)]).returncode == 0

@@ -24,9 +24,23 @@ see [](../guide/cli.md).
 :language: console
 ```
 
+(cli-profile)=
+## `mew profile`
+
+```{literalinclude} ../_generated/cli-help-profile.txt
+:language: console
+```
+
 (cli-compare)=
 ## `mew compare`
 
 ```{literalinclude} ../_generated/cli-help-compare.txt
+:language: console
+```
+
+(cli-completions)=
+## `mew completions`
+
+```{literalinclude} ../_generated/cli-help-completions.txt
 :language: console
 ```

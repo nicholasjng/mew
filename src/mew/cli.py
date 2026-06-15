@@ -630,6 +630,13 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
         return cap.get()
 
 
+def completions(shell: str) -> None:
+    """Print a shell-completion script for ``shell`` to stdout."""
+    from mew import _completions
+
+    sys.stdout.write(_completions.generate(shell, _build_parser()))
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argparse command tree. Each subparser sets ``_func`` to its handler."""
     parser = argparse.ArgumentParser(
@@ -921,6 +928,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="inline allowlist entry `PATTERN` (ignore) or `PATTERN:PCT` (per-rule threshold)",
     )
     p.set_defaults(_func=compare)
+
+    # mew completions
+    from mew._completions import SHELLS
+
+    p = sub.add_parser(
+        "completions",
+        help="Print a shell-completion script for eval/install.",
+        formatter_class=_CommandHelpFormatter,
+    )
+    p.add_argument(
+        "shell",
+        choices=list(SHELLS),
+        metavar="<shell>",
+        help=f"Target shell: {', '.join(SHELLS)}.",
+    )
+    p.set_defaults(_func=completions)
 
     return parser
 
