@@ -474,3 +474,100 @@ def test_run_filter_by_tag(benchdir, tmp_path):
     names = [b["name"] for b in doc["benchmarks"]]
     assert len(names) == 2
     assert all("bench_two" in n for n in names)
+
+
+# --- mew profile --slowest selection (in-process; no profiler backend needed) ---
+
+
+def _ends(entries, suffix):
+    return any(e.name.endswith(suffix) for e in entries)
+
+
+def test_select_slowest_quick_pass():
+    import mew
+    from mew.cli import _select_slowest
+
+    @mew.benchmark
+    def bench_fast(state):
+        for _ in state:
+            pass
+
+    @mew.benchmark
+    def bench_mid(state):
+        for _ in state:
+            sum(range(1000))
+
+    @mew.benchmark
+    def bench_slow(state):
+        for _ in state:
+            sum(range(200_000))
+
+    # No result file → a quick in-process timing pass ranks; the fast one drops.
+    top2 = _select_slowest(mew.REGISTRY.all(), 2, rank_from=None)
+    assert len(top2) == 2
+    assert _ends(top2, "bench_slow") and _ends(top2, "bench_mid")
+    assert not _ends(top2, "bench_fast")
+
+
+def test_select_slowest_from_result_file(tmp_path):
+    import mew
+    from mew.cli import _select_slowest
+
+    @mew.benchmark
+    def bench_a(state):
+        for _ in state:
+            pass
+
+    @mew.benchmark
+    def bench_b(state):
+        for _ in state:
+            pass
+
+    entries = mew.REGISTRY.all()
+    name_a = next(e.name for e in entries if e.name.endswith("bench_a"))
+    name_b = next(e.name for e in entries if e.name.endswith("bench_b"))
+    # bench_b is the slower one in the recorded file.
+    doc = {
+        "context": {},
+        "benchmarks": [
+            {"name": name_a, "real_time": 10.0, "aggregate_name": ""},
+            {"name": name_b, "real_time": 99.0, "aggregate_name": ""},
+        ],
+    }
+    f = tmp_path / "r.json"
+    f.write_text(json.dumps(doc))
+    (top1,) = _select_slowest(entries, 1, rank_from=f)
+    assert top1.name == name_b
+
+
+def test_select_slowest_ranks_family_by_slowest_case(tmp_path):
+    import mew
+    from mew.cli import _select_slowest
+
+    @mew.parametrize([{"n": 1}, {"n": 2}])
+    def bench_fam(state, n):
+        for _ in state:
+            pass
+
+    @mew.benchmark
+    def bench_plain(state):
+        for _ in state:
+            pass
+
+    entries = mew.REGISTRY.all()
+    fam = next(e.name for e in entries if e.case_labels is not None)
+    plain = next(e.name for e in entries if e.case_labels is None)
+    # Family's slow case (with a GB option suffix) beats the plain benchmark;
+    # the family's time is the max over its cases.
+    doc = {
+        "context": {},
+        "benchmarks": [
+            {"name": f"{fam}/case:0", "real_time": 1.0, "aggregate_name": ""},
+            {"name": f"{fam}/case:1/min_time:0.200", "real_time": 99.0, "aggregate_name": ""},
+            {"name": plain, "real_time": 50.0, "aggregate_name": ""},
+        ],
+    }
+    f = tmp_path / "r.json"
+    f.write_text(json.dumps(doc))
+    (top1,) = _select_slowest(entries, 1, rank_from=f)
+    assert top1.name == fam

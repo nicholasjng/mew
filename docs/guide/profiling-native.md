@@ -27,6 +27,22 @@ artifact, so one viewer covers both. `py-spy` needs `uv pip install py-spy` and,
 in containers, `CAP_SYS_PTRACE`. `perf` is a system package whose version must
 match the running kernel, and recording usually needs `kernel.perf_event_paranoid` lowered.
 
+## Selecting what to profile
+
+Profiling a whole suite is expensive — each case runs under a sampler for many
+iterations. `-k` / `-t` narrow the set like `mew run`; `--slowest N` keeps only
+the N slowest benchmarks, where the time is worth spending:
+
+```console
+$ mew profile --slowest 5                       # quick timing pass ranks, then profiles
+$ mew profile --slowest 5 --rank-from run.json  # rank by a prior run's real_time
+```
+
+Without `--rank-from`, `mew profile` runs a short in-process timing pass to rank
+(approximate, but no setup); point `--rank-from` at a `mew run -o` result file
+(`.json` / `.jsonl` / `.parquet`) to rank by recorded timings instead. A
+parametrized family is ranked by its slowest case.
+
 ## Basics (xctrace / macOS)
 
 `xctrace` ships with the full Xcode (not the Command Line Tools alone). If you see

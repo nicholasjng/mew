@@ -83,7 +83,11 @@ Legend: ✅ shipped · 🟡 partially shipped · ⬜ not started.
   memory bounded and let progress reporters render rows as they complete. The
   Python-side `Fanout` wrapper would need the same per-run callback shape.
 
-- ⬜ **Per-case discovery in `mew list`.** The indexing-based parametrize
+- ✅ **Per-case discovery in `mew list`.** Shipped: `mew list --show-cases`
+  expands each family into one row per case (`name[label]`), and `-F` / `--literal`
+  lets a displayed `name[label]` be pasted into `-k` to run a single case without
+  escaping its brackets. The registry still holds one `Entry` per family
+  (expansion is display-only). Original note below. The indexing-based parametrize
   rewrite collapsed each family to a single row in `mew list` (one
   `Entry`, one `case_labels` list). Power users who want to filter to a
   single case currently fall back to Google Benchmark's `--benchmark_filter`
@@ -156,8 +160,13 @@ default; the items here are opt-in additions, not replacements.
   just CPU. Open question: whether to surface this as `mew profile --what
   {cpu,memory}` or leave it as raw `--template`/backend selection.
 
-- ⬜ **Selective profiling (`--slowest N` / only-regressed).** Profiling a whole
-  suite is expensive, and most of it is uninteresting. A selector that profiles
+- 🟡 **Selective profiling (`--slowest N` / only-regressed).** Shipped:
+  `mew profile --slowest N` profiles only the N slowest benchmarks, ranked by a
+  prior result file (`--rank-from`) or a quick in-process timing pass; a family
+  is ranked by its slowest case. The only-regressed half (profile just the
+  benchmarks a `mew compare` gate flagged) is still open — see the
+  regression-triggered profiling item above. Profiling a whole suite is
+  expensive, and most of it is uninteresting. A selector that profiles
   only the top-N slowest benchmarks (from a prior timing run or a result file),
   or only those a compare flagged, makes "profile the suite" affordable instead
   of all-or-nothing. This is the cost lever the two items above lean on —
@@ -166,7 +175,12 @@ default; the items here are opt-in additions, not replacements.
 
 ## Comparison story
 
-- ⬜ **Variant orchestration for mutually-incompatible processes.** "Same
+- ✅ **Variant orchestration for mutually-incompatible processes.** Shipped:
+  `mew run --variant name=path` (one subprocess per variant via
+  `mew._variant_worker`, repetitions interleaved A B A B…), per-variant
+  `set_context`, profiling flags compose, and `mew compare <file> --by variant`
+  (defaults to `--key func`). See `docs/guide/variants.md`. Original sketch
+  below. "Same
   logical suite, N processes that cannot share an interpreter" is a recurring
   shape: two engines statically linking the same library (the ducky-vs-duckdb
   case in `notes/cross-engine-comparison.md`), GIL vs free-threaded
@@ -190,7 +204,7 @@ default; the items here are opt-in additions, not replacements.
   vehicle. Depends on the session-identity work below for clean row tagging;
   the combined design is sketched in `notes/sessions-and-variants.md`.
 
-- ⬜ **Noise instrumentation in `run` output.** A background compile during
+- 🟡 **Noise instrumentation in `run` output.** A background compile during
   one run once turned a 4.6 ms benchmark into 8.9 ms and nothing flagged it.
   `compare` now marks high-CV rows with `±N% (!)`; the remaining pieces are
   run-side and statistical:
@@ -225,7 +239,13 @@ default; the items here are opt-in additions, not replacements.
   produces a call graph (`callgrind_annotate` / KCachegrind / pprof can read it),
   so the same pass doubles as a profile artifact when you want one.
 
-- ⬜ **Session-addressable comparisons inside a single file.** (Implementation
+- ✅ **Session-addressable comparisons inside a single file.** Shipped: a
+  per-run `session_id` and optional `--session-tag` (auto-derived from
+  `git describe` unless `[tool.mew] auto_session_tag = false`) on every row, with
+  `mew compare path@<selector>` resolving `@latest` / `@earliest`, `@~N` (N back
+  from latest), an exact `session_tag`, or a `session_id` prefix (≥4 chars);
+  files without identifiers fall back to a `(date, host)` key. Original sketch
+  below. (Implementation
   sketch, including how this layers under variant orchestration:
   `notes/sessions-and-variants.md`.) Today
   `mew compare` only takes the cross-file shape (`mew compare a.parquet

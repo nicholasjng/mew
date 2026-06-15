@@ -620,6 +620,54 @@ def run(
         )
 
 
+def _quick_timing_pass(entries: list[Entry]) -> list[Any]:
+    """Run a fast in-process timing pass over ``entries``; return the collected RunRows."""
+    collected: list[Any] = []
+
+    class _Collector:
+        def report_context(self, context: dict[str, Any], /) -> bool:
+            return True
+
+        def report_runs(self, runs: list[Any], /) -> None:
+            collected.extend(runs)
+
+        def finalize(self) -> None:
+            pass
+
+    # Short min_time: we only need relative order, not publishable timings.
+    _run(entries, argv=["mew", "--benchmark_min_time=0.05"], reporter=_Collector())
+    return collected
+
+
+def _select_slowest(entries: list[Entry], n: int, *, rank_from: Path | None) -> list[Entry]:
+    """Keep the ``n`` slowest entries by real_time, ranked from a file or a quick pass.
+
+    A family's time is the max over its cases (the slowest case represents its
+    profiling cost). Entries with no timing rank last.
+    """
+    from mew.reporter import _CASE_SUFFIX_RE, _OPTION_SUFFIXES_RE
+
+    if rank_from is not None:
+        from mew.compare import _read_rows
+
+        rows = _read_rows(rank_from)[0]
+    else:
+        rows = _quick_timing_pass(entries)
+
+    # Strip GB's `/case:i` and option suffixes to recover the registered entry name.
+    times: dict[str, float] = {}
+    for row in rows:
+        name = row.get("name")
+        rt = row.get("real_time")
+        if not isinstance(name, str) or rt is None or row.get("aggregate_name"):
+            continue
+        base = _CASE_SUFFIX_RE.sub("", _OPTION_SUFFIXES_RE.sub("", name))
+        times[base] = max(times.get(base, 0.0), float(rt))
+
+    ranked = sorted(entries, key=lambda e: times.get(e.name, 0.0), reverse=True)
+    return ranked[:n]
+
+
 @app.command(usage="Usage: mew profile [OPTIONS] [PATHS]")
 def profile(
     paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],
@@ -649,6 +697,23 @@ def profile(
             "imports that path. Lines match literally.",
         ),
     ] = False,
+    slowest: Annotated[
+        int | None,
+        Parameter(
+            name="--slowest",
+            help="Profile only the N slowest benchmarks (profiling a whole suite "
+            "is expensive). Ranked by `--rank-from` if given, else by a quick "
+            "in-process timing pass.",
+        ),
+    ] = None,
+    rank_from: Annotated[
+        Path | None,
+        Parameter(
+            name="--rank-from",
+            help="With `--slowest`, rank by real_time from this result file "
+            "(`.json`/`.jsonl`/`.parquet`) instead of a quick timing pass.",
+        ),
+    ] = None,
     profiler: Annotated[
         str,
         Parameter(
@@ -716,6 +781,16 @@ def profile(
         if not entries:
             print("no benchmarks found", file=sys.stderr)
             raise SystemExit(1)
+        if slowest is not None:
+            if slowest < 1:
+                print("--slowest must be >= 1", file=sys.stderr)
+                raise SystemExit(2)
+            total = len(entries)
+            entries = _select_slowest(entries, slowest, rank_from=rank_from)
+            print(f"mew: profiling {len(entries)} slowest of {total}", file=sys.stderr)
+        elif rank_from is not None:
+            print("--rank-from has no effect without --slowest", file=sys.stderr)
+            raise SystemExit(2)
         artifacts = backend.run(
             entries,
             output_dir=output_dir,
