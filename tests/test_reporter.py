@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 
 import pytest
 
@@ -48,6 +49,36 @@ def test_json_reporter_writes_to_stream():
     _run_one(rep)
     doc = json.loads(buf.getvalue())
     assert doc["benchmarks"][0]["iterations"] >= 1
+
+
+def test_json_reporter_buffers_non_owned_sink_on_windows(monkeypatch):
+    # On Windows a non-owned sink (e.g. a stdout pipe) can claim seekable() yet
+    # mishandle the seek, duplicating content. So it must buffer and emit exactly
+    # one document at finalize — never the seek-rewrite path.
+    monkeypatch.setattr(sys, "platform", "win32")
+    buf = io.StringIO()
+    assert buf.seekable()  # seekable, yet must NOT stream on Windows when non-owned
+    rep = JSONReporter(output=buf)
+    rep.report_context({"host_name": "h", "num_cpus": 1})
+    rep.report_runs([_fake_row("a::one"), _fake_row("a::two")])
+    assert buf.getvalue() == ""  # buffered: nothing written before finalize
+    rep.finalize()
+    doc = json.loads(buf.getvalue())  # exactly one valid document, no "Extra data"
+    assert [b["name"] for b in doc["benchmarks"]] == ["a::one", "a::two"]
+
+
+def test_json_reporter_streams_to_seekable_sink_off_windows(monkeypatch):
+    # Off Windows a seekable sink still streams (Ctrl-C-survivable): the document
+    # is valid after the header and after each flush, not only at finalize. This
+    # is the `mew run --format json > out.json` shell-redirect case on POSIX.
+    monkeypatch.setattr(sys, "platform", "linux")
+    buf = io.StringIO()
+    rep = JSONReporter(output=buf)
+    rep.report_context({"host_name": "h", "num_cpus": 1})
+    assert json.loads(buf.getvalue())["benchmarks"] == []  # header streamed, valid now
+    rep.report_runs([_fake_row("a::one")])
+    assert [b["name"] for b in json.loads(buf.getvalue())["benchmarks"]] == ["a::one"]
+    rep.finalize()
 
 
 def _fake_row(name: str, label: str = "") -> RunRow:
