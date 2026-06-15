@@ -88,15 +88,17 @@ html_theme_options = {
 
 
 def _render_cli_help() -> None:
-    """Capture cyclopts help output for the CLI reference page.
+    """Capture argparse ``--help`` output for the CLI reference page.
 
     Imports mew.cli lazily so a missing extension build at conf-load time
-    surfaces as a Sphinx warning rather than an import crash.
+    surfaces as a Sphinx warning rather than an import crash. ``main`` is the
+    argparse entrypoint; ``--help`` prints to stdout and raises ``SystemExit``,
+    which the capture below suppresses.
     """
     out_dir = os.path.join(os.path.dirname(__file__), "_generated")
     os.makedirs(out_dir, exist_ok=True)
     try:
-        from mew.cli import app
+        from mew.cli import main
     except Exception as exc:
         with open(os.path.join(out_dir, "cli-help.txt"), "w") as fh:
             fh.write(f"<<failed to render CLI help: {exc!r}>>\n")
@@ -108,7 +110,7 @@ def _render_cli_help() -> None:
     def _capture(argv: list[str]) -> str:
         buf = StringIO()
         with redirect_stdout(buf), suppress(SystemExit):
-            app(argv)
+            main(argv)
         return buf.getvalue()
 
     blocks = {
