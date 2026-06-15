@@ -99,6 +99,42 @@ def test_run_k_selects_single_family_case(benchdir, tmp_path):
     assert "/case:1" in benches[0]["name"]
 
 
+def test_list_show_cases_expands_family(benchdir, tmp_path):
+    res = _mew("list", str(benchdir), "--show-cases", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    names = [n for n in res.stdout.splitlines() if n.strip()]
+    # The family expands to one row per case; the plain benchmark stays single.
+    assert any(n.endswith("::bench_two[n=1]") for n in names)
+    assert any(n.endswith("::bench_two[n=2]") for n in names)
+    assert any(n.endswith("::bench_one") for n in names)
+
+
+def test_run_literal_selects_bracketed_case_without_escaping(benchdir, tmp_path):
+    # `-F` lets a pasted `name[label]` select one case; the bare brackets would
+    # otherwise be a regex char class and match nothing.
+    out = tmp_path / "results.json"
+    res = _mew(
+        "run",
+        str(benchdir),
+        "--min-time",
+        "1x",
+        "-F",
+        "-k",
+        "bench_two[n=2]",
+        "-o",
+        str(out),
+        cwd=tmp_path,
+    )
+    assert res.returncode == 0, res.stderr
+    benches = json.loads(out.read_text())["benchmarks"]
+    assert len(benches) == 1 and "/case:1" in benches[0]["name"]
+
+    # Same pattern without -F: brackets are a char class → no match.
+    res = _mew("run", str(benchdir), "--min-time", "1x", "-k", "bench_two[n=2]", cwd=tmp_path)
+    assert res.returncode == 1
+    assert "no benchmarks found" in res.stderr
+
+
 def test_list_k_shows_narrowed_family_cases(benchdir, tmp_path):
     res = _mew("list", str(benchdir), "-k", "n=2", cwd=tmp_path)
     assert res.returncode == 0, res.stderr

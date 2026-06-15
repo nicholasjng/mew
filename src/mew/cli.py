@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from cyclopts import App, Parameter
 from cyclopts.help import ColumnSpec, DefaultFormatter, HelpEntry
@@ -162,6 +162,24 @@ def list_(
     show_tags: Annotated[
         bool, Parameter(help="Show associated tags alongside each benchmark name.")
     ] = False,
+    show_cases: Annotated[
+        bool,
+        Parameter(
+            name="--show-cases",
+            help="Expand each parametrized family into one row per case "
+            "(`name[label]`), matching what `mew run` would execute.",
+        ),
+    ] = False,
+    names_only: Annotated[
+        bool,
+        Parameter(
+            name=["-n", "--names-only"],
+            help="Print the bare benchmark name without the `file.py::` prefix "
+            "(like `docker ps -q`). The names are path-free, so "
+            "`mew list --names-only | mew run --stdin` round-trips from any "
+            "directory — `mew run` resolves them against its own discovery.",
+        ),
+    ] = False,
 ) -> None:
     """List discovered benchmarks without running them."""
     with _discovery.discovered():
@@ -171,12 +189,16 @@ def list_(
             raise SystemExit(1)
         for e in entries:
             tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
-            # List narrowed family cases by label, matching what `mew run` executes.
-            if e.case_labels is not None and e.cases is not None:
-                for i in e.cases:
-                    print(f"{e.name}[{e.case_labels[i]}]{tags_suffix}")
+            # --names-only drops the `file.py::` prefix for a cwd-independent id.
+            base = e.name.rsplit("::", 1)[-1] if names_only else e.name
+            # Expand family cases by label: those a -k narrowed to, or all with
+            # --show-cases. Matches what `mew run` executes.
+            if e.case_labels is not None and (e.cases is not None or show_cases):
+                indices = e.cases if e.cases is not None else range(len(e.case_labels))
+                for i in indices:
+                    print(f"{base}[{e.case_labels[i]}]{tags_suffix}")
             else:
-                print(f"{e.name}{tags_suffix}")
+                print(f"{base}{tags_suffix}")
 
 
 _STDOUT_SENTINELS = frozenset({"-", "stdout"})

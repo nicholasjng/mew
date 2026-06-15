@@ -70,3 +70,19 @@ Or combine discovery and filtering with the selector form:
 ```console
 $ mew run 'benchmarks/bench_sort.py::n=1000'
 ```
+
+To see the individual cases a family expands to, list them by label:
+
+```console
+$ mew list --show-cases
+benchmarks/bench_sort.py::bench_sort[n=100]
+benchmarks/bench_sort.py::bench_sort[n=1000]
+```
+
+`-k` is a regex, so selecting one case by its displayed `name[label]` would mean
+escaping the brackets (`bench_sort\[n=1000\]`). Pass `-F` / `--literal` to match
+the pattern as a literal string and paste the name as shown:
+
+```console
+$ mew run -F -k 'bench_sort[n=1000]'
+```
