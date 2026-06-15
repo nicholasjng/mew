@@ -321,11 +321,16 @@ default; the items here are opt-in additions, not replacements.
   signalling the benchmark to set `skip_with_message("cancelled")` from
   inside its loop, which only helps when the benchmark cooperates.
 
-- ⬜ **Custom statistics.** GBM supports `.ComputeStatistics(name, fn)` for
-  user-defined aggregate functions over repetitions (median, p95, …). The
-  binding shape mirrors `register_benchmark`: a Python callable that takes
-  `list[float]` and returns a float. Useful for projects whose
-  "did-we-regress" gate is a non-default statistic.
+- ⬜ **Custom statistics.** User-defined aggregate functions over repetitions
+  (median, p95, gmean, …), mainly for a non-default "did-we-regress" gate.
+  GBM's `.ComputeStatistics(name, fn)` takes a *raw C function pointer*, not a
+  `std::function`, so a Python callable can't bind to it directly — compute the
+  statistic Python-side over the per-repetition values instead (which mew already
+  receives). Contract is `Callable[[np.ndarray], float]`: mew applies
+  `np.asarray` to the per-rep values (don't pass float lists — scipy's array-API
+  shift is trending toward rejecting them), so numpy/scipy reducers drop in.
+  numpy becomes a lazy optional dep on this path only. Design: see
+  [notes/custom-statistics.md](notes/custom-statistics.md).
 
 ## Build / packaging
 
