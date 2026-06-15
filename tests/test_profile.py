@@ -20,7 +20,14 @@ from mew.reporter import JSONReporter
 
 
 def _fake_mem() -> MemoryProfile:
-    return MemoryProfile(profiler="memray", peak_bytes=1024, total_bytes=2048, total_allocations=5)
+    return MemoryProfile(
+        profiler="memray",
+        peak_bytes=1024,
+        total_bytes=2048,
+        total_allocations=5,
+        iterations=1,
+        allocations_per_iteration=5.0,
+    )
 
 
 def _fake_cpu() -> CPUProfile:
@@ -232,7 +239,11 @@ def test_memory_profile_excludes_setup_allocations():
     prof = mem_profile(mew.REGISTRY.all())[name]
     # Tracked high-water-mark bytes reflect the loop's ~10 KB, not the 50 MB fixture.
     assert prof.total_bytes < setup_bytes / 10
-    assert prof.total_allocations < 1000
+    # The 50 MB fixture is one big allocation outside the loop; per measured
+    # iteration the body makes only a handful (iteration-count-independent).
+    assert prof.iterations == 100
+    assert prof.allocations_per_iteration < 50
+    assert prof.allocations_per_iteration == prof.total_allocations / prof.iterations
 
 
 def test_memory_profile_skips_body_that_never_iterates(capsys):
@@ -256,15 +267,17 @@ def test_memory_profile_closes_tracker_when_body_raises(tmp_path):
         for _ in state:
             raise RuntimeError("boom")
 
+    # warmup=0 forces the raise into the tracked pass, exercising the finally
+    # that closes the tracker (a leaked global tracker would break the next case).
     with pytest.raises(RuntimeError, match="boom"):
-        _capture_case(exploding, 0, tmp_path / "boom.bin")
+        _capture_case(exploding, 0, tmp_path / "boom.bin", iterations=5, warmup=0)
 
     # The tracker was closed on the way out: a fresh tracker can start.
     def drain(state):
         for _ in state:
             pass
 
-    assert _capture_case(drain, 0, tmp_path / "next.bin")
+    assert _capture_case(drain, 0, tmp_path / "next.bin", iterations=5, warmup=1)
 
 
 def test_profilestate_loop_hooks_fire_once_around_the_loop():
@@ -358,6 +371,8 @@ def test_json_reporter_emits_memory_and_cpu_blocks(tmp_path):
         "peak_bytes": 1024,
         "total_bytes": 2048,
         "total_allocations": 5,
+        "iterations": 1,
+        "allocations_per_iteration": 5.0,
     }
     assert bench["cpu_profile"] == {
         "profiler": "pyinstrument",

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -30,6 +31,40 @@ if TYPE_CHECKING:
     from mew._core import Run
 
 
+@dataclass(frozen=True, slots=True)
+class ProfileConfig:
+    """Profiling flags forwarded to each variant child (mirrors ``mew run``).
+
+    Empty by default (no profiling). HTML artifact paths (``flamegraph``,
+    ``sample_html``) are suffixed with the variant name per child so the
+    variants don't overwrite each other's output.
+    """
+
+    profile_memory: bool = False
+    flamegraph: Path | None = None
+    memory_iterations: int = 100
+    sample: bool = False
+    sample_interval: float = 1e-4
+    sample_iterations: int = 1000
+    sample_html: Path | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return (
+            self.profile_memory
+            or self.sample
+            or self.flamegraph is not None
+            or self.sample_html is not None
+        )
+
+
+def _variant_artifact(path: Path | None, variant: str) -> Path | None:
+    """``out.html`` → ``out.<variant>.html`` so per-variant artifacts don't clobber."""
+    if path is None:
+        return None
+    return path.with_name(f"{path.stem}.{variant}{path.suffix}")
+
+
 class _Enumish:
     """Stand-in for a C++ enum field: only ``.name`` is read by the reporters."""
 
@@ -37,6 +72,16 @@ class _Enumish:
 
     def __init__(self, name: str) -> None:
         self.name = name
+
+
+def _as_dataclass(cls: Any, d: dict[str, Any] | None) -> Any:
+    """Rebuild a flat profile dataclass from a child row's serialized block.
+
+    The child emitted ``dataclasses.asdict(profile)`` into its JSONL row; undo
+    that so the parent's reporters re-serialize it the same as a direct run
+    (``_run_to_dict`` / ``ParquetReporter._row`` expect a dataclass, not a dict).
+    """
+    return cls(**d) if d else None
 
 
 class _DictRun:
@@ -48,13 +93,28 @@ class _DictRun:
     rows flow through every existing reporter without a parallel write path.
     """
 
-    memory = None
-    cpu = None
+    def __init__(
+        self,
+        row: dict[str, Any],
+        *,
+        variant: str,
+        repetition_index: int,
+        custom: dict[str, Any] | None = None,
+    ) -> None:
+        from mew.cpu import CPUProfile
+        from mew.memory import MemoryProfile
 
-    def __init__(self, row: dict[str, Any], *, variant: str, repetition_index: int) -> None:
         self._d = row
         self.variant = variant
         self._rep = repetition_index
+        # The child's per-suite set_context() values, kept per variant so the
+        # merged file records each variant's own engine/version (the single
+        # top-level context block can hold only one).
+        self.custom = custom
+        # Profiles arrive as plain dicts in the child row (--variant + --profile-*);
+        # rebuild the dataclasses so the parent's reporters serialize them natively.
+        self.memory = _as_dataclass(MemoryProfile, row.get("memory"))
+        self.cpu = _as_dataclass(CPUProfile, row.get("cpu_profile"))
 
     def benchmark_name(self) -> str:
         return self._d["name"]
@@ -125,8 +185,34 @@ def _pseudo_raw_context(
     return raw
 
 
+def _profile_args(profiling: ProfileConfig, variant: str) -> list[str]:
+    """Build the worker's profiling flags, suffixing artifact paths per variant."""
+    if not profiling.enabled:
+        return []
+    args: list[str] = []
+    if profiling.profile_memory or profiling.flamegraph is not None:
+        args.append(f"--memory-iterations={profiling.memory_iterations}")
+    if profiling.profile_memory:
+        args.append("--profile-memory")
+    if (fg := _variant_artifact(profiling.flamegraph, variant)) is not None:
+        args.append(f"--flamegraph={fg}")
+    if profiling.sample:
+        args.append("--sample")
+    if profiling.sample or profiling.sample_html is not None:
+        args.append(f"--sample-interval={profiling.sample_interval}")
+        args.append(f"--sample-iterations={profiling.sample_iterations}")
+    if (sh := _variant_artifact(profiling.sample_html, variant)) is not None:
+        args.append(f"--sample-html={sh}")
+    return args
+
+
 def _run_child(
-    file: Path, pattern: str | None, tags: list[str], gb_args: list[str]
+    file: Path,
+    pattern: str | None,
+    tags: list[str],
+    gb_args: list[str],
+    profiling: ProfileConfig,
+    variant: str,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
     """Run one variant child; return its (context, rows) or None on failure."""
     # `--opt=value` form (not `--opt value`): GB args like `--benchmark_min_time=20x`
@@ -136,6 +222,7 @@ def _run_child(
         cmd.append(f"--pattern={pattern}")
     cmd += [f"--tag={t}" for t in tags]
     cmd += [f"--gb={g}" for g in gb_args]
+    cmd += _profile_args(profiling, variant)
 
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
@@ -165,6 +252,7 @@ def run_variants(
     tags: list[str] | None = None,
     repetitions: int = 1,
     session_tag: str | None = None,
+    profiling: ProfileConfig | None = None,
 ) -> int:
     """Run each variant in its own subprocess, merging rows into ``reporters``.
 
@@ -175,13 +263,14 @@ def run_variants(
     session_id = new_session_id()
     reporter = _to_single_reporter(reporters)
     order = list(variants)
+    profiling = profiling or ProfileConfig()
     started = False
     failures = 0
 
     # Repetition-major: rep0 over all variants, then rep1, … (A B A B …).
     for rep in range(max(1, repetitions)):
         for name in order:
-            result = _run_child(variants[name], pattern, tags or [], gb_args)
+            result = _run_child(variants[name], pattern, tags or [], gb_args, profiling, name)
             if result is None:
                 failures += 1
                 continue
@@ -193,11 +282,17 @@ def run_variants(
                 started = True
             if reporter is not None:
                 # _DictRun is a structural Run stand-in (see its docstring); the
-                # reporters only touch the duck-typed surface it re-exposes.
+                # reporters only touch the duck-typed surface it re-exposes. Each
+                # variant's own custom context rides along per row so it survives
+                # the single shared top-level context block.
+                child_custom = child_ctx.get("custom")
                 reporter.report_runs(
                     cast(
                         "list[Run]",
-                        [_DictRun(row, variant=name, repetition_index=rep) for row in rows],
+                        [
+                            _DictRun(row, variant=name, repetition_index=rep, custom=child_custom)
+                            for row in rows
+                        ],
                     )
                 )
 

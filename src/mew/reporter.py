@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import sys
 from datetime import UTC, datetime
 from importlib.util import find_spec
@@ -48,6 +49,32 @@ def _fmt_bytes(n: int) -> str:
         if n >= threshold:
             return f"{n / threshold:.1f} {unit}"
     return f"{n} B"
+
+
+# Per-benchmark option suffixes GB appends to the name, e.g. `/min_time:0.200`.
+# Anchored to the end (they always follow the function and args parts) so path
+# segments in the registered name can't false-match.
+_OPTION_SUFFIXES_RE = re.compile(
+    r"(?:/(?:min_time:[^/]+|min_warmup_time:[^/]+|iterations:\d+|repeats:\d+"
+    r"|manual_time|process_time|real_time|threads:\d+))+$"
+)
+_CASE_SUFFIX_RE = re.compile(r"/case:\d+$")
+
+
+def canonical_name(name: str, label: Any) -> str:
+    """Strip GB option suffixes and render a parametrize case by its human label.
+
+    ``bench.py::f/case:0/min_time:0.200`` with label ``n=10000`` becomes
+    ``bench.py::f[n=10000]``. Shared by the live :class:`RichReporter` table and
+    :mod:`mew.compare` so both surfaces show the same human name; the stored
+    ``name`` field stays the raw GB name (compare canonicalizes on read).
+    """
+    name = _OPTION_SUFFIXES_RE.sub("", name)
+    if label and isinstance(label, str):
+        stripped, n = _CASE_SUFFIX_RE.subn("", name)
+        if n:
+            return f"{stripped}[{label}]"
+    return name
 
 
 def _build_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -106,6 +133,12 @@ def _run_to_dict(r: Run) -> dict[str, Any]:
     # Present only under --variant; absent keeps the GB-shaped row unchanged.
     if (variant := getattr(r, "variant", None)) is not None:
         d["variant"] = variant
+    # Per-row custom context: stamped by the --variant orchestrator so each
+    # variant carries its own set_context() values into the merged file (the
+    # single top-level context block can hold only one variant's). Absent on
+    # plain runs, where custom lives in the context block.
+    if (custom := getattr(r, "custom", None)) is not None:
+        d["custom"] = custom
     mem: MemoryProfile | None = getattr(r, "memory", None)
     if mem is not None:
         d["memory"] = dataclasses.asdict(mem)
@@ -363,7 +396,9 @@ class RichReporter:
     def _print_row(self, r: Run) -> None:
         w = self._widths
         unit = r.time_unit.name
-        name = r.benchmark_name()
+        # Canonical `file.py::f[label]` form (no `/case:N/min_time:…` noise), so
+        # the live table reads the same as `mew compare`.
+        name = canonical_name(r.benchmark_name(), r.report_label)
         # Left-ellipsize: keep the disambiguating function suffix / case:N tail.
         if len(name) > w["name"]:
             name = "…" + name[-(w["name"] - 1) :]
@@ -448,11 +483,7 @@ class ParquetReporter:
         import pyarrow.parquet as pq
 
         date = datetime.now(UTC)
-        ctx = self._context
-        custom = ctx.get("custom")
-        custom_json = json.dumps(custom, default=str) if custom else None
-
-        rows = [self._row(r, date, custom_json) for r in self._runs]
+        rows = [self._row(r, date) for r in self._runs]
         table = pa.Table.from_pylist(rows, schema=_parquet_schema())
         if self._append and self._output.exists():
             # promote_options fills columns absent from an older file with nulls,
@@ -461,10 +492,15 @@ class ParquetReporter:
             table = pa.concat_tables([existing, table], promote_options="default")
         pq.write_table(table, str(self._output))
 
-    def _row(self, r: Run, date: datetime, custom_json: str | None) -> dict[str, Any]:
+    def _row(self, r: Run, date: datetime) -> dict[str, Any]:
         ctx = self._context
         mem: MemoryProfile | None = getattr(r, "memory", None)
         cpu: CPUProfile | None = getattr(r, "cpu", None)
+        # A Run carrying its own custom (the --variant orchestrator stamps it)
+        # wins over the shared context block, which holds only one variant's.
+        run_custom = getattr(r, "custom", None)
+        custom = run_custom if run_custom is not None else ctx.get("custom")
+        custom_json = json.dumps(custom, default=str) if custom else None
         counters = r.counters  # hot path on C++ Run: each access rebuilds the dict
         return {
             "name": r.benchmark_name(),

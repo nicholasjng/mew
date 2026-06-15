@@ -49,7 +49,7 @@ def test_json_reporter_writes_to_stream():
     assert doc["benchmarks"][0]["iterations"] >= 1
 
 
-def _fake_run(name: str):
+def _fake_run(name: str, label: str = ""):
     class FakeName:
         function_name = name
         args = ""
@@ -65,7 +65,7 @@ def _fake_run(name: str):
         iterations = 1
         real_accumulated_time = 0.0
         cpu_accumulated_time = 0.0
-        report_label = ""
+        report_label = label
         skipped = False
         skip_message = ""
         counters: dict = {}
@@ -272,6 +272,21 @@ def test_rich_reporter_left_ellipsizes_long_names():
     out = buf.getvalue()
     assert "…" in out
     assert "bench_the_actual_function" in out
+
+
+def test_rich_reporter_renders_canonical_name():
+    """The live table shows the human `name[label]` form, not GB's raw
+    `/case:N/min_time:…` suffixes, so it reads the same as `mew compare`."""
+    from rich.console import Console
+
+    buf = io.StringIO()
+    rep = RichReporter(console=Console(file=buf, force_terminal=False, width=120))
+    rep.report_context({"host_name": "h", "num_cpus": 4, "mhz_per_cpu": 1000, "cpu_scaling": "off"})
+    rep.report_runs([_fake_run("bench.py::bench_x/case:0/min_time:0.200", label="small")])
+    out = buf.getvalue()
+    assert "bench.py::bench_x[small]" in out
+    assert "case:0" not in out
+    assert "min_time" not in out
 
 
 def test_jsonl_reporter_streams_one_object_per_line(tmp_path):
