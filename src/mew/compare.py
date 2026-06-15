@@ -168,10 +168,8 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return rows, file_ctx
 
 
-# Identity, grouping, and context columns every comparison needs regardless of
-# metric. Everything else in the schema (run_name, counters, cpu_profile, the
-# extra context fields) is dead weight for a compare — notably the JSON-string
-# `cpu_profile` blob, which is expensive to decode for every row and never read.
+# Columns every comparison needs regardless of metric. Notably excludes the
+# `cpu_profile` JSON blob: expensive to decode per row, never read by a compare.
 _PARQUET_BASE_COLUMNS = (
     "name",
     "label",
@@ -184,19 +182,21 @@ _PARQUET_BASE_COLUMNS = (
 
 
 def _parquet_projection(metric: str) -> list[str]:
-    """The columns a compare on ``metric`` actually reads: base + the metric source.
-
-    A ``memory.*`` metric reads the `memory` JSON blob; a flat metric (real_time /
-    cpu_time / iterations) reads that one column. Both are intersected with the
-    file's real schema by the caller, so older files missing a column don't error.
-    """
+    """Base columns plus the metric source: `memory` for a ``memory.*`` metric, else
+    the flat column. The caller intersects with the file schema (schema evolution)."""
     cols = list(dict.fromkeys(_PARQUET_BASE_COLUMNS))  # de-dup (date etc. via _SEGMENT_FIELDS)
     head = metric.split(".", 1)[0]
     cols.append("memory" if head == "memory" else head)
     return cols
 
 
-def _rows_from_parquet(path: Path, metric: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _read_parquet(path: Path, metric: str, *, filters: Any = None) -> list[dict[str, Any]]:
+    """Read metric-projected rows, ``filters`` (pyarrow DNF) pushed into the scan.
+
+    Projection intersects with the file schema (so a missing column is skipped, not
+    an error) and decodes only the JSON columns it kept (`custom`, `memory`);
+    `cpu_profile` is never projected.
+    """
     if find_spec("pyarrow") is None:
         raise SystemExit(
             "pyarrow is required to read Parquet result files. "
@@ -204,19 +204,19 @@ def _rows_from_parquet(path: Path, metric: str) -> tuple[list[dict[str, Any]], d
         )
     import pyarrow.parquet as pq
 
-    # Project to just what `metric` needs, intersected with the file schema so a
-    # missing column (schema evolution) is silently skipped rather than an error.
     available = set(pq.read_schema(path).names)
     columns = [c for c in _parquet_projection(metric) if c in available]
-    rows = pq.read_table(path, columns=columns).to_pylist()
-    # Decode the JSON-string columns we actually projected (custom, and memory for
-    # a memory metric) so the rest of the module sees native dicts; `cpu_profile`
-    # is never projected, so its blob is never read or decoded.
+    rows = pq.read_table(path, columns=columns, filters=filters).to_pylist()
     json_cols = [c for c in ("custom", "memory") if c in columns]
     for row in rows:
         for col in json_cols:
             if isinstance(row.get(col), str):
                 row[col] = _decode_json_str(row[col])
+    return rows
+
+
+def _rows_from_parquet(path: Path, metric: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    rows = _read_parquet(path, metric)
     # Parquet has no file-level context block; rebuild one from the per-row
     # session columns of the first row (same projection every session row carries).
     return rows, _session_context(rows[0] if rows else {}, {})
@@ -510,20 +510,63 @@ def _resolve_session(path: Path, sessions: list[SessionData], selector: str) -> 
     raise SystemExit(f"{path}: no session matching {selector!r}{hint}")
 
 
+def _parquet_session_index(path: Path) -> list[SessionData] | None:
+    """Enumerate sessions from identity columns only — a cheap pass so ``path@selector``
+    resolves the target without reading every session's metric rows.
+
+    Returns None when the fast path can't apply (not Parquet, no pyarrow, or a legacy
+    file lacking ``session_id``); the caller then falls back to the full read.
+    """
+    if path.suffix.lower() not in (".parquet", ".pq") or find_spec("pyarrow") is None:
+        return None
+    import pyarrow.parquet as pq
+
+    available = set(pq.read_schema(path).names)
+    if "session_id" not in available:
+        return None
+    cols = [c for c in ("date", "host_name", "session_id", "session_tag") if c in available]
+    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for r in pq.read_table(path, columns=cols).to_pylist():
+        by_key.setdefault(_session_key(r, {}), r)  # one representative row per session
+    return [
+        SessionData(
+            key=skey,
+            context=(ctx := _session_context(by_key[skey], {})),
+            samples={},
+            session_tag=ctx.get("session_tag"),
+        )
+        for skey in sorted(by_key)  # date-leading key → chronological, like _load_sessions
+    ]
+
+
+def _load_parquet_selected(
+    path: Path, metric: str, index: list[SessionData], selector: str
+) -> tuple[dict[str, Sample], dict[str, Any]]:
+    """Resolve ``selector`` against the cheap index, then read only that session's rows."""
+    chosen = _resolve_session(path, index, selector)
+    rows = _read_parquet(path, metric, filters=[("session_id", "==", chosen.key[2])])
+    samples = _samples_from_groups(_group_by_name(rows), metric, chosen.key[0] or None)
+    return samples, _session_context(rows[0] if rows else {}, {})
+
+
 def _load(
     path: Path, metric: str, key: str = "name", selector: str | None = None
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
     """Load a result file into one sample set: load → select → re-key.
 
     Without a selector, sessions merge latest-wins per name (warning on discards).
-    A selector picks exactly one session, no merge.
+    A selector picks exactly one session, no merge — and for Parquet, reads only
+    that session's rows (cheap index pass resolves it first).
     """
-    sessions = _load_sessions(path, metric)
-    if selector is None:
-        samples, ctx = _select_latest(path, sessions)
+    if selector is not None and (index := _parquet_session_index(path)) is not None:
+        samples, ctx = _load_parquet_selected(path, metric, index, selector)
     else:
-        chosen = _resolve_session(path, sessions, selector)
-        samples, ctx = chosen.samples, chosen.context
+        sessions = _load_sessions(path, metric)
+        if selector is None:
+            samples, ctx = _select_latest(path, sessions)
+        else:
+            chosen = _resolve_session(path, sessions, selector)
+            samples, ctx = chosen.samples, chosen.context
     return _normalize_samples(samples, key, str(path)), ctx
 
 
