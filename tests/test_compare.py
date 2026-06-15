@@ -739,6 +739,53 @@ def test_compare_parquet_skips_cpu_profile_column(tmp_path: Path) -> None:
     assert "×2.000" in console.export_text()
 
 
+def _two_session_parquet(tmp_path: Path) -> Path:
+    """A Parquet file holding 'before' (100) and 'after' (80) sessions of one bench."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    p = tmp_path / "results.parquet"
+    rows = [
+        _row("b", 100.0, date="2026-01-01T00:00:00", session_id="0197aaaa11", session_tag="before"),
+        _row("b", 80.0, date="2026-02-01T00:00:00", session_id="0197bbbb22", session_tag="after"),
+    ]
+    pq.write_table(pa.Table.from_pylist(rows), p)
+    return p
+
+
+@pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
+def test_compare_parquet_two_sessions_of_one_file(tmp_path: Path) -> None:
+    p = _two_session_parquet(tmp_path)
+    console = Console(record=True, width=200)
+    assert compare([Path(f"{p}@before"), Path(f"{p}@after")], console=console) == 0
+    out = console.export_text()
+    assert "-20.00%" in out  # 100 -> 80, so the fast path resolved both sessions correctly
+    assert "session=before" in out and "session=after" in out
+
+
+@pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
+def test_parquet_selector_pushes_down_session_filter(tmp_path: Path, monkeypatch) -> None:
+    """A Parquet ``@selector`` reads only the chosen session — via a pushed-down filter.
+
+    Spy on ``read_table``: the cheap index pass reads unfiltered identity columns,
+    but each metric read must carry ``filters=[("session_id", "==", <sid>)]`` so the
+    scan prunes the other sessions instead of materializing the whole table.
+    """
+    import pyarrow.parquet as pq
+
+    p = _two_session_parquet(tmp_path)
+    filters_seen: list = []
+    orig = pq.read_table
+    monkeypatch.setattr(
+        pq, "read_table", lambda *a, **k: (filters_seen.append(k.get("filters")), orig(*a, **k))[1]
+    )
+    assert compare([Path(f"{p}@before"), Path(f"{p}@after")], console=Console()) == 0
+    pushed = [f for f in filters_seen if f]
+    assert len(pushed) == 2  # one metric read per selected session
+    assert {f[0][2] for f in pushed} == {"0197aaaa11", "0197bbbb22"}
+    assert all(f[0][:2] == ("session_id", "==") for f in pushed)
+
+
 @pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
 def test_compare_parquet_roundtrip(tmp_path: Path) -> None:
     import pyarrow as pa
