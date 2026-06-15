@@ -19,7 +19,7 @@ class Config:
     # Keys are the short flag name (without the `--benchmark_` prefix); values
     # become `--benchmark_<key>=<value>` (or `--benchmark_<key>` for bool True).
     benchmark_options: dict[str, Any] = field(default_factory=dict)
-    # Derive a session tag from `git describe` when --session-tag is not given.
+    # Derive a session tag from the VCS when --session-tag is not given.
     auto_session_tag: bool = True
     project_root: Path | None = None
 
