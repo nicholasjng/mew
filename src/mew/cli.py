@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from cyclopts import App, Parameter
 from cyclopts.help import ColumnSpec, DefaultFormatter, HelpEntry
@@ -25,6 +25,9 @@ from mew import (
     run as _run,
 )
 from mew._registry import compile_name_filter, narrow_entry
+
+if TYPE_CHECKING:
+    from mew._variants import ProfileConfig
 
 
 def _short_first_name(entry: HelpEntry) -> str:
@@ -256,16 +259,16 @@ def _run_variants_cmd(
     paths: list[str],
     session_tag: str | None,
     append: bool,
-    profiling: bool,
+    profiling: ProfileConfig | None = None,
 ) -> None:
     """Run the ``--variant`` path: validate, then hand off to the orchestrator."""
+    from mew._variants import ProfileConfig, run_variants
+
     if paths:
         print("--variant and positional paths are mutually exclusive", file=sys.stderr)
         raise SystemExit(2)
-    if profiling:
-        print("profiling flags are not supported with --variant", file=sys.stderr)
-        raise SystemExit(2)
 
+    profiling = profiling or ProfileConfig()
     variants = _parse_variants(specs)
     cfg, session_tag = _load_config_and_session_tag(session_tag)
 
@@ -276,9 +279,13 @@ def _run_variants_cmd(
         gb_args.append(f"--benchmark_min_time={min_time}")
     gb_args.extend(extra)
 
-    reporters = _build_reporters(output, show_variant=True, append=append)
-
-    from mew._variants import run_variants
+    reporters = _build_reporters(
+        output,
+        show_variant=True,
+        show_memory=profiling.profile_memory or profiling.flamegraph is not None,
+        show_cpu=profiling.sample or profiling.sample_html is not None,
+        append=append,
+    )
 
     failures = run_variants(
         variants,
@@ -288,6 +295,7 @@ def _run_variants_cmd(
         tags=tags,
         repetitions=repetitions or 1,
         session_tag=session_tag,
+        profiling=profiling,
     )
     if failures:
         raise SystemExit(1)
@@ -380,6 +388,16 @@ def run(
             help="Write an HTML flame graph containing allocation data to this path. Implies `--profile-memory`.",
         ),
     ] = None,
+    memory_iterations: Annotated[
+        int,
+        Parameter(
+            name="--memory-iterations",
+            help="Measured timing-loop iterations per case under `--profile-memory` "
+            "(default 100, plus a short warmup). Counting over many iterations "
+            "amortizes one-time allocations, so `memory.allocations_per_iteration` "
+            "is comparable across engines.",
+        ),
+    ] = 100,
     sample: Annotated[
         bool,
         Parameter(
@@ -412,6 +430,8 @@ def run(
 ) -> None:
     """Discover and run benchmarks."""
     if variant:
+        from mew._variants import ProfileConfig
+
         _run_variants_cmd(
             variant,
             output=output,
@@ -423,7 +443,15 @@ def run(
             paths=paths,
             session_tag=session_tag,
             append=append,
-            profiling=profile_memory or flamegraph is not None or sample or sample_html is not None,
+            profiling=ProfileConfig(
+                profile_memory=profile_memory,
+                flamegraph=flamegraph,
+                memory_iterations=memory_iterations,
+                sample=sample,
+                sample_interval=sample_interval,
+                sample_iterations=sample_iterations,
+                sample_html=sample_html,
+            ),
         )
         return
 
@@ -459,7 +487,9 @@ def run(
         if profile_memory or flamegraph is not None:
             from mew.memory import profile as _profile_mem
 
-            memory_profiles = _profile_mem(entries, flamegraph=flamegraph)
+            memory_profiles = _profile_mem(
+                entries, flamegraph=flamegraph, iterations=memory_iterations
+            )
         if sample or sample_html is not None:
             from mew.cpu import profile as _profile_cpu
 
@@ -601,18 +631,20 @@ def compare(
             name=["--metric", "-m"],
             help="metric to compare: real_time, cpu_time, iterations, or (for "
             "--profile-memory results) memory.peak_bytes, memory.total_bytes, "
-            "memory.total_allocations",
+            "memory.total_allocations, memory.allocations_per_iteration (the "
+            "cross-engine-comparable per-call allocation count)",
         ),
     ] = "real_time",
     key: Annotated[
-        str,
+        str | None,
         Parameter(
             name="--key",
             help="how benchmarks are matched across files: `name` (full registered "
             "name) or `func` (strip the `file.py::` prefix, for A/B suites in "
-            "different files with matching function names)",
+            "different files with matching function names). Defaults to `func` "
+            "with `--by variant`, `name` otherwise.",
         ),
-    ] = "name",
+    ] = None,
     pattern: Annotated[
         str | None, Parameter(name=["--pattern", "-k"], help="regex filter (re.search)")
     ] = None,

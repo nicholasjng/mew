@@ -526,7 +526,7 @@ def test_compare_unknown_by(tmp_path: Path) -> None:
         compare([tmp_path / "a.json"], by="bogus")
 
 
-def _mem_row(name: str, real_time: float, peak: int, allocs: int) -> dict:
+def _mem_row(name: str, real_time: float, peak: int, allocs: int, *, iterations: int = 1) -> dict:
     return _row(
         name,
         real_time,
@@ -535,6 +535,8 @@ def _mem_row(name: str, real_time: float, peak: int, allocs: int) -> dict:
             "peak_bytes": peak,
             "total_bytes": peak,
             "total_allocations": allocs,
+            "iterations": iterations,
+            "allocations_per_iteration": allocs / iterations,
         },
     )
 
@@ -556,6 +558,23 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
     code = compare([base, other], metric="memory.total_allocations", console=console)
     assert code == 0
     assert "-50.00%" in console.export_text()
+
+
+def test_compare_allocations_per_iteration_is_speed_independent(tmp_path: Path) -> None:
+    # The whole point of item 0: two engines whose raw total_allocations differ
+    # only because they ran a different iteration count compare *equal* per-iter.
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    # Same per-call allocations (10), captured over different iteration counts.
+    _write_json(base, [_mem_row("bench_x", 1.0, peak=1 << 20, allocs=1000, iterations=100)])
+    _write_json(other, [_mem_row("bench_x", 1.0, peak=1 << 20, allocs=500, iterations=50)])
+
+    console = Console(record=True, width=200)
+    code = compare([base, other], metric="memory.allocations_per_iteration", console=console)
+    assert code == 0
+    out = console.export_text()
+    assert "10.0" in out  # baseline per-iteration count, fractional format
+    assert "+0.00%" in out  # identical per-call work despite 2× raw allocs
 
 
 def test_compare_memory_metric_without_data_hints_profile_flag(

@@ -22,30 +22,45 @@ class MemoryProfile:
 
     The capture is scoped to the benchmark's timing loop (``for _ in state``);
     fixture/setup allocations made before the loop are not tracked, so
-    cross-suite comparisons reflect the workload, not the setup strategy.
+    cross-suite comparisons reflect the workload, not the setup strategy. The
+    loop runs ``iterations`` times after a short warmup, so one-time/first-call
+    allocations don't dominate and ``allocations_per_iteration`` is a steady-state
+    per-call figure — the cross-engine-comparable allocation metric.
 
     Attributes
     ----------
     peak_bytes : int
-        Peak memory during the timing loop (``metadata.peak_memory``).
+        Peak memory during the timing loop (``metadata.peak_memory``). A
+        high-water mark, independent of iteration count.
     total_bytes : int
         Tracked heap live at the high-water mark, *not* the cumulative sum.
     total_allocations : int
-        Cumulative allocation count (``metadata.total_allocations``).
+        Cumulative allocation count over the whole capture
+        (``metadata.total_allocations``), i.e. across all ``iterations``. Not
+        comparable across runs of differing iteration count — use
+        ``allocations_per_iteration`` for that.
+    iterations : int
+        Number of measured timing-loop iterations the capture ran over.
+    allocations_per_iteration : float
+        ``total_allocations / iterations`` — the per-call allocation count,
+        comparable across engines regardless of their speed.
     """
 
     profiler: str
     peak_bytes: int
     total_bytes: int
     total_allocations: int
+    iterations: int
+    allocations_per_iteration: float
 
 
 def profile(
     entries: list[Entry],
     *,
     flamegraph: Path | None = None,
+    iterations: int = 100,
 ) -> dict[str, MemoryProfile]:
-    """Profile each entry once with memray.
+    """Profile each entry with memray over ``iterations`` measured loop passes.
 
     Parameters
     ----------
@@ -53,6 +68,11 @@ def profile(
         Benchmarks to profile.
     flamegraph : Path, optional
         If given, additionally writes a combined HTML flame graph to this path.
+    iterations : int, default 100
+        Measured timing-loop iterations per case (a short warmup runs first,
+        untracked). Counting more than one amortizes one-time/first-call
+        allocations, so ``allocations_per_iteration`` reflects steady-state
+        per-call work and stays comparable across engines.
 
     Returns
     -------
@@ -65,21 +85,28 @@ def profile(
             "memray is required for memory profiling. "
             "Install it with: uv add --optional memory memray"
         )
-    profiles = _collect_stats(entries)
+    profiles = _collect_stats(entries, max(1, iterations))
     if flamegraph is not None:
         _write_flamegraph(entries, flamegraph)
     return profiles
 
 
-def _capture_case(fn: BenchmarkFn, rng: int, dest: Path) -> bool:
-    """Run one case with the memray capture scoped to the timing loop.
+def _capture_case(fn: BenchmarkFn, rng: int, dest: Path, iterations: int, warmup: int) -> bool:
+    """Run one case with the memray capture scoped to ``iterations`` loop passes.
 
-    The tracker starts at the first state iteration and stops when the loop
-    ends, so fixture/setup allocations don't pollute the stats — without this,
-    cross-suite allocation comparisons mostly compare setup strategies.
-    Returns False when the body never iterated its state (nothing captured).
+    A ``warmup`` pass runs first, untracked, so one-time/first-call allocations
+    (lazy init, connection setup) don't dominate the measured count. The tracker
+    then starts at the first measured iteration and stops when the loop ends, so
+    fixture/setup allocations don't pollute the stats either — without this,
+    cross-suite allocation comparisons mostly compare setup strategies. Returns
+    False when the body never iterated its state.
     """
     import memray
+
+    # Warmup outside the tracker: trigger one-time allocations so the measured
+    # window sees steady-state per-iteration work.
+    if warmup > 0:
+        fn(_ProfileState(n_iterations=warmup, range_value=rng))
 
     tracker = memray.Tracker(dest)
     entered = exited = False
@@ -95,7 +122,11 @@ def _capture_case(fn: BenchmarkFn, rng: int, dest: Path) -> bool:
         tracker.__exit__(None, None, None)
 
     try:
-        fn(_ProfileState(range_value=rng, on_loop_start=start, on_loop_end=stop))
+        fn(
+            _ProfileState(
+                n_iterations=iterations, range_value=rng, on_loop_start=start, on_loop_end=stop
+            )
+        )
     finally:
         # A body that raises mid-loop leaves the tracker open; close it so the
         # capture file is readable and the next case can start its own tracker.
@@ -104,9 +135,11 @@ def _capture_case(fn: BenchmarkFn, rng: int, dest: Path) -> bool:
     return entered
 
 
-def _collect_stats(entries: list[Entry]) -> dict[str, MemoryProfile]:
+def _collect_stats(entries: list[Entry], iterations: int) -> dict[str, MemoryProfile]:
     import memray
 
+    # A tenth of the measured count (>=1) is enough to clear lazy init.
+    warmup = max(1, iterations // 10)
     profiles: dict[str, MemoryProfile] = {}
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -115,7 +148,7 @@ def _collect_stats(entries: list[Entry]) -> dict[str, MemoryProfile]:
             for key, rng in iter_entry_cases(entry):
                 dest = root / f"capture-{i}.bin"
                 i += 1
-                if not _capture_case(entry.fn, rng, dest):
+                if not _capture_case(entry.fn, rng, dest, iterations, warmup):
                     print(
                         f"warning: {key}: body never iterated its state; skipping memory capture",
                         file=sys.stderr,
@@ -135,6 +168,8 @@ def _collect_stats(entries: list[Entry]) -> dict[str, MemoryProfile]:
                     peak_bytes=peak,
                     total_bytes=total_bytes,
                     total_allocations=total_allocs,
+                    iterations=iterations,
+                    allocations_per_iteration=total_allocs / iterations,
                 )
     return profiles
 

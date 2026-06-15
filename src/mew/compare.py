@@ -30,9 +30,16 @@ from rich.table import Table
 
 from mew._registry import compile_name_filter
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
-from mew.reporter import _fmt_bytes
+from mew.reporter import _fmt_bytes, canonical_name
 
-_MEMORY_METRICS = frozenset({"memory.peak_bytes", "memory.total_bytes", "memory.total_allocations"})
+_MEMORY_METRICS = frozenset(
+    {
+        "memory.peak_bytes",
+        "memory.total_bytes",
+        "memory.total_allocations",
+        "memory.allocations_per_iteration",
+    }
+)
 _METRICS = frozenset({"real_time", "cpu_time", "iterations"}) | _MEMORY_METRICS
 _HIGHER_IS_BETTER = frozenset({"iterations"})
 _KEYS = frozenset({"name", "func"})
@@ -247,31 +254,6 @@ def _aggregate_group(rows: list[dict[str, Any]], metric: str) -> tuple[float, fl
     return median, stddev
 
 
-# Per-benchmark option suffixes GB appends to the name, e.g. `/min_time:0.200`.
-# Anchored to the end (they always follow the function and args parts) so path
-# segments in the registered name can't false-match.
-_OPTION_SUFFIXES_RE = re.compile(
-    r"(?:/(?:min_time:[^/]+|min_warmup_time:[^/]+|iterations:\d+|repeats:\d+"
-    r"|manual_time|process_time|real_time|threads:\d+))+$"
-)
-_CASE_SUFFIX_RE = re.compile(r"/case:\d+$")
-
-
-def _canonical_name(name: str, label: Any) -> str:
-    """Strip GB option suffixes and render a parametrize case by its human label.
-
-    ``bench.py::f/case:0/min_time:0.200`` with label ``n=10000`` becomes
-    ``bench.py::f[n=10000]``. Option suffixes are not part of the match key, so
-    files run with different per-benchmark options still align.
-    """
-    name = _OPTION_SUFFIXES_RE.sub("", name)
-    if label and isinstance(label, str):
-        stripped, n = _CASE_SUFFIX_RE.subn("", name)
-        if n:
-            return f"{stripped}[{label}]"
-    return name
-
-
 def _normalize_name(name: str, key: str) -> str:
     """``key="func"`` strips the ``file.py::`` prefix from a registered name."""
     if key == "func":
@@ -361,7 +343,7 @@ def _load_sessions(path: Path, metric: str) -> list[SessionData]:
     for skey, session_rows in sorted(_group_by_session(rows, file_ctx).items()):
         groups: dict[str, list[dict[str, Any]]] = {}
         for r in session_rows:
-            groups.setdefault(_canonical_name(r["name"], r.get("label")), []).append(r)
+            groups.setdefault(canonical_name(r["name"], r.get("label")), []).append(r)
         samples = _samples_from_groups(groups, metric, skey[0] or None)
         first_group = next(iter(groups.values()), [])
         ctx = _session_context(first_group[0] if first_group else {}, file_ctx)
@@ -391,7 +373,7 @@ def _load_variant_columns(
     for r in by_session[latest]:
         variant = r.get("variant")
         groups = by_variant.setdefault(variant, {})
-        groups.setdefault(_canonical_name(r["name"], r.get("label")), []).append(r)
+        groups.setdefault(canonical_name(r["name"], r.get("label")), []).append(r)
 
     columns: list[tuple[str, dict[str, Sample], dict[str, Any]]] = []
     for variant, groups in by_variant.items():
@@ -580,6 +562,8 @@ def _custom_diffs(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _fmt_value(sample: Sample, metric: str) -> str:
+    if metric == "memory.allocations_per_iteration":  # fractional per-call count
+        return f"{sample.value:,.1f}"
     if metric in ("iterations", "memory.total_allocations"):
         return f"{int(sample.value):,}"
     if metric in _MEMORY_METRICS:  # remaining memory metrics are byte-valued
@@ -746,7 +730,7 @@ def compare(
     files: list[Path],
     *,
     metric: str = "real_time",
-    key: str = "name",
+    key: str | None = None,
     pattern: str | None = None,
     show_stddev: bool = False,
     by: str | None = None,
@@ -771,11 +755,16 @@ def compare(
         Metric to compare.
         One of ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or — for files
         produced with ``--profile-memory`` — ``"memory.peak_bytes"``,
-        ``"memory.total_bytes"``, ``"memory.total_allocations"``.
-    key : str, default "name"
+        ``"memory.total_bytes"``, ``"memory.total_allocations"``, or
+        ``"memory.allocations_per_iteration"`` (the per-call allocation count,
+        comparable across engines regardless of speed).
+    key : str, optional
         How benchmarks are matched across files: ``"name"`` uses the full
         registered name; ``"func"`` strips the ``file.py::`` prefix so suites
         in different files with matching function names line up (A/B suites).
+        Defaults to ``"func"`` with ``by="variant"`` (each variant's rows keep
+        their own ``file.py::`` prefix, so the columns only line up on the
+        function name) and ``"name"`` otherwise.
     pattern : str, optional
         Regex (``re.search``) filter applied to benchmark names.
     show_stddev : bool, default False
@@ -798,6 +787,10 @@ def compare(
     """
     if metric not in _METRICS:
         raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
+    # Variant columns share the file prefix across all variants, so they only
+    # align on the function name; default to that unless the caller is explicit.
+    if key is None:
+        key = "func" if by == "variant" else "name"
     if key not in _KEYS:
         raise SystemExit(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
     try:
