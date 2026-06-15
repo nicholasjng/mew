@@ -109,7 +109,7 @@ class _Capture:
         self.context = context
         return True
 
-    def report_runs(self, runs: list[mew.Run]) -> None:
+    def report_runs(self, runs: list[mew.RunRow]) -> None:
         self.runs.extend(runs)
 
     def finalize(self):

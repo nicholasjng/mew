@@ -1,4 +1,4 @@
-"""Profile attachment via _ProfileEnriching, plus reporter output of memory/cpu."""
+"""Profile attachment via _RunProjector, plus reporter output of memory/cpu."""
 
 from __future__ import annotations
 
@@ -9,14 +9,60 @@ import pytest
 import mew
 from mew._profile import (
     _profile_key,
-    _ProfileEnriching,
     _ProfileState,
+    _RunProjector,
     iter_entry_cases,
 )
 from mew._registry import Entry
 from mew.cpu import CPUProfile
 from mew.memory import MemoryProfile
 from mew.reporter import JSONReporter
+
+
+def _proj_run(function_name: str, args: str = "", *, label: str = "", suffix: str = ""):
+    """A full fake C++ Run that _run_to_dict / _RunProjector can project to a RunRow."""
+    full = f"{function_name}/{args}{suffix}" if args else function_name
+
+    class FakeName:
+        def __init__(self) -> None:
+            self.function_name = function_name
+            self.args = args
+
+        def __str__(self) -> str:
+            return full
+
+    class FakeEnum:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class FakeRun:
+        run_name = FakeName()
+        family_index = 0
+        per_family_instance_index = 0
+        aggregate_name = ""
+        repetitions = 1
+        repetition_index = 0
+        threads = 1
+        iterations = 1
+        real_accumulated_time = 0.0
+        cpu_accumulated_time = 0.0
+        report_label = label
+        skipped = False
+        skip_message = ""
+        counters: dict = {}
+        run_type = FakeEnum("iteration")
+        time_unit = FakeEnum("ns")
+
+        def benchmark_name(self) -> str:
+            return full
+
+        def adjusted_real_time(self) -> float:
+            return 1.0
+
+        def adjusted_cpu_time(self) -> float:
+            return 1.0
+
+    return FakeRun()
 
 
 def _fake_mem() -> MemoryProfile:
@@ -99,49 +145,35 @@ def test_iter_entry_cases_drives_distinct_cases():
     assert runs == [10, 20, 30]
 
 
-def test_profile_enriching_attaches_by_benchmark_name():
+def test_run_projector_attaches_profiles_to_rows_by_name():
     seen = {}
 
     class CapturingReporter:
         def report_context(self, ctx):
             return True
 
-        def report_runs(self, runs):
-            for r in runs:
-                # Read like the real reporters: profiles are dynamic attrs,
-                # absent when no profile was attached for that case.
-                seen[r.benchmark_name()] = (getattr(r, "memory", None), getattr(r, "cpu", None))
+        def report_runs(self, rows):
+            # The projector emits RunRow dicts; profiles are dict keys, absent
+            # when no profile was attached for that case.
+            for row in rows:
+                seen[row["name"]] = (row.get("memory"), row.get("cpu_profile"))
 
         def finalize(self):
             pass
 
-    class FakeName:
-        def __init__(self, function_name: str, args: str = "") -> None:
-            self.function_name = function_name
-            self.args = args
-
-    class FakeRun:
-        def __init__(self, name: str, args: str = "") -> None:
-            self._name = name
-            self.run_name = FakeName(name, args)
-
-        def benchmark_name(self) -> str:
-            return self._name
-
-    wrapped = _ProfileEnriching(
+    wrapped = _RunProjector(
         CapturingReporter(),
         memory_profiles={"a": _fake_mem()},
         cpu_profiles={"b": _fake_cpu()},
     )
-    runs = [FakeRun("a"), FakeRun("b"), FakeRun("c")]
-    wrapped.report_runs(runs)  # ty: ignore[invalid-argument-type]
+    wrapped.report_runs([_proj_run("a"), _proj_run("b"), _proj_run("c")])
 
     assert seen["a"][0] is not None and seen["a"][1] is None
     assert seen["b"][0] is None and seen["b"][1] is not None
     assert seen["c"] == (None, None)
 
 
-def test_profile_enriching_matches_family_cases_by_structured_name():
+def test_run_projector_matches_family_cases_by_structured_name():
     """A family run carries `/min_time:…` in benchmark_name() but the profile dict
     is keyed by `entry.name/case:N` — match on the structured parts, not the full name."""
     seen = {}
@@ -150,50 +182,38 @@ def test_profile_enriching_matches_family_cases_by_structured_name():
         def report_context(self, ctx):
             return True
 
-        def report_runs(self, runs):
-            for r in runs:
-                seen[r.benchmark_name()] = getattr(r, "memory", None)
+        def report_runs(self, rows):
+            for row in rows:
+                seen[row["name"]] = row.get("memory")
 
         def finalize(self):
             pass
 
-    class FakeName:
-        def __init__(self, function_name: str, args: str) -> None:
-            self.function_name = function_name
-            self.args = args
-
-    class FakeRun:
-        def __init__(self, function_name: str, args: str, suffix: str) -> None:
-            self._full = f"{function_name}/{args}{suffix}"
-            self.run_name = FakeName(function_name, args)
-
-        def benchmark_name(self) -> str:
-            return self._full
-
-    wrapped = _ProfileEnriching(
+    wrapped = _RunProjector(
         CapturingReporter(),
         memory_profiles={"bench::f/case:0": _fake_mem(), "bench::f/case:1": _fake_mem()},
     )
-    runs = [
-        FakeRun("bench::f", "case:0", "/min_time:0.200"),
-        FakeRun("bench::f", "case:1", "/min_time:0.200"),
-    ]
-    wrapped.report_runs(runs)  # ty: ignore[invalid-argument-type]
+    wrapped.report_runs(
+        [
+            _proj_run("bench::f", "case:0", suffix="/min_time:0.200"),
+            _proj_run("bench::f", "case:1", suffix="/min_time:0.200"),
+        ]
+    )
 
     assert seen["bench::f/case:0/min_time:0.200"] is not None
     assert seen["bench::f/case:1/min_time:0.200"] is not None
 
 
-def test_profile_enriching_finalize_is_optional_on_inner():
+def test_run_projector_finalize_is_optional_on_inner():
     class NoFinalize:
         def report_context(self, ctx):
             return True
 
-        def report_runs(self, runs):
+        def report_runs(self, rows):
             pass
 
     # Should not raise.
-    _ProfileEnriching(NoFinalize()).finalize()
+    _RunProjector(NoFinalize()).finalize()
 
 
 def test_memory_profile_expands_family_keyed_per_case():
@@ -355,13 +375,12 @@ def test_json_reporter_emits_memory_and_cpu_blocks(tmp_path):
             pass
 
     out = tmp_path / "out.json"
-    inner = JSONReporter(output=out)
-    rep = _ProfileEnriching(
-        inner,
+    mew.run(
+        argv=["mew", "--benchmark_min_time=1x"],
+        reporter=JSONReporter(output=out),
         memory_profiles={name: _fake_mem()},
         cpu_profiles={name: _fake_cpu()},
     )
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=rep)
 
     doc = json.loads(out.read_text())
     bench = doc["benchmarks"][0]
@@ -412,12 +431,12 @@ def test_parquet_reporter_emits_memory_and_cpu_columns(tmp_path):
             pass
 
     out = tmp_path / "out.parquet"
-    rep = _ProfileEnriching(
-        ParquetReporter(output=out),
+    mew.run(
+        argv=["mew", "--benchmark_min_time=1x"],
+        reporter=ParquetReporter(output=out),
         memory_profiles={name: _fake_mem()},
         cpu_profiles={name: _fake_cpu()},
     )
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=rep)
 
     row = pq.read_table(out).to_pylist()[0]
     assert json.loads(row["memory"])["peak_bytes"] == 1024

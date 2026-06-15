@@ -1,4 +1,4 @@
-"""Variant orchestration: the _DictRun shim, CLI validation, and an end-to-end run."""
+"""Variant orchestration: the RunRow merge, CLI validation, and an end-to-end run."""
 
 from __future__ import annotations
 
@@ -12,14 +12,13 @@ from typing import cast
 
 import pytest
 
-from mew._core import Run
-from mew._variants import ProfileConfig, _DictRun, _pseudo_raw_context
+from mew._typing import RunRow
+from mew._variants import ProfileConfig, _merge_row, _pseudo_raw_context
 from mew.cli import _parse_variants, _run_variants_cmd
-from mew.reporter import _run_to_dict
 
 
-def _full_row(**overrides: object) -> dict[str, object]:
-    """A complete child JSONL row (every field _run_to_dict reads)."""
+def _full_row(**overrides: object) -> RunRow:
+    """A complete child JSONL row (a RunRow as the worker's reporters emit it)."""
     row: dict[str, object] = {
         "name": "bench.py::f",
         "run_name": "bench.py::f",
@@ -42,22 +41,20 @@ def _full_row(**overrides: object) -> dict[str, object]:
         "counters": {"items": 5.0},
     }
     row.update(overrides)
-    return row
+    return cast("RunRow", row)
 
 
-def test_dictrun_round_trips_through_run_to_dict() -> None:
-    # A child row is _run_to_dict output; wrapping it and re-serializing must
-    # preserve the fields and apply the variant / repetition overrides.
-    run = _DictRun(_full_row(), variant="engine-a", repetition_index=3)
-    out = _run_to_dict(cast(Run, run))
+def test_merge_row_overlays_variant_and_rep() -> None:
+    # A child row already is a RunRow; the merge overlays the orchestration's
+    # variant and repetition index while preserving every other field.
+    out = _merge_row(_full_row(), variant="engine-a", repetition_index=3, custom=None)
     assert out["name"] == "bench.py::f"
     assert out["real_time"] == 12.5
     assert out["time_unit"] == "ns"
-    assert out["run_type"] == "iteration"
-    assert out["label"] == "n=10"
     assert out["counters"] == {"items": 5.0}
     assert out["variant"] == "engine-a"
     assert out["repetition_index"] == 3  # orchestration rep, overriding the child's 0
+    assert "custom" not in out  # no per-suite context → no custom key
 
 
 def test_pseudo_raw_context_undoes_projection() -> None:
@@ -109,19 +106,18 @@ def test_run_variants_rejects_positional_paths(capsys: pytest.CaptureFixture[str
     assert "mutually exclusive" in capsys.readouterr().err
 
 
-def test_dictrun_carries_per_variant_custom() -> None:
+def test_merge_row_carries_per_variant_custom() -> None:
     # The orchestrator stamps each variant's set_context() values onto its rows
     # so the merged file records every variant's own engine, not just the first.
-    run = _DictRun(
+    out = _merge_row(
         _full_row(), variant="duckdb", repetition_index=0, custom={"engine": "duckdb 1.5.3"}
     )
-    out = _run_to_dict(cast(Run, run))
     assert out["custom"] == {"engine": "duckdb 1.5.3"}
 
 
-def test_dictrun_reconstructs_memory_profile() -> None:
-    # A child profiled under --variant emits memory as a plain dict; _DictRun
-    # rebuilds the dataclass so the parent's reporters re-serialize it natively.
+def test_merge_row_preserves_child_memory_block() -> None:
+    # A child profiled under --variant already serialized memory as a dict in its
+    # RunRow; the overlay leaves it untouched (no Run to reconstruct).
     row = _full_row(
         memory={
             "profiler": "memray",
@@ -132,10 +128,8 @@ def test_dictrun_reconstructs_memory_profile() -> None:
             "allocations_per_iteration": 7.0,
         }
     )
-    run = _DictRun(row, variant="a", repetition_index=0)
-    out = _run_to_dict(cast(Run, run))
+    out = _merge_row(row, variant="a", repetition_index=0, custom=None)
     assert out["memory"]["peak_bytes"] == 2048
-    assert out["memory"]["total_allocations"] == 700
     assert out["memory"]["allocations_per_iteration"] == 7.0
 
 
