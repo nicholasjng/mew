@@ -34,11 +34,12 @@ def benchdir(tmp_path: Path) -> Path:
     return d
 
 
-def _mew(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+def _mew(*args: str, cwd: Path, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
         [sys.executable, "-m", "mew.cli", *args],
         cwd=cwd,
+        input=stdin,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -284,6 +285,141 @@ def test_run_benchmark_options_from_pyproject(benchdir, tmp_path):
     doc = json.loads(out.read_text())
     assert len(doc["benchmarks"]) == 3
     assert all(b["iterations"] == 1 for b in doc["benchmarks"])
+
+
+def test_run_stdin_round_trip(benchdir):
+    # `mew list | mew run --stdin` with no xargs; run from the discovery cwd so
+    # the relative paths in the listing resolve.
+    listing = _mew("list", ".", cwd=benchdir)
+    assert listing.returncode == 0, listing.stderr
+    res = _mew(
+        "run",
+        "--stdin",
+        "--min-time",
+        "1x",
+        "--format",
+        "jsonl",
+        stdin=listing.stdout,
+        cwd=benchdir,
+    )
+    assert res.returncode == 0, res.stderr
+    objs = [json.loads(x) for x in res.stdout.splitlines() if x.strip()]
+    names = [o["name"] for o in objs if "name" in o]
+    assert any("bench_one" in n for n in names)
+    assert any("bench_two" in n for n in names)
+
+
+def test_run_stdin_show_cases_selects_one_case_literally(benchdir):
+    # A `name[label]` line from --show-cases is matched literally — no -F, no
+    # bracket escaping — so exactly that one case runs.
+    listing = _mew("list", ".", "--show-cases", "-k", "n=2", cwd=benchdir)
+    assert listing.returncode == 0, listing.stderr
+    assert listing.stdout.strip().endswith("bench_two[n=2]")
+    res = _mew(
+        "run",
+        "--stdin",
+        "--min-time",
+        "1x",
+        "--format",
+        "jsonl",
+        stdin=listing.stdout,
+        cwd=benchdir,
+    )
+    assert res.returncode == 0, res.stderr
+    objs = [json.loads(x) for x in res.stdout.splitlines() if x.strip()]
+    names = [o["name"] for o in objs if "name" in o]
+    assert len(names) == 1 and "/case:1" in names[0]
+
+
+def test_run_stdin_empty_runs_nothing(benchdir):
+    # Empty stdin selects nothing — it does not fall back to benchpaths.
+    res = _mew("run", "--stdin", "--min-time", "1x", stdin="", cwd=benchdir)
+    assert res.returncode == 1
+    assert "no benchmarks found" in res.stderr
+
+
+def test_run_stdin_rejects_variant(tmp_path):
+    res = _mew("run", "--stdin", "--variant", "a=x.py", stdin="", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "mutually exclusive" in res.stderr
+
+
+def _native_profiler_available() -> bool:
+    from mew import profilers
+
+    try:
+        profilers.select("auto")
+        return True
+    except SystemExit:
+        return False
+
+
+@pytest.mark.skipif(not _native_profiler_available(), reason="no native profiler backend")
+def test_profile_stdin_filters_before_backend(benchdir, tmp_path):
+    # A path-free stdin name filters discovery; a non-matching name selects
+    # nothing, so profile exits ("no benchmarks found") before any backend runs —
+    # which also proves --stdin is wired into profile's discovery.
+    res = _mew("profile", str(benchdir), "--stdin", stdin="does_not_exist_xyz\n", cwd=tmp_path)
+    assert res.returncode == 1
+    assert "no benchmarks found" in res.stderr
+
+
+def test_list_names_only_drops_path(benchdir, tmp_path):
+    res = _mew("list", str(benchdir), "--names-only", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    names = [n for n in res.stdout.splitlines() if n.strip()]
+    assert "bench_one" in names
+    assert all("::" not in n for n in names)  # path-free identifiers
+
+
+def test_list_names_only_show_cases(benchdir, tmp_path):
+    res = _mew("list", str(benchdir), "--names-only", "--show-cases", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    names = [n for n in res.stdout.splitlines() if n.strip()]
+    assert "bench_two[n=1]" in names and "bench_two[n=2]" in names
+    assert all("::" not in n for n in names)
+
+
+def test_run_stdin_names_only_is_cwd_independent(benchdir, tmp_path):
+    # A path-free name (from --names-only) selects against run's own discovery
+    # (here an absolute positional path), so the run cwd need not match the list
+    # cwd — this is the fix for the relative-path round-trip.
+    res = _mew(
+        "run",
+        str(benchdir),
+        "--stdin",
+        "--min-time",
+        "1x",
+        "--format",
+        "jsonl",
+        stdin="bench_one\n",
+        cwd=tmp_path,  # cwd != benchdir
+    )
+    assert res.returncode == 0, res.stderr
+    objs = [json.loads(x) for x in res.stdout.splitlines() if x.strip()]
+    names = [o["name"] for o in objs if "name" in o]
+    assert names and all("bench_one" in n for n in names)
+
+
+def test_run_stdin_names_only_round_trip(benchdir, tmp_path):
+    listing = _mew("list", str(benchdir), "--names-only", cwd=tmp_path)
+    assert listing.returncode == 0, listing.stderr
+    res = _mew(
+        "run",
+        str(benchdir),
+        "--stdin",
+        "--min-time",
+        "1x",
+        "--format",
+        "jsonl",
+        stdin=listing.stdout,
+        cwd=tmp_path,
+    )
+    assert res.returncode == 0, res.stderr
+    objs = [json.loads(x) for x in res.stdout.splitlines() if x.strip()]
+    names = [o["name"] for o in objs if "name" in o]
+    assert any("bench_one" in n for n in names)
+    assert any("bench_two" in n for n in names)
 
 
 def test_run_format_jsonl_streams_to_stdout(benchdir, tmp_path):

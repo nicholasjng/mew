@@ -397,6 +397,15 @@ def run(
             "without escaping its brackets.",
         ),
     ] = False,
+    stdin: Annotated[
+        bool,
+        Parameter(
+            name="--stdin",
+            help="Read newline-delimited selectors (`file.py::name` / `name[label]`) "
+            "from stdin, e.g. `mew list -k slow | mew run --stdin`. Each line is "
+            "matched literally, so `mew list --show-cases` output works as-is.",
+        ),
+    ] = False,
     tag: Annotated[
         list[str],
         Parameter(
@@ -557,7 +566,7 @@ def run(
 
     # discovered(): bench modules stay live for the run, cleaned up at exit.
     with _discovery.discovered():
-        entries = _collect(paths, pattern=pattern, tags=tag or None)
+        entries = _collect(paths, pattern=pattern, tags=tag or None, literal=literal, stdin=stdin)
         if not entries:
             print("no benchmarks found", file=sys.stderr)
             raise SystemExit(1)
@@ -630,6 +639,16 @@ def profile(
             help="Filter benchmarks by tag. Can be repeated, uses OR semantics.",
         ),
     ] = [],
+    stdin: Annotated[
+        bool,
+        Parameter(
+            name="--stdin",
+            help="Read newline-delimited selectors from stdin, e.g. "
+            "`mew list -n -k slow | mew profile --stdin`. A path-free name is "
+            "matched against the discovered benchmarks; a `file.py::name` line "
+            "imports that path. Lines match literally.",
+        ),
+    ] = False,
     profiler: Annotated[
         str,
         Parameter(
@@ -693,7 +712,7 @@ def profile(
     backend = profilers.select(profiler)
 
     with _discovery.discovered():
-        entries = _collect(paths, pattern=pattern, tags=tag or None)
+        entries = _collect(paths, pattern=pattern, tags=tag or None, stdin=stdin)
         if not entries:
             print("no benchmarks found", file=sys.stderr)
             raise SystemExit(1)
