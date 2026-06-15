@@ -11,7 +11,6 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "Nicholas Junge", email = "nicho.junge@gmail.com" }]
 dependencies = [
-    "cyclopts >=3.0",
     "rich >=13.7",
 ]
 
@@ -57,7 +56,7 @@ exclude-newer = "1 week"
 default-groups = ["build"]
 
 [project.scripts]
-mew = "mew.cli:app"
+mew = "mew.cli:main"
 
 [tool.scikit-build]
 minimum-version = "build-system.requires"

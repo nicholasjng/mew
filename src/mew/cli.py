@@ -1,13 +1,18 @@
-"""cyclopts CLI: `mew run`, `mew list`."""
+"""argparse CLI: `mew run`, `mew list`, `mew profile`, `mew compare`.
+
+stdlib argparse (no third-party CLI dep). Each command is a plain function with
+keyword args; :func:`_build_parser` mirrors those args as ``add_argument`` calls
+and :func:`main` dispatches via the parsed namespace. Help is plain text — mew
+keeps ``rich`` for the reporters, so a rich help formatter could be added later.
+"""
 
 from __future__ import annotations
 
+import argparse
+import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
-
-from cyclopts import App, Parameter
-from cyclopts.help import ColumnSpec, DefaultFormatter, HelpEntry
+from typing import TYPE_CHECKING, Any
 
 import mew.config as _config
 import mew.discovery as _discovery
@@ -29,34 +34,7 @@ from mew._registry import compile_name_filter, narrow_entry
 if TYPE_CHECKING:
     from mew._variants import ProfileConfig
 
-
-def _short_first_name(entry: HelpEntry) -> str:
-    """Render option names as ``-s, --long``, with shorts before longs."""
-    parts = (
-        *entry.positive_shorts,
-        *entry.positive_names,
-        *entry.negative_shorts,
-        *entry.negative_names,
-    )
-    return ", ".join(parts)
-
-
-def _param_columns(console, options, entries):  # noqa: ARG001
-    name_column = ColumnSpec(
-        renderer=_short_first_name, header="Option", justify="left", style="cyan"
-    )
-    description_column = ColumnSpec(renderer="description", header="Description", overflow="fold")
-    return (name_column, description_column)
-
-
-app = App(
-    name="mew",
-    help="Microbenchmarking for Python via Google Benchmark.",
-    version=f"mew {_mew_version} (Google Benchmark {BENCHMARK_COMMIT[:12]} {BENCHMARK_VERSION})",
-    # Suppress auto-generated `--empty-<arg>` flags for list-typed parameters.
-    default_parameter=Parameter(negative_bool=(), negative_iterable=()),
-    help_formatter=DefaultFormatter(column_specs=_param_columns),
-)
+_VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_COMMIT[:12]} {BENCHMARK_VERSION})"
 
 
 def _collect(
@@ -128,58 +106,15 @@ _PATHS_HELP = (
 )
 
 
-@app.command(name=["list", "ls"], usage="Usage: mew list [OPTIONS] [PATHS]")
 def list_(
-    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],
-    /,
+    paths: list[str],
     *,
-    pattern: Annotated[
-        str | None,
-        Parameter(
-            name=["-k", "--pattern"],
-            help="List benchmarks whose name matches this regex (re.search, "
-            "unanchored). A plain word works as a substring; a family case also "
-            "matches by its `name[label]` form. Pass `--literal` to match `[...]` "
-            "without escaping.",
-        ),
-    ] = None,
-    literal: Annotated[
-        bool,
-        Parameter(
-            name=["-F", "--literal"],
-            help="Match `-k` as a literal string, not a regex. Lets you paste a "
-            "displayed `name[label]` (e.g. `bench_sort[n=1000]`) without escaping "
-            "its brackets.",
-        ),
-    ] = False,
-    tag: Annotated[
-        list[str],
-        Parameter(
-            name=["-t", "--tag"],
-            help="Filter benchmarks by tag. Can be repeated, uses OR semantics.",
-        ),
-    ] = [],
-    show_tags: Annotated[
-        bool, Parameter(help="Show associated tags alongside each benchmark name.")
-    ] = False,
-    show_cases: Annotated[
-        bool,
-        Parameter(
-            name="--show-cases",
-            help="Expand each parametrized family into one row per case "
-            "(`name[label]`), matching what `mew run` would execute.",
-        ),
-    ] = False,
-    names_only: Annotated[
-        bool,
-        Parameter(
-            name=["-n", "--names-only"],
-            help="Print the bare benchmark name without the `file.py::` prefix "
-            "(like `docker ps -q`). The names are path-free, so "
-            "`mew list --names-only | mew run --stdin` round-trips from any "
-            "directory — `mew run` resolves them against its own discovery.",
-        ),
-    ] = False,
+    pattern: str | None = None,
+    literal: bool = False,
+    tag: list[str] | None = None,
+    show_tags: bool = False,
+    show_cases: bool = False,
+    names_only: bool = False,
 ) -> None:
     """List discovered benchmarks without running them."""
     with _discovery.discovered():
@@ -372,162 +307,34 @@ def _run_variants_cmd(
         raise SystemExit(1)
 
 
-@app.command(usage="Usage: mew run [OPTIONS] [PATHS]")
 def run(
-    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],
-    /,
+    paths: list[str],
     *,
-    pattern: Annotated[
-        str | None,
-        Parameter(
-            name=["-k", "--pattern"],
-            help="Only run benchmarks whose name matches this regex (re.search, "
-            "unanchored; a plain word works as a substring). Matches the registered "
-            "name (`file.py::func`); a family case also matches by its `name[label]` "
-            "form (e.g. `bench_sort[n=1000]`) — pass `--literal` to match `[...]` "
-            "without escaping.",
-        ),
-    ] = None,
-    literal: Annotated[
-        bool,
-        Parameter(
-            name=["-F", "--literal"],
-            help="Match `-k` as a literal string, not a regex. Lets you paste a "
-            "displayed `name[label]` (from `mew list --show-cases`) to run one case "
-            "without escaping its brackets.",
-        ),
-    ] = False,
-    stdin: Annotated[
-        bool,
-        Parameter(
-            name="--stdin",
-            help="Read newline-delimited selectors (`file.py::name` / `name[label]`) "
-            "from stdin, e.g. `mew list -k slow | mew run --stdin`. Each line is "
-            "matched literally, so `mew list --show-cases` output works as-is.",
-        ),
-    ] = False,
-    tag: Annotated[
-        list[str],
-        Parameter(
-            name=["-t", "--tag"],
-            help="Filter benchmarks by tag. Can be repeated, uses OR semantics.",
-        ),
-    ] = [],
-    output: Annotated[
-        list[str],
-        Parameter(
-            name=["-o", "--output"],
-            help="Output sink, repeatable: `-`/`stdout` for the terminal, "
-            "`<path>.{json,jsonl,parquet}` for a JSON / streaming-JSONL / Parquet "
-            "file. Default: `-`.",
-        ),
-    ] = [],
-    format: Annotated[
-        str,
-        Parameter(
-            name="--format",
-            help="Format of stdout output: `rich` (table), `json`, or `jsonl`. "
-            "Use `json`/`jsonl` to pipe machine-readable rows (e.g. `mew run "
-            "--format jsonl | jq`). File `-o` sinks keep their by-extension format.",
-        ),
-    ] = "rich",
-    min_time: Annotated[
-        str | None,
-        Parameter(
-            help="The minimum amount of time that each benchmark should run, in seconds (float, e.g. `0.5`) or number of iterations (e.g. `100x`)."
-        ),
-    ] = None,
-    repetitions: Annotated[int | None, Parameter(help="Repeat each benchmark N times.")] = None,
-    session_tag: Annotated[
-        str | None,
-        Parameter(
-            name="--session-tag",
-            help="Label this run's output as a session (e.g. `before`), persisted "
-            "next to the generated session id. Defaults to `git describe --always "
-            "--dirty` inside a checkout; disable the fallback with `[tool.mew] "
-            "auto_session_tag = false`. Unrelated to `-t/--tag`, which selects "
-            "which benchmarks run.",
-        ),
-    ] = None,
-    append: Annotated[
-        bool,
-        Parameter(
-            name="--append",
-            help="Append this run as a new session to existing `.jsonl` / `.parquet` "
-            "sinks instead of overwriting. Pair with `--session-tag` and select "
-            "sessions later via `mew compare file@<tag>`.",
-        ),
-    ] = False,
-    variant: Annotated[
-        list[str],
-        Parameter(
-            name="--variant",
-            help="Run a `name=path` variant in its own subprocess, repeatable. For "
-            "suites that can't share an interpreter (rival engines, GIL vs "
-            "free-threaded, …). Rows are tagged with the variant name; compare "
-            "with `mew compare <file> --by variant`. Mutually exclusive with "
-            "positional paths.",
-        ),
-    ] = [],
-    extra: Annotated[
-        list[str],
-        Parameter(name="--benchmark-option", help="raw arguments forwarded to Google Benchmark"),
-    ] = [],
-    profile_memory: Annotated[
-        bool,
-        Parameter(
-            name="--profile-memory",
-            help="Profile memory allocations with `memray` before the timing run.",
-        ),
-    ] = False,
-    flamegraph: Annotated[
-        Path | None,
-        Parameter(
-            name="--flamegraph",
-            help="Write an HTML flame graph containing allocation data to this path. Implies `--profile-memory`.",
-        ),
-    ] = None,
-    memory_iterations: Annotated[
-        int,
-        Parameter(
-            name="--memory-iterations",
-            help="Measured timing-loop iterations per case under `--profile-memory` "
-            "(default 100, plus a short warmup). Counting over many iterations "
-            "amortizes one-time allocations, so `memory.allocations_per_iteration` "
-            "is comparable across engines.",
-        ),
-    ] = 100,
-    sample: Annotated[
-        bool,
-        Parameter(
-            name="--sample",
-            help="Sample CPU time in-process with `pyinstrument` before the timing run. "
-            "Python frames only — for native/C frames use `mew profile`.",
-        ),
-    ] = False,
-    sample_interval: Annotated[
-        float,
-        Parameter(
-            name="--sample-interval",
-            help="`pyinstrument` sampling interval in seconds (default 1e-4).",
-        ),
-    ] = 1e-4,
-    sample_iterations: Annotated[
-        int,
-        Parameter(
-            name="--sample-iterations",
-            help="Iterations of the body per benchmark under the sampler (default 1000).",
-        ),
-    ] = 1000,
-    sample_html: Annotated[
-        Path | None,
-        Parameter(
-            name="--sample-html",
-            help="Write a pyinstrument HTML report to this path. Implies `--sample`.",
-        ),
-    ] = None,
+    pattern: str | None = None,
+    literal: bool = False,
+    stdin: bool = False,
+    tag: list[str] | None = None,
+    output: list[str] | None = None,
+    format: str = "rich",
+    min_time: str | None = None,
+    repetitions: int | None = None,
+    session_tag: str | None = None,
+    append: bool = False,
+    variant: list[str] | None = None,
+    extra: list[str] | None = None,
+    profile_memory: bool = False,
+    flamegraph: Path | None = None,
+    memory_iterations: int = 100,
+    sample: bool = False,
+    sample_interval: float = 1e-4,
+    sample_iterations: int = 1000,
+    sample_html: Path | None = None,
 ) -> None:
     """Discover and run benchmarks."""
+    tag = tag or []
+    output = output or []
+    variant = variant or []
+    extra = extra or []
     if format not in _STDOUT_FORMATS:
         print(
             f"unknown --format {format!r}; choose from {sorted(_STDOUT_FORMATS)}", file=sys.stderr
@@ -668,103 +475,22 @@ def _select_slowest(entries: list[Entry], n: int, *, rank_from: Path | None) -> 
     return ranked[:n]
 
 
-@app.command(usage="Usage: mew profile [OPTIONS] [PATHS]")
 def profile(
-    paths: Annotated[list[str], Parameter(help=_PATHS_HELP)] = [],
-    /,
+    paths: list[str],
     *,
-    pattern: Annotated[
-        str | None,
-        Parameter(
-            name=["-k", "--pattern"],
-            help="Only profile benchmarks whose name matches this regex (re.search).",
-        ),
-    ] = None,
-    tag: Annotated[
-        list[str],
-        Parameter(
-            name=["-t", "--tag"],
-            help="Filter benchmarks by tag. Can be repeated, uses OR semantics.",
-        ),
-    ] = [],
-    stdin: Annotated[
-        bool,
-        Parameter(
-            name="--stdin",
-            help="Read newline-delimited selectors from stdin, e.g. "
-            "`mew list -n -k slow | mew profile --stdin`. A path-free name is "
-            "matched against the discovered benchmarks; a `file.py::name` line "
-            "imports that path. Lines match literally.",
-        ),
-    ] = False,
-    slowest: Annotated[
-        int | None,
-        Parameter(
-            name="--slowest",
-            help="Profile only the N slowest benchmarks (profiling a whole suite "
-            "is expensive). Ranked by `--rank-from` if given, else by a quick "
-            "in-process timing pass.",
-        ),
-    ] = None,
-    rank_from: Annotated[
-        Path | None,
-        Parameter(
-            name="--rank-from",
-            help="With `--slowest`, rank by real_time from this result file "
-            "(`.json`/`.jsonl`/`.parquet`) instead of a quick timing pass.",
-        ),
-    ] = None,
-    profiler: Annotated[
-        str,
-        Parameter(
-            name=["-p", "--profiler"],
-            help="Backend: `auto` (the platform's native profiler), `xctrace` "
-            "(macOS), `py-spy` (Linux/Windows), or `perf` (Linux).",
-        ),
-    ] = "auto",
-    output_dir: Annotated[
-        Path,
-        Parameter(
-            name=["-o", "--output-dir"],
-            help="Directory for the recorded artifact(s). Default: `./.mew-traces`.",
-        ),
-    ] = Path(".mew-traces"),
-    template: Annotated[
-        str,
-        Parameter(
-            help="(xctrace only) Instruments template name (see `xctrace list "
-            "templates`) or a path to a `.tracetemplate`. Default: `Time Profiler`.",
-        ),
-    ] = "Time Profiler",
-    iterations: Annotated[
-        int,
-        Parameter(
-            help="Times the body runs per case under the sampler (default 100000). "
-            "Out-of-process samplers run at ~1 kHz, so fast benchmarks need many reps.",
-        ),
-    ] = 100_000,
-    time_limit: Annotated[
-        str | None,
-        Parameter(help="Hard cap on each recording, e.g. `10s`. Bounds a runaway body."),
-    ] = None,
-    rate: Annotated[
-        int,
-        Parameter(
-            help="(py-spy/perf) Sampling frequency in Hz (default 1000). Ignored by xctrace.",
-        ),
-    ] = 1000,
-    separate: Annotated[
-        bool,
-        Parameter(
-            name="--separate",
-            help="(xctrace only) Write one `<case>.trace` per case instead of a "
-            "single combined bundle with one run per case.",
-        ),
-    ] = False,
-    open_app: Annotated[
-        bool,
-        Parameter(name="--open", help="Open the resulting artifact(s) in their viewer."),
-    ] = False,
+    pattern: str | None = None,
+    tag: list[str] | None = None,
+    stdin: bool = False,
+    slowest: int | None = None,
+    rank_from: Path | None = None,
+    profiler: str = "auto",
+    output_dir: Path = Path(".mew-traces"),
+    template: str = "Time Profiler",
+    iterations: int = 100_000,
+    time_limit: str | None = None,
+    rate: int = 1000,
+    separate: bool = False,
+    open_app: bool = False,
 ) -> None:
     """Profile benchmarks out-of-process, capturing native C frames.
 
@@ -810,86 +536,24 @@ def profile(
         print(f"Open in {backend.viewer_hint}.", file=sys.stderr)
 
 
-@app.command
 def compare(
     files: list[Path],
-    /,
     *,
-    metric: Annotated[
-        str,
-        Parameter(
-            name=["--metric", "-m"],
-            help="metric to compare: real_time, cpu_time, iterations, or (for "
-            "--profile-memory results) memory.peak_bytes, memory.total_bytes, "
-            "memory.total_allocations, memory.allocations_per_iteration (the "
-            "cross-engine-comparable per-call allocation count)",
-        ),
-    ] = "real_time",
-    key: Annotated[
-        str | None,
-        Parameter(
-            name="--key",
-            help="how benchmarks are matched across files: `name` (full registered "
-            "name) or `func` (strip the `file.py::` prefix, for A/B suites in "
-            "different files with matching function names). Defaults to `func` "
-            "with `--by variant`, `name` otherwise.",
-        ),
-    ] = None,
-    pattern: Annotated[
-        str | None, Parameter(name=["--pattern", "-k"], help="regex filter (re.search)")
-    ] = None,
-    literal: Annotated[
-        bool,
-        Parameter(
-            name=["-F", "--literal"],
-            help="match `-k` as a literal string, not a regex (e.g. a pasted "
-            "`name[label]` with brackets)",
-        ),
-    ] = False,
-    stddev: Annotated[
-        bool,
-        Parameter(name="--stddev", help="show stddev columns if present in the result files"),
-    ] = False,
-    by: Annotated[
-        str | None,
-        Parameter(
-            name="--by",
-            help="pivot dimension: `variant` compares the variants within one "
-            "`mew run --variant` result file (one column each) instead of files",
-        ),
-    ] = None,
-    baseline: Annotated[
-        str | None,
-        Parameter(
-            name="--baseline",
-            help="with `--by variant`, the baseline variant (default: first written)",
-        ),
-    ] = None,
-    fail_on_regression: Annotated[
-        float | None,
-        Parameter(
-            name="--fail-on-regression",
-            help="exit 2 if any benchmark is slower than baseline by more than this percent",
-        ),
-    ] = None,
-    regressions_config: Annotated[
-        Path | None,
-        Parameter(
-            name="--regressions-config",
-            help="TOML file with [tool.mew.regressions] (default: ./pyproject.toml)",
-        ),
-    ] = None,
-    allow: Annotated[
-        list[str],
-        Parameter(
-            name="--allow",
-            help="inline allowlist entry `PATTERN` (ignore) or `PATTERN:PCT` (per-rule threshold)",
-        ),
-    ] = [],
+    metric: str = "real_time",
+    key: str | None = None,
+    pattern: str | None = None,
+    literal: bool = False,
+    stddev: bool = False,
+    by: str | None = None,
+    baseline: str | None = None,
+    fail_on_regression: float | None = None,
+    regressions_config: Path | None = None,
+    allow: list[str] | None = None,
 ) -> None:
     """Compare benchmark result files; the first file is the baseline."""
     from mew.compare import compare as _compare
 
+    allow = allow or []
     cfg = None
     if fail_on_regression is not None or allow or regressions_config is not None:
         from mew.regressions import load_config
@@ -915,5 +579,366 @@ def compare(
         raise SystemExit(code)
 
 
+class _CommandHelpFormatter(argparse.HelpFormatter):
+    """Help formatter for the git-style layout, with a light rich touch.
+
+    Tweaks over the argparse default:
+
+    * Drop the ``<command>`` metavar header argparse renders above a subparsers
+      group, so commands sit directly under the ``commands:`` heading.
+    * Render value placeholders as ``<spiky-braces>`` (e.g. ``--pattern
+      <pattern>``) instead of ``UPPERCASE``.
+    * On a color terminal, bold the section headings and tint option flags. The
+      styling is applied *after* argparse lays the text out (rich highlight spans
+      don't change any characters), so column alignment is untouched; it falls
+      back to plain when stdout isn't a TTY or ``NO_COLOR`` is set — keeping
+      pipes, CI logs, and the docs ``--help`` capture clean.
+    """
+
+    def _format_action(self, action: argparse.Action) -> str:
+        text = super()._format_action(action)
+        if isinstance(action, argparse._SubParsersAction):
+            _, _, text = text.partition("\n")  # strip the leading `<command>` line
+        return text
+
+    def _metavar(self, action: argparse.Action) -> str:
+        return f"<{action.dest.replace('_', '-')}>"
+
+    def _get_default_metavar_for_optional(self, action: argparse.Action) -> str:
+        return self._metavar(action)
+
+    def _get_default_metavar_for_positional(self, action: argparse.Action) -> str:
+        return self._metavar(action)
+
+    def format_help(self) -> str:
+        text = super().format_help()
+        # Decide at format time (not import time): the docs generator redirects
+        # stdout to a StringIO, which is not a TTY, so it gets plain text.
+        if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+            return text
+        from rich.console import Console
+        from rich.text import Text
+
+        styled = Text(text)
+        styled.highlight_regex(r"(?m)^[A-Za-z][A-Za-z ]*:", "bold")  # column-0 headings
+        styled.highlight_regex(r"(?<![\w-])--[A-Za-z][\w-]*", "cyan")  # long flags
+        styled.highlight_regex(r"(?<![\w-])-[A-Za-z](?![\w-])", "green")  # short flags
+        styled.highlight_regex(r"<[\w-]+>", "yellow")  # metavars
+        console = Console(force_terminal=True)
+        with console.capture() as cap:
+            console.print(styled, end="", soft_wrap=True)
+        return cap.get()
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argparse command tree. Each subparser sets ``_func`` to its handler."""
+    parser = argparse.ArgumentParser(
+        prog="mew",
+        description="Microbenchmarking for Python via Google Benchmark.",
+        formatter_class=_CommandHelpFormatter,
+        # git-style: global options up front, then `<command> [<args>]` — instead
+        # of argparse's default `{list,ls,run,…} ...` enumeration.
+        usage="mew [-h] [--version] <command> [<args>]",
+    )
+    parser.add_argument("--version", action="version", version=_VERSION)
+    # metavar `<command>` keeps the command list out of curly braces; prog="mew"
+    # so each subcommand's own usage reads `mew run …` (not the parent's usage
+    # string, which argparse would otherwise splice in).
+    sub = parser.add_subparsers(dest="_command", title="commands", metavar="<command>", prog="mew")
+
+    # mew list / ls
+    p = sub.add_parser(
+        "list",
+        aliases=["ls"],
+        help="List discovered benchmarks.",
+        formatter_class=_CommandHelpFormatter,
+    )
+    p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
+    p.add_argument(
+        "-k",
+        "--pattern",
+        help="List benchmarks whose name matches this regex (re.search, unanchored). "
+        "A plain word works as a substring; a family case also matches by its "
+        "`name[label]` form. Pass --literal to match `[...]` without escaping.",
+    )
+    p.add_argument(
+        "-F",
+        "--literal",
+        action="store_true",
+        help="Match -k as a literal string, not a regex (e.g. paste `bench_sort[n=1000]`).",
+    )
+    p.add_argument(
+        "-t",
+        "--tag",
+        action="append",
+        default=[],
+        help="Filter benchmarks by tag. Repeatable, OR semantics.",
+    )
+    p.add_argument("--show-tags", action="store_true", help="Show tags alongside each name.")
+    p.add_argument(
+        "--show-cases",
+        action="store_true",
+        help="Expand each parametrized family into one row per case (`name[label]`).",
+    )
+    p.add_argument(
+        "-n",
+        "--names-only",
+        action="store_true",
+        help="Print the bare name without the `file.py::` prefix (like `docker ps -q`); "
+        "path-free, so `mew list -n | mew run --stdin` round-trips from any directory.",
+    )
+    p.set_defaults(_func=list_)
+
+    # mew run
+    p = sub.add_parser(
+        "run", help="Discover and run benchmarks.", formatter_class=_CommandHelpFormatter
+    )
+    p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
+    p.add_argument(
+        "-k",
+        "--pattern",
+        help="Only run benchmarks whose name matches this regex (re.search). A family "
+        "case also matches by its `name[label]` form; pass --literal to match `[...]`.",
+    )
+    p.add_argument("-F", "--literal", action="store_true", help="Match -k as a literal string.")
+    p.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read newline-delimited selectors from stdin (`mew list | mew run --stdin`). "
+        "Lines match literally; a path-free name is resolved against run's own discovery.",
+    )
+    p.add_argument(
+        "-t",
+        "--tag",
+        action="append",
+        default=[],
+        help="Filter benchmarks by tag. Repeatable, OR semantics.",
+    )
+    p.add_argument(
+        "-o",
+        "--output",
+        action="append",
+        default=[],
+        help="Output sink, repeatable: `-`/`stdout` for the terminal, "
+        "`<path>.{json,jsonl,parquet}` for a file. Default: `-`.",
+    )
+    p.add_argument(
+        "--format",
+        default="rich",
+        help="Format of stdout output: `rich` (table), `json`, or `jsonl`. "
+        "Use json/jsonl to pipe machine-readable rows (`mew run --format jsonl | jq`).",
+    )
+    p.add_argument(
+        "--min-time", help="Min time per benchmark, seconds (e.g. `0.5`) or iters (`100x`)."
+    )
+    p.add_argument("--repetitions", type=int, help="Repeat each benchmark N times.")
+    p.add_argument(
+        "--session-tag",
+        help="Label this run's output as a session (e.g. `before`). Defaults to "
+        "`git describe`; disable with `[tool.mew] auto_session_tag = false`.",
+    )
+    p.add_argument(
+        "--append",
+        action="store_true",
+        help="Append as a new session to existing `.jsonl` / `.parquet` sinks.",
+    )
+    p.add_argument(
+        "--variant",
+        action="append",
+        default=[],
+        help="Run a `name=path` variant in its own subprocess, repeatable. Compare with "
+        "`mew compare <file> --by variant`. Mutually exclusive with positional paths.",
+    )
+    p.add_argument(
+        "--benchmark-option",
+        dest="extra",
+        action="append",
+        default=[],
+        help="Raw arguments forwarded to Google Benchmark.",
+    )
+    p.add_argument(
+        "--profile-memory",
+        action="store_true",
+        help="Profile memory allocations with `memray` before the timing run.",
+    )
+    p.add_argument(
+        "--flamegraph",
+        type=Path,
+        help="Write an HTML allocation flame graph to this path. Implies --profile-memory.",
+    )
+    p.add_argument(
+        "--memory-iterations",
+        type=int,
+        default=100,
+        help="Measured loop iterations per case under --profile-memory (default 100, + warmup).",
+    )
+    p.add_argument(
+        "--sample",
+        action="store_true",
+        help="Sample CPU in-process with `pyinstrument` (Python frames; use `mew profile` for native).",
+    )
+    p.add_argument(
+        "--sample-interval",
+        type=float,
+        default=1e-4,
+        help="pyinstrument sampling interval in seconds (default 1e-4).",
+    )
+    p.add_argument(
+        "--sample-iterations",
+        type=int,
+        default=1000,
+        help="Iterations of the body per benchmark under the sampler (default 1000).",
+    )
+    p.add_argument(
+        "--sample-html",
+        type=Path,
+        help="Write a pyinstrument HTML report to this path. Implies --sample.",
+    )
+    p.set_defaults(_func=run)
+
+    # mew profile
+    p = sub.add_parser(
+        "profile",
+        help="Profile benchmarks out-of-process (native frames).",
+        formatter_class=_CommandHelpFormatter,
+    )
+    p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
+    p.add_argument(
+        "-k", "--pattern", help="Only profile benchmarks whose name matches this regex (re.search)."
+    )
+    p.add_argument(
+        "-t",
+        "--tag",
+        action="append",
+        default=[],
+        help="Filter benchmarks by tag. Repeatable, OR semantics.",
+    )
+    p.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read newline-delimited selectors from stdin (`mew list -n | mew profile --stdin`).",
+    )
+    p.add_argument(
+        "--slowest",
+        type=int,
+        help="Profile only the N slowest benchmarks. Ranked by --rank-from if given, "
+        "else by a quick in-process timing pass.",
+    )
+    p.add_argument(
+        "--rank-from",
+        type=Path,
+        help="With --slowest, rank by real_time from this result file instead of a timing pass.",
+    )
+    p.add_argument(
+        "-p",
+        "--profiler",
+        default="auto",
+        help="Backend: `auto`, `xctrace` (macOS), `py-spy` (Linux/Windows), or `perf` (Linux).",
+    )
+    p.add_argument(
+        "-o",
+        "--output-dir",
+        type=Path,
+        default=Path(".mew-traces"),
+        help="Directory for the recorded artifact(s). Default: `./.mew-traces`.",
+    )
+    p.add_argument(
+        "--template",
+        default="Time Profiler",
+        help="(xctrace) Instruments template name or `.tracetemplate` path. Default: `Time Profiler`.",
+    )
+    p.add_argument(
+        "--iterations",
+        type=int,
+        default=100_000,
+        help="Times the body runs per case under the sampler (default 100000).",
+    )
+    p.add_argument("--time-limit", help="Hard cap on each recording, e.g. `10s`.")
+    p.add_argument(
+        "--rate",
+        type=int,
+        default=1000,
+        help="(py-spy/perf) Sampling frequency in Hz (default 1000). Ignored by xctrace.",
+    )
+    p.add_argument(
+        "--separate",
+        action="store_true",
+        help="(xctrace) Write one `<case>.trace` per case instead of a combined bundle.",
+    )
+    p.add_argument(
+        "--open",
+        dest="open_app",
+        action="store_true",
+        help="Open the resulting artifact(s) in their viewer.",
+    )
+    p.set_defaults(_func=profile)
+
+    # mew compare
+    p = sub.add_parser(
+        "compare", help="Compare benchmark result files.", formatter_class=_CommandHelpFormatter
+    )
+    p.add_argument("files", nargs="+", type=Path, help="Result files; the first is the baseline.")
+    p.add_argument(
+        "-m",
+        "--metric",
+        default="real_time",
+        help="metric: real_time, cpu_time, iterations, or (for --profile-memory results) "
+        "memory.peak_bytes / memory.total_bytes / memory.total_allocations / "
+        "memory.allocations_per_iteration",
+    )
+    p.add_argument(
+        "--key",
+        help="how benchmarks are matched: `name` (full) or `func` (strip the `file.py::` "
+        "prefix). Defaults to `func` with --by variant, `name` otherwise.",
+    )
+    p.add_argument("-k", "--pattern", help="regex filter (re.search)")
+    p.add_argument(
+        "-F",
+        "--literal",
+        action="store_true",
+        help="match -k as a literal string, not a regex",
+    )
+    p.add_argument("--stddev", action="store_true", help="show stddev columns if present")
+    p.add_argument(
+        "--by",
+        help="pivot dimension: `variant` compares variants within one --variant file.",
+    )
+    p.add_argument("--baseline", help="with --by variant, the baseline variant (default: first)")
+    p.add_argument(
+        "--fail-on-regression",
+        type=float,
+        help="exit 2 if any benchmark is slower than baseline by more than this percent",
+    )
+    p.add_argument(
+        "--regressions-config",
+        type=Path,
+        help="TOML file with [tool.mew.regressions] (default: ./pyproject.toml)",
+    )
+    p.add_argument(
+        "--allow",
+        action="append",
+        default=[],
+        help="inline allowlist entry `PATTERN` (ignore) or `PATTERN:PCT` (per-rule threshold)",
+    )
+    p.set_defaults(_func=compare)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse ``argv`` and dispatch to the selected command. Returns the exit code."""
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    func = getattr(args, "_func", None)
+    if func is None:
+        parser.print_help()
+        return 0
+    # Namespace dests mirror each command's keyword params; `_command`/`_func`
+    # are internal and excluded.
+    kwargs = {k: v for k, v in vars(args).items() if not k.startswith("_")}
+    func(**kwargs)
+    return 0
+
+
 if __name__ == "__main__":
-    app()
+    raise SystemExit(main())

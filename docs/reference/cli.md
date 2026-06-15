@@ -1,6 +1,6 @@
 # CLI reference
 
-Auto-generated from the cyclopts app. For an introduction and examples,
+Auto-generated from `mew … --help`. For an introduction and examples,
 see [](../guide/cli.md).
 
 (cli-root)=
