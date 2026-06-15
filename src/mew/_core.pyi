@@ -52,7 +52,7 @@ class Run:
     """
     A single benchmark run report.
     Times are in seconds (accumulated across iterations); use `adjusted_real_time()` for per-iteration averages.
-    Carries a `__dict__` (dynamic_attr) so out-of-loop profile passes can attach `.memory` / `.cpu` to a row in place.
+    Projected to a `RunRow` dict at the reporter boundary (`mew.reporter._run_to_dict`).
     """
 
     @property

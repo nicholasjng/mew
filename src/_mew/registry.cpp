@@ -1,5 +1,5 @@
-// Registry bindings — register a Python callable as a Google Benchmark and
-// expose the resulting Benchmark* as a chainable handle.
+// Registry bindings — register a Python callable as a Google Benchmark,
+// exposing the Benchmark* as a chainable handle.
 
 #include <benchmark/benchmark.h>
 #include <nanobind/nanobind.h>
@@ -67,9 +67,8 @@ void register_registry(nb::module_& m) {
                 try {
                     (*holder)(nb::cast(&s, nb::rv_policy::reference));
                 } catch (nb::python_error& e) {
-                    // SkipWithError captures the formatted traceback. Discard the
-                    // Python error so its destructor doesn't restore it to the
-                    // indicator and leak into the next benchmark.
+                    // SkipWithError captures the traceback; discard the Python
+                    // error so it doesn't leak into the next benchmark.
                     s.SkipWithError(e.what());
                     e.discard_as_unraisable(*holder);
                 } catch (std::exception& e) {

@@ -10,7 +10,7 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 namespace {
-// ScopedPauseTiming is non-movable, so hold it behind a unique_ptr to defer
+// ScopedPauseTiming is non-movable; hold it behind unique_ptr to defer
 // construction until __enter__.
 struct PauseScope {
     benchmark::State* state;
