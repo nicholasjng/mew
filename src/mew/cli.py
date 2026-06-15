@@ -616,8 +616,8 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
 
     def format_help(self) -> str:
         text = super().format_help()
-        # Decide at format time (not import time): the docs generator redirects
-        # stdout to a StringIO, which is not a TTY, so it gets plain text.
+        # TTY check at format time, not import: the docs generator captures stdout
+        # (non-TTY) and must get plain text.
         if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
             return text
         from mew._console import sgr
