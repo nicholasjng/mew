@@ -132,7 +132,7 @@ def test_discovered_unloads_only_what_it_added(tmp_path, _restore_sys_path):
     assert "_bench_fixtures" in sys.modules
     # ...and the registered function still works: its module namespace survives
     # via __globals__ even though sys.modules no longer holds the module.
-    assert entry.fn.__globals__["VALUE"] == 7  # ty: ignore[unresolved-attribute]
+    assert entry.fn.__globals__["VALUE"] == 7
 
 
 def test_unload_is_idempotent():
