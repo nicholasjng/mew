@@ -1,6 +1,5 @@
-// Reporter bindings — exposes Run/Context as Python objects, wires a duck-typed
-// Python reporter object into Google Benchmark's BenchmarkReporter interface,
-// and exposes `run_benchmarks` as the runner entry point.
+// Reporter bindings — exposes Run/Context as Python objects, bridges a Python
+// reporter into GB's BenchmarkReporter interface, and exposes `run_benchmarks`.
 
 #include <benchmark/benchmark.h>
 #include <nanobind/nanobind.h>
@@ -48,12 +47,11 @@ nb::dict build_context_dict(const Context& ctx) {
 class PyReporter : public BenchmarkReporter {
    public:
     nb::object py;
-    // Caller-supplied keys (session id/tag, user context) overlaid onto the
-    // GB-built context before the Python reporter sees it. Empty for direct
-    // `run_benchmarks` calls that pass no provenance.
+    // Caller keys (session id/tag, user context) overlaid onto the GB context
+    // before the Python reporter sees it. Empty when no provenance is passed.
     nb::dict extra_context;
-    // GB's reporter interface is noexcept, so callback exceptions are stashed
-    // here and rethrown from `run_benchmarks` after the loop returns.
+    // GB's reporter interface is noexcept; stash callback exceptions here and
+    // rethrow from `run_benchmarks` after the loop returns.
     std::exception_ptr pending_exception;
 
     PyReporter(nb::object obj, nb::dict extra)
@@ -134,9 +132,8 @@ void register_reporter(nb::module_& m) {
                     "A single benchmark run report.\n"
                     "Times are in seconds (accumulated across iterations); use "
                     "`adjusted_real_time()` for per-iteration averages.\n"
-                    "Carries a `__dict__` (dynamic_attr) so out-of-loop profile "
-                    "passes can attach `.memory` / `.cpu` to a row in place.",
-                    nb::dynamic_attr())
+                    "Projected to a `RunRow` dict at the reporter boundary "
+                    "(`mew.reporter._run_to_dict`).")
         .def_ro("run_name", &Run::run_name)
         .def("benchmark_name", &Run::benchmark_name)
         .def_ro("family_index", &Run::family_index)
@@ -176,8 +173,7 @@ void register_reporter(nb::module_& m) {
             for (auto& s : argv) argp.push_back(s.data());
 
             int argc = (int)argp.size();
-            // Re-parse flags on every call so different argv per call (e.g.
-            // distinct --benchmark_filter values across tests) take effect.
+            // Re-parse flags every call so a different argv per call takes effect.
             // `--help` in argv still triggers exit(0) — documented GB behavior.
             benchmark::Initialize(&argc, argp.data());
 
@@ -193,13 +189,11 @@ void register_reporter(nb::module_& m) {
                            : benchmark::RunSpecifiedBenchmarks();
             }
 
-            // Do NOT clear here: callers clear before registering, and atexit
-            // handles teardown. This keeps BenchmarkHandle objects valid past
-            // a run, up to the next clear.
+            // Do NOT clear here: callers clear before registering and atexit
+            // handles teardown, so BenchmarkHandles stay valid until the next clear.
 
-            // Rethrow the first reporter-callback exception. nanobind's
-            // binding trampoline restores the Python error indicator from the
-            // captured `python_error`.
+            // Rethrow the first reporter-callback exception; nanobind's trampoline
+            // restores the Python error indicator from the captured `python_error`.
             if (pr && pr->pending_exception) {
                 std::rethrow_exception(pr->pending_exception);
             }

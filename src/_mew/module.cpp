@@ -20,8 +20,7 @@ NB_MODULE(_core, m) {
     m.attr("BENCHMARK_COMMIT") = MEW_BENCHMARK_COMMIT;
     m.attr("BENCHMARK_VERSION") = benchmark::GetBenchmarkVersion();
 
-    // Reporter bindings first so register_benchmark / run_benchmarks can
-    // reference the Run and TimeUnit types they bind.
+    // Reporter first so registry/run_benchmarks can reference Run and TimeUnit.
     register_reporter(m);
     register_state(m);
     register_registry(m);
