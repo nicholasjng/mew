@@ -68,7 +68,6 @@ doctest_global_setup = "import mew"
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
-    "rich": ("https://rich.readthedocs.io/en/stable/", None),
     "pyarrow": ("https://arrow.apache.org/docs/", None),
 }
 

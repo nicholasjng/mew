@@ -206,10 +206,10 @@ def test_parquet_reporter_duckdb_query_round_trip(tmp_path):
 
 def test_rich_reporter_runs_without_error():
     # Use an in-memory console so the test doesn't paint the terminal.
-    from rich.console import Console
+    from mew._console import Terminal
 
     buf = io.StringIO()
-    rep = RichReporter(console=Console(file=buf, force_terminal=False, width=120))
+    rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
     _run_one(rep)
     out = buf.getvalue()
     assert "host=" in out
@@ -220,12 +220,11 @@ def test_rich_reporter_streams_header_before_first_run():
     """Header must be emitted at report_context, not deferred to finalize."""
     import io
 
-    from rich.console import Console
-
+    from mew._console import Terminal
     from mew.reporter import RichReporter
 
     buf = io.StringIO()
-    rep = RichReporter(console=Console(file=buf, force_terminal=False, width=120))
+    rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
     rep.report_context({"host_name": "h", "num_cpus": 4, "mhz_per_cpu": 1000, "cpu_scaling": "off"})
     # Header is already on screen — we haven't reported any runs yet.
     out = buf.getvalue()
@@ -237,13 +236,12 @@ def test_rich_reporter_streams_header_before_first_run():
 def test_rich_reporter_profile_flags_add_columns():
     import io
 
-    from rich.console import Console
-
+    from mew._console import Terminal
     from mew.reporter import RichReporter
 
     buf = io.StringIO()
     rep = RichReporter(
-        console=Console(file=buf, force_terminal=False, width=200),
+        terminal=Terminal(file=buf, width=200, color=False),
         show_memory=True,
         show_cpu=True,
     )
@@ -256,7 +254,7 @@ def test_rich_reporter_profile_flags_add_columns():
 
 
 def test_rich_reporter_shows_label_column_for_families():
-    from rich.console import Console
+    from mew._console import Terminal
 
     @mew.parametrize([{"n": 10}, {"n": 20}], ids=["small", "big"])
     def bench_x(state, n):
@@ -264,7 +262,7 @@ def test_rich_reporter_shows_label_column_for_families():
             pass
 
     buf = io.StringIO()
-    rep = RichReporter(console=Console(file=buf, force_terminal=False, width=120), show_label=True)
+    rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False), show_label=True)
     mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=rep)
     out = buf.getvalue()
     assert "Label" in out  # header
@@ -272,7 +270,7 @@ def test_rich_reporter_shows_label_column_for_families():
 
 
 def test_rich_reporter_left_ellipsizes_long_names():
-    from rich.console import Console
+    from mew._console import Terminal
 
     name = "benchmarks/some/deeply/nested/path/bench_module.py::bench_the_actual_function"
 
@@ -283,7 +281,7 @@ def test_rich_reporter_left_ellipsizes_long_names():
 
     buf = io.StringIO()
     # Narrow width forces truncation; the meaningful function suffix must survive.
-    rep = RichReporter(console=Console(file=buf, force_terminal=False, width=60))
+    rep = RichReporter(terminal=Terminal(file=buf, width=60, color=False))
     mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=rep)
     out = buf.getvalue()
     assert "…" in out
@@ -293,10 +291,10 @@ def test_rich_reporter_left_ellipsizes_long_names():
 def test_rich_reporter_renders_canonical_name():
     """The live table shows the human `name[label]` form, not GB's raw
     `/case:N/min_time:…` suffixes, so it reads the same as `mew compare`."""
-    from rich.console import Console
+    from mew._console import Terminal
 
     buf = io.StringIO()
-    rep = RichReporter(console=Console(file=buf, force_terminal=False, width=120))
+    rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
     rep.report_context({"host_name": "h", "num_cpus": 4, "mhz_per_cpu": 1000, "cpu_scaling": "off"})
     rep.report_runs([_fake_row("bench.py::bench_x/case:0/min_time:0.200", label="small")])
     out = buf.getvalue()

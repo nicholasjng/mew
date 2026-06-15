@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
-from rich.console import Console
 
+from mew._console import Terminal
 from mew.compare import (
     _aggregate_group,
     _load,
@@ -19,6 +20,17 @@ from mew.compare import (
     _split_selector,
     compare,
 )
+
+
+class Console(Terminal):
+    """A capture terminal mirroring rich's record/export_text shape, color off."""
+
+    def __init__(self, *, record: bool = True, width: int = 80) -> None:
+        self._buf = io.StringIO()
+        super().__init__(file=self._buf, width=width, color=False)
+
+    def export_text(self) -> str:
+        return self._buf.getvalue()
 
 
 def _make_doc(benches: list[dict]) -> dict:

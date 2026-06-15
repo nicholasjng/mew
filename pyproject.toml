@@ -10,9 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "Nicholas Junge", email = "nicho.junge@gmail.com" }]
-dependencies = [
-    "rich >=13.7",
-]
+dependencies = []
 
 [project.urls]
 Documentation = "https://mew.readthedocs.io"

@@ -10,9 +10,7 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Protocol, TextIO, cast, runtime_checkable
 
-from rich.console import Console
-from rich.text import Text
-
+from mew._console import Terminal, sgr
 from mew._core import Run
 from mew._typing import RunRow
 
@@ -290,8 +288,8 @@ class RichReporter:
 
     Parameters
     ----------
-    console : rich.console.Console, optional
-        Console to print to. Defaults to a fresh one.
+    terminal : mew._console.Terminal, optional
+        Terminal to print to. Defaults to a fresh one (stdout).
     show_memory : bool, default False
         Add ``Peak Mem`` / ``Total Alloc`` columns.
     show_cpu : bool, default False
@@ -307,13 +305,13 @@ class RichReporter:
     def __init__(
         self,
         *,
-        console: Console | None = None,
+        terminal: Terminal | None = None,
         show_memory: bool = False,
         show_cpu: bool = False,
         show_label: bool = False,
         show_variant: bool = False,
     ) -> None:
-        self._console = console or Console()
+        self._term = terminal or Terminal()
         self._show_memory = show_memory
         self._show_cpu = show_cpu
         self._show_label = show_label
@@ -341,10 +339,14 @@ class RichReporter:
         cpus = c.get("num_cpus", "?")
         mhz = c.get("mhz_per_cpu", 0) or 0
         scaling = c.get("cpu_scaling", "?")
-        self._console.print(
-            f"[bold]mew[/] [dim]·[/] host=[cyan]{host}[/] "
-            f"cpus=[cyan]{cpus}[/] @ [cyan]{mhz:.0f}MHz[/] "
-            f"scaling=[cyan]{scaling}[/]"
+        color = self._term.color
+
+        def cy(v: object) -> str:
+            return sgr(str(v), "cyan", enabled=color)
+
+        self._term.print(
+            f"{sgr('mew', 'bold', enabled=color)} {sgr('·', 'dim', enabled=color)} "
+            f"host={cy(host)} cpus={cy(cpus)} @ {cy(f'{mhz:.0f}MHz')} scaling={cy(scaling)}"
         )
 
     def _compute_widths(self) -> None:
@@ -366,7 +368,7 @@ class RichReporter:
         n_cols = len(fixed) + 1  # +1 for the name column
         spacing = (n_cols - 1) * len(_COL_SEP)
         # Name column takes whatever's left; floor at 30 even if it overflows.
-        name_w = max(30, self._console.width - sum(fixed.values()) - spacing)
+        name_w = max(30, self._term.width - sum(fixed.values()) - spacing)
         self._widths = {"name": name_w, **fixed}
 
     def _print_header(self) -> None:
@@ -388,8 +390,9 @@ class RichReporter:
             cells.append("Samples".rjust(w["samples"]))
             cells.append("Hottest Frame".ljust(w["hottest_frame"]))
         line = _COL_SEP.join(cells)
-        self._console.print(Text(line, style="bold"))
-        self._console.print(Text("─" * len(line), style="dim"))
+        color = self._term.color
+        self._term.print(sgr(line, "bold", enabled=color))
+        self._term.print(sgr("─" * len(line), "dim", enabled=color))
 
     def _print_row(self, row: RunRow) -> None:
         w = self._widths
@@ -428,7 +431,7 @@ class RichReporter:
             if len(top) > w["hottest_frame"]:
                 top = top[: w["hottest_frame"] - 1] + "…"
             cells.append(top.ljust(w["hottest_frame"]))
-        self._console.print(Text(_COL_SEP.join(cells)))
+        self._term.print(_COL_SEP.join(cells))
 
 
 class ParquetReporter:

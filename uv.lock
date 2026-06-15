@@ -432,9 +432,6 @@ wheels = [
 name = "mew"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
-    { name = "rich" },
-]
 
 [package.optional-dependencies]
 cpu = [
@@ -474,7 +471,6 @@ typing = [
 requires-dist = [
     { name = "memray", marker = "sys_platform != 'win32' and extra == 'memory'", specifier = ">=1.5" },
     { name = "pyinstrument", marker = "extra == 'cpu'", specifier = ">=4.6" },
-    { name = "rich", specifier = ">=13.7" },
 ]
 provides-extras = ["cpu", "memory"]
 
