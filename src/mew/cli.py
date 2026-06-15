@@ -732,13 +732,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--format",
         default="rich",
+        metavar="(rich|json|jsonl)",
         help="Format of stdout output: `rich` (table), `json`, or `jsonl`. "
         "Use json/jsonl to pipe machine-readable rows (`mew run --format jsonl | jq`).",
     )
     p.add_argument(
         "--min-time", help="Min time per benchmark, seconds (e.g. `0.5`) or iters (`100x`)."
     )
-    p.add_argument("--repetitions", type=int, help="Repeat each benchmark N times.")
+    p.add_argument("--repetitions", type=int, metavar="<N>", help="Repeat each benchmark N times.")
     p.add_argument(
         "--session-tag",
         help="Label this run's output as a session (e.g. `before`). Defaults to "
@@ -793,6 +794,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--sample-iterations",
         type=int,
+        metavar="<N>",
         default=1000,
         help="Iterations of the body per benchmark under the sampler (default 1000).",
     )
@@ -828,6 +830,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--slowest",
         type=int,
+        metavar="<N>",
         help="Profile only the N slowest benchmarks. Ranked by --rank-from if given, "
         "else by a quick in-process timing pass.",
     )
@@ -857,6 +860,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--iterations",
         type=int,
+        metavar="<N>",
         default=100_000,
         help="Times the body runs per case under the sampler (default 100000).",
     )
@@ -891,41 +895,41 @@ def _build_parser() -> argparse.ArgumentParser:
         default="real_time",
         help="metric: real_time, cpu_time, iterations, or (for --profile-memory results) "
         "memory.peak_bytes / memory.total_bytes / memory.total_allocations / "
-        "memory.allocations_per_iteration",
+        "memory.allocations_per_iteration.",
     )
     p.add_argument(
         "--key",
         help="how benchmarks are matched: `name` (full) or `func` (strip the `file.py::` "
         "prefix). Defaults to `func` with --by variant, `name` otherwise.",
     )
-    p.add_argument("-k", "--pattern", help="regex filter (re.search)")
+    p.add_argument("-k", "--pattern", help="regex filter (re.search).")
     p.add_argument(
         "-F",
         "--literal",
         action="store_true",
-        help="match -k as a literal string, not a regex",
+        help="match -k as a literal string, not a regex.",
     )
-    p.add_argument("--stddev", action="store_true", help="show stddev columns if present")
+    p.add_argument("--stddev", action="store_true", help="show stddev columns if present.")
     p.add_argument(
         "--by",
         help="pivot dimension: `variant` compares variants within one --variant file.",
     )
-    p.add_argument("--baseline", help="with --by variant, the baseline variant (default: first)")
+    p.add_argument("--baseline", help="with --by variant, the baseline variant (default: first).")
     p.add_argument(
         "--fail-on-regression",
         type=float,
-        help="exit 2 if any benchmark is slower than baseline by more than this percent",
+        help="exit 2 if any benchmark is slower than baseline by more than this percent.",
     )
     p.add_argument(
         "--regressions-config",
         type=Path,
-        help="TOML file with [tool.mew.regressions] (default: ./pyproject.toml)",
+        help="TOML file with [tool.mew.regressions] (default: ./pyproject.toml).",
     )
     p.add_argument(
         "--allow",
         action="append",
         default=[],
-        help="inline allowlist entry `PATTERN` (ignore) or `PATTERN:PCT` (per-rule threshold)",
+        help="inline allowlist entry `PATTERN` (ignore) or `PATTERN:PCT` (per-rule threshold).",
     )
     p.set_defaults(_func=compare)
 
