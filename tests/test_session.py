@@ -68,6 +68,22 @@ def test_derive_session_tag_prefers_jj(tmp_path: Path):
     assert derive_session_tag(cwd=tmp_path)  # supplied by jj
 
 
+def test_derive_session_tag_tool_forces_one_provider(tmp_path: Path):
+    if not shutil.which("jj"):
+        pytest.skip("jj not available")
+    # jj resolves here but git has no usable HEAD. tool="git" must NOT fall back to
+    # jj — the configured command is honored even when it yields nothing.
+    subprocess.run(["jj", "git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    assert derive_session_tag(cwd=tmp_path, tool="jj")  # forced jj → a tag
+    assert derive_session_tag(cwd=tmp_path, tool="git") is None  # forced git, no fallback
+    assert derive_session_tag(cwd=tmp_path)  # no tool → auto (jj then git) → jj's tag
+
+
+def test_derive_session_tag_custom_tool_and_args(tmp_path: Path):
+    # Bring-your-own command: not tied to a VCS. `echo v1.2.3` stands in for a script.
+    assert derive_session_tag(cwd=tmp_path, tool="echo", args=["v1.2.3"]) == "v1.2.3"
+
+
 def _run_to_jsonl(tmp_path: Path, name: str, **run_kwargs) -> dict:
     """Run the registered benchmarks into a JSONL file, return its context block."""
     out = tmp_path / f"{name}.jsonl"

@@ -34,61 +34,47 @@ def new_session_id() -> str:
     return str(uuid.UUID(int=value))
 
 
-def derive_session_tag(cwd: Path | None = None) -> str | None:
-    """A "what code was this" label for the run, or None outside a work tree.
+# Built-in describe commands (args after the program name). jj uses a fixed-length
+# change-id prefix — not ``shortest()``, which grows with the repo — and no
+# ``-dirty`` marker, since jj's working copy is always a commit. With no tool
+# configured, derivation tries jj then git.
+_PRESETS: dict[str, list[str]] = {
+    "git": ["describe", "--always", "--dirty"],
+    # --ignore-working-copy: read the repo without snapshotting/mutating it.
+    "jj": ["log", "--no-graph", "--ignore-working-copy", "-r", "@", "-T", "change_id.short(12)"],
+}
 
-    The label an archive almost always wants is the source revision, so derive it instead of
-    making every pipeline spell it out. Prefer jj when a jj repo is present (including colocated
-    checkouts) and fall back to ``git describe`` in a plain git repo. Each helper returns None
-    when its VCS isn't there, so the first hit wins.
+
+def derive_session_tag(
+    cwd: Path | None = None, *, tool: str | None = None, args: list[str] | None = None
+) -> str | None:
+    """The run's source-revision label, or None outside a work tree / on failure.
+
+    ``tool`` is the executable that prints the tag and ``args`` its arguments. With no
+    ``tool``, derive automatically: try jj, then git. A known ``tool`` (``"git"`` /
+    ``"jj"``) supplies default ``args``; any other command brings its own (none by
+    default), so a project can plug in ``hg``, a script, etc. without being tied to a VCS.
     """
-    return _jj_describe(cwd) or _git_describe(cwd)
+    if tool is None:
+        return _jj_describe(cwd) or _git_describe(cwd)
+    return _run_vcs(cwd, tool, args if args is not None else _PRESETS.get(tool, []))
+
+
+def _run_vcs(cwd: Path | None, program: str, args: list[str]) -> str | None:
+    """Run ``program args`` and return its stripped stdout, or None on failure/empty."""
+    try:
+        proc = subprocess.run(
+            [program, *args], capture_output=True, text=True, timeout=5, cwd=cwd, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = proc.stdout.strip()
+    return out if proc.returncode == 0 and out else None
 
 
 def _git_describe(cwd: Path | None) -> str | None:
-    try:
-        proc = subprocess.run(
-            ["git", "describe", "--always", "--dirty"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            cwd=cwd,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    tag = proc.stdout.strip()
-    return tag if proc.returncode == 0 and tag else None
+    return _run_vcs(cwd, "git", _PRESETS["git"])
 
 
 def _jj_describe(cwd: Path | None) -> str | None:
-    """The working commit's change id.
-
-    jj has no ``git describe`` analog, so this is a best-effort id (not tag-relative), and no
-    ``-dirty`` marker: the working copy is always a commit, so there's no clean/dirty state to
-    flag. Use a fixed-length prefix, not ``shortest()`` — the latter grows as the repo gains
-    changes, so it wouldn't identify a fixed revision stably.
-    """
-    try:
-        proc = subprocess.run(
-            # --ignore-working-copy: don't snapshot/mutate the repo just to read it.
-            [
-                "jj",
-                "log",
-                "--no-graph",
-                "--ignore-working-copy",
-                "-r",
-                "@",
-                "-T",
-                "change_id.short(12)",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            cwd=cwd,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    tag = proc.stdout.strip()
-    return tag if proc.returncode == 0 and tag else None
+    return _run_vcs(cwd, "jj", _PRESETS["jj"])

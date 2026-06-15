@@ -245,15 +245,15 @@ def _parse_variants(specs: list[str]) -> dict[str, Path]:
 def _load_config_and_session_tag(session_tag: str | None) -> tuple[_config.Config, str | None]:
     """Load the project config and default the session tag from the VCS when unset.
 
-    Default is the VCS (jj and git are supported) change ID unless disabled via
-    ``[tool.mew] auto_session_tag = false``.
+    Default is the change id from the ``[tool.mew.session-tag]`` command (auto: jj, then
+    git), unless disabled via ``[tool.mew.session-tag] enabled = false``.
     Shared by the plain and ``--variant`` run paths.
     """
     cfg = _config.load()
-    if session_tag is None and cfg.auto_session_tag:
+    if session_tag is None and cfg.session_tag.enabled:
         from mew._session import derive_session_tag
 
-        session_tag = derive_session_tag()
+        session_tag = derive_session_tag(tool=cfg.session_tag.tool, args=cfg.session_tag.args)
     return cfg, session_tag
 
 
@@ -747,7 +747,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--session-tag",
         help="Label this run's output as a session (e.g. `before`). Defaults to "
-        "the jj change id or `git describe`; disable with `[tool.mew] auto_session_tag = false`.",
+        "the jj change id or `git describe`; disable with "
+        "`[tool.mew.session-tag] enabled = false`.",
     )
     p.add_argument(
         "--append",

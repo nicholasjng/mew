@@ -36,7 +36,7 @@ Every {func}`mew.run` invocation is one *session* with a generated `session_id` 
 This keeps runs distinguishable when several land in one archive — even two in the same wall-clock second.
 
 `session_tag` is the human label next to it: pass `mew run --session-tag before` (or `session_tag=` on {func}`mew.run`).
-With no tag, the CLI derives one from your VCS' change id (git and jj are both supported); opt out with `auto_session_tag = false` under `[tool.mew]`.
+With no tag, the CLI derives one from your VCS' change id (jj, then git). `[tool.mew.session-tag]` overrides the command via `tool`/`args` (any tool, not just a VCS), and `enabled = false` in that block opts out entirely. See [](configuration.md).
 Note `--session-tag` labels the run's *output* — unrelated to `-t/--tag`, which selects which benchmarks run.
 
 ## Dotted keys
