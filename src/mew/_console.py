@@ -15,7 +15,7 @@ import shutil
 import sys
 from typing import TextIO
 
-# Style name -> ANSI SGR parameter. Only the styles mew actually uses.
+# Style name -> ANSI SGR code (only the styles mew uses).
 _SGR = {"bold": "1", "dim": "2", "red": "31", "green": "32", "yellow": "33", "cyan": "36"}
 
 # A styled run of text. ``style`` is a key of _SGR, or None for unstyled.

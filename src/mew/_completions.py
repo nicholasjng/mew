@@ -61,8 +61,7 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
     if sub is None:
         return []
     help_by_name = {ca.dest: (ca.help or "") for ca in sub._choices_actions}
-    # Group names that map to the same subparser (argparse stores aliases as
-    # extra keys pointing at the same parser object).
+    # Group by parser identity: argparse stores aliases as extra keys → same parser.
     grouped: dict[int, _Cmd] = {}
     order: list[int] = []
     for name, subp in sub.choices.items():
