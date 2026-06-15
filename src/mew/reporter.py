@@ -167,10 +167,16 @@ def _close_sink(fh: TextIO | None, owns_fh: bool) -> None:
 class JSONReporter:
     """Emit a single ``{"context": ..., "benchmarks": [...]}`` document, GB-style.
 
-    To a **seekable** sink (a file) it streams: writes context + empty array up
-    front, then each :meth:`report_runs` seeks over the closing ``]}`` and re-writes
-    it, so the file stays valid JSON after every flush (survives Ctrl-C). A non-seekable
-    sink (stdout, pipe) can't be rewritten, so it buffers and writes once at :meth:`finalize`.
+    To a **seekable** sink it streams: writes context + empty array up front, then
+    each :meth:`report_runs` seeks over the closing ``]}`` and re-writes it, so the
+    file stays valid JSON after every flush (survives Ctrl-C). This covers a file
+    we opened and a stdout/stream redirected to a regular file. A non-seekable sink
+    (a terminal, a pipe) buffers and writes once at :meth:`finalize`.
+
+    The one exception is a sink we did **not** open, on **Windows**: a stdout pipe
+    there can report ``seekable()`` yet not honor the seek, duplicating content
+    (the rows land after an already-closed empty document). So a non-owned sink on
+    Windows buffers regardless of its ``seekable()`` self-report.
 
     Parameters
     ----------
@@ -193,7 +199,11 @@ class JSONReporter:
     def report_context(self, context: dict[str, Any]) -> bool:
         self._context = dict(context)
         self._fh, self._owns_fh = _open_sink(self._output)
-        self._streaming = self._fh.seekable()
+        # Stream into any seekable sink (file, or stdout redirected to a file).
+        # Exception: a non-owned sink on Windows — a stdout pipe there can claim
+        # seekable() but mishandle the seek and duplicate content, so buffer it.
+        trust_seek = self._owns_fh or sys.platform != "win32"
+        self._streaming = trust_seek and self._fh.seekable()
         if self._streaming:
             # default=str: don't crash on Path/datetime; lossy by design.
             ctx = _indent_block(json.dumps(_build_context(context), indent=2, default=str), 2)
