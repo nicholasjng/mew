@@ -24,7 +24,7 @@ memory = [ "memray>=1.5; sys_platform != 'win32'" ]
 
 [dependency-groups]
 build = [
-    "nanobind >=2.10",
+    "nanobind>=2.13.0",
     "ruff>=0.15.12",  # for CMake's post-build stub formatting step.
     "scikit-build-core >=0.10",
 ]
@@ -50,6 +50,7 @@ typing = [ "ty>=0.0.42" ]  # used in GitHub Actions only.
 no-build-isolation-package = ["mew"]
 # exclude dependency versions newer than one week
 exclude-newer = "1 week"
+exclude-newer-package = { nanobind = false }
 # Require the "build" group due to no build isolation
 default-groups = ["build"]
 

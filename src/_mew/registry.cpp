@@ -11,18 +11,6 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 
-namespace {
-
-benchmark::TimeUnit parse_unit(const std::string& u) {
-    if (u == "ns") return benchmark::kNanosecond;
-    if (u == "us") return benchmark::kMicrosecond;
-    if (u == "ms") return benchmark::kMillisecond;
-    if (u == "s") return benchmark::kSecond;
-    throw nb::value_error(("unknown time unit: " + u).c_str());
-}
-
-}  // namespace
-
 void register_registry(nb::module_& m) {
     nb::class_<benchmark::Benchmark>(
         m, "BenchmarkHandle",
@@ -35,12 +23,6 @@ void register_registry(nb::module_& m) {
              nb::rv_policy::reference)
         .def("iterations", &benchmark::Benchmark::Iterations, "n"_a, nb::rv_policy::reference)
         .def("repetitions", &benchmark::Benchmark::Repetitions, "n"_a, nb::rv_policy::reference)
-        .def(
-            "unit",
-            [](benchmark::Benchmark& b, const std::string& u) { return b.Unit(parse_unit(u)); },
-            "unit"_a, nb::rv_policy::reference,
-            nb::sig(
-                "def unit(self, unit: typing.Literal['ns', 'us', 'ms', 's']) -> BenchmarkHandle"))
         .def("unit", &benchmark::Benchmark::Unit, "unit"_a, nb::rv_policy::reference)
         .def("use_real_time", &benchmark::Benchmark::UseRealTime, nb::rv_policy::reference)
         .def("use_manual_time", &benchmark::Benchmark::UseManualTime, nb::rv_policy::reference)
