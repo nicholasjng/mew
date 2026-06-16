@@ -3,31 +3,30 @@
 import enum
 import types
 from collections.abc import Callable, Sequence
-from typing import Literal, overload
 
 BENCHMARK_COMMIT: str = "a8460680f0df91fd26205e0931708a26c3b4094d"
 
 BENCHMARK_VERSION: str = "v1.9.5-74-ga8460680"
 
-class TimeUnit(enum.Enum):
+class TimeUnit(enum.StrEnum):
     """Time unit used for reported per-iteration durations."""
 
-    ns = 0
+    ns = "ns"
 
-    us = 1
+    us = "us"
 
-    ms = 2
+    ms = "ms"
 
-    s = 3
+    s = "s"
 
-class RunType(enum.Enum):
+class RunType(enum.StrEnum):
     """
     Distinguishes per-repetition runs from aggregate (mean / median / stddev) rows.
     """
 
-    iteration = 0
+    iteration = "iteration"
 
-    aggregate = 1
+    aggregate = "aggregate"
 
 class BenchmarkName:
     @property
@@ -211,9 +210,6 @@ class BenchmarkHandle:
     def min_warmup_time(self, seconds: float) -> BenchmarkHandle: ...
     def iterations(self, n: int) -> BenchmarkHandle: ...
     def repetitions(self, n: int) -> BenchmarkHandle: ...
-    @overload
-    def unit(self, unit: Literal["ns", "us", "ms", "s"]) -> BenchmarkHandle: ...
-    @overload
     def unit(self, unit: TimeUnit) -> BenchmarkHandle: ...
     def use_real_time(self) -> BenchmarkHandle: ...
     def use_manual_time(self) -> BenchmarkHandle: ...

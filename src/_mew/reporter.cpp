@@ -104,18 +104,18 @@ class PyReporter : public BenchmarkReporter {
 }  // namespace
 
 void register_reporter(nb::module_& m) {
-    nb::enum_<benchmark::TimeUnit>(m, "TimeUnit",
+    nb::enum_<benchmark::TimeUnit>(m, "TimeUnit", nb::is_str(),
                                    "Time unit used for reported per-iteration durations.")
-        .value("ns", benchmark::kNanosecond)
-        .value("us", benchmark::kMicrosecond)
-        .value("ms", benchmark::kMillisecond)
-        .value("s", benchmark::kSecond);
+        .str_value("ns", benchmark::kNanosecond, "ns")
+        .str_value("us", benchmark::kMicrosecond, "us")
+        .str_value("ms", benchmark::kMillisecond, "ms")
+        .str_value("s", benchmark::kSecond, "s");
 
-    nb::enum_<Run::RunType>(m, "RunType",
+    nb::enum_<Run::RunType>(m, "RunType", nb::is_str(),
                             "Distinguishes per-repetition runs from aggregate "
                             "(mean / median / stddev) rows.")
-        .value("iteration", Run::RT_Iteration)
-        .value("aggregate", Run::RT_Aggregate);
+        .str_value("iteration", Run::RT_Iteration, "iteration")
+        .str_value("aggregate", Run::RT_Aggregate, "aggregate");
 
     nb::class_<benchmark::BenchmarkName>(m, "BenchmarkName")
         .def_ro("function_name", &benchmark::BenchmarkName::function_name)

@@ -125,7 +125,9 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
     if (v := opts.get("repetitions")) is not None:
         handle.repetitions(int(v))
     if v := opts.get("unit"):
-        handle.unit(v)
+        # Normalize the bare "ns"/"us"/... string (or a TimeUnit) to the enum;
+        # the C++ binding takes a TimeUnit. TimeUnit(...) is idempotent on members.
+        handle.unit(_core.TimeUnit(v))
     if opts.get("use_real_time"):
         handle.use_real_time()
     if opts.get("use_manual_time"):
