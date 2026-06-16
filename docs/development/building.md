@@ -26,10 +26,25 @@ The `[tool.uv]` config in `pyproject.toml` opts out of build isolation, so nanob
 $ uv sync --reinstall-package=mew  # editable install picks up the rebuilt .so
 ```
 
-Alternatively, rebuild using CMake directly:
+Alternatively, rebuild the configured tree directly. The build dir is
+wheel-tag-specific (`build/{wheel_tag}`), so adjust the path to yours:
 
 ```console
-$ cmake --build build
+$ cmake --build build/cp312-abi3-macosx_26_0_arm64
+```
+
+## Rebuilding after a dependency bump
+
+The `build/{wheel_tag}` tree persists across rebuilds for fast incremental
+compiles. After bumping a native dependency (e.g. nanobind), object files in it
+may have been compiled against the old headers — and because ninja decides what
+to recompile from file timestamps, a freshly installed header whose mtime
+doesn't exceed the cached object can be skipped. This is usually not what you want,
+and can result in linker errors and ABI mismatches. You can force a clean rebuild with:
+
+```console
+$ rm -rf build/
+$ uv sync --reinstall-package=nanobind --reinstall-package=mew
 ```
 
 ## Test, lint, type-check
