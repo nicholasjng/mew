@@ -24,10 +24,7 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-from rich.markup import escape
-from rich.table import Table
-
+from mew._console import Span, Table, Terminal, sgr
 from mew._registry import compile_name_filter
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
 from mew.reporter import _fmt_bytes, canonical_name
@@ -325,6 +322,14 @@ def _group_by_session(
     return by_session
 
 
+def _group_by_name(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Bucket rows by canonical ``name[label]``, the unit both load paths aggregate over."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        groups.setdefault(canonical_name(r["name"], r.get("label")), []).append(r)
+    return groups
+
+
 def _load_sessions(path: Path, metric: str) -> list[SessionData]:
     """Load every session in a result file, sorted by ascending date.
 
@@ -336,9 +341,7 @@ def _load_sessions(path: Path, metric: str) -> list[SessionData]:
     sessions: list[SessionData] = []
     # ISO-8601 dates sort lexicographically in chronological order.
     for skey, session_rows in sorted(_group_by_session(rows, file_ctx).items()):
-        groups: dict[str, list[dict[str, Any]]] = {}
-        for r in session_rows:
-            groups.setdefault(canonical_name(r["name"], r.get("label")), []).append(r)
+        groups = _group_by_name(session_rows)
         samples = _samples_from_groups(groups, metric, skey[0] or None)
         first_group = next(iter(groups.values()), [])
         ctx = _session_context(first_group[0] if first_group else {}, file_ctx)
@@ -363,16 +366,15 @@ def _load_variant_columns(
         return []
 
     latest = max(by_session)  # date-leading key → most recent session
-    by_variant: dict[Any, dict[str, list[dict[str, Any]]]] = {}
+    by_variant: dict[Any, list[dict[str, Any]]] = {}
     for r in by_session[latest]:
-        variant = r.get("variant")
-        groups = by_variant.setdefault(variant, {})
-        groups.setdefault(canonical_name(r["name"], r.get("label")), []).append(r)
+        by_variant.setdefault(r.get("variant"), []).append(r)
 
     columns: list[tuple[str, dict[str, Sample], dict[str, Any]]] = []
-    for variant, groups in by_variant.items():
+    for variant, variant_rows in by_variant.items():
         if variant is None:
             continue  # rows from a non-variant run; nothing to pivot
+        groups = _group_by_name(variant_rows)
         samples = _samples_from_groups(groups, metric, latest[0] or None)
         rep_row = next(iter(groups.values()))[0]
         ctx = _session_context(rep_row, file_ctx)
@@ -577,12 +579,13 @@ def _fmt_speedup(speedup: float) -> str:
     return f"×{speedup:.3f}"
 
 
-def _cv_marker(sample: Sample) -> str:
-    """A red ``±N% (!)`` suffix for rows whose repetitions scatter too much to trust."""
+def _value_cell(sample: Sample, metric: str) -> str | list[Span]:
+    """The value text, with a red ``±N% (!)`` marker when repetitions scatter too much."""
+    value = _fmt_value(sample, metric)
     cv = sample.cv
     if cv is None or cv < _CV_UNRELIABLE:
-        return ""
-    return f" [red]±{cv * 100.0:.0f}% (!)[/]"
+        return value
+    return [(value, None), (f" ±{cv * 100.0:.0f}% (!)", "red")]
 
 
 @dataclass(slots=True)
@@ -606,7 +609,7 @@ def _render(
     pattern: re.Pattern[str] | None,
     show_stddev: bool,
     regressions: RegressionConfig | None,
-    console: Console | None,
+    console: Terminal | None,
     key: str = "name",
 ) -> int:
     """Compare the first column against the rest and render the table.
@@ -649,20 +652,18 @@ def _render(
         for c, diff in zip(columns, diffs, strict=True)
     ]
 
-    console = console or Console()
+    term = console or Terminal()
     for label, c in zip(labels, columns, strict=True):
         if c.context:
-            console.print(
-                f"[dim]{escape(f'{label}: {_ctx_summary(c.context)}')}[/]", highlight=False
-            )
+            term.print(sgr(f"{label}: {_ctx_summary(c.context)}", "dim", enabled=term.color))
 
-    table = Table(title=f"Comparison ({metric})", show_lines=False)
-    table.add_column("Benchmark", overflow="fold")
-    table.add_column(escape(f"{labels[0]} (baseline)"), justify="right")
+    table = Table(title=f"Comparison ({metric})")
+    table.add_column("Benchmark", flex=True)
+    table.add_column(f"{labels[0]} (baseline)", justify="right")
     if show_stddev:
         table.add_column("± stddev", justify="right")
     for lbl in labels[1:]:
-        table.add_column(escape(lbl), justify="right")
+        table.add_column(lbl, justify="right")
         table.add_column("Δ%", justify="right")
         table.add_column("speedup", justify="right")
         if show_stddev:
@@ -674,8 +675,7 @@ def _render(
 
     for name in sorted(shared):
         base = baseline[name]
-        # escape(): case labels like `[n=10]` would otherwise parse as rich markup.
-        row: list[Any] = [escape(name), _fmt_value(base, metric) + _cv_marker(base)]
+        row: list[Any] = [name, _value_cell(base, metric)]
         if show_stddev:
             row.append(f"{base.stddev:.2f}" if base.stddev is not None else "-")
         for idx, c in enumerate(columns[1:]):
@@ -683,8 +683,8 @@ def _render(
             delta = (s.value - base.value) / base.value if base.value else 0.0
             speedup = base.value / s.value if s.value else float("inf")
             delta_text, delta_style = _fmt_delta(delta)
-            row.append(_fmt_value(s, metric) + _cv_marker(s))
-            row.append(f"[{delta_style}]{delta_text}[/]" if delta_style else delta_text)
+            row.append(_value_cell(s, metric))
+            row.append([(delta_text, delta_style)] if delta_style else delta_text)
             row.append(_fmt_speedup(speedup))
             if show_stddev:
                 row.append(f"{s.stddev:.2f}" if s.stddev is not None else "-")
@@ -696,7 +696,7 @@ def _render(
                 )
         table.add_row(*row)
 
-    console.print(table)
+    term.print(table)
 
     if regressions is not None:
         return report(verdicts, default_threshold_pct=regressions.default_threshold_pct)
@@ -731,7 +731,7 @@ def compare(
     by: str | None = None,
     baseline: str | None = None,
     regressions: RegressionConfig | None = None,
-    console: Console | None = None,
+    console: Terminal | None = None,
 ) -> int:
     """Compare benchmark result files and render a comparison table.
 
@@ -775,8 +775,8 @@ def compare(
         first one written).
     regressions : RegressionConfig, optional
         If given, gate the second file against the baseline and append a regression panel.
-    console : rich.console.Console, optional
-        Output console; defaults to a fresh :class:`~rich.console.Console`.
+    console : mew._console.Terminal, optional
+        Output terminal; defaults to a fresh :class:`~mew._console.Terminal`.
 
     Returns
     -------

@@ -6,8 +6,8 @@ Microbenchmarking Python code snippets, and reporting results.
 
 * Google Benchmark as a microbenchmarking library
 * Python bindings via nanobind
-* cyclopts as a Python CLI tool
-* rich for terminal results rendering
+* stdlib `argparse` for the CLI (no third-party CLI dependency)
+* a small in-house ANSI module (`mew._console`) for terminal tables/colors — the runtime is zero-dependency
 * vite + echarts as a visualization tool for a lightweight browser app
 
 ## Public Python API

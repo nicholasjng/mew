@@ -13,7 +13,7 @@ never a live `Run`).
 ## Built-ins
 
 {class}`~mew.RichReporter`
-: Streams one row per Run as a rich-formatted table. The default for
+: Streams one row per Run as a formatted, colorized table. The default for
   `mew run` when no `-o` is given. Optional columns: `Peak Mem` /
   `Total Alloc` (via `show_memory=True`) and `Samples` / `Hottest Frame`
   (via `show_cpu=True`). The CLI exposes those options via

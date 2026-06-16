@@ -228,6 +228,22 @@ def _register_family(
     return target
 
 
+def _make_family_decorator(
+    variants: Sequence[dict[str, Any]],
+    *,
+    name: str | None,
+    ids: Sequence[str] | None,
+    options: BenchmarkOptions,
+    tags: frozenset[str],
+) -> Callable[[BenchmarkFn], BenchmarkFn]:
+    """The decorator parametrize/product return: register ``target`` as a family."""
+
+    def deco(target: BenchmarkFn) -> BenchmarkFn:
+        return _register_family(target, variants, name=name, ids=ids, options=options, tags=tags)
+
+    return deco
+
+
 def parametrize(
     parameters: Iterable[dict[str, Any]],
     *,
@@ -283,18 +299,7 @@ def parametrize(
     _check_options(options)
     norm_tags = _normalize_tags(tags)
     variants = [dict(p) for p in parameters]  # snapshot, allow generators
-
-    def deco(target: BenchmarkFn) -> BenchmarkFn:
-        return _register_family(
-            target,
-            variants,
-            name=name,
-            ids=ids,
-            options=options,
-            tags=norm_tags,
-        )
-
-    return deco
+    return _make_family_decorator(variants, name=name, ids=ids, options=options, tags=norm_tags)
 
 
 def product(
@@ -383,15 +388,4 @@ def product(
     keys = list(iterables.keys())
     value_lists = [list(v) for v in iterables.values()]
     variants = [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*value_lists)]
-
-    def deco(target: BenchmarkFn) -> BenchmarkFn:
-        return _register_family(
-            target,
-            variants,
-            name=name,
-            ids=ids,
-            options=options,
-            tags=norm_tags,
-        )
-
-    return deco
+    return _make_family_decorator(variants, name=name, ids=ids, options=options, tags=norm_tags)

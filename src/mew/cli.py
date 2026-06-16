@@ -2,14 +2,15 @@
 
 stdlib argparse (no third-party CLI dep). Each command is a plain function with
 keyword args; :func:`_build_parser` mirrors those args as ``add_argument`` calls
-and :func:`main` dispatches via the parsed namespace. Help is plain text — mew
-keeps ``rich`` for the reporters, so a rich help formatter could be added later.
+and :func:`main` dispatches via the parsed namespace. Help is colorized with a
+small ANSI helper (:mod:`mew._console`); no third-party CLI dependency.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -100,6 +101,15 @@ def _collect(
     return entries
 
 
+def _collect_or_exit(paths: list[str], **kwargs: Any) -> list[Entry]:
+    """:func:`_collect`, but exit ``1`` (the shared "nothing matched" code) if empty."""
+    entries = _collect(paths, **kwargs)
+    if not entries:
+        print("no benchmarks found", file=sys.stderr)
+        raise SystemExit(1)
+    return entries
+
+
 _PATHS_HELP = (
     "Files, directories, or `<path>::<filter>` selectors to discover benchmarks from. "
     "Defaults to `[tool.mew] benchpaths`."
@@ -118,10 +128,7 @@ def list_(
 ) -> None:
     """List discovered benchmarks without running them."""
     with _discovery.discovered():
-        entries = _collect(paths, pattern=pattern, tags=tag or None, literal=literal)
-        if not entries:
-            print("no benchmarks found", file=sys.stderr)
-            raise SystemExit(1)
+        entries = _collect_or_exit(paths, pattern=pattern, tags=tag or None, literal=literal)
         for e in entries:
             tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
             # --names-only drops the `file.py::` prefix for a cwd-independent id.
@@ -374,10 +381,9 @@ def run(
 
     # discovered(): bench modules stay live for the run, cleaned up at exit.
     with _discovery.discovered():
-        entries = _collect(paths, pattern=pattern, tags=tag or None, literal=literal, stdin=stdin)
-        if not entries:
-            print("no benchmarks found", file=sys.stderr)
-            raise SystemExit(1)
+        entries = _collect_or_exit(
+            paths, pattern=pattern, tags=tag or None, literal=literal, stdin=stdin
+        )
 
         cfg, session_tag = _load_config_and_session_tag(session_tag)
 
@@ -504,10 +510,7 @@ def profile(
     backend = profilers.select(profiler)
 
     with _discovery.discovered():
-        entries = _collect(paths, pattern=pattern, tags=tag or None, stdin=stdin)
-        if not entries:
-            print("no benchmarks found", file=sys.stderr)
-            raise SystemExit(1)
+        entries = _collect_or_exit(paths, pattern=pattern, tags=tag or None, stdin=stdin)
         if slowest is not None:
             if slowest < 1:
                 print("--slowest must be >= 1", file=sys.stderr)
@@ -581,7 +584,7 @@ def compare(
 
 
 class _CommandHelpFormatter(argparse.HelpFormatter):
-    """Help formatter for the git-style layout, with a light rich touch.
+    """Help formatter for the git-style layout, with light ANSI color.
 
     Tweaks over the argparse default:
 
@@ -590,10 +593,10 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
     * Render value placeholders as ``<spiky-braces>`` (e.g. ``--pattern
       <pattern>``) instead of ``UPPERCASE``.
     * On a color terminal, bold the section headings and tint option flags. The
-      styling is applied *after* argparse lays the text out (rich highlight spans
-      don't change any characters), so column alignment is untouched; it falls
-      back to plain when stdout isn't a TTY or ``NO_COLOR`` is set — keeping
-      pipes, CI logs, and the docs ``--help`` capture clean.
+      styling wraps matches *after* argparse lays the text out (ANSI codes around
+      disjoint regex matches add no visible characters), so column alignment is
+      untouched; it falls back to plain when stdout isn't a TTY or ``NO_COLOR``
+      is set — keeping pipes, CI logs, and the docs ``--help`` capture clean.
     """
 
     def _format_action(self, action: argparse.Action) -> str:
@@ -617,18 +620,19 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
         # stdout to a StringIO, which is not a TTY, so it gets plain text.
         if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
             return text
-        from rich.console import Console
-        from rich.text import Text
+        from mew._console import sgr
 
-        styled = Text(text)
-        styled.highlight_regex(r"(?m)^[A-Za-z][A-Za-z ]*:", "bold")  # column-0 headings
-        styled.highlight_regex(r"(?<![\w-])--[A-Za-z][\w-]*", "cyan")  # long flags
-        styled.highlight_regex(r"(?<![\w-])-[A-Za-z](?![\w-])", "green")  # short flags
-        styled.highlight_regex(r"<[\w-]+>", "yellow")  # metavars
-        console = Console(force_terminal=True)
-        with console.capture() as cap:
-            console.print(styled, end="", soft_wrap=True)
-        return cap.get()
+        # Wrap disjoint matches in ANSI: column-0 headings, long/short flags, and
+        # <metavars>. The patterns don't overlap (and ANSI codes carry no -, --,
+        # or <>), so sequential subs never nest.
+        for pattern, style in (
+            (r"(?m)^[A-Za-z][A-Za-z ]*:", "bold"),
+            (r"(?<![\w-])--[A-Za-z][\w-]*", "cyan"),
+            (r"(?<![\w-])-[A-Za-z](?![\w-])", "green"),
+            (r"<[\w-]+>", "yellow"),
+        ):
+            text = re.sub(pattern, lambda m, s=style: sgr(m.group(), s), text)
+        return text
 
 
 def completions(shell: str) -> None:
@@ -636,6 +640,17 @@ def completions(shell: str) -> None:
     from mew import _completions
 
     sys.stdout.write(_completions.generate(shell, _build_parser()))
+
+
+def _add_tag_arg(p: argparse.ArgumentParser) -> None:
+    """Add the shared ``-t/--tag`` filter (identical across list/run/profile)."""
+    p.add_argument(
+        "-t",
+        "--tag",
+        action="append",
+        default=[],
+        help="Filter benchmarks by tag. Repeatable, OR semantics.",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -675,13 +690,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Match -k as a literal string, not a regex (e.g. paste `bench_sort[n=1000]`).",
     )
-    p.add_argument(
-        "-t",
-        "--tag",
-        action="append",
-        default=[],
-        help="Filter benchmarks by tag. Repeatable, OR semantics.",
-    )
+    _add_tag_arg(p)
     p.add_argument("--show-tags", action="store_true", help="Show tags alongside each name.")
     p.add_argument(
         "--show-cases",
@@ -715,13 +724,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Read newline-delimited selectors from stdin (`mew list | mew run --stdin`). "
         "Lines match literally; a path-free name is resolved against run's own discovery.",
     )
-    p.add_argument(
-        "-t",
-        "--tag",
-        action="append",
-        default=[],
-        help="Filter benchmarks by tag. Repeatable, OR semantics.",
-    )
+    _add_tag_arg(p)
     p.add_argument(
         "-o",
         "--output",
@@ -816,13 +819,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "-k", "--pattern", help="Only profile benchmarks whose name matches this regex (re.search)."
     )
-    p.add_argument(
-        "-t",
-        "--tag",
-        action="append",
-        default=[],
-        help="Filter benchmarks by tag. Repeatable, OR semantics.",
-    )
+    _add_tag_arg(p)
     p.add_argument(
         "--stdin",
         action="store_true",

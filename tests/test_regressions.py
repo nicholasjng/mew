@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
 import pytest
-from rich.console import Console
 
+from mew._console import Terminal
 from mew.compare import compare
 from mew.regressions import (
     AllowRule,
@@ -182,7 +183,9 @@ def test_compare_passes_when_under_threshold(tmp_path: Path) -> None:
     _write_json(base, [_row("b", 100.0)])
     _write_json(other, [_row("b", 102.0)])  # +2%
     cfg = RegressionConfig(default_threshold_pct=5.0)
-    code = compare([base, other], regressions=cfg, console=Console(record=True, width=200))
+    code = compare(
+        [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
+    )
     assert code == 0
 
 
@@ -192,7 +195,9 @@ def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixtu
     _write_json(base, [_row("b", 100.0)])
     _write_json(other, [_row("b", 120.0)])  # +20%
     cfg = RegressionConfig(default_threshold_pct=5.0)
-    code = compare([base, other], regressions=cfg, console=Console(record=True, width=200))
+    code = compare(
+        [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
+    )
     assert code == 2
     err = capsys.readouterr().err
     assert "❌" in err
@@ -205,7 +210,9 @@ def test_compare_inline_allow_lifts_threshold(tmp_path: Path) -> None:
     _write_json(base, [_row("b", 100.0)])
     _write_json(other, [_row("b", 120.0)])  # +20%
     cfg = load_config(default_threshold_pct=5.0, inline_allows=["b:50"])
-    code = compare([base, other], regressions=cfg, console=Console(record=True, width=200))
+    code = compare(
+        [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
+    )
     # 20% > 5% default but rule allows up to 50% — allowed_over → exit 0.
     assert code == 0
 
@@ -216,7 +223,9 @@ def test_compare_inline_allow_ignore_skips_gating(tmp_path: Path) -> None:
     _write_json(base, [_row("b", 100.0)])
     _write_json(other, [_row("b", 200.0)])  # +100%
     cfg = load_config(default_threshold_pct=5.0, inline_allows=["b"])  # ignore
-    code = compare([base, other], regressions=cfg, console=Console(record=True, width=200))
+    code = compare(
+        [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
+    )
     assert code == 0
 
 
@@ -227,6 +236,9 @@ def test_compare_iterations_metric_regression(tmp_path: Path) -> None:
     _write_json(other, [_row("b", 1.0, iterations=800)])  # -20% iters = slower
     cfg = RegressionConfig(default_threshold_pct=5.0)
     code = compare(
-        [base, other], metric="iterations", regressions=cfg, console=Console(record=True, width=200)
+        [base, other],
+        metric="iterations",
+        regressions=cfg,
+        console=Terminal(file=io.StringIO(), width=200, color=False),
     )
     assert code == 2
