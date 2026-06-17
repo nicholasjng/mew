@@ -63,6 +63,20 @@ def _check_options(options: Mapping[str, object]) -> None:
     extra = set(options) - _OptionKeys
     if extra:
         raise TypeError(f"unknown option(s): {sorted(extra)}")
+    # Validate at decoration time, not deep inside the run: the decorator is
+    # where the mistake is on screen.
+    if options.get("threads") is not None and options.get("thread_range") is not None:
+        # GB *accumulates* thread counts, so passing both would silently run
+        # the union rather than one overriding the other.
+        raise TypeError("threads and thread_range are mutually exclusive")
+
+    if (tr := options.get("thread_range")) is not None:
+        try:
+            lo, hi = tr  # ty: ignore[not-iterable]
+        except (TypeError, ValueError):
+            raise TypeError(f"thread_range must be a (min, max) pair, got {tr!r}") from None
+        if int(lo) < 1 or int(hi) < int(lo):
+            raise TypeError(f"thread_range must satisfy 1 <= min <= max, got {tr!r}")
 
 
 def _normalize_tags(tags: Iterable[str] | str | None) -> frozenset[str]:
@@ -167,6 +181,9 @@ def benchmark(
     norm_tags = _normalize_tags(tags)
 
     def deco(target: BenchmarkFn) -> BenchmarkFn:
+        # Guard before adding: a failed double-registration must not leave a
+        # second entry in the registry.
+        _mark_registered(target)
         file = _source_file(target)
         REGISTRY.add(
             Entry(
@@ -178,7 +195,6 @@ def benchmark(
                 tags=norm_tags,
             )
         )
-        _mark_registered(target)
         return target
 
     if fn is not None:
@@ -202,11 +218,25 @@ def _register_family(
     if not variants:
         raise ValueError("parametrize/product needs at least one case")
 
+    # Guard before adding: a failed double-registration must not leave a
+    # second entry in the registry.
+    _mark_registered(target)
     file = _source_file(target)
     base_name = name or _qualified_name(target, file)
     module = getattr(target, "__module__", None)
     cases = [dict(kw) for kw in variants]
     labels = list(ids) if ids is not None else [_default_id(kw) for kw in cases]
+    if len(set(labels)) != len(labels):
+        from collections import Counter
+
+        dupes = sorted(label for label, n in Counter(labels).items() if n > 1)
+        # Ambiguous labels break `name[label]` addressing (-k filters, compare
+        # merging). Non-scalar values collapse to their type name, so two list
+        # cases both label as `data=list` unless ids disambiguate.
+        raise ValueError(
+            f"duplicate case label(s) {dupes}; pass explicit ids= to disambiguate "
+            "(non-scalar parameter values collapse to their type name)"
+        )
 
     trampoline = _make_family_trampoline(
         target,
@@ -226,7 +256,6 @@ def _register_family(
             case_labels=labels,
         )
     )
-    _mark_registered(target)
     return target
 
 
