@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
@@ -15,9 +16,82 @@ from mew._session import new_session_id
 from mew.reporter import Reporter
 
 if TYPE_CHECKING:
-    from mew._typing import BenchmarkOptions
+    from mew._typing import BenchmarkOptions, RunRow
     from mew.cpu import CPUProfile
     from mew.memory import MemoryProfile
+
+
+def _gil_enabled() -> bool:
+    """True on a stock (GIL) interpreter, False on a free-threaded build."""
+    return getattr(sys, "_is_gil_enabled", lambda: True)()
+
+
+def _is_threaded(opts: BenchmarkOptions) -> bool:
+    """Whether ``opts`` asks Google Benchmark to spawn more than one worker thread."""
+    if (v := opts.get("threads")) is not None and v > 1:
+        return True
+    if (tr := opts.get("thread_range")) is not None:
+        return max(tr) > 1
+    return False
+
+
+def _requested_threads(opts: BenchmarkOptions) -> int:
+    """The thread count a threaded benchmark asked for (max of a range)."""
+    if (v := opts.get("threads")) is not None:
+        return int(v)
+    if (tr := opts.get("thread_range")) is not None:
+        return int(max(tr))
+    return 1
+
+
+def _skipped_row(name: str, threads: int, message: str) -> RunRow:
+    """A minimal ``skipped=True`` :class:`~mew._typing.RunRow` for a benchmark mew
+    declined to run (never handed to Google Benchmark)."""
+    return {
+        "name": name,
+        "run_name": name,
+        "family_index": 0,
+        "per_family_instance_index": 0,
+        "run_type": "iteration",
+        "aggregate_name": "",
+        "repetitions": 0,
+        "repetition_index": 0,
+        "threads": threads,
+        "iterations": 0,
+        "real_time": 0.0,
+        "cpu_time": 0.0,
+        "real_accumulated_time": 0.0,
+        "cpu_accumulated_time": 0.0,
+        "time_unit": "ns",
+        "label": "",
+        "skipped": True,
+        "skip_message": message,
+        "counters": {},
+    }
+
+
+_FT_WARMED_UP = False
+
+
+def _warmup_free_threading() -> None:
+    """Force CPython's single→multi-thread transition on the main thread.
+
+    On a free-threaded interpreter the first second-thread creation runs a
+    stop-the-world immortalization pass. Google Benchmark spawns N raw worker
+    threads that all ``PyGILState_Ensure`` at once; if that pass fires while
+    they're mid-attach they deadlock. Driving it here, on a clean main thread
+    before GB spawns anything, makes it a no-op by attach time. A no-op after the
+    first call.
+    """
+    global _FT_WARMED_UP
+    if _FT_WARMED_UP:
+        return
+    _FT_WARMED_UP = True
+    import threading
+
+    t = threading.Thread(target=lambda: None)
+    t.start()
+    t.join()
 
 
 @contextmanager
@@ -74,6 +148,7 @@ def run(
     reporter: Reporter | Iterable[Reporter] | None = None,
     filter: str | None = None,
     session_tag: str | None = None,
+    strict: bool = False,
     memory_profiles: dict[str, MemoryProfile] | None = None,
     cpu_profiles: dict[str, CPUProfile] | None = None,
 ) -> int:
@@ -98,6 +173,14 @@ def run(
     session_tag : str, optional
         Human label for this session (e.g. ``"before"``), persisted next to
         ``session_id`` in the reporter context.
+    strict : bool, default False
+        Govern what happens when threaded benchmarks (``threads`` /
+        ``thread_range``) are selected on a GIL interpreter, where they can't run
+        (they would deadlock on Google Benchmark's start barrier). By default mew
+        warns and skips them — emitting a ``skipped`` row per benchmark — and runs
+        the rest, so a mixed suite still works on stock CPython. Set ``strict`` to
+        raise a :class:`RuntimeError` instead, e.g. in CI where the threaded
+        benchmarks are the point and a silent skip would mask a misconfiguration.
     memory_profiles, cpu_profiles : dict[str, MemoryProfile | CPUProfile], optional
         Out-of-loop profile results keyed by ``_profile_key``, attached onto each
         :class:`~mew._typing.RunRow`.
@@ -109,6 +192,64 @@ def run(
     """
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
+        return 0
+
+    # Threaded mode can't run on a GIL build (it would deadlock on GB's start
+    # barrier): warn and skip by default, raise under `strict`.
+    skipped_rows: list[RunRow] = []
+    threaded = [e for e in selected if _is_threaded(e.options)]
+    if threaded and _gil_enabled():
+        names = ", ".join(e.name for e in threaded[:3])
+        more = f" (+{len(threaded) - 3} more)" if len(threaded) > 3 else ""
+        reason = (
+            "threaded benchmarks require a free-threaded interpreter (CPython "
+            "3.13t+); this interpreter has the GIL enabled, where threaded mode "
+            "would deadlock on Google Benchmark's start barrier"
+        )
+        if strict:
+            raise RuntimeError(
+                f"{reason}. Affected: {names}{more}. Run on a 3.13t build, drop "
+                f"the threads option, or pass strict=False to skip them."
+            )
+        warnings.warn(
+            f"skipping {len(threaded)} threaded benchmark(s) on a GIL interpreter "
+            f"({names}{more}) — run on a 3.13t build to execute them; {reason}.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        skip_msg = f"skipped: {reason}"
+        skipped_rows = [
+            _skipped_row(e.name, _requested_threads(e.options), skip_msg) for e in threaded
+        ]
+        selected = [e for e in selected if not _is_threaded(e.options)]
+
+    rep = _to_single_reporter(reporter)
+    # The binding merges extra_context into the GB context before calling
+    # report_context, so every reporter sees session identity without a wrapper.
+    extra_context: dict[str, Any] = {}
+    if rep is not None:
+        extra_context["session_id"] = new_session_id()
+        if session_tag:
+            extra_context["session_tag"] = session_tag
+        if custom := _context._snapshot():
+            extra_context["custom"] = custom
+        # Projector turns the C++ live Runs into RunRow dicts and flushes the
+        # skipped rows for `rep`.
+        from mew._profile import _RunProjector
+
+        rep = _RunProjector(
+            rep,
+            memory_profiles=memory_profiles,
+            cpu_profiles=cpu_profiles,
+            skipped_rows=skipped_rows,
+        )
+
+    if not selected:
+        # All skipped: GB emits no context for an empty registry, so drive the
+        # reporter lifecycle here to surface the skipped rows.
+        if rep is not None:
+            rep.report_context(extra_context)
+            rep.finalize()
         return 0
 
     cli = list(argv) if argv is not None else ["mew"]
@@ -132,20 +273,10 @@ def run(
                     handle.arg(i)
             handle.arg_name("case")
 
-    rep = _to_single_reporter(reporter)
-    # The binding merges extra_context into the GB context before calling
-    # report_context, so every reporter sees session identity without a wrapper.
-    extra_context: dict[str, Any] = {}
-    if rep is not None:
-        extra_context["session_id"] = new_session_id()
-        if session_tag:
-            extra_context["session_tag"] = session_tag
-        if custom := _context._snapshot():
-            extra_context["custom"] = custom
-        # Projector turns the C++ live Runs into RunRow dicts for `rep`.
-        from mew._profile import _RunProjector
-
-        rep = _RunProjector(rep, memory_profiles=memory_profiles, cpu_profiles=cpu_profiles)
+    # Only reached on a free-threaded build (threaded entries are skipped above
+    # under the GIL), where the warmup avoids the attach deadlock.
+    if any(_is_threaded(e.options) for e in selected):
+        _warmup_free_threading()
     with _silence_native_stderr():
         return _core.run_benchmarks(cli, rep, extra_context)
 

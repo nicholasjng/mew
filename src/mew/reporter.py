@@ -405,6 +405,14 @@ class RichReporter:
         if len(name) > w["name"]:
             name = "…" + name[-(w["name"] - 1) :]
 
+        # Skipped rows carry no timing — render the reason in place of the
+        # numeric columns and dim the whole line so it reads as "didn't run".
+        if row["skipped"]:
+            reason = row["skip_message"] or "skipped"
+            line = f"{name.ljust(w['name'])}{_COL_SEP}{reason}"
+            self._term.print(sgr(line, "dim", enabled=self._term.color))
+            return
+
         cells = [name.ljust(w["name"])]
         if self._show_variant:
             variant = row.get("variant") or "-"

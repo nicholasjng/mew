@@ -328,6 +328,7 @@ def run(
     repetitions: int | None = None,
     session_tag: str | None = None,
     append: bool = False,
+    strict: bool = False,
     variant: list[str] | None = None,
     extra: list[str] | None = None,
     profile_memory: bool = False,
@@ -429,6 +430,7 @@ def run(
             argv=argv,
             reporter=reporters,
             session_tag=session_tag,
+            strict=strict,
             memory_profiles=memory_profiles,
             cpu_profiles=cpu_profiles,
         )
@@ -754,6 +756,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--append",
         action="store_true",
         help="Append as a new session to existing `.jsonl` / `.parquet` sinks.",
+    )
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Error instead of skipping when threaded benchmarks (threads / "
+        "thread_range) are selected on a GIL interpreter, where they can't run.",
     )
     p.add_argument(
         "--variant",

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any
+
+import pytest
 
 import mew
 
@@ -112,6 +115,126 @@ def test_run_registers_only_selected_cases_of_a_family():
     assert sorted(n.split("/case:")[1] for n in case_names) == ["0", "2"]
     # The trampoline bound the kwargs for exactly cases 0 and 2 (n=1, n=100).
     assert sorted(seen_n) == [1, 100]
+
+
+def test_is_threaded_helper():
+    from mew.runner import _is_threaded
+
+    assert not _is_threaded({})
+    assert not _is_threaded({"threads": 1})
+    assert _is_threaded({"threads": 2})
+    assert not _is_threaded({"thread_range": (1, 1)})
+    assert _is_threaded({"thread_range": (1, 8)})
+
+
+def test_threaded_benchmark_skipped_on_gil_build(monkeypatch):
+    """On a GIL interpreter, threaded mode would deadlock on GB's start barrier.
+    By default mew warns and emits a skipped row rather than running (or hanging)."""
+    from mew import runner
+
+    monkeypatch.setattr(runner, "_gil_enabled", lambda: True)
+
+    @mew.benchmark(threads=4)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    cap = Capture()
+    with pytest.warns(RuntimeWarning, match="skipping 1 threaded benchmark"):
+        n = mew.run(argv=_argv_fast(), reporter=cap)
+
+    assert n == 0  # nothing actually executed by GB
+    assert len(cap.runs) == 1
+    row = cap.runs[0]
+    assert row["skipped"] is True
+    assert row["threads"] == 4
+    assert "free-threaded" in row["skip_message"]
+    assert cap.finalized
+
+
+def test_threaded_benchmark_strict_raises_on_gil_build(monkeypatch):
+    """`strict=True` restores the hard error for CI where the skip would mask a
+    misconfiguration."""
+    from mew import runner
+
+    monkeypatch.setattr(runner, "_gil_enabled", lambda: True)
+
+    @mew.benchmark(threads=4)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    with pytest.raises(RuntimeError, match="free-threaded interpreter"):
+        mew.run(argv=_argv_fast(), reporter=Capture(), strict=True)
+
+
+def test_mixed_suite_skips_threaded_runs_rest_on_gil_build(monkeypatch):
+    """A mixed suite runs its non-threaded benchmarks and skips only the threaded
+    ones — the dual-interpreter workflow."""
+    from mew import runner
+
+    monkeypatch.setattr(runner, "_gil_enabled", lambda: True)
+
+    @mew.benchmark(threads=4)
+    def bench_threaded(state):
+        for _ in state:
+            pass
+
+    @mew.benchmark
+    def bench_plain(state):
+        for _ in state:
+            pass
+
+    cap = Capture()
+    with pytest.warns(RuntimeWarning):
+        n = mew.run(argv=_argv_fast(), reporter=cap)
+
+    assert n == 1  # bench_plain ran
+    threaded_rows = [r for r in cap.runs if "bench_threaded" in r["name"]]
+    plain_rows = [r for r in cap.runs if "bench_plain" in r["name"]]
+    assert threaded_rows and all(r["skipped"] for r in threaded_rows)
+    assert plain_rows and not any(r["skipped"] for r in plain_rows)
+
+
+def test_threaded_benchmark_warms_up_on_free_threaded(monkeypatch):
+    """On a free-threaded build the guard passes and mew warms the threading
+    state before invoking the C++ runner (which we stub to avoid real threads)."""
+    from mew import _core, runner
+
+    monkeypatch.setattr(runner, "_gil_enabled", lambda: False)
+    monkeypatch.setattr(runner, "_FT_WARMED_UP", False)
+    warmed = []
+    monkeypatch.setattr(runner, "_warmup_free_threading", lambda: warmed.append(True))
+    monkeypatch.setattr(_core, "run_benchmarks", lambda *a, **k: 1)
+
+    @mew.benchmark(threads=4)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    assert mew.run(argv=_argv_fast(), reporter=Capture()) == 1
+    assert warmed == [True]
+
+
+@pytest.mark.skipif(
+    getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="threaded mode requires a free-threaded interpreter",
+)
+def test_threaded_benchmark_runs_without_deadlock():
+    """Real threaded run on a free-threaded build. Regression guard for the
+    stop-the-world attach deadlock: if it returns, the warmup did its job (a
+    failure here manifests as a hang / CI timeout)."""
+
+    @mew.benchmark(threads=4, iterations=100)
+    def bench_x(state):
+        for _ in state:
+            pass
+        state.set_counter("nthreads", state.threads)
+
+    cap = Capture()
+    mew.run(argv=_argv_fast(), reporter=cap)
+    assert len(cap.runs) == 1
+    assert cap.runs[0]["threads"] == 4
 
 
 def test_run_multiple_reporters_fan_out():
