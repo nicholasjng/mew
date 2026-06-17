@@ -39,6 +39,20 @@ if(MEW_ASAN)
     add_link_options(-fsanitize=address)
 endif()
 
+# ThreadSanitizer build, driven by -DMEW_TSAN=ON or MEW_TSAN=1 in the env.
+# Mutually exclusive with ASAN — the two runtimes can't co-load.
+option(MEW_TSAN "Build with ThreadSanitizer" OFF)
+if(DEFINED ENV{MEW_TSAN} AND NOT MEW_TSAN)
+    set(MEW_TSAN ON)
+endif()
+if(MEW_TSAN AND MEW_ASAN)
+    message(FATAL_ERROR "MEW_TSAN and MEW_ASAN cannot be enabled at the same time")
+endif()
+if(MEW_TSAN)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+endif()
+
 # --- Python + nanobind --------------------------------------------------------
 find_package(Python 3.11 COMPONENTS Interpreter Development.Module REQUIRED)
 
@@ -97,9 +111,13 @@ set(_MEW_SOURCES
     src/_mew/reporter.cpp
 )
 
+# nanobind keeps whichever of STABLE_ABI / FREE_THREADED fits the interpreter:
+# `cp312` abi3 on stock CPython, a `Py_MOD_GIL_NOT_USED` wheel on free-threaded
+# builds (the limited API has no free-threaded variant). Inert on a GIL build.
 nanobind_add_module(
     _core
     STABLE_ABI
+    FREE_THREADED
     NB_STATIC
     ${_MEW_SOURCES}
 )
@@ -116,6 +134,10 @@ target_compile_definitions(_core PRIVATE
 if(MEW_ASAN)
     target_compile_options(_core PRIVATE -fsanitize=address -fno-omit-frame-pointer)
     target_link_options(_core PRIVATE -fsanitize=address)
+endif()
+if(MEW_TSAN)
+    target_compile_options(_core PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
+    target_link_options(_core PRIVATE -fsanitize=thread)
 endif()
 
 install(TARGETS _core LIBRARY DESTINATION mew)

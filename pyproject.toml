@@ -71,10 +71,23 @@ BENCHMARK_ENABLE_INSTALL = "OFF"
 CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
 
 [[tool.scikit-build.overrides]]
+# Free-threaded interpreters (abi flag "t") can't use the stable ABI, so the
+# `cp312` abi3 tag above is invalid there: clear py-api for a version-specific
+# free-threaded wheel.
+if.abi-flags = "t"
+wheel.py-api = ""
+
+[[tool.scikit-build.overrides]]
 if.env.MEW_ASAN = "1"
 build-dir = "build/asan"
 cmake.build-type = "Debug"
 cmake.args = ["-DMEW_ASAN=ON"]
+
+[[tool.scikit-build.overrides]]
+if.env.MEW_TSAN = "1"
+build-dir = "build/tsan"
+cmake.build-type = "Debug"
+cmake.args = ["-DMEW_TSAN=ON"]
 
 [tool.ruff]
 line-length = 100

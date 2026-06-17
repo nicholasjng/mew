@@ -5,7 +5,7 @@
 # Prerequisites:
 #   - Activate the uv-managed venv (VIRTUAL_ENV set).
 #   - Build the ASAN editable install:
-#         DUCKY_ASAN=1 uv sync --all-groups --reinstall-package=ducky
+#         MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
 #
 # Usage: scripts/asan-pytest.sh [pytest args]
 
