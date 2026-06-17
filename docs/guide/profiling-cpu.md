@@ -8,7 +8,7 @@ This is **in-process** sampling: it sees Python frames only. To capture native
 ## Prerequisites
 
 ```console
-$ uv add 'mew[cpu]'    # or: pip install 'mew[cpu]'
+$ uv add 'mew-bench[cpu]'    # or: pip install 'mew-bench[cpu]'
 ```
 
 ## Basics

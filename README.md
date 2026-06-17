@@ -39,8 +39,8 @@ mew = { git = "https://github.com/nicholasjng/mew" }
 ```
 
 ```console
-$ uv add mew                 # or: pip install mew
-$ uv add 'mew[cpu,memory]'   # opt-in profilers
+$ uv add mew-bench                 # or: pip install mew-bench
+$ uv add 'mew-bench[cpu,memory]'   # opt-in profilers
 ```
 
 Requires Python 3.11+. A pre-built wheel is installed where available;

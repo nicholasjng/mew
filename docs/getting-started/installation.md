@@ -1,7 +1,9 @@
 # Installation
 
-`mew` is distributed as a CPython 3.11+ package with a small C++ extension
-(Google Benchmark via nanobind). On supported platforms a pre-built wheel is
+`mew-bench` is distributed as a CPython 3.11+ package with a small C++ extension
+(Google Benchmark via nanobind). Install it as `mew-bench`, import it as `mew`
+(the shorter name was already taken on PyPI); the CLI is `mew` either way.
+On supported platforms a pre-built wheel is
 installed; otherwise the C++ extension is compiled from source; see
 [](../development/building.md) for the toolchain requirements.
 
@@ -11,13 +13,13 @@ Add a `[tool.uv.sources]` entry to your `pyproject.toml`:
 
 ```toml
 [tool.uv.sources]
-mew = { git = "https://github.com/nicholasjng/mew" }
+mew-bench = { git = "https://github.com/nicholasjng/mew" }
 ```
 
 then run:
 
 ```console
-$ uv add mew
+$ uv add mew-bench
 ```
 
 ## Using `pip`
@@ -83,7 +85,7 @@ Extras enabling additional CLI features:
 | `dev`      | `pytest`, `ruff`, `duckdb`, build deps | Local development |
 
 ```console
-$ uv add 'mew[cpu,memory]'
+$ uv add 'mew-bench[cpu,memory]'
 ```
 
 ## Verifying

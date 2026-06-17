@@ -13,7 +13,7 @@ For cross-engine / cross-run comparisons use `allocations_per_iteration` (`total
 ## Prerequisites
 
 ```console
-$ uv add 'mew[memory]'    # or: pip install 'mew[memory]'
+$ uv add 'mew-bench[memory]'    # or: pip install 'mew-bench[memory]'
 ```
 
 Note: `memray` is not available on Windows.

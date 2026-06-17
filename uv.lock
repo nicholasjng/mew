@@ -428,7 +428,7 @@ wheels = [
 ]
 
 [[package]]
-name = "mew"
+name = "mew-bench"
 source = { editable = "." }
 
 [package.optional-dependencies]

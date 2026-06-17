@@ -55,7 +55,19 @@ if(MEW_TSAN)
 endif()
 
 # --- Python + nanobind --------------------------------------------------------
-find_package(Python 3.11 COMPONENTS Interpreter Development.Module REQUIRED)
+# Optional, not required: a missing SABI module must degrade to a version-specific
+# build rather than fail the configure, and this also works outside scikit-build-core,
+# where SKBUILD_SABI_COMPONENT is undefined.
+find_package(Python 3.11
+    REQUIRED COMPONENTS Interpreter Development.Module
+    OPTIONAL_COMPONENTS Development.SABIModule)
+
+if(SKBUILD_SABI_COMPONENT AND NOT TARGET Python::SABIModule)
+    message(FATAL_ERROR
+        "scikit-build-core is building a stable-ABI wheel, but Python::SABIModule "
+        "was not found. Install the Python SABI development files, or clear "
+        "tool.scikit-build.wheel.py-api to build an untagged wheel.")
+endif()
 
 execute_process(
     COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
