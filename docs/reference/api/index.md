@@ -37,10 +37,7 @@ importable from `mew` directly:
    JSONLReporter
    Fanout
    RunRow
-   Run
-   RunType
    TimeUnit
-   BenchmarkHandle
    Registry
    Entry
    REGISTRY
