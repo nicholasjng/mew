@@ -4,73 +4,63 @@ Legend: ✅ shipped · 🟡 partially shipped · ⬜ not started.
 
 ## Free-threading (CPython 3.13t+)
 
-- ⬜ **Free-thread-ready module import.** Add `FREE_THREADED` to
-  `nanobind_add_module(_core …)` in `CMakeLists.txt` so the extension emits
-  `Py_MOD_GIL_NOT_USED` and `import mew._core` doesn't re-enable the GIL on a
-  3.13t interpreter. Zero behavioural change for current users on 3.12 / 3.13
-  default — the flag is a no-op when the GIL is enabled. Two follow-on bits of
-  work: (1) verify nanobind's `STABLE_ABI` (we're on `cp312`) is co-compatible
-  with `FREE_THREADED`; the free-threaded ABI tag is distinct, so we may need
-  a separate FT wheel or drop STABLE_ABI for the FT variant; (2) add a CI job
-  that imports `mew._core` on a 3.13t interpreter and asserts
-  `sys._is_gil_enabled() is False`, so any future change that accidentally
-  re-enables the GIL is caught at PR time. This is the door-opener for the
-  rest of the section; nothing downstream of it changes mew's C++ behaviour.
+- ✅ **Free-thread-ready module import.** Shipped:
+  `nanobind_add_module(_core STABLE_ABI FREE_THREADED …)` in `CMakeLists.txt`.
+  nanobind keeps exactly the flag that fits the interpreter — `cp312` abi3 on a
+  stock build (FREE_THREADED dropped), and a version-specific free-threaded wheel
+  emitting `Py_MOD_GIL_NOT_USED` on a 3.13t/3.14t build (STABLE_ABI dropped,
+  since the limited API has no free-threaded variant). The
+  `if.abi-flags = "t"` scikit-build-core override clears `wheel.py-api` so the
+  FT build isn't tagged abi3. Verified end-to-end: `import mew._core` leaves
+  `sys._is_gil_enabled()` False on 3.13t. The STABLE_ABI/FREE_THREADED
+  co-compatibility question is resolved — pass both, nanobind picks.
 
-- ⬜ **Expose Google Benchmark's threaded mode.** Bind
-  `BenchmarkHandle.threads(n)`, `.thread_range(min, max)`, and
-  `.thread_per_cpu()` — one-liner member-pointer bindings in the same shape as
-  `.min_time(...)` etc. (`src/_mew/registry.cpp`). Add `threads: int | None`
-  and `thread_range: tuple[int, int] | None` to `BenchmarkOptions`
-  (`src/mew/_typing.py`); plumb through `runner._apply_options`. Each thread
-  gets its own `State` and timer (see audit below), so the C++ side is
-  thread-clean; the catch worth documenting prominently is the GIL: on a GIL
-  interpreter, GBM still spawns N OS threads, but mew's `register_benchmark`
-  trampoline acquires the GIL on every call, so the N threads serialise —
-  `state.threads` / `state.thread_index` are accurate, but wall-clock timing
-  reflects 1-thread-at-a-time-in-Python rather than real parallelism. The
-  docstring on `.threads()` and the docs page on parametrization both need a
-  "threaded mode is only meaningful on free-threaded interpreters" callout.
-  Shipping these bindings without the warning is the failure mode to avoid.
+- ✅ **Expose Google Benchmark's threaded mode.** Shipped:
+  `BenchmarkHandle.threads(n)`, `.thread_range(min, max)`, `.thread_per_cpu()`
+  (`src/_mew/registry.cpp`); `threads: int` / `thread_range: tuple[int, int]` on
+  `BenchmarkOptions`, plumbed through `runner._apply_options` and `@product`'s
+  explicit kwargs. **Correction to the original note:** threaded mode does *not*
+  "serialise" on a GIL interpreter — it **deadlocks**. The trampoline holds the
+  GIL across Google Benchmark's per-thread start barrier (`StartStopBarrier`),
+  so thread 0 waits for siblings that can never acquire the GIL to reach the
+  barrier. `mew.run` therefore detects threaded entries on a GIL build and, by
+  default, **warns and skips** them (emitting a `skipped` row per benchmark) so a
+  mixed suite still runs on stock CPython — `mew run --strict` / `run(strict=True)`
+  turns the skip into a hard `RuntimeError` for CI. Threaded mode is
+  free-threaded-only, documented in `docs/guide/state-and-timing.md`.
 
-- ⬜ **Audit the actual FT hazard sites.** Each GBM thread constructs its
-  own `State` with its own per-thread `ThreadTimer`
-  (`benchmark_runner.cc:144-171`), and per-thread results are merged under
-  `manager->GetBenchmarkMutex()` on thread completion. So `pause()` is
-  per-thread by construction, and `set_counter` / `set_label` etc. write to a
-  per-thread `State.counters` map that GBM `Increment`s into the merged
-  result — the "call from `thread_index == 0` only" GBM convention is
-  reporting hygiene (one label, one `set_items_processed` per benchmark) not
-  memory safety. The sites worth checking on FT builds instead:
-  - **nanobind's instance cache** when `nb::cast(&s, reference)` runs
-    concurrently in N trampolines. Different threads cast different `State*`,
-    so they don't collide on the same entry, but the cache itself needs
-    FT-safe lookup. nanobind handles this internally via `nb::ft_mutex` once
-    the module is built with `FREE_THREADED`; verify clean under TSAN.
-  - **The `shared_ptr<nb::callable>` holder** captured in
-    `register_benchmark`'s lambda (`src/_mew/registry.cpp`). Control block
-    is atomic; the wrapped Python callable runs under whatever FT semantics
-    Python applies. No code change expected; verify.
-  - **The user's benchmark body.** N concurrent invocations of one Python
-    callable. Thread-safety is the user's responsibility — the docs should
-    show `state.thread_index` for work-partitioning alongside the threaded-
-    mode section.
+- ✅ **Audit the actual FT hazard sites.** Done — and it surfaced a real
+  deadlock the source audit alone would have missed. The C++ side is
+  thread-clean as predicted (per-thread `State`/`ThreadTimer`, merge under
+  `GetBenchmarkMutex`, nanobind's `nb::ft_mutex`-guarded instance cache, atomic
+  `shared_ptr` control block — all verified on the FT build). The hazard was in
+  CPython itself: Google Benchmark spawns N *raw* worker threads that each call
+  `PyGILState_Ensure` at once, and the first one to cross the single→multi-thread
+  boundary triggers `_PyGC_ImmortalizeDeferredObjects`, a **stop-the-world** pass
+  that deadlocks against siblings blocked mid-`_PyThreadState_Attach` (confirmed
+  with a native `sample` trace). Fix: `runner._warmup_free_threading` drives that
+  transition on a clean main thread (spawn+join one `threading.Thread`) before
+  GB launches its workers, making the STW a no-op by attach time. Only invoked
+  on the free-threaded threaded path. The user-body thread-safety note is in the
+  docs. Still open: the TSAN pass below (source audit + a runtime sanitizer are
+  complementary).
 
-- ⬜ **CI matrix entry for 3.13t.** Add a job that builds the extension on a
-  3.13t interpreter, imports `mew._core`, asserts GIL is off, and runs the
-  Python test suite. The big unknown is which of mew's dev / runtime deps
-  publish 3.13t wheels yet (pyarrow, duckdb, polars, rich, pyinstrument all
-  matter for the reporter / profile paths); the CI matrix should start with
-  the minimum subset needed to import mew and run benchmark execution, and
-  expand as upstream wheels appear. Without a CI job here, any of the items
-  above can silently regress on the FT path between releases.
+- ✅ **CI matrix entry for 3.13t.** Shipped: the `free-threaded · py3.13t` job
+  in `ci.yml` builds the extension on 3.13t, asserts `sys._is_gil_enabled()` is
+  False after `import mew._core`, and runs a dependency-light test subset
+  (including a real threaded-benchmark run that would hang on a deadlock
+  regression). Confirmed empirically that the result-path deps (pyarrow, duckdb,
+  memray, pyinstrument) still build from source on 3.13t — no FT wheels yet — so
+  the subset is intentionally minimal per the original note; grow it as upstream
+  wheels appear.
 
-- ⬜ **ThreadSanitizer pass.** The ASAN config from `DEVELOPMENT.md` catches
-  use-after-free but not data races. Once the threaded-mode bindings land and
-  the FT CI job is green, a TSAN build run against a benchmark file that uses
-  `.threads()` with a deliberately-racy callback would smoke out anything the
-  source audit missed — particularly around `pause()` and the shared
-  `state.counters` map on the C++ side.
+- 🟡 **ThreadSanitizer pass.** Infra shipped: a `MEW_TSAN` CMake option +
+  scikit-build-core override (`build/tsan/`), mirroring ASAN and mutually
+  exclusive with it; documented in `docs/development/building.md`. Not yet *run*
+  in CI against a deliberately-racy `.threads()` callback — that's the remaining
+  half. The source audit above found the deadlock; TSAN is the backstop for any
+  data race it didn't, particularly around `pause()` and the shared
+  `state.counters` map.
 
 ## Reporter / output
 

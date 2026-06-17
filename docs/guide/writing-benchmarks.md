@@ -30,6 +30,8 @@ All options are optional and map 1:1 to Google Benchmark concepts:
 | `use_manual_time`            | The benchmark calls `state.set_iteration_time()` itself.      |
 | `measure_process_cpu_time`   | Use process-wide CPU time (multi-threaded benchmarks).        |
 | `report_aggregates_only`     | When `repetitions > 1`, suppress per-rep rows.                |
+| `threads`                    | Run the body with _N_ threads (free-threaded only — see below). |
+| `thread_range`               | `(min, max)`: run once per thread count, powers of two.        |
 
 Defaults live in your `pyproject.toml` `[tool.mew.benchmark_options]` and are overridden by per-decorator options and by CLI flags.
 See [](configuration.md).
