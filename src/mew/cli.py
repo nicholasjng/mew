@@ -1,9 +1,14 @@
 """argparse CLI: `mew run`, `mew list`, `mew profile`, `mew compare`.
 
-stdlib argparse (no third-party CLI dep). Each command is a plain function with
-keyword args; :func:`_build_parser` mirrors those args as ``add_argument`` calls
-and :func:`main` dispatches via the parsed namespace. Help is colorized with a
-small ANSI helper (:mod:`mew._console`); no third-party CLI dependency.
+Built on stdlib argparse, with help colorized by a small ANSI helper
+(:mod:`mew._console`). Each command is a plain function with keyword args;
+:func:`_build_parser` mirrors those args as ``add_argument`` calls and
+:func:`main` dispatches via the parsed namespace.
+
+The command functions are the CLI layer, not a supported Python API: each
+keyword mirrors a flag, and the ``add_argument`` help text in the
+``_add_*_cmd`` builders is the canonical documentation for what it does.
+Drive benchmarks programmatically through :func:`mew.run` instead.
 """
 
 from __future__ import annotations
@@ -16,7 +21,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import mew.config as _config
-import mew.discovery as _discovery
 from mew import (
     BENCHMARK_COMMIT,
     BENCHMARK_VERSION,
@@ -27,6 +31,7 @@ from mew import (
     Reporter,
     RichReporter,
     __version__ as _mew_version,
+    _discovery,
     run as _run,
 )
 from mew._registry import compile_name_filter, narrow_entry
@@ -904,7 +909,8 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--sample",
         action="store_true",
-        help="Sample CPU in-process with `pyinstrument` (Python frames; use `mew profile` for native).",
+        help="Sample CPU in-process with `pyinstrument` (Python frames; "
+        "use `mew profile` for native).",
     )
     p.add_argument(
         "--sample-interval",
@@ -967,7 +973,8 @@ def _add_profile_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--template",
         default="Time Profiler",
-        help="(xctrace) Instruments template name or `.tracetemplate` path. Default: `Time Profiler`.",
+        help="(xctrace) Instruments template name or `.tracetemplate` path. "
+        "Default: `Time Profiler`.",
     )
     p.add_argument(
         "--iterations",

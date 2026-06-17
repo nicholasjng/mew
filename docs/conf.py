@@ -58,6 +58,10 @@ autodoc_typehints_format = "short"
 napoleon_numpy_docstring = True
 napoleon_google_docstring = False
 napoleon_use_rtype = False
+# Render `Attributes` sections as `:ivar:` field lists. Otherwise napoleon emits a
+# second py:attribute per entry, colliding with the one autodoc already generates
+# from the annotation on every documented dataclass field.
+napoleon_use_ivar = True
 
 # Only run doctests in explicit ``.. doctest::`` directives. The NumPy-style
 # `>>>` example blocks in docstrings are illustrative, not executable.

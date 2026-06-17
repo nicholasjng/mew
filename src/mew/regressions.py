@@ -18,6 +18,8 @@ from pathlib import Path
 
 
 class Verdict(Enum):
+    """How one benchmark's delta was classified by the gate."""
+
     OK = "ok"
     """Within the active threshold; does not contribute to gate failure."""
 
@@ -34,12 +36,28 @@ class Verdict(Enum):
 
 @dataclass(frozen=True, slots=True)
 class AllowRule:
+    """One ``[[tool.mew.regressions.allow]]`` entry.
+
+    Attributes
+    ----------
+    pattern : str
+        ``fnmatch`` pattern matched case-sensitively against the full benchmark name.
+    reason : str
+        Why this benchmark is allowlisted. Required, so the file explains itself.
+    ignore : bool, default False
+        Exempt matching benchmarks from gating entirely.
+    threshold : float or None
+        Percent threshold replacing the default for matching benchmarks.
+        Exactly one of ``ignore`` / ``threshold`` must be set.
+    """
+
     pattern: str
     reason: str
     ignore: bool = False
     threshold: float | None = None
 
     def matches(self, name: str) -> bool:
+        """Whether ``name`` falls under this rule's pattern."""
         return fnmatch.fnmatchcase(name, self.pattern)
 
 
@@ -55,10 +73,21 @@ class BenchmarkVerdict:
 
 @dataclass(frozen=True, slots=True)
 class RegressionConfig:
+    """The active gate: a default threshold plus ordered allowlist rules.
+
+    Attributes
+    ----------
+    default_threshold : float
+        Percent slowdown tolerated by benchmarks no rule matches.
+    rules : tuple[AllowRule, ...]
+        Allowlist rules in file order; the first match wins.
+    """
+
     default_threshold: float
     rules: tuple[AllowRule, ...] = ()
 
     def find_rule(self, name: str) -> AllowRule | None:
+        """The first rule matching ``name``, or ``None`` if none do."""
         for r in self.rules:
             if r.matches(name):
                 return r
@@ -114,7 +143,8 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
     reason = raw.get("reason")
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError(
-            f"{source}: allow rule {pattern!r}: 'reason' is required (document why this is allowlisted)"
+            f"{source}: allow rule {pattern!r}: 'reason' is required "
+            "(document why this is allowlisted)"
         )
 
     if not ignore and threshold is None:
@@ -224,6 +254,24 @@ def report(
     *,
     default_threshold: float,
 ) -> int:
+    """Print the regression panel to stderr and return the exit code.
+
+    :func:`render_panel` with the side effect: stderr keeps the panel out of a
+    redirected comparison table.
+
+    Parameters
+    ----------
+    verdicts : list of BenchmarkVerdict
+        One entry per gated benchmark in display order.
+    default_threshold : float
+        Threshold quoted in the panel header.
+
+    Returns
+    -------
+    int
+        ``2`` if any benchmark regressed, else ``0``. Nothing is printed when
+        there is nothing to report.
+    """
     text, code = render_panel(verdicts, default_threshold=default_threshold)
     if text:
         print(text, file=sys.stderr)

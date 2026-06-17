@@ -15,7 +15,7 @@ It re-imports the benchmark file (decorator side-effects repopulate
 :class:`mew._profile._ProfileState`, the same out-of-loop runner the memory/CPU
 profilers use, so ``state.range``/family trampolines behave identically. The fresh
 interpreter means the ``sys.modules`` caching in
-:func:`mew.discovery.import_file` never bites here.
+:func:`mew._discovery.import_file` never bites here.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from mew import discovery as _discovery
+from mew import _discovery
 from mew._profile import _ProfileState
 from mew._registry import REGISTRY
 
