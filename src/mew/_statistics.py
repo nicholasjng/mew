@@ -70,9 +70,9 @@ def reduce_statistic(statistic: Statistic, values: list[float]) -> float:
 def resolve_statistic(spec: str) -> Statistic:
     """Resolve a statistic spec to a reducer callable.
 
-    A bare name resolves to a built-in (``min``/``max``/``mean``/``median``/``gmean``,
-    a ``pNN`` percentile, or any stdlib ``statistics`` function); a ``module.path:attr``
-    reference imports a user reducer.
+    A bare name resolves to a built-in (``min``/``max``/``mean``/``median``/``gmean``
+    or a ``pNN`` percentile); a ``module.path:attr`` reference imports a user
+    reducer (which also reaches stdlib functions, e.g. ``statistics:harmonic_mean``).
     """
     module_path, sep, attr = spec.partition(":")
     if sep:
@@ -101,12 +101,9 @@ def resolve_statistic(spec: str) -> Statistic:
         if q > 100:
             raise SystemExit(f"statistic {spec!r}: percentile must be between 0 and 100")
         return _percentile(q)
-    fn = getattr(statistics, spec, None)
-    if callable(fn):
-        return fn
     raise SystemExit(
         f"statistic {spec!r}: unknown name. Use a built-in "
-        f"({', '.join(sorted(_BUILTIN_STATISTICS))}, or a pNN percentile like p95), "
-        f"a `statistics` function (e.g. stdev, harmonic_mean), or a 'module.path:attr' "
-        f"reference (e.g. scipy.stats:gmean)."
+        f"({', '.join(sorted(_BUILTIN_STATISTICS))}, or a pNN percentile like p95) "
+        f"or a 'module.path:attr' reference (e.g. scipy.stats:gmean, "
+        f"statistics:harmonic_mean)."
     )

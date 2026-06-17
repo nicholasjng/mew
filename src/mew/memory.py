@@ -63,6 +63,8 @@ def profile(
         Benchmarks to profile.
     flamegraph : Path, optional
         If given, additionally writes a combined HTML flame graph to this path.
+        Note this re-executes every case under a second tracker (memray capture
+        files cannot be merged after the fact), roughly doubling profiling time.
     iterations : int, default 100
         Measured timing-loop passes per case (a warmup runs first, untracked).
         Many passes amortize one-time allocations, keeping
