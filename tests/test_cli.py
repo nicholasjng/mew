@@ -309,6 +309,17 @@ def test_run_jsonl_gz_extension_accepted(benchdir, tmp_path):
     assert len(lines) == 3  # pure NDJSON: one row per benchmark, no header
 
 
+def test_run_min_warmup_time_accepts_durations(benchdir, tmp_path):
+    # Consistent with --min-time's suffix syntax: `200ms` parses to seconds.
+    res = _mew("run", str(benchdir), "--min-time", "1x", "--min-warmup-time", "200ms", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+
+    res = _mew("run", str(benchdir), "--min-warmup-time", "1h", cwd=tmp_path)
+    assert res.returncode != 0
+    assert "invalid --min-warmup-time" in res.stderr
+    assert "Traceback" not in res.stderr
+
+
 def test_run_promoted_gb_flags_accepted(benchdir, tmp_path):
     # The promoted global knobs translate to GB flags GB actually accepts —
     # a bad flag would make benchmark::Initialize exit() before any run.

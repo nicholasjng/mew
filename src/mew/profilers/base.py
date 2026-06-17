@@ -100,12 +100,13 @@ def each_case(
             yield key, entry.file, entry.name, rng, output_dir / f"{slug(key)}{ext}"
 
 
-def parse_seconds(dur: str) -> float:
+def parse_seconds(dur: str, *, flag: str = "--time-limit") -> float:
     """``'10s'`` / ``'500ms'`` / ``'1m'`` / ``'5'`` → float seconds.
 
     For backends without a native duration flag (perf wraps the worker in ``timeout``;
-    py-spy takes integer ``--duration`` seconds). xctrace passes its ``--time-limit``
-    string through unparsed. An unparseable value is a CLI error, not a traceback.
+    py-spy takes integer ``--duration`` seconds) and for duration-valued run flags
+    (``--min-warmup-time``). xctrace passes its ``--time-limit`` string through
+    unparsed. An unparseable value is a CLI error naming ``flag``, not a traceback.
     """
     dur = dur.strip()
     try:
@@ -116,6 +117,6 @@ def parse_seconds(dur: str) -> float:
         return float(dur[:-1] if dur.endswith("s") else dur)
     except ValueError:
         raise SystemExit(
-            f"mew: invalid --time-limit {dur!r}; use seconds ('10s', '0.5'), "
+            f"mew: invalid {flag} {dur!r}; use seconds ('10s', '0.5'), "
             "milliseconds ('500ms'), or minutes ('1m')"
         ) from None

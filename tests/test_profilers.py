@@ -326,6 +326,9 @@ def test_parse_seconds_invalid_is_clean_error():
 
     with pytest.raises(SystemExit, match="invalid --time-limit"):
         parse_seconds("1h")
+    # The reported flag name is caller-supplied (also used by --min-warmup-time).
+    with pytest.raises(SystemExit, match="invalid --min-warmup-time"):
+        parse_seconds("1h", flag="--min-warmup-time")
 
 
 def test_pyspy_unavailable_on_macos(monkeypatch):
