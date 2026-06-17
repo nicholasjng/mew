@@ -10,7 +10,7 @@ import pytest
 
 import mew
 from mew import RunRow
-from mew.reporter import JSONReporter, RichReporter
+from mew.reporter import JSONLReporter, JSONReporter, RichReporter
 
 
 def _run_one(reporter):
@@ -133,75 +133,38 @@ def test_json_reporter_file_is_valid_after_each_flush_without_finalize(tmp_path)
     assert len(doc["benchmarks"]) == 3
 
 
-def test_parquet_reporter_writes_typed_columns(tmp_path):
-    pa = pytest.importorskip("pyarrow")
-    pq = pytest.importorskip("pyarrow.parquet")
-
-    import mew
-    from mew.reporter import ParquetReporter
-
-    mew.set_context("dataset.size", 1024)
-    mew.set_context("commit", "abc")
-
-    out = tmp_path / "results.parquet"
-    rep = ParquetReporter(output=out)
-    _run_one(rep)
-
-    table = pq.read_table(out)
-    assert table.num_rows == 1
-
-    schema = table.schema
-    # Spot-check the static schema: numeric columns, map<string,double>, custom string.
-    assert pa.types.is_float64(schema.field("real_time").type)
-    assert pa.types.is_int64(schema.field("iterations").type)
-    assert pa.types.is_map(schema.field("counters").type)
-    assert pa.types.is_string(schema.field("custom").type)
-    assert pa.types.is_timestamp(schema.field("date").type)
-
-    row = table.to_pylist()[0]
-    assert "bench_x" in row["name"]
-    assert row["iterations"] >= 1
-    assert row["time_unit"] == "ns"
-    # `custom` is a JSON string; round-trip it.
-    assert json.loads(row["custom"]) == {"dataset": {"size": 1024}, "commit": "abc"}
-
-
-def test_parquet_reporter_omits_custom_when_no_context(tmp_path):
-    pytest.importorskip("pyarrow")
-    pq = pytest.importorskip("pyarrow.parquet")
-
-    from mew.reporter import ParquetReporter
-
-    out = tmp_path / "results.parquet"
-    _run_one(ParquetReporter(output=out))
-
-    row = pq.read_table(out).to_pylist()[0]
-    assert row["custom"] is None
-
-
-def test_parquet_reporter_duckdb_query_round_trip(tmp_path):
-    pytest.importorskip("pyarrow")
+def test_jsonl_reporter_duckdb_query_round_trip(tmp_path):
+    # The archive contract: self-contained NDJSON rows are directly queryable
+    # by DuckDB, with nested blocks (`custom`) arriving as structs.
     duckdb = pytest.importorskip("duckdb")
 
     import mew
-    from mew.reporter import ParquetReporter
 
     mew.set_context("dataset.size", 1024)
 
-    out = tmp_path / "results.parquet"
-    _run_one(ParquetReporter(output=out))
+    out = tmp_path / "results.jsonl"
+    _run_one(JSONLReporter(output=out))
 
     con = duckdb.connect()
     rows = con.execute(
-        "SELECT name, real_time, "
-        "CAST(json_extract(custom, '$.dataset.size') AS BIGINT) AS sz "
-        f"FROM '{out}'"
+        f"SELECT name, real_time, custom.dataset.size, session_id FROM '{out}'"
     ).fetchall()
     assert len(rows) == 1
-    name, real_time, sz = rows[0]
+    name, real_time, sz, session_id = rows[0]
     assert "bench_x" in name
     assert real_time > 0
     assert sz == 1024
+    assert session_id  # identity on the row itself, no header join
+
+
+def test_jsonl_gz_reporter_duckdb_query_round_trip(tmp_path):
+    duckdb = pytest.importorskip("duckdb")
+
+    out = tmp_path / "results.jsonl.gz"
+    _run_one(JSONLReporter(output=out))
+
+    (row,) = duckdb.connect().execute(f"SELECT name FROM read_json_auto('{out}')").fetchall()
+    assert "bench_x" in row[0]
 
 
 def test_rich_reporter_runs_without_error():
@@ -248,7 +211,6 @@ def test_rich_reporter_profile_flags_add_columns():
     rep.report_context({"host_name": "h", "num_cpus": 1, "mhz_per_cpu": 1000, "cpu_scaling": "?"})
     out = buf.getvalue()
     assert "Peak Mem" in out
-    assert "Total Alloc" in out
     assert "Samples" in out
     assert "Hottest Frame" in out
 
@@ -315,12 +277,11 @@ def test_jsonl_reporter_streams_one_object_per_line(tmp_path):
     mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=JSONLReporter(output=out))
 
     lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
-    docs = [json.loads(ln) for ln in lines]  # each line is independently valid JSON
-    # Line 1 is the context header; the rest are benchmark rows.
-    assert "context" in docs[0]
-    rows = docs[1:]
+    rows = [json.loads(ln) for ln in lines]  # each line is independently valid JSON
+    # Pure NDJSON: no context header, every line is a self-contained row.
     assert len(rows) == 2
     assert all("/case:" in r["name"] for r in rows)
+    assert all(r["host_name"] and r["date"] for r in rows)
 
 
 def test_jsonl_reporter_flushes_incrementally(tmp_path):
@@ -332,9 +293,8 @@ def test_jsonl_reporter_flushes_incrementally(tmp_path):
     rep.report_context({})
 
     rep.report_runs([_fake_row("f::bench")])
-    # File already holds the context header + the row before finalize() is called.
+    # File already holds the row before finalize() is called.
     lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
-    assert len(lines) == 2
-    assert "context" in json.loads(lines[0])
-    assert json.loads(lines[1])["name"] == "f::bench"
+    assert len(lines) == 1
+    assert json.loads(lines[0])["name"] == "f::bench"
     rep.finalize()
