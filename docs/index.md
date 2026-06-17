@@ -41,7 +41,7 @@ Register one benchmark or a family with `@mew.benchmark`,
 :link: guide/cli
 :link-type: doc
 `mew run` discovers `bench_*.py` files, runs them with Google Benchmark, and
-streams results to the terminal, JSON, or Parquet.
+streams results to the terminal, JSON, or a JSONL archive.
 :::
 
 :::{grid-item-card} Profile

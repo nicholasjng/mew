@@ -20,7 +20,6 @@ from mew.reporter import (
     Fanout,
     JSONLReporter,
     JSONReporter,
-    ParquetReporter,
     Reporter,
     RichReporter,
 )
@@ -42,7 +41,6 @@ __all__ = [
     "Fanout",
     "JSONLReporter",
     "JSONReporter",
-    "ParquetReporter",
     "REGISTRY",
     "Registry",
     "Reporter",

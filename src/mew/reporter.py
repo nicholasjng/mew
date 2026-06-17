@@ -6,7 +6,6 @@ import json
 import re
 import sys
 from datetime import UTC, datetime
-from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Protocol, TextIO, cast, runtime_checkable
 
@@ -146,9 +145,16 @@ def _open_sink(output: Path | TextIO | None, mode: str = "w") -> tuple[TextIO, b
     """Resolve ``output`` to ``(file, owns_it)``.
 
     A Path is opened (owned), ``None`` → stdout, a stream is used as-is. ``mode``
-    applies only to a Path sink (``"a"`` appends a new segment).
+    applies only to a Path sink (``"a"`` appends a new session). A ``.gz`` Path
+    opens through gzip; appending writes a new gzip *member*, which every
+    multi-member-aware reader (Python, DuckDB, pandas) decompresses as one
+    stream — so archive appends stay O(new data).
     """
     if isinstance(output, Path):
+        if output.name.endswith(".gz"):
+            import gzip
+
+            return cast(TextIO, gzip.open(output, mode + "t")), True
         return cast(TextIO, output.open(mode)), True
     if output is None:
         return sys.stdout, False
@@ -239,41 +245,71 @@ class JSONReporter:
         _close_sink(self._fh, self._owns_fh)
 
 
+# Context fields stamped onto every JSONL row so each line is self-contained.
+# Optional identity (session_id/session_tag/custom) is stamped only when present.
+_ROW_STAMP_FIELDS = ("date", "host_name", "num_cpus", "cpu_scaling_enabled")
+_ROW_STAMP_OPTIONAL = ("session_id", "session_tag", "custom")
+
+
 class JSONLReporter:
-    """Stream one JSON object per Run, one per line, flushed as runs land.
+    """Stream one self-contained JSON object per Run, one per line, flushed as runs land.
 
     Append-only (works on pipes): a long suite leaves a growing, ``tail``-able file
-    that survives interruption. Line 1 is a ``{"context": {...}}`` header; each later
-    line is one benchmark record. Consumers skip line 1 / branch on ``context``.
+    that survives interruption. Every row carries its session identity (date, host,
+    ``session_id``/``session_tag``, ``custom``), so the file is plain NDJSON that
+    DuckDB / pandas / polars query directly — no header join needed — and converts
+    to Parquet with a one-liner (see docs/guide/reporters.md). A ``.gz`` path
+    writes a gzip archive; ``--append`` adds a new gzip member, so appends stay
+    cheap on compressed archives too.
 
     Parameters
     ----------
     output : Path, TextIO, or None, optional
-        Destination. A Path is opened and closed here; a stream is written directly;
-        ``None`` writes to ``sys.stdout``.
+        Destination. A Path is opened and closed here (gzip for ``.gz``); a stream
+        is written directly; ``None`` writes to ``sys.stdout``.
     append : bool, default False
-        Open a Path sink in append mode, adding this run as a new
-        context-header + rows *segment* (one more session). Ignored for
-        stream / stdout sinks.
+        Open a Path sink in append mode, adding this run's rows as a new session.
+        Ignored for stream / stdout sinks.
+    header : bool, default False
+        Channel mode: write a ``{"context": {...}}`` line before the rows and
+        leave the rows bare (identity lives in the header only). Used by the
+        ``--variant`` worker, whose parent re-projects the context and stamps
+        its own shared session onto the merged rows — row-stamping here would
+        let the child's throwaway session identity shadow the parent's. File
+        sinks stay pure NDJSON with self-contained rows.
     """
 
-    def __init__(self, *, output: Path | TextIO | None = None, append: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        output: Path | TextIO | None = None,
+        append: bool = False,
+        header: bool = False,
+    ) -> None:
         self._output = output
         self._append = append
+        self._header = header
         self._fh: TextIO | None = None
         self._owns_fh = False
+        self._stamp: dict[str, Any] = {}
 
     def report_context(self, context: dict[str, Any]) -> bool:
         self._fh, self._owns_fh = _open_sink(self._output, "a" if self._append else "w")
-        # Header first so provenance lands before any rows.
-        self._fh.write(json.dumps({"context": _build_context(context)}, default=str) + "\n")
-        self._fh.flush()
+        ctx = _build_context(context)
+        if self._header:
+            self._fh.write(json.dumps({"context": ctx}, default=str) + "\n")
+            self._fh.flush()
+        else:
+            self._stamp = {k: ctx.get(k) for k in _ROW_STAMP_FIELDS}
+            self._stamp.update({k: ctx[k] for k in _ROW_STAMP_OPTIONAL if k in ctx})
         return True
 
     def report_runs(self, runs: list[RunRow]) -> None:
         assert self._fh is not None  # report_context runs first, always
         for row in runs:
-            self._fh.write(json.dumps(row, default=str) + "\n")
+            # Row-carried values win: merged --variant rows bring their own
+            # per-variant `custom` (and `variant`), which must not be clobbered.
+            self._fh.write(json.dumps({**self._stamp, **row}, default=str) + "\n")
         self._fh.flush()
 
     def finalize(self) -> None:
@@ -290,7 +326,7 @@ class RichReporter:
     terminal : mew._console.Terminal, optional
         Terminal to print to. Defaults to a fresh one (stdout).
     show_memory : bool, default False
-        Add ``Peak Mem`` / ``Total Alloc`` columns.
+        Add a ``Peak Mem`` column.
     show_cpu : bool, default False
         Add ``Samples`` / ``Hottest Frame`` columns.
     show_label : bool, default False
@@ -360,7 +396,6 @@ class RichReporter:
             fixed["label"] = 20
         if self._show_memory:
             fixed["peak"] = 10
-            fixed["alloc"] = 12
         if self._show_cpu:
             fixed["samples"] = 9
             fixed["hottest_frame"] = 30
@@ -384,7 +419,6 @@ class RichReporter:
         ]
         if self._show_memory:
             cells.append("Peak Mem".rjust(w["peak"]))
-            cells.append("Total Alloc".rjust(w["alloc"]))
         if self._show_cpu:
             cells.append("Samples".rjust(w["samples"]))
             cells.append("Hottest Frame".ljust(w["hottest_frame"]))
@@ -430,7 +464,6 @@ class RichReporter:
         if self._show_memory:
             mem = row.get("memory")
             cells.append((_fmt_bytes(mem["peak_bytes"]) if mem else "-").rjust(w["peak"]))
-            cells.append((_fmt_bytes(mem["total_bytes"]) if mem else "-").rjust(w["alloc"]))
         if self._show_cpu:
             cpu = row.get("cpu_profile")
             cells.append((f"{cpu['sample_count']:,}" if cpu else "-").rjust(w["samples"]))
@@ -439,153 +472,6 @@ class RichReporter:
                 top = top[: w["hottest_frame"] - 1] + "…"
             cells.append(top.ljust(w["hottest_frame"]))
         self._term.print(_COL_SEP.join(cells))
-
-
-class ParquetReporter:
-    """Write a Parquet file with one row per benchmark Run.
-
-    Static schema; user context goes in a JSON string column ``custom`` (query via
-    ``json_extract`` in DuckDB).
-
-    Parameters
-    ----------
-    output : Path
-        Destination file, overwritten if it exists.
-    append : bool, default False
-        If the file exists, concatenate this run's rows onto it (one more
-        session) instead of overwriting. Per-row ``session_id`` columns keep
-        sessions distinct.
-
-    Raises
-    ------
-    RuntimeError
-        From :meth:`finalize` when ``pyarrow`` is not installed.
-    """
-
-    def __init__(self, *, output: Path, append: bool = False) -> None:
-        if sys.platform == "win32" and find_spec("tzdata") is None:
-            raise RuntimeError(
-                "ParquetReporter on Windows requires the `tzdata` package "
-                "for pyarrow's UTC timestamp support. Install it with "
-                "`pip install tzdata`."
-            )
-        self._output = Path(output)
-        self._append = append
-        self._context: dict[str, Any] = {}
-        self._runs: list[RunRow] = []
-
-    def report_context(self, context: dict[str, Any]) -> bool:
-        self._context = dict(context)
-        return True
-
-    def report_runs(self, runs: list[RunRow]) -> None:
-        self._runs.extend(runs)
-
-    def finalize(self) -> None:
-        if find_spec("pyarrow") is None:
-            raise RuntimeError(
-                "ParquetReporter requires pyarrow. Install it with "
-                "`pip install pyarrow` (or `uv add pyarrow`)."
-            )
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        date = datetime.now(UTC)
-        rows = [self._row(r, date) for r in self._runs]
-        table = pa.Table.from_pylist(rows, schema=_parquet_schema())
-        if self._append and self._output.exists():
-            # promote_options fills columns absent from an older file with nulls,
-            # so appending across a schema bump (e.g. pre-session files) works.
-            existing = pq.read_table(self._output)
-            table = pa.concat_tables([existing, table], promote_options="default")
-        pq.write_table(table, str(self._output))
-
-    def _row(self, row: RunRow, date: datetime) -> dict[str, Any]:
-        ctx = self._context
-        mem = row.get("memory")
-        cpu = row.get("cpu_profile")
-        # A row's own custom (set per variant) wins over the shared context block.
-        run_custom = row.get("custom")
-        custom = run_custom if run_custom is not None else ctx.get("custom")
-        custom_json = json.dumps(custom, default=str) if custom else None
-        counters = row["counters"]
-        return {
-            "name": row["name"],
-            "run_name": row["run_name"],
-            "family_index": row["family_index"],
-            "per_family_instance_index": row["per_family_instance_index"],
-            "run_type": row["run_type"],
-            "aggregate_name": row["aggregate_name"],
-            "repetitions": row["repetitions"],
-            "repetition_index": row["repetition_index"],
-            "threads": row["threads"],
-            "iterations": row["iterations"],
-            "real_time": row["real_time"],
-            "cpu_time": row["cpu_time"],
-            "real_accumulated_time": row["real_accumulated_time"],
-            "cpu_accumulated_time": row["cpu_accumulated_time"],
-            "time_unit": row["time_unit"],
-            "label": row["label"],
-            "skipped": row["skipped"],
-            "skip_message": row["skip_message"],
-            # pa rejects `{}` for `map_` columns; a list of (k, v) pairs handles
-            # the empty case cleanly.
-            "counters": list(counters.items()) if counters else [],
-            "variant": row.get("variant"),
-            "date": date,
-            "session_id": ctx.get("session_id"),
-            "session_tag": ctx.get("session_tag"),
-            "host_name": ctx.get("host_name"),
-            "executable": ctx.get("executable"),
-            "num_cpus": ctx.get("num_cpus"),
-            "mhz_per_cpu": ctx.get("mhz_per_cpu"),
-            "cpu_scaling_enabled": ctx.get("cpu_scaling") == "enabled",
-            "library_build_type": ctx.get("library_build_type"),
-            "custom": custom_json,
-            "memory": json.dumps(mem) if mem is not None else None,
-            "cpu_profile": json.dumps(cpu) if cpu is not None else None,
-        }
-
-
-def _parquet_schema() -> Any:
-    import pyarrow as pa
-
-    return pa.schema(
-        [
-            ("name", pa.string()),
-            ("run_name", pa.string()),
-            ("family_index", pa.int64()),
-            ("per_family_instance_index", pa.int64()),
-            ("run_type", pa.string()),
-            ("aggregate_name", pa.string()),
-            ("repetitions", pa.int64()),
-            ("repetition_index", pa.int64()),
-            ("threads", pa.int64()),
-            ("iterations", pa.int64()),
-            ("real_time", pa.float64()),
-            ("cpu_time", pa.float64()),
-            ("real_accumulated_time", pa.float64()),
-            ("cpu_accumulated_time", pa.float64()),
-            ("time_unit", pa.string()),
-            ("label", pa.string()),
-            ("skipped", pa.bool_()),
-            ("skip_message", pa.string()),
-            ("counters", pa.map_(pa.string(), pa.float64())),
-            ("variant", pa.string()),
-            ("date", pa.timestamp("us", tz="UTC")),
-            ("session_id", pa.string()),
-            ("session_tag", pa.string()),
-            ("host_name", pa.string()),
-            ("executable", pa.string()),
-            ("num_cpus", pa.int64()),
-            ("mhz_per_cpu", pa.float64()),
-            ("cpu_scaling_enabled", pa.bool_()),
-            ("library_build_type", pa.string()),
-            ("custom", pa.string()),
-            ("memory", pa.string()),
-            ("cpu_profile", pa.string()),
-        ]
-    )
 
 
 class Fanout:
@@ -622,7 +508,6 @@ __all__ = [
     "Fanout",
     "JSONLReporter",
     "JSONReporter",
-    "ParquetReporter",
     "Reporter",
     "RichReporter",
 ]
