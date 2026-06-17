@@ -222,6 +222,59 @@ def test_double_registration_raises():
             for _ in state:
                 pass
 
+    # The failed outer decorator must not have added a second entry: the
+    # registry still holds exactly the @parametrize registration.
+    (entry,) = REGISTRY.all()
+    assert entry.case_labels == ["n=1"]
+
+
+def test_parametrize_rejects_duplicate_case_labels():
+    # Two list-valued cases both collapse to `data=list`, making `name[label]`
+    # addressing ambiguous; registration must reject this, pointing at ids=.
+    with pytest.raises(ValueError, match="duplicate case label"):
+
+        @mew.parametrize([{"data": [1, 2]}, {"data": [3, 4]}])
+        def _bench(state, data):
+            for _ in state:
+                pass
+
+    assert REGISTRY.all() == []  # nothing half-registered
+
+
+def test_parametrize_duplicate_labels_ok_with_explicit_ids():
+    @mew.parametrize([{"data": [1, 2]}, {"data": [3, 4]}], ids=["small", "large"])
+    def _bench(state, data):
+        for _ in state:
+            pass
+
+    (entry,) = REGISTRY.all()
+    assert entry.case_labels == ["small", "large"]
+
+
+def test_threads_and_thread_range_mutually_exclusive():
+    with pytest.raises(TypeError, match="mutually exclusive"):
+
+        @mew.benchmark(threads=2, thread_range=(1, 4))
+        def _bench(state):
+            for _ in state:
+                pass
+
+
+def test_thread_range_shape_validated_at_decoration():
+    with pytest.raises(TypeError, match="min, max"):
+
+        @mew.benchmark(thread_range=(1,))  # ty: ignore[invalid-argument-type]
+        def _bench(state):
+            for _ in state:
+                pass
+
+    with pytest.raises(TypeError, match="1 <= min <= max"):
+
+        @mew.benchmark(thread_range=(4, 2))
+        def _bench2(state):
+            for _ in state:
+                pass
+
 
 def test_benchmark_tags_propagate():
     @mew.benchmark(tags=("io", "slow"))

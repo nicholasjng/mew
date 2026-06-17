@@ -54,6 +54,14 @@ def test_nesting_under_existing_leaf_raises():
         mew.set_context("dataset.size", 1024)
 
 
+def test_nesting_under_explicit_none_leaf_raises():
+    # None is a stored value like any other, not "absent": traversing through
+    # it must raise, not silently replace it with a subtree.
+    mew.set_context("dataset", None)
+    with pytest.raises(ValueError, match="is not a dict"):
+        mew.set_context("dataset.size", 1024)
+
+
 def test_update_context_with_kwargs():
     mew.update_context(commit="abc", env={"python": "3.13"})
     assert mew.get_context() == {"commit": "abc", "env": {"python": "3.13"}}

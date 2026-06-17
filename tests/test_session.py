@@ -85,15 +85,17 @@ def test_derive_session_tag_custom_tool_and_args(tmp_path: Path):
 
 
 def _run_to_jsonl(tmp_path: Path, name: str, **run_kwargs) -> dict:
-    """Run the registered benchmarks into a JSONL file, return its context block."""
+    """Run the registered benchmarks into a JSONL file, return the first row.
+
+    Rows are self-contained, so session identity is read off the row itself.
+    """
     out = tmp_path / f"{name}.jsonl"
     mew.run(
         argv=["mew", "--benchmark_min_time=1x"],
         reporter=JSONLReporter(output=out),
         **run_kwargs,
     )
-    header = json.loads(out.read_text().splitlines()[0])
-    return header["context"]
+    return json.loads(out.read_text().splitlines()[0])
 
 
 def test_run_stamps_session_id_into_context(tmp_path: Path):
@@ -145,26 +147,25 @@ def test_json_reporter_persists_session_identity(tmp_path: Path):
     assert ctx["session_tag"] == "before"
 
 
-def test_parquet_reporter_persists_session_columns(tmp_path: Path):
-    pytest.importorskip("pyarrow")
-    import pyarrow.parquet as pq
-
-    from mew.reporter import ParquetReporter
-
+def test_jsonl_rows_are_self_contained(tmp_path: Path):
+    # Every JSONL row carries its session identity — no header line to join.
     @mew.benchmark
     def bench_s(state):
         for _ in state:
             pass
 
-    out = tmp_path / "out.parquet"
+    out = tmp_path / "out.jsonl"
     mew.run(
         argv=["mew", "--benchmark_min_time=1x"],
-        reporter=ParquetReporter(output=out),
+        reporter=JSONLReporter(output=out),
         session_tag="before",
     )
-    row = pq.read_table(out).to_pylist()[0]
+    lines = [json.loads(ln) for ln in out.read_text().splitlines()]
+    assert all("name" in row for row in lines)  # pure NDJSON, no context line
+    row = lines[0]
     assert uuid.UUID(row["session_id"]).version == 7
     assert row["session_tag"] == "before"
+    assert row["host_name"] and row["date"]
 
 
 def test_bare_reporter_context_omits_session_keys():
@@ -196,33 +197,33 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path):
         session_tag="after",
     )
 
-    # Two header lines + two rows; compare splits them into two sessions, keyed
-    # by their distinct session ids (not collapsed by the shared name).
+    # Two rows, each carrying its own session identity; compare splits them
+    # into two sessions keyed by their distinct session ids.
     sessions = _load_sessions(out, "real_time")
     assert len(sessions) == 2
     assert {s.session_tag for s in sessions} == {"before", "after"}
     assert len({s.session_id for s in sessions}) == 2
 
 
-def test_parquet_append_concatenates_sessions(tmp_path: Path):
-    pytest.importorskip("pyarrow")
+def test_jsonl_gz_append_concatenates_sessions(tmp_path: Path):
+    # Gzip archive: each --append run writes a new gzip member; readers see
+    # one stream, compare sees two sessions.
     from mew.compare import _load_sessions
-    from mew.reporter import ParquetReporter
 
     @mew.benchmark
     def bench_s(state):
         for _ in state:
             pass
 
-    out = tmp_path / "acc.parquet"
+    out = tmp_path / "acc.jsonl.gz"
     mew.run(
         argv=["mew", "--benchmark_min_time=1x"],
-        reporter=ParquetReporter(output=out),
+        reporter=JSONLReporter(output=out),
         session_tag="before",
     )
     mew.run(
         argv=["mew", "--benchmark_min_time=1x"],
-        reporter=ParquetReporter(output=out, append=True),
+        reporter=JSONLReporter(output=out, append=True),
         session_tag="after",
     )
 

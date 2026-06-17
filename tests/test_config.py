@@ -1,4 +1,4 @@
-"""Loading `[tool.mew]` from pyproject.toml and formatting GB options."""
+"""Loading `[tool.mew]` from pyproject.toml."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mew.config import format_benchmark_args, load
+from mew.config import load
 
 
 def _write(root: Path, body: str) -> None:
@@ -17,9 +17,35 @@ def _write(root: Path, body: str) -> None:
 def test_load_defaults_when_no_pyproject(tmp_path: Path):
     cfg = load(tmp_path)
     assert cfg.benchpaths == ["benchmarks"]
-    assert cfg.benchmark_options == {}
     assert cfg.session_tag.tool is None  # unset → auto (jj then git)
     assert cfg.statistic is None
+
+
+def test_load_bare_string_benchpaths_is_one_path(tmp_path: Path):
+    # A bare TOML string must be one path, not list("perf") == ["p","e","r","f"].
+    _write(
+        tmp_path,
+        """
+        [tool.mew]
+        benchpaths = "perf"
+        python-files = "bench_*.py"
+        """,
+    )
+    cfg = load(tmp_path)
+    assert cfg.benchpaths == ["perf"]
+    assert cfg.python_files == ["bench_*.py"]
+
+
+def test_load_rejects_non_string_benchpaths(tmp_path: Path):
+    _write(
+        tmp_path,
+        """
+        [tool.mew]
+        benchpaths = 42
+        """,
+    )
+    with pytest.raises(ValueError, match="benchpaths"):
+        load(tmp_path)
 
 
 def test_load_statistic_reference(tmp_path: Path):
@@ -51,14 +77,10 @@ def test_load_kebab_case_keys_coerce_to_snake(tmp_path: Path):
         """
         [tool.mew]
         python-files = ["b_*.py"]
-
-        [tool.mew.benchmark-options]
-        min-time = "2.0"
         """,
     )
     cfg = load(tmp_path)
     assert cfg.python_files == ["b_*.py"]
-    assert cfg.benchmark_options == {"min_time": "2.0"}
 
 
 def test_load_session_tag_disabled(tmp_path: Path):
@@ -85,36 +107,3 @@ def test_load_rejects_unknown_session_tag_key(tmp_path: Path):
     _write(tmp_path, "[tool.mew.session-tag]\ntoll = 'git'\n")  # typo
     with pytest.raises(ValueError, match="unknown keys in \\[tool.mew.session-tag\\]"):
         load(tmp_path)
-
-
-def test_load_benchmark_options_table(tmp_path: Path):
-    _write(
-        tmp_path,
-        """
-        [tool.mew.benchmark_options]
-        min_time = "2.0"
-        repetitions = 5
-        report_aggregates_only = true
-        """,
-    )
-    cfg = load(tmp_path)
-    assert cfg.benchmark_options == {
-        "min_time": "2.0",
-        "repetitions": 5,
-        "report_aggregates_only": True,
-    }
-
-
-def test_format_benchmark_args_handles_strings_numbers_and_bools():
-    args = format_benchmark_args(
-        {"min_time": "2.0", "repetitions": 5, "report_aggregates_only": True, "color": False}
-    )
-    assert args == [
-        "--benchmark_min_time=2.0",
-        "--benchmark_repetitions=5",
-        "--benchmark_report_aggregates_only",
-    ]
-
-
-def test_format_benchmark_args_empty():
-    assert format_benchmark_args({}) == []

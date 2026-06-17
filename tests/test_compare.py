@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import json
-from importlib.util import find_spec
 from pathlib import Path
 
 import numpy as np
@@ -130,8 +129,12 @@ def test_resolve_statistic_percentile_picks_tail() -> None:
     assert reduce_statistic(stat, [float(i) for i in range(1, 11)]) == pytest.approx(9.1)
 
 
-def test_resolve_statistic_falls_back_to_statistics_module() -> None:
-    stat = resolve_statistic("stdev")  # not a curated alias, but stdlib statistics has it
+def test_resolve_statistic_rejects_bare_stdlib_names() -> None:
+    # The implicit statistics-module fallback was removed: bare stdlib names
+    # are unknown; the module:attr form remains the explicit escape hatch.
+    with pytest.raises(SystemExit, match="unknown name"):
+        resolve_statistic("stdev")
+    stat = resolve_statistic("statistics:stdev")
     assert reduce_statistic(stat, [2.0, 4.0, 6.0]) == pytest.approx(2.0)
 
 
@@ -304,7 +307,7 @@ def test_compare_stddev_column(tmp_path: Path) -> None:
 def test_load_multi_session_keeps_latest(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Simulate a concatenated Parquet by hand-building rows with per-row dates.
+    # Simulate a concatenated archive by hand-building rows with per-row dates.
     p = tmp_path / "agg.json"
     _write_json(
         p,
@@ -678,7 +681,7 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
     assert "speedup" not in out
 
     console = Console(record=True, width=200)
-    code = compare([base, other], metric="memory.total_allocations", console=console)
+    code = compare([base, other], metric="memory.allocations_per_iteration", console=console)
     assert code == 0
     assert "-50.00%" in console.export_text()
 
@@ -797,128 +800,139 @@ def test_select_latest_merges_per_name(tmp_path: Path, capsys: pytest.CaptureFix
     assert samples["shared"].value == 20.0
     assert samples["old_only"].value == 1.0
     err = capsys.readouterr().err
-    assert "'shared' has 2 sessions" in err
+    assert "'shared' (2 sessions)" in err
     assert "old_only" not in err
+    # One aggregated warning line, not one per benchmark.
+    assert err.count("warning:") == 1
 
 
-@pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
-def test_compare_parquet_memory_metric_parses_json_column(tmp_path: Path) -> None:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+def test_load_selector_drops_aggregate_rows(tmp_path: Path) -> None:
+    """A ``@selector`` load must filter GB aggregate rows like the default load.
 
-    def write(path: Path, peak: int) -> None:
-        row = _row("bench_x", 1.0)
-        row["memory"] = json.dumps(
-            {"profiler": "memray", "peak_bytes": peak, "total_bytes": peak, "total_allocations": 1}
-        )
-        pq.write_table(pa.Table.from_pylist([row]), path)
-
-    base = tmp_path / "base.parquet"
-    other = tmp_path / "other.parquet"
-    write(base, 1 << 20)
-    write(other, 1 << 19)
-    console = Console(record=True, width=200)
-    assert compare([base, other], metric="memory.peak_bytes", console=console) == 0
-    assert "-50.00%" in console.export_text()
-
-
-@pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
-def test_compare_parquet_skips_cpu_profile_column(tmp_path: Path) -> None:
-    """A timing compare must not read/decode `cpu_profile` — it's projected away.
-
-    The blob here is deliberately un-decodable JSON: if the reader ever touched
-    it, `_decode_json_str` would surface garbage (or the column read would bloat
-    memory). The compare succeeding proves the column is never materialized.
+    With repetitions > 1 the file carries mean/stddev/cv rows; mixing them into
+    the recomputed statistics drags the median toward the tiny cv/stddev values.
     """
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+    common = dict(date="2026-01-01T00:00:00", session_id="0197-aaaa", session_tag="before")
+    rows = [
+        _row("b", 100.0, repetition_index=0, **common),
+        _row("b", 110.0, repetition_index=1, **common),
+        _row("b", 120.0, repetition_index=2, **common),
+        _row("b", 110.0, aggregate_name="mean", **common),
+        _row("b", 10.0, aggregate_name="stddev", **common),
+        _row("b", 0.09, aggregate_name="cv", **common),
+    ]
+    p = tmp_path / "r.jsonl"
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
-    from mew.compare import _parquet_projection
-    from mew.reporter import _parquet_schema
-
-    schema = _parquet_schema()
-
-    def write(path: Path, rt: float) -> None:
-        row = {f.name: None for f in schema}
-        row.update(
-            name="pkg::bench_x",
-            aggregate_name="",
-            time_unit="ns",
-            real_time=rt,
-            cpu_time=rt,
-            iterations=1000,
-            counters=[("a", 1.0)],
-            cpu_profile="{ NOT VALID JSON >>>",  # poison: never decoded for a timing metric
-        )
-        pq.write_table(pa.Table.from_pylist([row], schema=schema), path)
-
-    base = tmp_path / "base.parquet"
-    other = tmp_path / "other.parquet"
-    write(base, 100.0)
-    write(other, 50.0)
-    assert "cpu_profile" not in _parquet_projection("real_time")
-    console = Console(record=True, width=200)
-    assert compare([base, other], console=console) == 0
-    assert "×2.000" in console.export_text()
+    selected, _ = _load(p, "real_time", selector="before")
+    full, _ = _load(p, "real_time")
+    assert selected["b"].value == 110.0
+    assert selected["b"].value == full["b"].value
 
 
-def _two_session_parquet(tmp_path: Path) -> Path:
-    """A Parquet file holding 'before' (100) and 'after' (80) sessions of one bench."""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+def test_load_excludes_skipped_rows(tmp_path: Path) -> None:
+    # Skipped rows carry no real timing; including them would drag the median
+    # toward 0. A benchmark with only skipped rows must not produce a sample.
+    p = tmp_path / "a.json"
+    _write_json(
+        p,
+        [
+            _row("b", 100.0),
+            _row("b", 120.0),
+            _row("b", 0.0, skipped=True),
+            _row("only_skipped", 0.0, skipped=True),
+        ],
+    )
+    samples, _ = _load(p, "real_time")
+    assert samples["b"].value == 110.0  # median of the two real rows
+    assert "only_skipped" not in samples
 
-    p = tmp_path / "results.parquet"
+
+def test_compare_zero_baseline_shows_infinite_delta(tmp_path: Path) -> None:
+    # A zero baseline against a nonzero contender must not read as +0.00%.
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    _write_json(base, [_row("b", 0.0)])
+    _write_json(other, [_row("b", 50.0)])
+    console = Console(width=200)
+    compare([base, other], console=console)
+    assert "+∞%" in console.export_text()
+
+
+def test_fmt_delta_colors_by_improvement_direction() -> None:
+    from mew.compare import _fmt_delta
+
+    assert _fmt_delta(0.2) == ("+20.00%", "red")  # slower time: bad
+    assert _fmt_delta(-0.2) == ("-20.00%", "green")
+    # More iterations is an improvement, fewer a regression.
+    assert _fmt_delta(0.2, higher_is_better=True)[1] == "green"
+    assert _fmt_delta(-0.2, higher_is_better=True)[1] == "red"
+
+
+def test_compare_iterations_speedup_direction(tmp_path: Path) -> None:
+    # +20% iterations is a ×1.2 speedup, not ×0.83.
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    _write_json(base, [_row("b", 1.0, iterations=1000)])
+    _write_json(other, [_row("b", 1.0, iterations=1200)])
+    console = Console(width=200)
+    compare([base, other], metric="iterations", console=console)
+    assert "×1.200" in console.export_text()
+
+
+def test_compare_warns_on_time_unit_skew(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    _write_json(base, [_row("b", 100.0)])  # ns
+    _write_json(other, [_row("b", 0.1, time_unit="us")])
+    compare([base, other], console=Console(width=200))
+    err = capsys.readouterr().err
+    assert "different time units" in err
+
+
+def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
+    # `stdev` needs two values; a single-repetition file must fail loudly, not
+    # silently drop every benchmark and report "no overlapping benchmarks".
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    _write_json(base, [_row("b", 100.0)])
+    _write_json(other, [_row("b", 120.0)])
+    statistic = resolve_statistic("statistics:stdev")
+    with pytest.raises(SystemExit, match="--statistic failed on 'b'"):
+        compare([base, other], statistic=statistic, console=Console(width=200))
+
+
+def _two_session_jsonl(tmp_path: Path) -> Path:
+    """A self-contained JSONL file holding 'before' (100) and 'after' (80) sessions."""
+    p = tmp_path / "results.jsonl"
     rows = [
         _row("b", 100.0, date="2026-01-01T00:00:00", session_id="0197aaaa11", session_tag="before"),
         _row("b", 80.0, date="2026-02-01T00:00:00", session_id="0197bbbb22", session_tag="after"),
     ]
-    pq.write_table(pa.Table.from_pylist(rows), p)
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
     return p
 
 
-@pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
-def test_compare_parquet_two_sessions_of_one_file(tmp_path: Path) -> None:
-    p = _two_session_parquet(tmp_path)
+def test_compare_two_sessions_of_one_jsonl_file(tmp_path: Path) -> None:
+    p = _two_session_jsonl(tmp_path)
     console = Console(record=True, width=200)
     assert compare([Path(f"{p}@before"), Path(f"{p}@after")], console=console) == 0
     out = console.export_text()
-    assert "-20.00%" in out  # 100 -> 80, so the fast path resolved both sessions correctly
+    assert "-20.00%" in out  # 100 -> 80: both sessions resolved from row-level identity
     assert "session=before" in out and "session=after" in out
 
 
-@pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
-def test_parquet_selector_pushes_down_session_filter(tmp_path: Path, monkeypatch) -> None:
-    """A Parquet ``@selector`` reads only the chosen session — via a pushed-down filter.
-
-    Spy on ``read_table``: the cheap index pass reads unfiltered identity columns,
-    but each metric read must carry ``filters=[("session_id", "==", <sid>)]`` so the
-    scan prunes the other sessions instead of materializing the whole table.
-    """
-    import pyarrow.parquet as pq
-
-    p = _two_session_parquet(tmp_path)
-    filters_seen: list = []
-    orig = pq.read_table
-    monkeypatch.setattr(
-        pq, "read_table", lambda *a, **k: (filters_seen.append(k.get("filters")), orig(*a, **k))[1]
-    )
-    assert compare([Path(f"{p}@before"), Path(f"{p}@after")], console=Console()) == 0
-    pushed = [f for f in filters_seen if f]
-    assert len(pushed) == 2  # one metric read per selected session
-    assert {f[0][2] for f in pushed} == {"0197aaaa11", "0197bbbb22"}
-    assert all(f[0][:2] == ("session_id", "==") for f in pushed)
-
-
-@pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
-def test_compare_parquet_roundtrip(tmp_path: Path) -> None:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+def test_compare_jsonl_gz_roundtrip(tmp_path: Path) -> None:
+    import gzip
 
     def write(path: Path, rows: list[dict]) -> None:
-        pq.write_table(pa.Table.from_pylist(rows), path)
+        with gzip.open(path, "wt") as fh:
+            fh.writelines(json.dumps(r) + "\n" for r in rows)
 
-    base = tmp_path / "base.parquet"
-    other = tmp_path / "other.parquet"
+    base = tmp_path / "base.jsonl.gz"
+    other = tmp_path / "other.jsonl.gz"
     write(base, [_row("bench_x", 100.0)])
     write(other, [_row("bench_x", 50.0)])
     console = Console(record=True, width=200)
