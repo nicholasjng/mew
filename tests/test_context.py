@@ -134,7 +134,7 @@ def test_context_flows_into_reporter():
             pass
 
     cap = _Capture()
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=cap)
+    mew.run(min_time="1x", reporter=cap)
     assert cap.context is not None
     assert cap.context["custom"] == {
         "dataset": {"size": 1024},
@@ -149,7 +149,7 @@ def test_no_custom_key_when_context_is_empty():
             pass
 
     cap = _Capture()
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=cap)
+    mew.run(min_time="1x", reporter=cap)
     assert cap.context is not None
     # No injection means no `custom` key shoved into the dict.
     assert "custom" not in cap.context
@@ -166,7 +166,7 @@ def test_context_snapshot_is_captured_at_run_start():
             pass
 
     cap = _Capture()
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=cap)
+    mew.run(min_time="1x", reporter=cap)
     assert cap.context is not None
     assert cap.context["custom"] == {"snapshot_phase": "before"}
 
@@ -181,7 +181,7 @@ def test_json_reporter_emits_custom_context(tmp_path: Path):
 
     out = tmp_path / "results.json"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONReporter(output=out),
     )
     doc = json.loads(out.read_text())
@@ -198,7 +198,7 @@ def test_json_reporter_handles_non_serializable_via_default(tmp_path: Path):
 
     out = tmp_path / "results.json"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONReporter(output=out),
     )
     doc = json.loads(out.read_text())

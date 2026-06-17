@@ -145,12 +145,42 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
         handle.threads(int(v))
 
 
+def _gb_argv(
+    min_time: str | float | None,
+    min_warmup_time: float | None,
+    repetitions: int | None,
+    random_interleaving: bool,
+    filter: str | None,
+) -> list[str]:
+    """Google Benchmark argv for the structured global knobs.
+
+    Deliberately closed: per-benchmark knobs live on the decorators, and GB's
+    output/reporting flags would fight mew's own reporters. A new global knob
+    earns a keyword on :func:`run`, not an argv passthrough.
+    """
+    argv = ["mew"]
+    if min_time is not None:
+        argv.append(f"--benchmark_min_time={min_time}")
+    if min_warmup_time is not None:
+        argv.append(f"--benchmark_min_warmup_time={min_warmup_time}")
+    if repetitions is not None:
+        argv.append(f"--benchmark_repetitions={repetitions}")
+    if random_interleaving:
+        argv.append("--benchmark_enable_random_interleaving=true")
+    if filter:
+        argv.append(f"--benchmark_filter={filter}")
+    return argv
+
+
 def run(
     entries: Sequence[Entry] | None = None,
     *,
-    argv: Sequence[str] | None = None,
     reporter: Reporter | Iterable[Reporter] | None = None,
     filter: str | None = None,
+    min_time: str | float | None = None,
+    min_warmup_time: float | None = None,
+    repetitions: int | None = None,
+    random_interleaving: bool = False,
     session_tag: str | None = None,
     strict: bool = False,
     memory_profiles: dict[str, MemoryProfile] | None = None,
@@ -167,13 +197,22 @@ def run(
     entries : Sequence[Entry], optional
         Benchmarks to run. ``None`` runs the whole global registry; pass a filtered
         subset (e.g. from :meth:`Registry.filter`) to scope a run.
-    argv : Sequence[str], optional
-        Argv forwarded to Google Benchmark's ``Initialize``. Defaults to ``["mew"]``.
     reporter : Reporter, Iterable[Reporter], or None, optional
         A single reporter, an iterable of reporters (multiplexed via :class:`Fanout`),
         or ``None`` for Google Benchmark's default console reporter.
     filter : str, optional
-        Regex forwarded to Google Benchmark as ``--benchmark_filter=``.
+        Google Benchmark name-filter regex applied to the registered names.
+        Prefer :meth:`Registry.filter` plus ``entries`` for Python-side selection.
+    min_time : str or float, optional
+        Global minimum time per benchmark: seconds (``0.5``) or a fixed
+        iteration count (``"100x"``). Per-benchmark ``min_time`` options win.
+    min_warmup_time : float, optional
+        Global warmup seconds per benchmark before measurement starts.
+    repetitions : int, optional
+        Repeat each benchmark this many times (variance metrics need >= 2).
+    random_interleaving : bool, default False
+        Randomly interleave repetitions across benchmarks to decorrelate
+        thermal/load drift; effective with ``repetitions > 1``.
     session_tag : str, optional
         Human label for this session (e.g. ``"before"``), persisted next to
         ``session_id`` in the reporter context.
@@ -256,9 +295,7 @@ def run(
             rep.finalize()
         return 0
 
-    cli = list(argv) if argv is not None else ["mew"]
-    if filter:
-        cli.append(f"--benchmark_filter={filter}")
+    cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, filter)
 
     # Clear before registering so a second mew.run() in the same process
     # doesn't double-register entries.

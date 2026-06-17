@@ -13,7 +13,8 @@ HTML artifact path is already suffixed with the variant name by the parent.
 
 Invoked as::
 
-    python -m mew._variant_worker --file F [--pattern P] [--tag T ...] [--gb ARG ...]
+    python -m mew._variant_worker --file F [--pattern P] [--tag T ...]
+        [--min-time V] [--min-warmup-time S] [--random-interleaving]
         [--profile-memory] [--flamegraph PATH] [--sample] [--sample-interval F]
         [--sample-iterations N] [--sample-html PATH]
 """
@@ -59,7 +60,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pattern", default=None)
     ap.add_argument("--literal", action="store_true")
     ap.add_argument("--tag", action="append", default=[])
-    ap.add_argument("--gb", action="append", default=[], help="raw Google Benchmark arg")
+    ap.add_argument("--min-time", default=None, dest="min_time")
+    ap.add_argument("--min-warmup-time", default=None, type=float, dest="min_warmup_time")
+    ap.add_argument("--random-interleaving", action="store_true", dest="random_interleaving")
     ap.add_argument("--profile-memory", action="store_true", dest="profile_memory")
     ap.add_argument("--flamegraph", default=None, type=Path)
     ap.add_argument("--memory-iterations", default=100, type=int, dest="memory_iterations")
@@ -98,7 +101,9 @@ def main(argv: list[str] | None = None) -> int:
         memory_profiles, cpu_profiles = _profiles(ns, entries)
         _run(
             entries,
-            argv=["mew", *ns.gb],
+            min_time=ns.min_time,
+            min_warmup_time=ns.min_warmup_time,
+            random_interleaving=ns.random_interleaving,
             reporter=JSONLReporter(output=data_stream, header=True),
             memory_profiles=memory_profiles,
             cpu_profiles=cpu_profiles,

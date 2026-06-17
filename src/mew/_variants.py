@@ -101,13 +101,12 @@ def _pseudo_raw_context(
     child_ctx: dict[str, Any],
     session_id: str,
     session_tag: str | None,
-    variant_order: list[str],
 ) -> dict[str, Any]:
     """Rebuild a raw-C++-shaped context from a child's projected context block.
 
     Reporters re-project via ``_build_context`` (which reads ``cpu_scaling`` as
     a string), so undo the child's projection and graft on the shared session
-    identity and the declared variant order.
+    identity.
     """
     raw: dict[str, Any] = {
         "host_name": child_ctx.get("host_name"),
@@ -117,7 +116,6 @@ def _pseudo_raw_context(
         "cpu_scaling": "enabled" if child_ctx.get("cpu_scaling_enabled") else "disabled",
         "library_build_type": child_ctx.get("library_build_type"),
         "session_id": session_id,
-        "variants": variant_order,
     }
     if session_tag:
         raw["session_tag"] = session_tag
@@ -152,20 +150,27 @@ def _run_child(
     pattern: str | None,
     literal: bool,
     tags: list[str],
-    gb_args: list[str],
+    min_time: str | None,
+    min_warmup_time: str | None,
+    random_interleaving: bool,
     profiling: ProfileConfig,
     variant: str,
 ) -> tuple[dict[str, Any], list[RunRow]] | None:
     """Run one variant child; return its (context, rows) or None on failure."""
-    # `--opt=value` form: GB args like `--benchmark_min_time=20x` start with `--`,
-    # which argparse would otherwise read as the next option.
+    # `--opt=value` form: a min_time like `20x` would otherwise be read by
+    # argparse as the next option.
     cmd = [sys.executable, "-m", "mew._variant_worker", f"--file={file}"]
     if pattern:
         cmd.append(f"--pattern={pattern}")
     if literal:
         cmd.append("--literal")
     cmd += [f"--tag={t}" for t in tags]
-    cmd += [f"--gb={g}" for g in gb_args]
+    if min_time is not None:
+        cmd.append(f"--min-time={min_time}")
+    if min_warmup_time is not None:
+        cmd.append(f"--min-warmup-time={min_warmup_time}")
+    if random_interleaving:
+        cmd.append("--random-interleaving")
     cmd += _profile_args(profiling, variant)
 
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -191,10 +196,12 @@ def run_variants(
     variants: dict[str, Path],
     *,
     reporters: list[Reporter],
-    gb_args: list[str],
     pattern: str | None = None,
     literal: bool = False,
     tags: list[str] | None = None,
+    min_time: str | None = None,
+    min_warmup_time: str | None = None,
+    random_interleaving: bool = False,
     repetitions: int = 1,
     session_tag: str | None = None,
     profiling: ProfileConfig | None = None,
@@ -226,7 +233,9 @@ def run_variants(
                 pattern,
                 literal,
                 tags or [],
-                gb_args,
+                min_time,
+                min_warmup_time,
+                random_interleaving,
                 profiling if rep == 0 else no_profiling,
                 name,
             )
@@ -235,7 +244,7 @@ def run_variants(
                 continue
             child_ctx, rows = result
             if not started:
-                raw = _pseudo_raw_context(child_ctx, session_id, session_tag, order)
+                raw = _pseudo_raw_context(child_ctx, session_id, session_tag)
                 if reporter is not None and reporter.report_context(raw) is False:
                     # A veto can arrive after sinks already opened resources in
                     # report_context (Fanout calls every child): close them.
