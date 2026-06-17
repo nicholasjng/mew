@@ -52,6 +52,20 @@ void register_registry(nb::module_& m) {
              "value"_a = true, nb::rv_policy::reference)
         .def("dense_range", &benchmark::Benchmark::DenseRange, "start"_a, "limit"_a, "step"_a = 1,
              nb::rv_policy::reference)
+        .def("threads", &benchmark::Benchmark::Threads, "n"_a, nb::rv_policy::reference,
+             "Run the benchmark with `n` threads, each with its own State and timer.\n"
+             "Requires a free-threaded interpreter (CPython 3.13t+): under the GIL the "
+             "trampoline holds the GIL across Google Benchmark's per-thread start "
+             "barrier, so the workers deadlock rather than run. On a GIL build mew "
+             "warns and skips threaded benchmarks by default (see mew.run).")
+        .def("thread_range", &benchmark::Benchmark::ThreadRange, "min_threads"_a, "max_threads"_a,
+             nb::rv_policy::reference,
+             "Run the benchmark once per thread count in [min_threads, max_threads], "
+             "stepping by the range multiplier (powers of two). See `threads` for the "
+             "free-threading requirement.")
+        .def("thread_per_cpu", &benchmark::Benchmark::ThreadPerCpu, nb::rv_policy::reference,
+             "Run the benchmark with one thread per CPU. See `threads` for the "
+             "free-threading requirement.")
         .def("arg", &benchmark::Benchmark::Arg, "value"_a, nb::rv_policy::reference)
         .def("arg_name", &benchmark::Benchmark::ArgName, "name"_a, nb::rv_policy::reference)
         .def_prop_ro("name", &benchmark::Benchmark::GetName);

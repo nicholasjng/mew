@@ -62,6 +62,15 @@ class BenchmarkOptions(TypedDict, total=False):
     """Per-benchmark Google Benchmark options accepted by the decorators.
 
     All keys are optional; omit one to fall back to Google Benchmark's default.
+
+    ``threads`` and ``thread_range`` enable Google Benchmark's threaded mode (each
+    thread gets its own ``State`` and timer). They **require** a free-threaded
+    interpreter (CPython 3.13t+): under the GIL the trampoline holds the GIL across
+    Google Benchmark's per-thread start barrier, so the workers deadlock rather
+    than run. On a GIL build :func:`mew.run` warns and skips threaded benchmarks
+    by default (``strict=True`` raises instead). ``thread_range`` runs once per
+    thread count in ``[min, max]`` (powers of two) and is mutually exclusive with
+    ``threads``.
     """
 
     min_time: float
@@ -73,6 +82,8 @@ class BenchmarkOptions(TypedDict, total=False):
     use_manual_time: bool
     measure_process_cpu_time: bool
     report_aggregates_only: bool
+    threads: int
+    thread_range: tuple[int, int]
 
 
 @runtime_checkable
