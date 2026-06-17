@@ -221,6 +221,22 @@ class BenchmarkHandle:
     def report_aggregates_only(self, value: bool = True) -> BenchmarkHandle: ...
     def display_aggregates_only(self, value: bool = True) -> BenchmarkHandle: ...
     def dense_range(self, start: int, limit: int, step: int = 1) -> BenchmarkHandle: ...
+    def threads(self, n: int) -> BenchmarkHandle:
+        """
+        Run the benchmark with `n` threads, each with its own State and timer.
+        Requires a free-threaded interpreter (CPython 3.13t+): under the GIL the trampoline holds the GIL across Google Benchmark's per-thread start barrier, so the workers deadlock rather than run. On a GIL build mew warns and skips threaded benchmarks by default (see mew.run).
+        """
+
+    def thread_range(self, min_threads: int, max_threads: int) -> BenchmarkHandle:
+        """
+        Run the benchmark once per thread count in [min_threads, max_threads], stepping by the range multiplier (powers of two). See `threads` for the free-threading requirement.
+        """
+
+    def thread_per_cpu(self) -> BenchmarkHandle:
+        """
+        Run the benchmark with one thread per CPU. See `threads` for the free-threading requirement.
+        """
+
     def arg(self, value: int) -> BenchmarkHandle: ...
     def arg_name(self, name: str) -> BenchmarkHandle: ...
     @property

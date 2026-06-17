@@ -173,6 +173,37 @@ def test_product_pulls_options_out_of_kwargs():
     assert entry.options["unit"] == "us"
 
 
+def test_threads_option_accepted_on_benchmark():
+    @mew.benchmark(threads=4)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    (entry,) = REGISTRY.all()
+    assert entry.options["threads"] == 4
+
+
+def test_thread_range_option_accepted_on_parametrize():
+    @mew.parametrize([{"n": 1}], thread_range=(1, 8))
+    def bench_x(state, n):
+        for _ in state:
+            pass
+
+    (entry,) = REGISTRY.all()
+    assert entry.options["thread_range"] == (1, 8)
+
+
+def test_product_pulls_threads_out_of_kwargs():
+    @mew.product(n=[1, 2], threads=2)
+    def bench_x(state, n):
+        for _ in state:
+            pass
+
+    (entry,) = REGISTRY.all()
+    assert entry.case_labels == ["n=1", "n=2"]  # threads is an option, not an axis
+    assert entry.options["threads"] == 2
+
+
 def test_product_needs_at_least_one_iterable():
     with pytest.raises(TypeError, match="at least one iterable"):
 

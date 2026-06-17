@@ -318,6 +318,8 @@ def product(
     use_manual_time: bool = False,
     measure_process_cpu_time: bool = False,
     report_aggregates_only: bool = False,
+    threads: int | None = None,
+    thread_range: tuple[int, int] | None = None,
     **iterables: Iterable[Any],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a benchmark family from the cartesian product of iterables.
@@ -342,6 +344,13 @@ def product(
         Flag-style Google Benchmark options.
     report_aggregates_only : bool
         Suppress per-repetition rows when ``repetitions > 1``.
+    threads : int, optional
+        Run each case with this many threads. Requires a free-threaded interpreter
+        (CPython 3.13t+); on a GIL build :func:`mew.run` warns and skips threaded
+        benchmarks by default. See :class:`~mew._typing.BenchmarkOptions`.
+    thread_range : tuple[int, int], optional
+        Run each case once per thread count in ``[min, max]`` (powers of two).
+        Mutually exclusive with ``threads``; same free-threading requirement.
     **iterables
         Parameter name → iterable of values.
 
@@ -385,6 +394,10 @@ def product(
         options["measure_process_cpu_time"] = True
     if report_aggregates_only:
         options["report_aggregates_only"] = True
+    if threads is not None:
+        options["threads"] = threads
+    if thread_range is not None:
+        options["thread_range"] = thread_range
 
     norm_tags = _normalize_tags(tags)
     keys = list(iterables.keys())

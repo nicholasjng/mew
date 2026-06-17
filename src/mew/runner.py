@@ -60,6 +60,11 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
         handle.measure_process_cpu_time()
     if opts.get("report_aggregates_only"):
         handle.report_aggregates_only(True)
+    if (tr := opts.get("thread_range")) is not None:
+        lo, hi = tr
+        handle.thread_range(int(lo), int(hi))
+    if (v := opts.get("threads")) is not None:
+        handle.threads(int(v))
 
 
 def run(
