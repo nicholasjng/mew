@@ -80,7 +80,7 @@ Extras enabling additional CLI features:
 | ---------- | ------------------------- | -------------------------------------------------------- |
 | `cpu`      | `pyinstrument`            | `mew run --sample`, `--sample-html report.html`          |
 | `memory`   | `memray` (non-Windows)    | `mew run --profile-memory`, `--flamegraph alloc.html`    |
-| `dev`      | `pytest`, `ruff`, `pyarrow`, `duckdb`, build deps | Local development and Parquet output |
+| `dev`      | `pytest`, `ruff`, `duckdb`, build deps | Local development |
 
 ```console
 $ uv add 'mew[cpu,memory]'

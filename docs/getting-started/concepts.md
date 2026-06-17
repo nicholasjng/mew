@@ -53,7 +53,7 @@ run(REGISTRY.all(), reporter=JSONReporter(output=Path("out.json")))
 ## Reporters
 
 Reporters are duck-typed objects with `report_context()` and `report_runs()` methods.
-Built-ins: {class}`~mew.RichReporter`, {class}`~mew.JSONReporter`, {class}`~mew.ParquetReporter`.
+Built-ins: {class}`~mew.RichReporter`, {class}`~mew.JSONReporter`, {class}`~mew.JSONLReporter`.
 Combine several with {class}`~mew.Fanout`.
 See [](../guide/reporters.md).
 

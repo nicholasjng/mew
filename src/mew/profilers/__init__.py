@@ -6,6 +6,9 @@ in-process samplers can't do. In-process Python sampling (pyinstrument) lives on
 
 ``select()`` resolves a ``--profiler`` value, including ``auto`` (picks the
 platform's native backend or errors with a pointer to ``mew run --sample``).
+
+Internal: consumed by ``mew profile``; not part of the public API and carries
+no stability guarantee.
 """
 
 from __future__ import annotations
