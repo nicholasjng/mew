@@ -1,14 +1,16 @@
-"""Prototype xctrace XML → collapsed-stacks folding.
+"""Prototype xctrace XML → speedscope (collapsed text + multi-profile JSON).
 
-The folder is exercised against a synthetic fixture mirroring the documented
-``xctrace export`` shape (the id/ref dedup, leaf-first frames) — no Xcode needed.
-Replace/augment with a real recorded trace once one is available.
+The folder/emitters are exercised against a synthetic fixture mirroring the
+documented ``xctrace export`` shape (the id/ref dedup, leaf-first frames) — no Xcode
+needed. Replace/augment with a real recorded trace once one is available.
 """
 
 from __future__ import annotations
 
 import io
+import json
 import textwrap
+from collections import Counter
 from pathlib import Path
 
 from mew.profilers import _xctrace_export as xe
@@ -46,8 +48,8 @@ _XML = textwrap.dedent(
 
 def test_fold_resolves_refs_and_orders_root_first() -> None:
     folded = xe.fold_samples(io.BytesIO(_XML))
-    # Leaf-first input reversed to root-first collapsed stacks.
-    assert folded == {"main;work": 2, "main;other": 1}
+    # Leaf-first input reversed to root-first stacks, keyed by tuple (not "a;b;c").
+    assert folded == {("main", "work"): 2, ("main", "other"): 1}
 
 
 def test_unsymbolicated_frame_falls_back_to_address() -> None:
@@ -55,10 +57,45 @@ def test_unsymbolicated_frame_falls_back_to_address() -> None:
         b'<trace-query-result><node><row><backtrace id="b">'
         b'<frame id="f" addr="0xdead"/></backtrace></row></node></trace-query-result>'
     )
-    assert xe.fold_samples(io.BytesIO(xml)) == {"0xdead": 1}
+    assert xe.fold_samples(io.BytesIO(xml)) == {("0xdead",): 1}
 
 
 def test_write_collapsed_is_sorted_and_speedscope_shaped(tmp_path: Path) -> None:
     dest = tmp_path / "out.collapsed.txt"
     xe.write_collapsed(xe.fold_samples(io.BytesIO(_XML)), dest)
     assert dest.read_text() == "main;other 1\nmain;work 2\n"
+
+
+def test_speedscope_json_single_profile_shape(tmp_path: Path) -> None:
+    folded = xe.fold_samples(io.BytesIO(_XML))
+    dest = tmp_path / "one.speedscope.json"
+    xe.write_speedscope_json({"bench[n=1]": folded}, dest)
+    doc = json.loads(dest.read_text())
+
+    assert doc["$schema"] == xe._SPEEDSCOPE_SCHEMA
+    (profile,) = doc["profiles"]
+    assert profile["type"] == "sampled"
+    assert profile["name"] == "bench[n=1]"
+    assert profile["endValue"] == 3  # total samples (2 + 1)
+
+    # Samples carry frame *indices* into shared.frames; resolve them back to names.
+    frames = [f["name"] for f in doc["shared"]["frames"]]
+    resolved = {
+        tuple(frames[i] for i in stack): w
+        for stack, w in zip(profile["samples"], profile["weights"], strict=True)
+    }
+    assert resolved == {("main", "other"): 1, ("main", "work"): 2}
+
+
+def test_speedscope_json_combines_cases_and_shares_frames(tmp_path: Path) -> None:
+    a: Counter[tuple[str, ...]] = Counter({("main", "work"): 3})
+    b: Counter[tuple[str, ...]] = Counter({("main", "parse"): 2})
+    dest = tmp_path / "mew.speedscope.json"
+    xe.write_speedscope_json({"bench[n=1]": a, "bench[n=2]": b}, dest)
+    doc = json.loads(dest.read_text())
+
+    # One document, one profile per case (the dropdown), and `main` interned once.
+    assert [p["name"] for p in doc["profiles"]] == ["bench[n=1]", "bench[n=2]"]
+    names = [f["name"] for f in doc["shared"]["frames"]]
+    assert sorted(names) == ["main", "parse", "work"]  # main shared, not duplicated
+    assert doc["activeProfileIndex"] == 0

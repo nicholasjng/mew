@@ -207,23 +207,51 @@ _EXPORT_XML = (
 )
 
 
-def test_xctrace_speedscope_format_folds_each_trace_to_collapsed_text(tmp_path, monkeypatch):
-    # record/export share the one `subprocess` module, so one dispatching stand-in:
-    # `record` is a no-op; `export` writes the fixture XML to its stdout file.
+def _speedscope_runner():
+    """A subprocess.run stand-in: `record` is a no-op; `export` writes fixture XML."""
+
     def run(cmd, **kwargs):
         if "export" in cmd:
             kwargs["stdout"].write(_EXPORT_XML.decode())
         return subprocess.CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr(xctrace.subprocess, "run", run)
+    return run
+
+
+def test_xctrace_speedscope_format_combines_cases_into_one_document(tmp_path, monkeypatch):
+    monkeypatch.setattr(xctrace.subprocess, "run", _speedscope_runner())
 
     artifacts = XctraceProfiler().run(
-        [_entry("bench.py::f")], output_dir=tmp_path, iterations=1000, format="speedscope"
+        [_entry("bench.py::f", case_labels=["n=1", "n=2"])],
+        output_dir=tmp_path,
+        iterations=1000,
+        format="speedscope",
     )
-    (path,) = artifacts.values()
-    # Artifact is the folded text, not the `.trace`, root-first and speedscope-shaped.
-    assert path.suffix == ".txt"
-    assert path.read_text() == "main;work 1\n"
+    # Both cases resolve to one combined JSON document (the dropdown).
+    paths = set(artifacts.values())
+    assert len(artifacts) == 2 and len(paths) == 1
+    (doc_path,) = paths
+    assert doc_path.name == "mew.speedscope.json"
+    doc = json.loads(doc_path.read_text())
+    assert len(doc["profiles"]) == 2  # one profile per case
+    assert doc["profiles"][0]["samples"]  # folded from the exported XML
+
+
+def test_xctrace_speedscope_separate_writes_one_file_per_case(tmp_path, monkeypatch):
+    monkeypatch.setattr(xctrace.subprocess, "run", _speedscope_runner())
+
+    artifacts = XctraceProfiler().run(
+        [_entry("bench.py::f", case_labels=["n=1", "n=2"])],
+        output_dir=tmp_path,
+        iterations=1000,
+        format="speedscope",
+        separate=True,
+    )
+    # One single-profile JSON per case.
+    assert len(set(artifacts.values())) == 2
+    for path in artifacts.values():
+        assert path.suffix == ".json" and path.name != "mew.speedscope.json"
+        assert len(json.loads(path.read_text())["profiles"]) == 1
 
 
 @pytest.mark.parametrize("fmt", ["auto", "xctrace"])
@@ -262,9 +290,9 @@ def test_xctrace_open_routes_collapsed_to_speedscope(tmp_path, monkeypatch):
     monkeypatch.setattr(xctrace.subprocess, "run", runner)
 
     backend = XctraceProfiler()
-    backend.open_artifact(tmp_path / "x.collapsed.txt")
+    backend.open_artifact(tmp_path / "mew.speedscope.json")
     backend.open_artifact(tmp_path / "x.trace")
-    assert opened == [tmp_path / "x.collapsed.txt"]  # text → speedscope
+    assert opened == [tmp_path / "mew.speedscope.json"]  # JSON → speedscope
     assert instruments and instruments[0][:3] == [
         "open",
         "-a",
