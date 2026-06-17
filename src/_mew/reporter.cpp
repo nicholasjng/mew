@@ -131,7 +131,10 @@ void register_reporter(nb::module_& m) {
         .str_value("iteration", Run::RT_Iteration, "iteration")
         .str_value("aggregate", Run::RT_Aggregate, "aggregate");
 
-    nb::class_<benchmark::BenchmarkName>(m, "BenchmarkName")
+    nb::class_<benchmark::BenchmarkName>(m, "BenchmarkName",
+                                         "A registered name split into its parts.\n"
+                                         "Google Benchmark assembles these into the reported "
+                                         "`function/args/min_time:...` string; `str()` renders it.")
         .def_ro("function_name", &benchmark::BenchmarkName::function_name)
         .def_ro("args", &benchmark::BenchmarkName::args)
         .def_ro("min_time", &benchmark::BenchmarkName::min_time)

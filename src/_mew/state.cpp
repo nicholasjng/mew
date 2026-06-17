@@ -98,19 +98,33 @@ void register_state(nb::module_& m) {
             "pause", [](benchmark::State& self) { return PauseScope{&self, nullptr}; },
             nb::keep_alive<0, 1>(),
             "Return a context manager that pauses timing for the duration of the `with` block.")
-        .def("skip_with_error", &benchmark::State::SkipWithError, "msg"_a)
-        .def("skip_with_message", &benchmark::State::SkipWithMessage, "msg"_a)
-        .def("set_label", &benchmark::State::SetLabel, "label"_a)
-        .def("set_iteration_time", &benchmark::State::SetIterationTime, "seconds"_a)
-        .def("set_items_processed", &benchmark::State::SetItemsProcessed, "items"_a)
-        .def("set_bytes_processed", &benchmark::State::SetBytesProcessed, "n_bytes"_a)
+        .def("skip_with_error", &benchmark::State::SkipWithError, "msg"_a,
+             "Abort this benchmark and mark it failed; the row reports as skipped.")
+        .def("skip_with_message", &benchmark::State::SkipWithMessage, "msg"_a,
+             "Abort this benchmark without marking it an error (e.g. an unmet "
+             "precondition).")
+        .def("set_label", &benchmark::State::SetLabel, "label"_a,
+             "Attach a free-form label to this benchmark's reported row.")
+        .def("set_iteration_time", &benchmark::State::SetIterationTime, "seconds"_a,
+             "Report the elapsed time of one iteration yourself. Only honored when "
+             "the benchmark sets `use_manual_time`.")
+        .def("set_items_processed", &benchmark::State::SetItemsProcessed, "items"_a,
+             "Record how many items the body handled, reported as items/second.")
+        .def("set_bytes_processed", &benchmark::State::SetBytesProcessed, "n_bytes"_a,
+             "Record how many bytes the body handled, reported as bytes/second.")
         .def(
             "set_counter",
             [](benchmark::State& self, const std::string& name, double value,
                benchmark::Counter::Flags flags) {
                 self.counters[name] = benchmark::Counter(value, flags);
             },
-            "name"_a, "value"_a, "flags"_a = benchmark::Counter::kDefaults)
+            "name"_a, "value"_a,
+            // Spell the default symbolically. nanobind renders defaults with
+            // PyObject_Repr, and since 3.11 every IntFlag member reprs as a bare
+            // int (enum.ReprEnum inherits int.__repr__), so this would read `= 0`.
+            "flags"_a.sig("CounterFlags.kDefaults") = benchmark::Counter::kDefaults,
+            "Attach a user-defined counter, surfaced in `RunRow['counters']`.\n"
+            "`flags` controls how Google Benchmark normalizes it (see `CounterFlags`).")
         .def(
             "range",
             [](const benchmark::State& self, std::size_t pos) {
@@ -124,13 +138,25 @@ void register_state(nb::module_& m) {
                 }
                 return self.range(pos);
             },
-            "pos"_a = 0)
-        .def_prop_ro("range_size", &benchmark::State::range_size)
-        .def_prop_ro("iterations", &benchmark::State::iterations)
-        .def_prop_ro("threads", &benchmark::State::threads)
-        .def_prop_ro("thread_index", &benchmark::State::thread_index)
-        .def_prop_ro("name", &benchmark::State::name)
-        .def_prop_ro("skipped", &benchmark::State::skipped)
-        .def_prop_ro("error_occurred", &benchmark::State::error_occurred)
-        .def_prop_ro("max_iterations", [](const benchmark::State& s) { return s.max_iterations; });
+            "pos"_a = 0,
+            "The `pos`-th range argument this benchmark was registered with.\n"
+            "`@parametrize` / `@product` families use `range(0)` as the case index; "
+            "the trampoline reads it to bind that case's kwargs and label.")
+        .def_prop_ro("range_size", &benchmark::State::range_size,
+                     "Number of range arguments available to `range`.")
+        .def_prop_ro("iterations", &benchmark::State::iterations,
+                     "Iterations completed so far; the total once the loop finishes.")
+        .def_prop_ro("threads", &benchmark::State::threads,
+                     "Total number of threads in this run (1 unless threaded mode is on).")
+        .def_prop_ro("thread_index", &benchmark::State::thread_index,
+                     "Index of the thread owning this State, in `[0, threads)`.")
+        .def_prop_ro("name", &benchmark::State::name, "The registered benchmark name.")
+        .def_prop_ro("skipped", &benchmark::State::skipped,
+                     "Whether this benchmark was skipped, by either skip_with_* call.")
+        .def_prop_ro("error_occurred", &benchmark::State::error_occurred,
+                     "Whether the skip came from `skip_with_error` rather than "
+                     "`skip_with_message`.")
+        .def_prop_ro(
+            "max_iterations", [](const benchmark::State& s) { return s.max_iterations; },
+            "Iteration count Google Benchmark budgeted for this run.");
 }
