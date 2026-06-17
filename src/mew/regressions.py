@@ -22,7 +22,8 @@ class Verdict(Enum):
     """Within the active threshold; does not contribute to gate failure."""
 
     REGRESSED = "regressed"
-    """Slower than the default threshold, no allow rule. Fails the gate (exit code 2)."""
+    """Slower than the active threshold (a rule-supplied one when a rule matches,
+    the default otherwise). Fails the gate (exit code 2)."""
 
     ALLOWED_OVER = "allowed_over"
     """Over the default threshold but inside a rule-supplied one; soft warning."""
@@ -90,17 +91,14 @@ class RegressionConfig:
         # Magnitude in the "worse" direction: slower for time metrics, fewer
         # iters (negative delta) for iterations.
         magnitude = -delta_pct if higher_is_better else delta_pct
-        threshold = (
-            rule.threshold_pct
-            if rule is not None and rule.threshold_pct is not None
-            else self.default_threshold_pct
-        )
+        rule_threshold = rule.threshold_pct if rule is not None else None
+        threshold = rule_threshold if rule_threshold is not None else self.default_threshold_pct
 
-        if magnitude <= threshold:
-            return BenchmarkVerdict(name, delta_pct, Verdict.OK, rule)
-        if rule is not None and rule.threshold_pct is not None:
+        if magnitude > threshold:
+            return BenchmarkVerdict(name, delta_pct, Verdict.REGRESSED, rule)
+        if rule_threshold is not None and magnitude > self.default_threshold_pct:
             return BenchmarkVerdict(name, delta_pct, Verdict.ALLOWED_OVER, rule)
-        return BenchmarkVerdict(name, delta_pct, Verdict.REGRESSED, rule)
+        return BenchmarkVerdict(name, delta_pct, Verdict.OK, rule)
 
 
 def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
@@ -136,18 +134,20 @@ def load_config(
     *,
     default_threshold_pct: float,
     path: Path | None = None,
-    inline_allows: list[str] | None = None,
 ) -> RegressionConfig:
     """Build a :class:`RegressionConfig`.
 
     Reads ``[tool.mew.regressions]`` from ``path`` (or ``pyproject.toml`` in the cwd
-    when ``path`` is ``None``). Inline ``--allow`` strings are appended after file
-    rules; both lists are searched in order.
+    when ``path`` is ``None``). Rules are searched in file order.
     """
     rules: list[AllowRule] = []
     threshold = default_threshold_pct
 
     source: Path | None = path
+    if source is not None and not source.is_file():
+        # An explicit path that doesn't exist must not silently gate with
+        # defaults; only the implicit pyproject.toml probe may come up empty.
+        raise SystemExit(f"regressions config not found: {source}")
     if source is None:
         candidate = Path.cwd() / "pyproject.toml"
         if candidate.is_file():
@@ -162,31 +162,7 @@ def load_config(
         for raw in table.get("allow", []):
             rules.append(_coerce_rule(raw, source=source))
 
-    for spec in inline_allows or []:
-        rules.append(_parse_inline(spec))
-
     return RegressionConfig(default_threshold_pct=threshold, rules=tuple(rules))
-
-
-def _parse_inline(spec: str) -> AllowRule:
-    """Parse a ``PATTERN[:PCT]`` string from the CLI.
-
-    Bare pattern → ``ignore=true``; ``PATTERN:5`` → ``threshold_pct=5.0``. Inline
-    rules are ad-hoc; persistent allowlisting belongs in ``pyproject.toml``.
-    """
-    if ":" in spec:
-        pattern, _, pct = spec.rpartition(":")
-        try:
-            threshold = float(pct)
-        except ValueError as exc:
-            raise SystemExit(f"--allow: bad threshold in {spec!r}: {exc}") from exc
-        return AllowRule(
-            pattern=pattern,
-            reason="(inline --allow)",
-            ignore=False,
-            threshold_pct=threshold,
-        )
-    return AllowRule(pattern=spec, reason="(inline --allow)", ignore=True)
 
 
 def render_panel(

@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import re
 import statistics
 import sys
 from dataclasses import dataclass, field
-from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -30,11 +30,13 @@ from mew._statistics import Statistic, reduce_statistic
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
 from mew.reporter import _fmt_bytes, canonical_name
 
+# `memory.total_bytes` and `memory.total_allocations` stay in stored files but
+# are not compare metrics: total_bytes duplicates peak_bytes for comparison
+# purposes, and total_allocations is documented as not comparable across runs
+# of differing iteration count — allocations_per_iteration is the comparable form.
 _MEMORY_METRICS = frozenset(
     {
         "memory.peak_bytes",
-        "memory.total_bytes",
-        "memory.total_allocations",
         "memory.allocations_per_iteration",
     }
 )
@@ -93,22 +95,20 @@ class SessionData:
         return self.key[2] or None
 
 
-def _decode_json_str(value: Any) -> Any:
-    """Parse a JSON string into its value; pass non-strings through unchanged.
-
-    Parquet stores nested blocks (``custom``, ``memory``) as JSON string columns.
-    Returns ``None`` on malformed JSON so callers treat "absent" and "unparseable" alike.
-    """
-    if not isinstance(value, str):
-        return value
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return None
-
-
 def _is_aggregate_row(row: dict[str, Any]) -> bool:
     return bool(row.get("aggregate_name"))
+
+
+def _is_measurement_row(row: dict[str, Any]) -> bool:
+    """A per-repetition benchmark measurement usable for statistics.
+
+    Excludes non-benchmark rows, GB aggregate rows (we recompute statistics
+    ourselves), and skipped rows (their zeroed timings would drag medians
+    toward 0 and produce infinite speedups).
+    """
+    return (
+        isinstance(row.get("name"), str) and not _is_aggregate_row(row) and not row.get("skipped")
+    )
 
 
 def _rows_from_json(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -133,19 +133,27 @@ _SEGMENT_FIELDS = (
 
 
 def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Read the streaming sink: a ``{"context": ...}`` header line, then one row per line.
+    """Read the JSONL sink (plain or gzip): one self-contained row per line.
 
-    A file written with ``mew run --append`` has several header/rows *segments*.
-    Each row inherits its segment's identity (so rows land in the right session);
-    ``file_ctx`` is the last segment's context, a single-block fallback.
+    Current files are pure NDJSON — every row carries its session identity.
+    Files from older versions (and the --variant worker channel) interleave
+    ``{"context": ...}`` header lines with rows; rows inherit their segment's
+    identity for those, and ``file_ctx`` is the last segment's context.
     """
     rows: list[dict[str, Any]] = []
     file_ctx: dict[str, Any] = {}
     current: dict[str, Any] = {}
+    if path.name.endswith(".gz"):
+        import gzip
+
+        def _open(p: Path):  # noqa: ANN202
+            return gzip.open(p, "rt")
+    else:
+        _open = Path.open
     # Stream line-by-line: a growing --append archive can be large;
     # read_text().splitlines() would hold the whole file plus a list of every
     # line in memory at once, on top of the parsed rows.
-    with path.open() as fh:
+    with _open(path) as fh:
         for lineno, line in enumerate(fh, start=1):
             if not line.strip():
                 continue
@@ -169,64 +177,10 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return rows, file_ctx
 
 
-# Columns every comparison needs regardless of metric. Notably excludes the
-# `cpu_profile` JSON blob: expensive to decode per row, never read by a compare.
-_PARQUET_BASE_COLUMNS = (
-    "name",
-    "label",
-    "aggregate_name",
-    "variant",
-    "time_unit",
-    *_SEGMENT_FIELDS,
-    "custom",
-)
-
-
-def _parquet_projection(metric: str) -> list[str]:
-    """Base columns plus the metric source: `memory` for a ``memory.*`` metric, else
-    the flat column. The caller intersects with the file schema (schema evolution)."""
-    cols = list(dict.fromkeys(_PARQUET_BASE_COLUMNS))  # de-dup (date etc. via _SEGMENT_FIELDS)
-    head = metric.split(".", 1)[0]
-    cols.append("memory" if head == "memory" else head)
-    return cols
-
-
-def _read_parquet(path: Path, metric: str, *, filters: Any = None) -> list[dict[str, Any]]:
-    """Read metric-projected rows, ``filters`` (pyarrow DNF) pushed into the scan.
-
-    Projection intersects with the file schema (so a missing column is skipped, not
-    an error) and decodes only the JSON columns it kept (`custom`, `memory`);
-    `cpu_profile` is never projected.
-    """
-    if find_spec("pyarrow") is None:
-        raise SystemExit(
-            "pyarrow is required to read Parquet result files. "
-            "Install it with: uv add --optional parquet pyarrow"
-        )
-    import pyarrow.parquet as pq
-
-    available = set(pq.read_schema(path).names)
-    columns = [c for c in _parquet_projection(metric) if c in available]
-    rows = pq.read_table(path, columns=columns, filters=filters).to_pylist()
-    json_cols = [c for c in ("custom", "memory") if c in columns]
-    for row in rows:
-        for col in json_cols:
-            if isinstance(row.get(col), str):
-                row[col] = _decode_json_str(row[col])
-    return rows
-
-
-def _rows_from_parquet(path: Path, metric: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    rows = _read_parquet(path, metric)
-    # Parquet has no file-level context block; rebuild one from the per-row
-    # session columns of the first row (same projection every session row carries).
-    return rows, _session_context(rows[0] if rows else {}, {})
-
-
 def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[str, Any]:
     """Build one session's context from a representative row over the file block.
 
-    Per-row identity (Parquet columns, enriched JSONL segments) wins; single-doc
+    Per-row identity (self-contained/enriched JSONL rows) wins; single-doc
     JSON has identity only in ``file_ctx``, so the block stands. ``custom`` arrives
     already decoded (see :func:`_read_rows`).
     """
@@ -243,7 +197,7 @@ def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[
 def _session_key(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, str, str]:
     """Identify which session a row belongs to.
 
-    Parquet rows carry session columns per-row; JSON rows inherit the file's single
+    JSONL rows carry session fields per-row; JSON rows inherit the file's single
     top-level context block via ``file_ctx``. ``session_id`` keeps two runs distinct
     even when they share a wall-clock second on one host; files predating it fall back
     to (date, host). Date leads so chronological sort still holds.
@@ -267,6 +221,15 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
     return value.get(tail) if isinstance(value, dict) else None
 
 
+class _NoMetricValues(ValueError):
+    """A row group carries no values for the requested metric (skip the benchmark).
+
+    Distinct from ``ValueError`` so a failing custom statistic (e.g.
+    ``statistics.StatisticsError``, a ``ValueError`` subclass) is surfaced to the
+    user instead of silently dropping the benchmark.
+    """
+
+
 def _aggregate_group(
     rows: list[dict[str, Any]], metric: str, statistic: Statistic | None = None
 ) -> tuple[float, float | None]:
@@ -278,7 +241,7 @@ def _aggregate_group(
     """
     values = [float(v) for r in rows if (v := _metric_value(r, metric)) is not None]
     if not values:
-        raise ValueError(f"no {metric!r} values in group")
+        raise _NoMetricValues(f"no {metric!r} values in group")
     center = (
         reduce_statistic(statistic, values) if statistic is not None else statistics.median(values)
     )
@@ -316,17 +279,15 @@ def _read_rows(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Dispatch on suffix to read ``(rows, file_ctx)`` from a result file.
 
-    ``metric`` lets the Parquet reader project to only the columns that metric needs;
-    JSON/JSONL are already streaming and read every field regardless.
+    ``metric`` is accepted for call-site symmetry; JSON/JSONL are streaming
+    readers and read every field regardless.
     """
-    suffix = path.suffix.lower()
-    if suffix == ".json":
+    name = path.name.lower()
+    if name.endswith(".json"):
         return _rows_from_json(path)
-    if suffix == ".jsonl":
+    if name.endswith((".jsonl", ".jsonl.gz")):
         return _rows_from_jsonl(path)
-    if suffix in (".parquet", ".pq"):
-        return _rows_from_parquet(path, metric)
-    raise SystemExit(f"unsupported result file: {path} (use .json, .jsonl, or .parquet)")
+    raise SystemExit(f"unsupported result file: {path} (use .json, .jsonl, or .jsonl.gz)")
 
 
 def _samples_from_groups(
@@ -340,8 +301,12 @@ def _samples_from_groups(
     for name, group in groups.items():
         try:
             center, stddev = _aggregate_group(group, metric, statistic)
-        except ValueError:
+        except _NoMetricValues:
             continue
+        except statistics.StatisticsError as e:
+            # e.g. `--statistic stdev` on a single-repetition file: fail loudly
+            # instead of dropping every benchmark and reporting "no overlap".
+            raise SystemExit(f"--statistic failed on {name!r}: {e}") from e
         samples[name] = Sample(
             name=name,
             value=center,
@@ -355,7 +320,8 @@ def _samples_from_groups(
 def _group_by_session(
     rows: list[dict[str, Any]], file_ctx: dict[str, Any]
 ) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
-    """Bucket benchmark rows by session key, dropping non-benchmark and GB aggregate rows.
+    """Bucket benchmark rows by session key, keeping only measurement rows
+    (see :func:`_is_measurement_row`).
 
     Shared front half of both load paths: :func:`_load_sessions` sub-groups each
     bucket by name, :func:`_load_variant_columns` keeps the latest bucket whole and
@@ -364,7 +330,7 @@ def _group_by_session(
     """
     by_session: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for r in rows:
-        if not isinstance(r.get("name"), str) or _is_aggregate_row(r):
+        if not _is_measurement_row(r):
             continue
         by_session.setdefault(_session_key(r, file_ctx), []).append(r)
     return by_session
@@ -438,7 +404,7 @@ def _select_latest(
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
     """Default session selection: per name, the latest session that has it wins.
 
-    Warns per benchmark when older sessions are discarded, so concatenated archives
+    Warns (once) when older sessions are discarded, so concatenated archives
     don't silently compare stale numbers.
     """
     if not sessions:
@@ -449,14 +415,19 @@ def _select_latest(
         for name, sample in session.samples.items():
             merged[name] = sample
             history.setdefault(name, []).append(session)
-    for name, owners in history.items():
-        if len(owners) > 1:
-            chosen = owners[-1]
-            print(
-                f"warning: {path}: {name!r} has {len(owners)} sessions, "
-                f"keeping latest (date={chosen.key[0]!r}, host={chosen.key[1]!r})",
-                file=sys.stderr,
-            )
+    # One aggregated line: a long-lived --append archive would otherwise print
+    # a near-identical warning per benchmark on every compare.
+    stale = {name: owners for name, owners in history.items() if len(owners) > 1}
+    if stale:
+        preview = ", ".join(f"{n!r} ({len(o)} sessions)" for n, o in list(stale.items())[:3])
+        extra = f" (+{len(stale) - 3} more)" if len(stale) > 3 else ""
+        chosen = next(iter(stale.values()))[-1]
+        print(
+            f"warning: {path}: {len(stale)} benchmark(s) appear in multiple sessions; "
+            f"keeping the latest per name, e.g. {preview}{extra} "
+            f"(latest: date={chosen.key[0]!r}, host={chosen.key[1]!r})",
+            file=sys.stderr,
+        )
     return merged, sessions[-1].context
 
 
@@ -525,49 +496,6 @@ def _resolve_session(path: Path, sessions: list[SessionData], selector: str) -> 
     raise SystemExit(f"{path}: no session matching {selector!r}{hint}")
 
 
-def _parquet_session_index(path: Path) -> list[SessionData] | None:
-    """Enumerate sessions from identity columns only, a cheap pass so ``path@selector``
-    resolves the target without reading every session's metric rows.
-
-    Returns None when the fast path can't apply (not Parquet, no pyarrow, or a legacy
-    file lacking ``session_id``); the caller then falls back to the full read.
-    """
-    if path.suffix.lower() not in (".parquet", ".pq") or find_spec("pyarrow") is None:
-        return None
-    import pyarrow.parquet as pq
-
-    available = set(pq.read_schema(path).names)
-    if "session_id" not in available:
-        return None
-    cols = [c for c in ("date", "host_name", "session_id", "session_tag") if c in available]
-    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for r in pq.read_table(path, columns=cols).to_pylist():
-        by_key.setdefault(_session_key(r, {}), r)  # one representative row per session
-    return [
-        SessionData(
-            key=skey,
-            context=(ctx := _session_context(by_key[skey], {})),
-            samples={},
-            session_tag=ctx.get("session_tag"),
-        )
-        for skey in sorted(by_key)  # date-leading key → chronological, like _load_sessions
-    ]
-
-
-def _load_parquet_selected(
-    path: Path,
-    metric: str,
-    index: list[SessionData],
-    selector: str,
-    statistic: Statistic | None = None,
-) -> tuple[dict[str, Sample], dict[str, Any]]:
-    """Resolve ``selector`` against the cheap index, then read only that session's rows."""
-    chosen = _resolve_session(path, index, selector)
-    rows = _read_parquet(path, metric, filters=[("session_id", "==", chosen.key[2])])
-    samples = _samples_from_groups(_group_by_name(rows), metric, chosen.key[0] or None, statistic)
-    return samples, _session_context(rows[0] if rows else {}, {})
-
-
 def _load(
     path: Path,
     metric: str,
@@ -578,18 +506,14 @@ def _load(
     """Load a result file into one sample set: load → select → re-key.
 
     Without a selector, sessions merge latest-wins per name (warning on discards).
-    A selector picks exactly one session, no merge, and for Parquet reads only
-    that session's rows (cheap index pass resolves it first).
+    A selector picks exactly one session, no merge.
     """
-    if selector is not None and (index := _parquet_session_index(path)) is not None:
-        samples, ctx = _load_parquet_selected(path, metric, index, selector, statistic)
+    sessions = _load_sessions(path, metric, statistic)
+    if selector is None:
+        samples, ctx = _select_latest(path, sessions)
     else:
-        sessions = _load_sessions(path, metric, statistic)
-        if selector is None:
-            samples, ctx = _select_latest(path, sessions)
-        else:
-            chosen = _resolve_session(path, sessions, selector)
-            samples, ctx = chosen.samples, chosen.context
+        chosen = _resolve_session(path, sessions, selector)
+        samples, ctx = chosen.samples, chosen.context
     return _normalize_samples(samples, key, str(path)), ctx
 
 
@@ -661,7 +585,7 @@ def _custom_diffs(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _fmt_value(sample: Sample, metric: str) -> str:
     if metric == "memory.allocations_per_iteration":  # fractional per-call count
         return f"{sample.value:,.1f}"
-    if metric in ("iterations", "memory.total_allocations"):
+    if metric == "iterations":
         return f"{int(sample.value):,}"
     if metric in _MEMORY_METRICS:  # remaining memory metrics are byte-valued
         return _fmt_bytes(int(sample.value))
@@ -669,10 +593,12 @@ def _fmt_value(sample: Sample, metric: str) -> str:
     return f"{sample.value:.2f} {unit}".rstrip()
 
 
-def _fmt_delta(delta: float) -> tuple[str, str]:
+def _fmt_delta(delta: float, *, higher_is_better: bool = False) -> tuple[str, str]:
     pct = delta * 100.0
-    text = f"{pct:+.2f}%"
-    style = "green" if delta < 0 else "red" if delta > 0 else ""
+    text = f"{pct:+.2f}%" if math.isfinite(pct) else "+∞%"
+    # Color by improvement direction: +20% iterations is green, +20% time red.
+    worse = -delta if higher_is_better else delta
+    style = "green" if worse < 0 else "red" if worse > 0 else ""
     return text, style
 
 
@@ -777,8 +703,10 @@ def _render(
             table.add_column("± stddev", justify="right")
 
     higher_is_better = metric in _HIGHER_IS_BETTER
+    is_time_metric = metric not in _MEMORY_METRICS and not higher_is_better
     verdicts: list[BenchmarkVerdict] = []
     baseline = columns[0].samples
+    unit_skew: dict[str, tuple[Any, Any]] = {}
 
     for name in sorted(shared):
         base = baseline[name]
@@ -787,9 +715,18 @@ def _render(
             row.append(f"{base.stddev:.2f}" if base.stddev is not None else "-")
         for idx, c in enumerate(columns[1:]):
             s = c.samples[name]
-            delta = (s.value - base.value) / base.value if base.value else 0.0
-            speedup = base.value / s.value if s.value else float("inf")
-            delta_text, delta_style = _fmt_delta(delta)
+            if is_time_metric and base.time_unit != s.time_unit:
+                unit_skew[name] = (base.time_unit, s.time_unit)
+            if base.value:
+                delta = (s.value - base.value) / base.value
+            else:
+                # A zero baseline must not mask a nonzero contender as +0.00%.
+                delta = 0.0 if not s.value else float("inf")
+            # "How much better is the contender": contender/baseline for
+            # higher-is-better metrics, baseline/contender otherwise.
+            num, den = (s.value, base.value) if higher_is_better else (base.value, s.value)
+            speedup = num / den if den else float("inf")
+            delta_text, delta_style = _fmt_delta(delta, higher_is_better=higher_is_better)
             row.append(_value_cell(s, metric))
             row.append([(delta_text, delta_style)] if delta_style else delta_text)
             row.append(_fmt_speedup(speedup))
@@ -802,6 +739,16 @@ def _render(
                     regressions.evaluate(name, delta * 100.0, higher_is_better=higher_is_better)
                 )
         table.add_row(*row)
+
+    if unit_skew:
+        name, (a, b) = next(iter(unit_skew.items()))
+        extra = f" (+{len(unit_skew) - 1} more)" if len(unit_skew) > 1 else ""
+        print(
+            f"warning: {len(unit_skew)} benchmark(s) declare different time units "
+            f"across files (e.g. {name!r}: {a!r} vs {b!r}){extra}; raw values are "
+            "compared without conversion, so deltas are not meaningful",
+            file=sys.stderr,
+        )
 
     term.print(table)
 
@@ -850,17 +797,16 @@ def compare(
     Parameters
     ----------
     files : list[Path]
-        Result files (JSON, JSONL, or Parquet); the first is treated as the
+        Result files (JSON, JSONL, or JSONL.gz); the first is treated as the
         baseline. A ``path@selector`` argument picks one session from a
         multi-session file: ``@latest``/``@earliest``, ``@~N`` (N back from
         latest), an exact ``session_tag``, or a ``session_id`` prefix
         (≥4 chars). Repeat one file with two selectors to compare two of its
-        sessions (``results.parquet@before results.parquet@after``).
+        sessions (``results.jsonl@before results.jsonl@after``).
     metric : str, default "real_time"
         Metric to compare.
         One of ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or (for files
-        produced with ``--profile-memory``) ``"memory.peak_bytes"``,
-        ``"memory.total_bytes"``, ``"memory.total_allocations"``, or
+        produced with ``--profile-memory``) ``"memory.peak_bytes"`` or
         ``"memory.allocations_per_iteration"`` (the per-call allocation count,
         comparable across engines regardless of speed).
     key : str, optional
