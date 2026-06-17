@@ -135,15 +135,12 @@ cmake.args = ["-DMEW_TSAN=ON"]
 build = ["cp311-*", "cp312-*", "cp314t-*"]
 archs = ["auto64"]
 build-frontend = "build[uv]"
-test-groups = ["test"]
-test-command = "pytest {project}/tests -n auto"
-
-[[tool.cibuildwheel.overrides]]
-# duckdb publishes neither a free-threaded nor a musllinux wheel, so skip its installation
-# to avoid a build from source. All tests using it are behind an importorskip barrier.
-select = ["*t-*", "*-musllinux*"]
-test-groups = []
-test-requires = ["pytest >=8", "pytest-xdist>=3.8.0", "numpy>=2.4.6"]
+# don't rerun the full test suite, just make sure that paths work after the wheel repair,
+# and that the _core extension loads correctly.
+test-command = [
+    "python {project}/tests/smoke_wheel.py",
+    "mew --version",
+]
 
 [tool.ruff]
 line-length = 100
