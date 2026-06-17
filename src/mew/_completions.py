@@ -15,7 +15,7 @@ import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 
-SHELLS = ("bash", "zsh", "fish", "powershell")
+SHELLS = ("bash", "zsh", "fish")
 
 
 @dataclass
@@ -25,6 +25,7 @@ class _Opt:
     takes_value: bool
     # "file", a list of choices, or None (freeform / no value).
     value: str | list[str] | None
+    repeat: bool = False  # action="append": may be given more than once
 
 
 @dataclass
@@ -35,7 +36,7 @@ class _Cmd:
     positional: str | list[str] | None = None  # value kind of the positional arg
 
 
-def _value_kind(action: argparse.Action) -> str | list[str] | None:
+def _value_kind(action: argparse.Action, command: str) -> str | list[str] | None:
     """Completion kind for an action's value: a choices list, ``"file"``, or None."""
     if action.choices:
         return [str(c) for c in action.choices]
@@ -45,6 +46,14 @@ def _value_kind(action: argparse.Action) -> str | list[str] | None:
     if dest == "tag":
         return "tags"
     if dest == "format":
+        # Two commands share this dest with disjoint value sets.
+        if command == "profile":
+            from mew import profilers
+
+            formats = {"auto"}
+            for backend in profilers._BACKENDS.values():
+                formats.update(getattr(backend, "FORMATS", ()))
+            return sorted(formats)
         from mew.cli import _STDOUT_FORMATS  # source of truth, avoids drift
 
         return sorted(_STDOUT_FORMATS)
@@ -80,10 +89,16 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
             for a in subp._actions:
                 if a.option_strings:
                     grouped[key].opts.append(
-                        _Opt(a.option_strings, a.help or "", a.nargs != 0, _value_kind(a))
+                        _Opt(
+                            a.option_strings,
+                            a.help or "",
+                            a.nargs != 0,
+                            _value_kind(a, name),
+                            repeat=isinstance(a, argparse._AppendAction),
+                        )
                     )
                 else:
-                    grouped[key].positional = _value_kind(a)
+                    grouped[key].positional = _value_kind(a, name)
         grouped[key].names.append(name)
     return [grouped[k] for k in order]
 
@@ -134,7 +149,9 @@ def _bash(parser: argparse.ArgumentParser) -> str:
         out.append(f'            COMPREPLY=( $(compgen -W "{" ".join(flags)}" -- "$cur") )')
         out.append("            return")
         out.append("        fi")
-        if c.positional == "file":
+        if c.positional in ("file", "selector"):
+            # Selectors are `path[::filter]`: file completion covers the path
+            # part, the shell's static script can't complete the filter names.
             out.append('        COMPREPLY=( $(compgen -f -- "$cur") )')
         elif isinstance(c.positional, list):
             out.append(f'        COMPREPLY=( $(compgen -W "{" ".join(c.positional)}" -- "$cur") )')
@@ -171,20 +188,29 @@ _mew_selectors() {
 
 
 def _zsh_spec(o: _Opt) -> str:
-    flagpart = "{" + ",".join(o.flags) + "}" if len(o.flags) > 1 else o.flags[0]
-    spec = f"'({' '.join(o.flags)}){flagpart}[{_zdesc(o.help)}]"
+    body = f"[{_zdesc(o.help)}]"
     if o.takes_value:
         if o.value == "file":
-            spec += ":path:_files"
+            body += ":path:_files"
         elif o.value == "benchmarks":
-            spec += ":pattern:_mew_patterns"
+            body += ":pattern:_mew_patterns"
         elif o.value == "tags":
-            spec += ":tag:_mew_tags"
+            body += ":tag:_mew_tags"
         elif isinstance(o.value, list):
-            spec += f":value:({' '.join(o.value)})"
+            body += f":value:({' '.join(o.value)})"
         else:
-            spec += ":value:"
-    return spec + "'"
+            body += ":value:"
+    # Repeatable options get the `*` prefix and no exclusion list (excluding an
+    # option against itself stops zsh from offering it a second time). Brace
+    # alternatives must sit *outside* the quotes for zsh to expand them into
+    # one spec per flag.
+    if o.repeat:
+        prefix = "'*'" if len(o.flags) > 1 else "*"
+    else:
+        prefix = f"'({' '.join(o.flags)})'" if len(o.flags) > 1 else ""
+    if len(o.flags) > 1:
+        return f"{prefix}{{{','.join(o.flags)}}}'{body}'"
+    return f"'{prefix}{o.flags[0]}{body}'"
 
 
 def _zsh(parser: argparse.ArgumentParser) -> str:
@@ -253,41 +279,7 @@ def _fish(parser: argparse.ArgumentParser) -> str:
     return "\n".join(out) + "\n"
 
 
-# --- powershell ---------------------------------------------------------------
-
-
-def _powershell(parser: argparse.ArgumentParser) -> str:
-    cmds = _commands(parser)
-    top = [n for c in cmds for n in c.names] + _global_flags(parser)
-    branches = [
-        f"        '{c.names[0]}' {{ @({_ps_list(f for o in c.opts for f in o.flags)}) }}"
-        for c in cmds
-    ]
-    branches.append(f"        default {{ @({_ps_list(top)}) }}")
-    body = "\n".join(branches)
-    return f"""$block = {{
-    param($wordToComplete, $commandAst, $cursorPosition)
-    $tokens = @($commandAst.CommandElements | ForEach-Object {{ $_.ToString() }})
-    $cmd = $null
-    for ($i = 1; $i -lt $tokens.Count; $i++) {{
-        if ($tokens[$i] -notlike '-*') {{ $cmd = $tokens[$i]; break }}
-    }}
-    $candidates = switch ($cmd) {{
-{body}
-    }}
-    $candidates | Where-Object {{ $_ -like "$wordToComplete*" }} | ForEach-Object {{
-        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
-    }}
-}}
-Register-ArgumentCompleter -Native -CommandName mew -ScriptBlock $block
-"""
-
-
-def _ps_list(items) -> str:
-    return ", ".join(f"'{i}'" for i in items)
-
-
-_GENERATORS = {"bash": _bash, "zsh": _zsh, "fish": _fish, "powershell": _powershell}
+_GENERATORS = {"bash": _bash, "zsh": _zsh, "fish": _fish}
 
 
 def generate(shell: str, parser: argparse.ArgumentParser) -> str:
