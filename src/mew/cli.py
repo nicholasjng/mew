@@ -304,7 +304,7 @@ def _run_variants_cmd(
     literal: bool = False,
     tags: list[str] | None,
     min_time: str | None,
-    min_warmup_time: str | None,
+    min_warmup_time: float | None,
     random_interleaving: bool,
     repetitions: int | None,
     paths: list[str],
@@ -362,7 +362,7 @@ def run(
     output: list[str] | None = None,
     format: str = "rich",
     min_time: str | None = None,
-    min_warmup_time: str | None = None,
+    min_warmup_time: float | None = None,
     random_interleaving: bool = False,
     repetitions: int | None = None,
     session_tag: str | None = None,
@@ -716,6 +716,13 @@ def _complete(kind: str) -> None:
     sys.stdout.write("".join(f"{c}\n" for c in pool))
 
 
+def _warmup_seconds(value: str) -> float:
+    """argparse type for --min-warmup-time: '0.2', '200ms', '1m' → seconds."""
+    from mew.profilers.base import parse_seconds
+
+    return parse_seconds(value, flag="--min-warmup-time")
+
+
 def _add_tag_arg(p: argparse.ArgumentParser) -> None:
     """Add the shared ``-t/--tag`` filter (identical across list/run/profile)."""
     p.add_argument(
@@ -819,7 +826,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--min-warmup-time",
-        help="Warmup seconds per benchmark before measurement starts (e.g. `0.2`).",
+        type=_warmup_seconds,
+        help="Warmup time per benchmark before measurement starts "
+        "(seconds, or a duration like `200ms`).",
     )
     p.add_argument("--repetitions", type=int, metavar="<N>", help="Repeat each benchmark N times.")
     p.add_argument(
