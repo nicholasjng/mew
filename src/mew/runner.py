@@ -96,11 +96,13 @@ def _warmup_free_threading() -> None:
 
 @contextmanager
 def _silence_native_stderr() -> Iterator[None]:
-    """Redirect OS-level fd 2 to /dev/null around the C++ call.
+    """Redirect OS-level fd 2 to /dev/null within the scope.
 
-    Google Benchmark's init writes platform diagnostics straight to fd 2, bypassing
-    Python's ``sys.stderr``. User-facing errors route through the reporter callback
-    or as Python exceptions, not fd 2.
+    Google Benchmark's lazy system-info probes write platform diagnostics straight
+    to fd 2, bypassing Python's ``sys.stderr``. Scope this narrowly (around
+    ``_core.preload_system_info()``), never around the benchmark run itself:
+    user benchmark bodies and GB's own run-time diagnostics (e.g. "Failed to
+    match any benchmarks against regex") must stay visible.
     """
     sys.stderr.flush()
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -279,8 +281,11 @@ def run(
     # under the GIL), where the warmup avoids the attach deadlock.
     if any(_is_threaded(e.options) for e in selected):
         _warmup_free_threading()
+    # Trigger GB's noisy system-info probes with fd 2 silenced, then run with
+    # stderr live so user output and GB run-time diagnostics get through.
     with _silence_native_stderr():
-        return _core.run_benchmarks(cli, rep, extra_context)
+        _core.preload_system_info()
+    return _core.run_benchmarks(cli, rep, extra_context)
 
 
 def _to_single_reporter(

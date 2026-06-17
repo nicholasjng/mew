@@ -92,9 +92,11 @@ def profile(
             "pyinstrument is required for CPU profiling. "
             "Install it with: uv add --optional cpu pyinstrument"
         )
-    profiles = _collect_stats(entries, interval, inner_iterations)
+    profiles, sessions = _collect_stats(entries, interval, inner_iterations)
     if output is not None:
-        _write_html(entries, output, interval, inner_iterations)
+        # Render from the sessions already captured for the stats pass; a
+        # second execution of the whole suite would double profiling wall time.
+        _write_html(sessions, output)
     return profiles
 
 
@@ -102,10 +104,11 @@ def _collect_stats(
     entries: list[Entry],
     interval: float,
     inner_iterations: int,
-) -> dict[str, CPUProfile]:
+) -> tuple[dict[str, CPUProfile], list[Session]]:
     import pyinstrument
 
     profiles: dict[str, CPUProfile] = {}
+    sessions: list[Session] = []
     for entry in entries:
         for key, rng in iter_entry_cases(entry):
             prof = pyinstrument.Profiler(interval=interval, async_mode="disabled")
@@ -121,24 +124,20 @@ def _collect_stats(
             # Set on context-manager exit; always present here.
             assert session is not None
             profiles[key] = _summarize(session)
-    return profiles
+            sessions.append(session)
+    return profiles, sessions
 
 
-def _write_html(
-    entries: list[Entry],
-    path: Path,
-    interval: float,
-    inner_iterations: int,
-) -> None:
-    import pyinstrument
+def _write_html(sessions: list[Session], path: Path) -> None:
+    from functools import reduce
 
-    prof = pyinstrument.Profiler(interval=interval, async_mode="disabled")
-    pause = _sampling_pause(prof)
-    with prof:
-        for entry in entries:
-            for _, rng in iter_entry_cases(entry):
-                entry.fn(_ProfileState(n_iterations=inner_iterations, range_value=rng, pause=pause))
-    path.write_text(prof.output_html())
+    from pyinstrument.renderers import HTMLRenderer
+    from pyinstrument.session import Session
+
+    if not sessions:
+        return
+    combined = reduce(Session.combine, sessions)
+    path.write_text(HTMLRenderer().render(combined))
 
 
 def _summarize(session: Session) -> CPUProfile:
