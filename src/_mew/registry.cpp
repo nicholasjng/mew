@@ -5,11 +5,36 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 
+#include <exception>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <utility>
+
+#include "interrupt.h"
 
 namespace nb = nanobind;
 using namespace nb::literals;
+
+namespace {
+std::mutex g_interrupt_mutex;
+std::exception_ptr g_pending_interrupt;
+}  // namespace
+
+void mew_set_pending_interrupt(std::exception_ptr p) {
+    std::lock_guard<std::mutex> lock(g_interrupt_mutex);
+    if (!g_pending_interrupt) g_pending_interrupt = std::move(p);
+}
+
+bool mew_interrupt_pending() {
+    std::lock_guard<std::mutex> lock(g_interrupt_mutex);
+    return static_cast<bool>(g_pending_interrupt);
+}
+
+std::exception_ptr mew_take_pending_interrupt() {
+    std::lock_guard<std::mutex> lock(g_interrupt_mutex);
+    return std::exchange(g_pending_interrupt, nullptr);
+}
 
 void register_registry(nb::module_& m) {
     nb::class_<benchmark::Benchmark>(
@@ -30,8 +55,6 @@ void register_registry(nb::module_& m) {
              nb::rv_policy::reference)
         .def("report_aggregates_only", &benchmark::Benchmark::ReportAggregatesOnly,
              "value"_a = true, nb::rv_policy::reference)
-        .def("display_aggregates_only", &benchmark::Benchmark::DisplayAggregatesOnly,
-             "value"_a = true, nb::rv_policy::reference)
         .def("dense_range", &benchmark::Benchmark::DenseRange, "start"_a, "limit"_a, "step"_a = 1,
              nb::rv_policy::reference)
         .def("threads", &benchmark::Benchmark::Threads, "n"_a, nb::rv_policy::reference,
@@ -45,9 +68,6 @@ void register_registry(nb::module_& m) {
              "Run the benchmark once per thread count in [min_threads, max_threads], "
              "stepping by the range multiplier (powers of two). See `threads` for the "
              "free-threading requirement.")
-        .def("thread_per_cpu", &benchmark::Benchmark::ThreadPerCpu, nb::rv_policy::reference,
-             "Run the benchmark with one thread per CPU. See `threads` for the "
-             "free-threading requirement.")
         .def("arg", &benchmark::Benchmark::Arg, "value"_a, nb::rv_policy::reference)
         .def("arg_name", &benchmark::Benchmark::ArgName, "name"_a, nb::rv_policy::reference)
         .def_prop_ro("name", &benchmark::Benchmark::GetName);
@@ -59,10 +79,24 @@ void register_registry(nb::module_& m) {
             // (Google Benchmark stores it as a std::function).
             auto holder = std::make_shared<nb::callable>(std::move(fn));
             return benchmark::RegisterBenchmark(name, [holder](benchmark::State& s) {
+                // A prior body raised KeyboardInterrupt/SystemExit: wind the
+                // run down without touching Python again.
+                if (mew_interrupt_pending()) {
+                    s.SkipWithError("interrupted");
+                    return;
+                }
                 nb::gil_scoped_acquire gil;
                 try {
                     (*holder)(nb::cast(&s, nb::rv_policy::reference));
                 } catch (nb::python_error& e) {
+                    if (!e.matches(PyExc_Exception)) {
+                        // BaseException-only (KeyboardInterrupt, SystemExit) must
+                        // stop the whole run, not skip one benchmark: stash it,
+                        // `run_benchmarks` rethrows after the loop returns.
+                        s.SkipWithError(e.what());
+                        mew_set_pending_interrupt(std::current_exception());
+                        return;
+                    }
                     // SkipWithError captures the traceback; discard the Python
                     // error so it doesn't leak into the next benchmark.
                     s.SkipWithError(e.what());

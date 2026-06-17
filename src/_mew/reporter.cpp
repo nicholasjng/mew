@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "interrupt.h"
+
 namespace nb = nanobind;
 using namespace nb::literals;
 
@@ -104,6 +106,18 @@ class PyReporter : public BenchmarkReporter {
 }  // namespace
 
 void register_reporter(nb::module_& m) {
+    m.def(
+        "preload_system_info",
+        [] {
+            nb::gil_scoped_release release;
+            benchmark::CPUInfo::Get();
+            benchmark::SystemInfo::Get();
+        },
+        "Force Google Benchmark's lazy CPU/system-info probes to run now.\n"
+        "Their platform diagnostics go straight to fd 2 (e.g. the macOS\n"
+        "hw.cpufrequency sysctl failure); calling this under a scoped fd-2\n"
+        "redirect keeps that noise out of user-visible stderr without\n"
+        "silencing the benchmark run itself.");
     nb::enum_<benchmark::TimeUnit>(m, "TimeUnit", nb::is_str(),
                                    "Time unit used for reported per-iteration durations.")
         .str_value("ns", benchmark::kNanosecond, "ns")
@@ -177,6 +191,10 @@ void register_reporter(nb::module_& m) {
             // `--help` in argv still triggers exit(0); documented GB behavior.
             benchmark::Initialize(&argc, argp.data());
 
+            // Defensive: drop any interrupt a previous run failed to consume so
+            // it can't abort this run's first benchmark.
+            mew_take_pending_interrupt();
+
             std::unique_ptr<PyReporter> pr;
             if (!reporter.is_none()) {
                 pr = std::make_unique<PyReporter>(reporter, extra_context);
@@ -192,6 +210,11 @@ void register_reporter(nb::module_& m) {
             // Do NOT clear here: callers clear before registering and atexit
             // handles teardown, so BenchmarkHandles stay valid until the next clear.
 
+            // A KeyboardInterrupt/SystemExit from a benchmark body outranks any
+            // reporter-callback exception: it is the user's stop request.
+            if (auto interrupt = mew_take_pending_interrupt()) {
+                std::rethrow_exception(interrupt);
+            }
             // Rethrow the first reporter-callback exception; nanobind's trampoline
             // restores the Python error indicator from the captured `python_error`.
             if (pr && pr->pending_exception) {

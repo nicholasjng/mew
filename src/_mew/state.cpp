@@ -111,7 +111,20 @@ void register_state(nb::module_& m) {
                 self.counters[name] = benchmark::Counter(value, flags);
             },
             "name"_a, "value"_a, "flags"_a = benchmark::Counter::kDefaults)
-        .def("range", &benchmark::State::range, "pos"_a = 0)
+        .def(
+            "range",
+            [](const benchmark::State& self, std::size_t pos) {
+                // GB's own guard is an assert, compiled out in release builds;
+                // an unchecked call would read out of bounds.
+                if (pos >= self.range_size()) {
+                    throw nb::index_error(("range(" + std::to_string(pos) +
+                                           ") out of bounds: benchmark has " +
+                                           std::to_string(self.range_size()) + " range argument(s)")
+                                              .c_str());
+                }
+                return self.range(pos);
+            },
+            "pos"_a = 0)
         .def_prop_ro("range_size", &benchmark::State::range_size)
         .def_prop_ro("iterations", &benchmark::State::iterations)
         .def_prop_ro("threads", &benchmark::State::threads)
