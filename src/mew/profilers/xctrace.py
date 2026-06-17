@@ -17,6 +17,8 @@ from mew._profile import iter_entry_cases
 from mew.profilers.base import Capabilities, open_speedscope_artifact, slug, worker_argv
 
 if TYPE_CHECKING:
+    from collections import Counter
+
     from mew._registry import Entry
 
 #: Default Instruments template. Pass a template name (as shown by
@@ -26,9 +28,9 @@ DEFAULT_TEMPLATE = "Time Profiler"
 COMBINED_NAME = "mew.trace"
 #: Output formats this backend accepts. ``auto`` (the platform-agnostic default,
 #: mirroring ``--profiler auto``) and its tool-named alias ``xctrace`` both yield
-#: the native Instruments ``.trace`` bundle; ``speedscope`` folds it to
-#: speedscope-loadable collapsed stacks. ``pprof`` is the planned sibling (see
-#: ROADMAP) — the same format axis that gates perf.
+#: the native Instruments ``.trace`` bundle; ``speedscope`` folds it to a
+#: speedscope JSON document (one profile per case). ``pprof`` is the planned
+#: sibling (see ROADMAP) — the same format axis that gates perf.
 FORMATS = ("auto", "xctrace", "speedscope")
 
 
@@ -68,26 +70,29 @@ class XctraceProfiler:
         exe = shutil.which("xctrace") or "/usr/bin/xctrace"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # `speedscope` folds one `.trace` to one collapsed file, and the export
-        # xpath reads a single run — so force per-case bundles, where each maps 1:1
-        # to a converted file (a combined bundle interleaves runs under one toc).
-        if format == "speedscope":
-            separate = True
+        # `speedscope` exports each `.trace` via an xpath that reads a single run, so
+        # every case must record into its own bundle (a combined bundle interleaves
+        # runs under one toc). `separate` then controls only the *output* layout: one
+        # combined JSON (dropdown over cases) vs. one file per case.
+        speedscope = format == "speedscope"
+        record_per_case = separate or speedscope
 
         combined = output_dir / COMBINED_NAME
         # xctrace refuses to overwrite a bundle (and would otherwise append this
         # invocation's runs to a stale one), so start each combined run fresh.
-        if not separate and combined.exists():
+        if not record_per_case and combined.exists():
             shutil.rmtree(combined)
 
         artifacts: dict[str, Path] = {}
+        # case_name -> folded sample tally, accumulated for the speedscope path.
+        folded: dict[str, Counter[tuple[str, ...]]] = {}
         combined_started = False
         for entry in entries:
             if entry.file is None:
                 print(f"mew: skipping {entry.name}: no source file to launch", file=sys.stderr)
                 continue
             for key, case in iter_entry_cases(entry):
-                if separate:
+                if record_per_case:
                     dest = output_dir / f"{slug(key)}.trace"
                     if dest.exists():
                         shutil.rmtree(dest)
@@ -110,21 +115,45 @@ class XctraceProfiler:
                 )
                 subprocess.run(cmd, check=True)
 
-                if format == "speedscope":
-                    # Fold the bundle to speedscope-loadable collapsed text and hand
-                    # *that* back as the artifact, not the `.trace`.
-                    from mew.profilers._xctrace_export import trace_to_collapsed
+                if speedscope:
+                    from mew.profilers._xctrace_export import fold_trace
 
-                    artifacts[key] = trace_to_collapsed(
-                        dest, output_dir / f"{slug(key)}.collapsed.txt", exe=exe
-                    )
+                    folded[key] = fold_trace(dest, exe=exe)
                 else:
                     artifacts[key] = dest
+
+        if speedscope:
+            artifacts = self._write_speedscope(folded, output_dir, separate=separate)
         return artifacts
 
+    @staticmethod
+    def _write_speedscope(
+        folded: dict[str, Counter[tuple[str, ...]]],
+        output_dir: Path,
+        *,
+        separate: bool,
+    ) -> dict[str, Path]:
+        """Write folded tallies as speedscope JSON: one file per case, or one combined.
+
+        Combined (the default) packs every case into one document behind a profile
+        dropdown; ``separate`` writes a single-profile file per case instead.
+        """
+        from mew.profilers._xctrace_export import write_speedscope_json
+
+        if separate:
+            return {
+                key: write_speedscope_json(
+                    {key: tally}, output_dir / f"{slug(key)}.speedscope.json"
+                )
+                for key, tally in folded.items()
+            }
+        # One document, N profiles — every key resolves to it (CLI dedups on open).
+        dest = write_speedscope_json(folded, output_dir / "mew.speedscope.json")
+        return dict.fromkeys(folded, dest)
+
     def open_artifact(self, path: Path) -> None:
-        # Collapsed text goes to speedscope; a `.trace` bundle opens in Instruments.
-        if path.suffix == ".txt":
+        # speedscope JSON / collapsed text → speedscope; a `.trace` → Instruments.
+        if path.suffix in (".json", ".txt"):
             open_speedscope_artifact(path)
         else:
             subprocess.run(["open", "-a", "Instruments", str(path)], check=False)

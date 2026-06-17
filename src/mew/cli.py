@@ -900,7 +900,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--separate",
         action="store_true",
-        help="(xctrace) Write one `<case>.trace` per case instead of a combined bundle.",
+        help="(xctrace) Write one artifact per case instead of one combined: "
+        "`<case>.trace` bundles (native), or `<case>.speedscope.json` files "
+        "(--format speedscope) instead of a single dropdown-over-cases document.",
     )
     p.add_argument(
         "--format",
@@ -908,9 +910,9 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="(auto|xctrace|speedscope)",
         help="Output format (backend-specific; validated against the chosen `-p`). "
         "`auto` (default) is each backend's native output. For xctrace: `xctrace` "
-        "is the native `.trace` bundle; `speedscope` folds each trace to "
-        "speedscope-loadable collapsed stacks (`<case>.collapsed.txt`, implies "
-        "--separate).",
+        "is the native `.trace` bundle; `speedscope` folds each trace to a "
+        "speedscope JSON document — one `mew.speedscope.json` with a profile per "
+        "case (cycle via the dropdown), or per-case files under --separate.",
     )
     p.add_argument(
         "--open",
