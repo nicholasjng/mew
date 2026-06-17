@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mew._profile import iter_entry_cases
-from mew.profilers.base import Capabilities, slug, worker_argv
+from mew.profilers.base import Capabilities, open_speedscope_artifact, slug, worker_argv
 
 if TYPE_CHECKING:
     from mew._registry import Entry
@@ -24,6 +24,12 @@ if TYPE_CHECKING:
 DEFAULT_TEMPLATE = "Time Profiler"
 #: Name of the combined trace bundle written when ``separate`` is false.
 COMBINED_NAME = "mew.trace"
+#: Output formats this backend accepts. ``auto`` (the platform-agnostic default,
+#: mirroring ``--profiler auto``) and its tool-named alias ``xctrace`` both yield
+#: the native Instruments ``.trace`` bundle; ``speedscope`` folds it to
+#: speedscope-loadable collapsed stacks. ``pprof`` is the planned sibling (see
+#: ROADMAP) — the same format axis that gates perf.
+FORMATS = ("auto", "xctrace", "speedscope")
 
 
 class XctraceProfiler:
@@ -56,10 +62,17 @@ class XctraceProfiler:
         time_limit: str | None = None,
         template: str = DEFAULT_TEMPLATE,
         separate: bool = False,
+        format: str = "auto",
         **_: object,
     ) -> dict[str, Path]:
         exe = shutil.which("xctrace") or "/usr/bin/xctrace"
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # `speedscope` folds one `.trace` to one collapsed file, and the export
+        # xpath reads a single run — so force per-case bundles, where each maps 1:1
+        # to a converted file (a combined bundle interleaves runs under one toc).
+        if format == "speedscope":
+            separate = True
 
         combined = output_dir / COMBINED_NAME
         # xctrace refuses to overwrite a bundle (and would otherwise append this
@@ -97,8 +110,21 @@ class XctraceProfiler:
                 )
                 subprocess.run(cmd, check=True)
 
-                artifacts[key] = dest
+                if format == "speedscope":
+                    # Fold the bundle to speedscope-loadable collapsed text and hand
+                    # *that* back as the artifact, not the `.trace`.
+                    from mew.profilers._xctrace_export import trace_to_collapsed
+
+                    artifacts[key] = trace_to_collapsed(
+                        dest, output_dir / f"{slug(key)}.collapsed.txt", exe=exe
+                    )
+                else:
+                    artifacts[key] = dest
         return artifacts
 
     def open_artifact(self, path: Path) -> None:
-        subprocess.run(["open", "-a", "Instruments", str(path)], check=False)
+        # Collapsed text goes to speedscope; a `.trace` bundle opens in Instruments.
+        if path.suffix == ".txt":
+            open_speedscope_artifact(path)
+        else:
+            subprocess.run(["open", "-a", "Instruments", str(path)], check=False)

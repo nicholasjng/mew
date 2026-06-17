@@ -499,6 +499,7 @@ def profile(
     time_limit: str | None = None,
     rate: int = 1000,
     separate: bool = False,
+    format: str = "xctrace",
     open_app: bool = False,
 ) -> None:
     """Profile benchmarks out-of-process, capturing native C frames.
@@ -510,6 +511,17 @@ def profile(
     from mew import profilers
 
     backend = profilers.select(profiler)
+
+    # Formats are backend-specific (e.g. `--format xctrace` is meaningless under
+    # perf/py-spy). `auto` is always valid; validate the rest against the backend.
+    supported = getattr(backend, "FORMATS", ("auto",))
+    if format not in supported:
+        print(
+            f"mew: --format {format!r} is not supported by the {backend.name} backend; "
+            f"choose from {', '.join(supported)}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
     with _discovery.discovered():
         entries = _collect_or_exit(paths, pattern=pattern, tags=tag or None, stdin=stdin)
@@ -531,6 +543,7 @@ def profile(
             rate=rate,
             template=template,
             separate=separate,
+            format=format,
         )
 
     for key, path in artifacts.items():
@@ -539,7 +552,13 @@ def profile(
         for path in dict.fromkeys(artifacts.values()):
             backend.open_artifact(path)
     if artifacts:
-        print(f"Open in {backend.viewer_hint}.", file=sys.stderr)
+        # --format speedscope swaps the xctrace bundle for speedscope-loadable text.
+        hint = (
+            "speedscope.app (import the collapsed stacks)"
+            if format == "speedscope"
+            else backend.viewer_hint
+        )
+        print(f"Open in {hint}.", file=sys.stderr)
 
 
 def compare(
@@ -882,6 +901,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--separate",
         action="store_true",
         help="(xctrace) Write one `<case>.trace` per case instead of a combined bundle.",
+    )
+    p.add_argument(
+        "--format",
+        default="auto",
+        metavar="(auto|xctrace|speedscope)",
+        help="Output format (backend-specific; validated against the chosen `-p`). "
+        "`auto` (default) is each backend's native output. For xctrace: `xctrace` "
+        "is the native `.trace` bundle; `speedscope` folds each trace to "
+        "speedscope-loadable collapsed stacks (`<case>.collapsed.txt`, implies "
+        "--separate).",
     )
     p.add_argument(
         "--open",
