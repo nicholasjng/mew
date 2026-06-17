@@ -6,9 +6,6 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from mew._core import (
     BENCHMARK_COMMIT,
     BENCHMARK_VERSION,
-    BenchmarkHandle,
-    Run,
-    RunType,
     TimeUnit,
     clear_registered_benchmarks as _clear_registered_benchmarks,
 )
@@ -36,7 +33,6 @@ del _clear_registered_benchmarks
 
 __all__ = [
     "BenchmarkFn",
-    "BenchmarkHandle",
     "Entry",
     "Fanout",
     "JSONLReporter",
@@ -45,9 +41,7 @@ __all__ = [
     "Registry",
     "Reporter",
     "RichReporter",
-    "Run",
     "RunRow",
-    "RunType",
     "State",
     "TimeUnit",
     "BENCHMARK_COMMIT",
