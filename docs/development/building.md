@@ -52,7 +52,7 @@ $ uv sync --reinstall-package=nanobind --reinstall-package=mew
 ```console
 $ uv run pytest tests/ -q
 $ uvx prek run --all-files
-$ uvx ty check src/mew/ tests/
+$ uv run --all-extras --group test ty check
 ```
 
 These steps run in CI (`.github/workflows/ci.yml`) across Linux, macOS, and Windows on Python 3.11–3.14.

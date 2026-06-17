@@ -30,7 +30,7 @@ jobs:
         run: uvx prek run --all-files --show-diff-on-failure
 
       - name: Type check the codebase
-        run: uv run --all-extras --group test --group typing ty check
+        run: uv run --all-extras --group test ty check
 
   test:
     name: ${{ matrix.os }} · py${{ matrix.python-version }}

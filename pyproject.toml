@@ -1,5 +1,7 @@
 [build-system]
-requires = ["scikit-build-core >=0.10", "nanobind >=2.13"]
+# The floor doubles as `tool.scikit-build.minimum-version` below, so raising it
+# opts into the 1.x default behaviours instead of emulating the 0.10 era.
+requires = ["scikit-build-core >=1.0,<2", "nanobind >=2.13"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -26,7 +28,7 @@ memory = [ "memray>=1.5; sys_platform != 'win32'" ]
 build = [
     "nanobind>=2.13.0",
     "ruff>=0.15.12",  # for CMake's post-build stub formatting step.
-    "scikit-build-core >=0.10",
+    "scikit-build-core >=1.0,<2",  # keep in sync with build-system.requires.
 ]
 docs = [
     "sphinx >=8",
@@ -42,7 +44,11 @@ test = [
     "pytest >=8",
     "pytest-xdist>=3.8.0",
 ]
-typing = [ "ty>=0.0.42" ]  # used in GitHub Actions only.
+# Single source of truth for the ty version: CI, the CLI, and Zed's language
+# server all resolve ty from the project .venv.
+typing = [
+    "ty>=0.0.42",
+]
 
 [tool.uv]
 # Build mew against the project .venv so includes from Python packages
@@ -50,8 +56,14 @@ typing = [ "ty>=0.0.42" ]  # used in GitHub Actions only.
 no-build-isolation-package = ["mew"]
 # exclude dependency versions newer than one week
 exclude-newer = "1 week"
-# Require the "build" group due to no build isolation
-default-groups = ["build"]
+# ...except the toolchain, which we want at the latest release: ruff and ty are
+# dev tools whose diagnostics we track upstream, and nanobind is pinned in
+# lockstep with the C++ bindings it generates.
+exclude-newer-package = { ruff = false, ty = false, nanobind = false }
+# Require the "build" group due to no build isolation. "typing" is default so
+# that .venv/bin/ty always exists for Zed's language server, which would
+# otherwise break whenever a bare `uv run` re-synced the group away.
+default-groups = ["build", "typing"]
 
 [project.scripts]
 mew = "mew.cli:main"
