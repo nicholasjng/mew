@@ -24,7 +24,6 @@ from mew import (
     Entry,
     JSONLReporter,
     JSONReporter,
-    ParquetReporter,
     Reporter,
     RichReporter,
     __version__ as _mew_version,
@@ -36,6 +35,31 @@ if TYPE_CHECKING:
     from mew._variants import ProfileConfig
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_COMMIT[:12]} {BENCHMARK_VERSION})"
+
+
+def _load_config_or_exit() -> _config.Config:
+    """Load the project config, turning a malformed ``[tool.mew]`` into a CLI error."""
+    try:
+        return _config.load()
+    except ValueError as e:
+        print(f"mew: invalid [tool.mew] config: {e}", file=sys.stderr)
+        raise SystemExit(2) from e
+
+
+def _benchpath_selectors(cfg: _config.Config) -> list[_discovery.Selector]:
+    """Selectors for the config benchpaths, anchored at the project root.
+
+    Config paths are declared next to pyproject.toml, so they must resolve
+    against it — not the cwd — for `mew run`/`list` to work from a subdirectory.
+    """
+    root = cfg.project_root or Path.cwd()
+    selectors: list[_discovery.Selector] = []
+    for p in cfg.benchpaths:
+        sel = _discovery.parse(p)
+        if not sel.path.is_absolute():
+            sel.path = root / sel.path
+        selectors.append(sel)
+    return selectors
 
 
 def _collect(
@@ -55,7 +79,7 @@ def _collect(
     against benchmarks discovered the normal way (positional paths / benchpaths),
     so it round-trips regardless of cwd.
     """
-    cfg = _config.load()
+    cfg = _load_config_or_exit()
     pairs: list[tuple[_discovery.Selector, bool]] = [(_discovery.parse(p), literal) for p in paths]
     name_filters: list[str] = []
     if stdin:
@@ -71,9 +95,16 @@ def _collect(
     # otherwise fall back to benchpaths, unless stdin was given but empty, where
     # an empty pipe should select nothing rather than the whole suite.
     if not pairs and (name_filters or not stdin):
-        pairs = [(_discovery.parse(p), literal) for p in cfg.benchpaths]
+        # A missing default benchpath is "nothing to discover" (a fresh project
+        # should get "no benchmarks found"), not a hard error like a mistyped
+        # positional path.
+        pairs = [(s, literal) for s in _benchpath_selectors(cfg) if s.path.exists()]
 
-    files = _discovery.collect_files([s for s, _ in pairs], file_patterns=cfg.python_files)
+    try:
+        files = _discovery.collect_files([s for s, _ in pairs], file_patterns=cfg.python_files)
+    except FileNotFoundError as e:
+        print(f"mew: path does not exist: {e.args[0]}", file=sys.stderr)
+        raise SystemExit(2) from e
 
     REGISTRY.clear()
     for f in files:
@@ -168,10 +199,11 @@ def _build_reporters(
     """Resolve ``-o`` sinks into a list of reporters.
 
     ``-``/``stdout`` map to a stdout reporter in ``stdout_format`` (``rich`` /
-    ``json`` / ``jsonl``); ``*.json``/``*.jsonl``/``*.parquet`` to file reporters
-    (format by extension). Defaults to one stdout reporter when no ``-o`` is
-    given. ``append`` adds the run as a new session to existing ``.jsonl`` /
-    ``.parquet`` sinks (rejected for ``.json``, a single streamed document).
+    ``json`` / ``jsonl``); ``*.json``/``*.jsonl``/``*.jsonl.gz`` to file
+    reporters (format by extension; ``.gz`` writes a gzip archive). Defaults to
+    one stdout reporter when no ``-o`` is given. ``append`` adds the run as a
+    new session to existing ``.jsonl[.gz]`` sinks (rejected for ``.json``, a
+    single streamed document).
     """
 
     def _stdout() -> Reporter:
@@ -205,24 +237,22 @@ def _build_reporters(
             print(f"duplicate file sink: {raw}", file=sys.stderr)
             raise SystemExit(2)
         seen_files.add(path)
-        suffix = path.suffix.lower()
-        if suffix == ".json":
+        name = path.name.lower()
+        if name.endswith(".json"):
             if append:
                 print(
                     f"--append is not supported for the JSON sink {raw} "
-                    "(a single streamed document); use *.jsonl or *.parquet",
+                    "(a single streamed document); use *.jsonl or *.jsonl.gz",
                     file=sys.stderr,
                 )
                 raise SystemExit(2)
             reps.append(JSONReporter(output=Path(raw)))
-        elif suffix == ".jsonl":
+        elif name.endswith((".jsonl", ".jsonl.gz")):
             reps.append(JSONLReporter(output=Path(raw), append=append))
-        elif suffix in (".parquet", ".pq"):
-            reps.append(ParquetReporter(output=Path(raw), append=append))
         else:
             print(
                 f"unsupported output format: {raw} "
-                "(use `-`/`stdout`, *.json, *.jsonl, *.parquet, or *.pq)",
+                "(use `-`/`stdout`, *.json, *.jsonl, or *.jsonl.gz)",
                 file=sys.stderr,
             )
             raise SystemExit(2)
@@ -257,12 +287,31 @@ def _load_config_and_session_tag(session_tag: str | None) -> tuple[_config.Confi
     git), unless disabled via ``[tool.mew.session-tag] enabled = false``.
     Shared by the plain and ``--variant`` run paths.
     """
-    cfg = _config.load()
+    cfg = _load_config_or_exit()
     if session_tag is None and cfg.session_tag.enabled:
         from mew._session import derive_session_tag
 
         session_tag = derive_session_tag(tool=cfg.session_tag.tool, args=cfg.session_tag.args)
     return cfg, session_tag
+
+
+def _gb_flags(
+    min_time: str | None, min_warmup_time: str | None, random_interleaving: bool
+) -> list[str]:
+    """Google Benchmark flags for the promoted global CLI knobs.
+
+    Deliberately closed: per-benchmark knobs live on the decorators, and GB's
+    output/reporting flags would fight mew's own reporters. A new global knob
+    earns a real `mew run` flag here, not a passthrough.
+    """
+    args: list[str] = []
+    if min_time is not None:
+        args.append(f"--benchmark_min_time={min_time}")
+    if min_warmup_time is not None:
+        args.append(f"--benchmark_min_warmup_time={min_warmup_time}")
+    if random_interleaving:
+        args.append("--benchmark_enable_random_interleaving=true")
+    return args
 
 
 def _run_variants_cmd(
@@ -274,8 +323,9 @@ def _run_variants_cmd(
     literal: bool = False,
     tags: list[str] | None,
     min_time: str | None,
+    min_warmup_time: str | None,
+    random_interleaving: bool,
     repetitions: int | None,
-    extra: list[str],
     paths: list[str],
     session_tag: str | None,
     append: bool,
@@ -290,14 +340,11 @@ def _run_variants_cmd(
 
     profiling = profiling or ProfileConfig()
     variants = _parse_variants(specs)
-    cfg, session_tag = _load_config_and_session_tag(session_tag)
+    _, session_tag = _load_config_and_session_tag(session_tag)
 
     # Repetitions become separate child invocations, so they are NOT forwarded
-    # as a GB flag; min_time and raw options are.
-    gb_args = _config.format_benchmark_args(cfg.benchmark_options)
-    if min_time is not None:
-        gb_args.append(f"--benchmark_min_time={min_time}")
-    gb_args.extend(extra)
+    # as a GB flag; the global GB knobs are.
+    gb_args = _gb_flags(min_time, min_warmup_time, random_interleaving)
 
     reporters = _build_reporters(
         output,
@@ -333,12 +380,13 @@ def run(
     output: list[str] | None = None,
     format: str = "rich",
     min_time: str | None = None,
+    min_warmup_time: str | None = None,
+    random_interleaving: bool = False,
     repetitions: int | None = None,
     session_tag: str | None = None,
     append: bool = False,
     strict: bool = False,
     variant: list[str] | None = None,
-    extra: list[str] | None = None,
     profile_memory: bool = False,
     flamegraph: Path | None = None,
     memory_iterations: int = 100,
@@ -351,7 +399,6 @@ def run(
     tag = tag or []
     output = output or []
     variant = variant or []
-    extra = extra or []
     if format not in _STDOUT_FORMATS:
         print(
             f"unknown --format {format!r}; choose from {sorted(_STDOUT_FORMATS)}", file=sys.stderr
@@ -371,8 +418,9 @@ def run(
             literal=literal,
             tags=tag or None,
             min_time=min_time,
+            min_warmup_time=min_warmup_time,
+            random_interleaving=random_interleaving,
             repetitions=repetitions,
-            extra=extra,
             paths=paths,
             session_tag=session_tag,
             append=append,
@@ -394,15 +442,11 @@ def run(
             paths, pattern=pattern, tags=tag or None, literal=literal, stdin=stdin
         )
 
-        cfg, session_tag = _load_config_and_session_tag(session_tag)
+        _, session_tag = _load_config_and_session_tag(session_tag)
 
-        # Config defaults first so later CLI flags win via gflags' last-wins rule.
-        argv: list[str] = ["mew", *_config.format_benchmark_args(cfg.benchmark_options)]
-        if min_time is not None:
-            argv.append(f"--benchmark_min_time={min_time}")
+        argv: list[str] = ["mew", *_gb_flags(min_time, min_warmup_time, random_interleaving)]
         if repetitions is not None:
             argv.append(f"--benchmark_repetitions={repetitions}")
-        argv.extend(extra)
 
         reporters = _build_reporters(
             output,
@@ -463,27 +507,26 @@ def _quick_timing_pass(entries: list[Entry]) -> list[Any]:
     return collected
 
 
-def _select_slowest(entries: list[Entry], n: int, *, rank_from: Path | None) -> list[Entry]:
-    """Keep the ``n`` slowest entries by real_time, ranked from a file or a quick pass.
+def _select_slowest(entries: list[Entry], n: int) -> list[Entry]:
+    """Keep the ``n`` slowest entries by real_time from a quick in-process pass.
 
     A family's time is the max over its cases (the slowest case represents its
-    profiling cost). Entries with no timing rank last.
+    profiling cost). Entries with no timing rank last. For file-based selection,
+    compose instead: extract names externally and pipe them to ``--stdin``.
     """
+    from mew.compare import _is_measurement_row
     from mew.reporter import _CASE_SUFFIX_RE, _OPTION_SUFFIXES_RE
 
-    if rank_from is not None:
-        from mew.compare import _read_rows
-
-        rows = _read_rows(rank_from)[0]
-    else:
-        rows = _quick_timing_pass(entries)
+    rows = _quick_timing_pass(entries)
 
     # Strip GB's `/case:i` and option suffixes to recover the registered entry name.
     times: dict[str, float] = {}
     for row in rows:
-        name = row.get("name")
+        name: str | None = row.get("name")
+        if name is None:
+            raise KeyError("_select_slowest: no 'name' column in result row") from None
         rt = row.get("real_time")
-        if not isinstance(name, str) or rt is None or row.get("aggregate_name"):
+        if not _is_measurement_row(row) or rt is None:
             continue
         base = _CASE_SUFFIX_RE.sub("", _OPTION_SUFFIXES_RE.sub("", name))
         times[base] = max(times.get(base, 0.0), float(rt))
@@ -499,7 +542,6 @@ def profile(
     tag: list[str] | None = None,
     stdin: bool = False,
     slowest: int | None = None,
-    rank_from: Path | None = None,
     profiler: str = "auto",
     output_dir: Path = Path(".mew-traces"),
     template: str = "Time Profiler",
@@ -508,7 +550,6 @@ def profile(
     rate: int = 1000,
     separate: bool = False,
     format: str = "xctrace",
-    open_app: bool = False,
 ) -> None:
     """Profile benchmarks out-of-process, capturing native C frames.
 
@@ -538,11 +579,8 @@ def profile(
                 print("--slowest must be >= 1", file=sys.stderr)
                 raise SystemExit(2)
             total = len(entries)
-            entries = _select_slowest(entries, slowest, rank_from=rank_from)
+            entries = _select_slowest(entries, slowest)
             print(f"mew: profiling {len(entries)} slowest of {total}", file=sys.stderr)
-        elif rank_from is not None:
-            print("--rank-from has no effect without --slowest", file=sys.stderr)
-            raise SystemExit(2)
         artifacts = backend.run(
             entries,
             output_dir=output_dir,
@@ -556,9 +594,6 @@ def profile(
 
     for key, path in artifacts.items():
         print(f"{key}\t{path}")
-    if open_app:
-        for path in dict.fromkeys(artifacts.values()):
-            backend.open_artifact(path)
     if artifacts:
         # --format speedscope swaps the xctrace bundle for speedscope-loadable text.
         hint = (
@@ -582,25 +617,22 @@ def compare(
     statistic: str | None = None,
     fail_on_regression: float | None = None,
     regressions_config: Path | None = None,
-    allow: list[str] | None = None,
 ) -> None:
     """Compare benchmark result files; the first file is the baseline."""
     from mew._statistics import resolve_statistic
     from mew.compare import compare as _compare
 
     # --statistic wins; else fall back to [tool.mew] statistic; else stdlib median.
-    spec = statistic if statistic is not None else _config.load().statistic
+    spec = statistic if statistic is not None else _load_config_or_exit().statistic
     reduce = resolve_statistic(spec) if spec is not None else None
 
-    allow = allow or []
     cfg = None
-    if fail_on_regression is not None or allow or regressions_config is not None:
+    if fail_on_regression is not None or regressions_config is not None:
         from mew.regressions import load_config
 
         cfg = load_config(
             default_threshold_pct=fail_on_regression if fail_on_regression is not None else 5.0,
             path=regressions_config,
-            inline_allows=allow,
         )
 
     code = _compare(
@@ -687,15 +719,15 @@ def _complete(kind: str) -> None:
     """
     from mew import _completion_cache as cache
 
-    cfg = _config.load()
-    root = cfg.project_root or Path.cwd()
+    # A Tab press must never print a traceback: any failure (malformed config,
+    # missing benchpaths, unreadable cache) silently completes nothing.
     try:
-        files = _discovery.collect_files(
-            [_discovery.parse(p) for p in cfg.benchpaths], file_patterns=cfg.python_files
-        )
-    except FileNotFoundError:
+        cfg = _config.load()
+        root = cfg.project_root or Path.cwd()
+        files = _discovery.collect_files(_benchpath_selectors(cfg), file_patterns=cfg.python_files)
+        data = cache.read_fresh(root, files)
+    except Exception:
         return
-    data = cache.read_fresh(root, files)
     if data is None:
         return
     pool = {"names": data.names, "cases": data.names + data.cases, "tags": data.tags}.get(kind, [])
@@ -792,7 +824,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Output sink, repeatable: `-`/`stdout` for the terminal, "
-        "`<path>.{json,jsonl,parquet}` for a file. Default: `-`.",
+        "`<path>.json` / `<path>.jsonl` / `<path>.jsonl.gz` for a file. Default: `-`.",
     )
     p.add_argument(
         "--format",
@@ -804,7 +836,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--min-time", help="Min time per benchmark, seconds (e.g. `0.5`) or iters (`100x`)."
     )
+    p.add_argument(
+        "--min-warmup-time",
+        help="Warmup seconds per benchmark before measurement starts (e.g. `0.2`).",
+    )
     p.add_argument("--repetitions", type=int, metavar="<N>", help="Repeat each benchmark N times.")
+    p.add_argument(
+        "--random-interleaving",
+        action="store_true",
+        help="Randomly interleave repetitions across benchmarks to decorrelate "
+        "thermal/load drift (effective with --repetitions > 1).",
+    )
     p.add_argument(
         "--session-tag",
         help="Label this run's output as a session (e.g. `before`). Defaults to "
@@ -814,7 +856,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--append",
         action="store_true",
-        help="Append as a new session to existing `.jsonl` / `.parquet` sinks.",
+        help="Append as a new session to existing `.jsonl[.gz]` sinks.",
     )
     p.add_argument(
         "--strict",
@@ -828,13 +870,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Run a `name=path` variant in its own subprocess, repeatable. Compare with "
         "`mew compare <file> --by variant`. Mutually exclusive with positional paths.",
-    )
-    p.add_argument(
-        "--benchmark-option",
-        dest="extra",
-        action="append",
-        default=[],
-        help="Raw arguments forwarded to Google Benchmark.",
     )
     p.add_argument(
         "--profile-memory",
@@ -897,13 +932,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--slowest",
         type=int,
         metavar="<N>",
-        help="Profile only the N slowest benchmarks. Ranked by --rank-from if given, "
-        "else by a quick in-process timing pass.",
-    )
-    p.add_argument(
-        "--rank-from",
-        type=Path,
-        help="With --slowest, rank by real_time from this result file instead of a timing pass.",
+        help="Profile only the N slowest benchmarks, ranked by a quick in-process "
+        "timing pass. To rank from a result file instead, pipe names to --stdin.",
     )
     p.add_argument(
         "-p",
@@ -954,12 +984,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "speedscope JSON document, one `mew.speedscope.json` with a profile per "
         "case (cycle via the dropdown), or per-case files under --separate.",
     )
-    p.add_argument(
-        "--open",
-        dest="open_app",
-        action="store_true",
-        help="Open the resulting artifact(s) in their viewer.",
-    )
     p.set_defaults(_func=profile)
 
     # mew compare
@@ -972,8 +996,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--metric",
         default="real_time",
         help="metric: real_time, cpu_time, iterations, or (for --profile-memory results) "
-        "memory.peak_bytes / memory.total_bytes / memory.total_allocations / "
-        "memory.allocations_per_iteration.",
+        "memory.peak_bytes / memory.allocations_per_iteration.",
     )
     p.add_argument(
         "--key",
@@ -996,8 +1019,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--statistic",
         help="reducer over per-repetition values for display and the regression gate. "
-        "A built-in name (min, max, mean, median, gmean, a pNN percentile like p95, "
-        "or any `statistics` function) or an importable `module.path:attr` "
+        "A built-in name (min, max, mean, median, gmean, or a pNN percentile like "
+        "p95) or an importable `module.path:attr` reference "
         "(e.g. scipy.stats:gmean; needs numpy). Default: median. Overrides "
         "[tool.mew] statistic.",
     )
@@ -1010,12 +1033,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--regressions-config",
         type=Path,
         help="TOML file with [tool.mew.regressions] (default: ./pyproject.toml).",
-    )
-    p.add_argument(
-        "--allow",
-        action="append",
-        default=[],
-        help="inline allowlist entry `PATTERN` (ignore) or `PATTERN:PCT` (per-rule threshold).",
     )
     p.set_defaults(_func=compare)
 
