@@ -75,11 +75,10 @@ def test_pseudo_raw_context_undoes_projection() -> None:
         "cpu_scaling_enabled": False,
         "custom": {"engine": "x"},
     }
-    raw = _pseudo_raw_context(child_ctx, "sid123", "before", ["a", "b"])
+    raw = _pseudo_raw_context(child_ctx, "sid123", "before")
     assert raw["cpu_scaling"] == "disabled"  # bool -> GB string form
     assert raw["session_id"] == "sid123"
     assert raw["session_tag"] == "before"
-    assert raw["variants"] == ["a", "b"]
     assert raw["custom"] == {"engine": "x"}
 
 

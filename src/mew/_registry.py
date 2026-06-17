@@ -33,7 +33,6 @@ def compile_name_filter(pattern: str, *, literal: bool = False) -> re.Pattern[st
 class Entry:
     name: str
     fn: BenchmarkFn
-    module: str | None = None
     file: str | None = None
     options: BenchmarkOptions = field(default_factory=lambda: BenchmarkOptions())
     tags: frozenset[str] = field(default_factory=frozenset)

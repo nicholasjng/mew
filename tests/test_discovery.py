@@ -138,12 +138,6 @@ def test_discovered_unloads_only_what_it_added(tmp_path, _restore_sys_path):
     assert entry.fn.__globals__["VALUE"] == 7
 
 
-def test_unload_is_idempotent():
-    # Nothing tracked → no error, no effect.
-    discovery.unload()
-    discovery.unload()
-
-
 def test_collect_files_missing_path_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         discovery.collect_files(

@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-# Tracked so unload() drops exactly what import_file added, and nothing else.
+# Tracked so discovered() drops exactly what import_file added, and nothing else.
 _loaded_modules: list[str] = []
 _inserted_paths: list[str] = []
 
@@ -94,20 +94,6 @@ def import_file(path: Path) -> None:
         sys.modules.pop(mod_name, None)
         raise
     _loaded_modules.append(mod_name)
-
-
-def unload() -> None:
-    """Drop the synthetic bench modules and ``sys.path`` entries import_file added.
-
-    Safe post-*run*: each ``Entry.fn`` keeps its namespace alive via ``__globals__``,
-    so the pop doesn't break execution. Sibling/third-party modules are left alone;
-    pruning them from ``sys.modules`` risks half-initialized-module bugs.
-    """
-    while _loaded_modules:
-        sys.modules.pop(_loaded_modules.pop(), None)
-    while _inserted_paths:
-        with contextlib.suppress(ValueError):
-            sys.path.remove(_inserted_paths.pop())
 
 
 @contextmanager

@@ -189,7 +189,6 @@ def benchmark(
             Entry(
                 name=name or _qualified_name(target, file),
                 fn=target,
-                module=getattr(target, "__module__", None),
                 file=file,
                 options=options,
                 tags=norm_tags,
@@ -223,7 +222,6 @@ def _register_family(
     _mark_registered(target)
     file = _source_file(target)
     base_name = name or _qualified_name(target, file)
-    module = getattr(target, "__module__", None)
     cases = [dict(kw) for kw in variants]
     labels = list(ids) if ids is not None else [_default_id(kw) for kw in cases]
     if len(set(labels)) != len(labels):
@@ -249,7 +247,6 @@ def _register_family(
         Entry(
             name=base_name,
             fn=trampoline,
-            module=module,
             file=file,
             options=options,
             tags=tags,

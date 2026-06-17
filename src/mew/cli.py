@@ -295,25 +295,6 @@ def _load_config_and_session_tag(session_tag: str | None) -> tuple[_config.Confi
     return cfg, session_tag
 
 
-def _gb_flags(
-    min_time: str | None, min_warmup_time: str | None, random_interleaving: bool
-) -> list[str]:
-    """Google Benchmark flags for the promoted global CLI knobs.
-
-    Deliberately closed: per-benchmark knobs live on the decorators, and GB's
-    output/reporting flags would fight mew's own reporters. A new global knob
-    earns a real `mew run` flag here, not a passthrough.
-    """
-    args: list[str] = []
-    if min_time is not None:
-        args.append(f"--benchmark_min_time={min_time}")
-    if min_warmup_time is not None:
-        args.append(f"--benchmark_min_warmup_time={min_warmup_time}")
-    if random_interleaving:
-        args.append("--benchmark_enable_random_interleaving=true")
-    return args
-
-
 def _run_variants_cmd(
     specs: list[str],
     *,
@@ -343,8 +324,7 @@ def _run_variants_cmd(
     _, session_tag = _load_config_and_session_tag(session_tag)
 
     # Repetitions become separate child invocations, so they are NOT forwarded
-    # as a GB flag; the global GB knobs are.
-    gb_args = _gb_flags(min_time, min_warmup_time, random_interleaving)
+    # to the children; the other global knobs are.
 
     reporters = _build_reporters(
         output,
@@ -358,7 +338,9 @@ def _run_variants_cmd(
     failures = run_variants(
         variants,
         reporters=reporters,
-        gb_args=gb_args,
+        min_time=min_time,
+        min_warmup_time=min_warmup_time,
+        random_interleaving=random_interleaving,
         pattern=pattern,
         literal=literal,
         tags=tags,
@@ -444,10 +426,6 @@ def run(
 
         _, session_tag = _load_config_and_session_tag(session_tag)
 
-        argv: list[str] = ["mew", *_gb_flags(min_time, min_warmup_time, random_interleaving)]
-        if repetitions is not None:
-            argv.append(f"--benchmark_repetitions={repetitions}")
-
         reporters = _build_reporters(
             output,
             stdout_format=format,
@@ -479,8 +457,11 @@ def run(
         # `run`'s projector attaches the profiles onto each RunRow before fan-out.
         _run(
             entries,
-            argv=argv,
             reporter=reporters,
+            min_time=min_time,
+            min_warmup_time=min_warmup_time,
+            repetitions=repetitions,
+            random_interleaving=random_interleaving,
             session_tag=session_tag,
             strict=strict,
             memory_profiles=memory_profiles,
@@ -503,7 +484,7 @@ def _quick_timing_pass(entries: list[Entry]) -> list[Any]:
             pass
 
     # Short min_time: we only need relative order, not publishable timings.
-    _run(entries, argv=["mew", "--benchmark_min_time=0.05"], reporter=_Collector())
+    _run(entries, min_time=0.05, reporter=_Collector())
     return collected
 
 

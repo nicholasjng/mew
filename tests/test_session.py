@@ -91,7 +91,7 @@ def _run_to_jsonl(tmp_path: Path, name: str, **run_kwargs) -> dict:
     """
     out = tmp_path / f"{name}.jsonl"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONLReporter(output=out),
         **run_kwargs,
     )
@@ -138,7 +138,7 @@ def test_json_reporter_persists_session_identity(tmp_path: Path):
 
     out = tmp_path / "out.json"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONReporter(output=out),
         session_tag="before",
     )
@@ -156,7 +156,7 @@ def test_jsonl_rows_are_self_contained(tmp_path: Path):
 
     out = tmp_path / "out.jsonl"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONLReporter(output=out),
         session_tag="before",
     )
@@ -187,12 +187,12 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path):
 
     out = tmp_path / "acc.jsonl"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONLReporter(output=out),
         session_tag="before",
     )
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONLReporter(output=out, append=True),
         session_tag="after",
     )
@@ -217,12 +217,12 @@ def test_jsonl_gz_append_concatenates_sessions(tmp_path: Path):
 
     out = tmp_path / "acc.jsonl.gz"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONLReporter(output=out),
         session_tag="before",
     )
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONLReporter(output=out, append=True),
         session_tag="after",
     )

@@ -29,12 +29,6 @@ class Capture:
         self.finalized = True
 
 
-def _argv_fast() -> list[str]:
-    # `--benchmark_min_time=1x` forces exactly one iteration per benchmark,
-    # which keeps the test suite fast and deterministic.
-    return ["mew", "--benchmark_min_time=1x"]
-
-
 def test_run_single_benchmark_captures_one_run():
     @mew.benchmark
     def bench_x(state):
@@ -42,7 +36,7 @@ def test_run_single_benchmark_captures_one_run():
             pass
 
     cap = Capture()
-    n = mew.run(argv=_argv_fast(), reporter=cap)
+    n = mew.run(min_time="1x", reporter=cap)
     assert n == 1
     assert len(cap.runs) == 1
     assert cap.finalized
@@ -68,7 +62,7 @@ def test_run_benchmarks_extra_context_overlays_onto_report_context():
     try:
         cap = Capture()
         extra = {"session_id": "sid-123", "host_name": "overridden", "custom": {"k": "v"}}
-        _core.run_benchmarks(_argv_fast(), cap, extra)
+        _core.run_benchmarks(["mew", "--benchmark_min_time=1x"], cap, extra)
     finally:
         _core.clear_registered_benchmarks()
 
@@ -88,7 +82,7 @@ def test_run_parametrize_emits_one_run_per_variant():
             pass
 
     cap = Capture()
-    mew.run(argv=_argv_fast(), reporter=cap)
+    mew.run(min_time="1x", reporter=cap)
     names = [r["name"] for r in cap.runs]
     assert len(names) == 3
 
@@ -107,7 +101,7 @@ def test_run_registers_only_selected_cases_of_a_family():
     # Select small (case 0) and big (case 2) by label; mid is dropped.
     narrowed = mew.REGISTRY.filter(r"small|big")
     cap = Capture()
-    mew.run(entries=narrowed, argv=_argv_fast(), reporter=cap)
+    mew.run(entries=narrowed, min_time="1x", reporter=cap)
 
     case_names = [r["name"] for r in cap.runs]
     assert all("bench_fam" in n for n in case_names)
@@ -141,7 +135,7 @@ def test_threaded_benchmark_skipped_on_gil_build(monkeypatch):
 
     cap = Capture()
     with pytest.warns(RuntimeWarning, match="skipping 1 threaded benchmark"):
-        n = mew.run(argv=_argv_fast(), reporter=cap)
+        n = mew.run(min_time="1x", reporter=cap)
 
     assert n == 0  # nothing actually executed by GB
     assert len(cap.runs) == 1
@@ -165,7 +159,7 @@ def test_threaded_benchmark_strict_raises_on_gil_build(monkeypatch):
             pass
 
     with pytest.raises(RuntimeError, match="free-threaded interpreter"):
-        mew.run(argv=_argv_fast(), reporter=Capture(), strict=True)
+        mew.run(min_time="1x", reporter=Capture(), strict=True)
 
 
 def test_mixed_suite_skips_threaded_runs_rest_on_gil_build(monkeypatch):
@@ -187,7 +181,7 @@ def test_mixed_suite_skips_threaded_runs_rest_on_gil_build(monkeypatch):
 
     cap = Capture()
     with pytest.warns(RuntimeWarning):
-        n = mew.run(argv=_argv_fast(), reporter=cap)
+        n = mew.run(min_time="1x", reporter=cap)
 
     assert n == 1  # bench_plain ran
     threaded_rows = [r for r in cap.runs if "bench_threaded" in r["name"]]
@@ -212,7 +206,7 @@ def test_threaded_benchmark_warms_up_on_free_threaded(monkeypatch):
         for _ in state:
             pass
 
-    assert mew.run(argv=_argv_fast(), reporter=Capture()) == 1
+    assert mew.run(min_time="1x", reporter=Capture()) == 1
     assert warmed == [True]
 
 
@@ -232,7 +226,7 @@ def test_threaded_benchmark_runs_without_deadlock():
         state.set_counter("nthreads", state.threads)
 
     cap = Capture()
-    mew.run(argv=_argv_fast(), reporter=cap)
+    mew.run(min_time="1x", reporter=cap)
     assert len(cap.runs) == 1
     assert cap.runs[0]["threads"] == 4
 
@@ -245,7 +239,7 @@ def test_run_multiple_reporters_fan_out():
 
     a = Capture()
     b = Capture()
-    mew.run(argv=_argv_fast(), reporter=[a, b])
+    mew.run(min_time="1x", reporter=[a, b])
     assert len(a.runs) == 1
     assert len(b.runs) == 1
     assert a.finalized and b.finalized
@@ -259,7 +253,7 @@ def test_run_options_iterations_applied():
 
     cap = Capture()
     # When iterations is set on the handle, GB ignores --benchmark_min_time.
-    mew.run(argv=["mew"], reporter=cap)
+    mew.run(reporter=cap)
     assert cap.runs[0]["iterations"] == 42
 
 
@@ -275,7 +269,7 @@ def test_run_filter_selects_subset():
             pass
 
     cap = Capture()
-    mew.run(argv=_argv_fast(), reporter=cap, filter="bench_a")
+    mew.run(min_time="1x", reporter=cap, filter="bench_a")
     names = [r["name"] for r in cap.runs]
     assert all("bench_a" in n for n in names)
     assert not any("bench_b" in n for n in names)
@@ -301,7 +295,7 @@ def test_state_pause_context_manager_excludes_work_from_timing():
                 seen.append("inside")
 
     cap = Capture()
-    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    mew.run(reporter=cap, filter=".*")
     assert cap.runs[0]["iterations"] == 1
     assert cap.runs[1]["iterations"] == 1
     assert seen == ["inside"]
@@ -325,7 +319,7 @@ def test_state_pause_excludes_paused_work_from_real_time():
                 sum(range(WORK))
 
     cap = Capture()
-    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    mew.run(reporter=cap, filter=".*")
     unpaused, paused = cap.runs
     paused_time = paused["real_accumulated_time"]
     unpaused_time = unpaused["real_accumulated_time"]
@@ -347,13 +341,13 @@ def test_state_pause_resumes_on_exception():
     cap = Capture()
     # Body completes normally because the exception is swallowed; ScopedPauseTiming's
     # destructor still resumes timing as the with-block unwinds.
-    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    mew.run(reporter=cap, filter=".*")
     assert cap.runs[0]["iterations"] == 1
 
 
 def test_run_with_no_entries_returns_zero():
     cap = Capture()
-    assert mew.run(argv=_argv_fast(), reporter=cap) == 0
+    assert mew.run(min_time="1x", reporter=cap) == 0
     assert cap.runs == []
 
 
@@ -367,7 +361,7 @@ def test_state_batches_drives_body_in_multiples_of_n():
                 body_calls.append(1)
 
     cap = Capture()
-    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    mew.run(reporter=cap, filter=".*")
     # 3 batches × 4 = 12 body calls; GB reports the actual count, not the cap.
     assert cap.runs[0]["iterations"] == 12
     assert len(body_calls) == 12
@@ -386,7 +380,7 @@ def test_state_batches_rejects_non_positive_n():
             pass
 
     cap = Capture()
-    mew.run(argv=["mew"], reporter=cap, filter=".*")
+    mew.run(reporter=cap, filter=".*")
     assert seen == [ValueError]
 
 
@@ -405,7 +399,7 @@ def test_state_range_out_of_bounds_raises():
             pass
 
     cap = Capture()
-    mew.run(argv=_argv_fast(), reporter=cap)
+    mew.run(min_time="1x", reporter=cap)
     assert seen == [IndexError]
 
 
@@ -429,7 +423,7 @@ def test_keyboard_interrupt_stops_run_and_propagates():
 
     cap = Capture()
     with pytest.raises(KeyboardInterrupt):
-        mew.run(argv=_argv_fast(), reporter=cap)
+        mew.run(min_time="1x", reporter=cap)
     assert bodies == ["a"]
 
     # The interrupt is consumed: a follow-up run starts clean and completes.
@@ -440,7 +434,7 @@ def test_keyboard_interrupt_stops_run_and_propagates():
 
     cap2 = Capture()
     entries = [e for e in mew._registry.REGISTRY.all() if "bench_c" in e.name]
-    assert mew.run(entries, argv=_argv_fast(), reporter=cap2) == 1
+    assert mew.run(entries, min_time="1x", reporter=cap2) == 1
     assert [r["skipped"] for r in cap2.runs] == [False]
 
 
@@ -454,5 +448,5 @@ def test_benchmark_body_stderr_is_visible(capfd: pytest.CaptureFixture[str]):
         print("body stderr marker", file=sys.stderr, flush=True)
 
     cap = Capture()
-    mew.run(argv=_argv_fast(), reporter=cap)
+    mew.run(min_time="1x", reporter=cap)
     assert "body stderr marker" in capfd.readouterr().err

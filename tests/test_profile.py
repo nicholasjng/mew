@@ -403,7 +403,7 @@ def test_json_reporter_emits_memory_and_cpu_blocks(tmp_path):
 
     out = tmp_path / "out.json"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONReporter(output=out),
         memory_profiles={name: _fake_mem()},
         cpu_profiles={name: _fake_cpu()},
@@ -437,7 +437,7 @@ def test_json_reporter_omits_memory_and_cpu_when_absent(tmp_path):
 
     out = tmp_path / "out.json"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONReporter(output=out),
     )
     bench = json.loads(out.read_text())["benchmarks"][0]
@@ -457,7 +457,7 @@ def test_jsonl_reporter_emits_memory_and_cpu_blocks(tmp_path):
 
     out = tmp_path / "out.jsonl"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONLReporter(output=out),
         memory_profiles={name: _fake_mem()},
         cpu_profiles={name: _fake_cpu()},
@@ -478,7 +478,7 @@ def test_jsonl_reporter_omits_profile_blocks_when_absent(tmp_path):
 
     out = tmp_path / "out.jsonl"
     mew.run(
-        argv=["mew", "--benchmark_min_time=1x"],
+        min_time="1x",
         reporter=JSONLReporter(output=out),
     )
     row = json.loads(out.read_text().splitlines()[0])
