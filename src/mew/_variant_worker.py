@@ -92,12 +92,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         # JSONL to the preserved stdout; the parent applies its session id and the
-        # variant name when it parses these lines.
+        # variant name when it parses these lines. `header=True`: the channel
+        # carries the full context line, which the parent needs to re-project
+        # (executable / MHz / build type are not stamped per row).
         memory_profiles, cpu_profiles = _profiles(ns, entries)
         _run(
             entries,
             argv=["mew", *ns.gb],
-            reporter=JSONLReporter(output=data_stream),
+            reporter=JSONLReporter(output=data_stream, header=True),
             memory_profiles=memory_profiles,
             cpu_profiles=cpu_profiles,
         )

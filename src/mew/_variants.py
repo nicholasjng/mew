@@ -65,16 +65,33 @@ def _merge_row(
     child_row: RunRow,
     *,
     variant: str,
-    repetition_index: int,
+    rep: int,
+    outer_reps: int,
     custom: dict[str, Any] | None,
 ) -> RunRow:
-    """Overlay ``variant`` / ``repetition_index`` / ``custom`` onto a child's
+    """Overlay ``variant`` and merged repetition identity onto a child's
     :class:`~mew._typing.RunRow`.
+
+    A child may itself run N inner Google Benchmark repetitions (via
+    ``--benchmark_repetitions`` in the forwarded args or a decorator option), so
+    the merged index composes outer × inner — a flat overwrite with the outer
+    index would collapse distinct inner measurements onto one index. With a
+    single inner repetition this reduces to ``repetition_index=rep``,
+    ``repetitions=outer_reps``.
 
     The child's ``custom`` preserves each variant's context in the merged file
     (the single top-level context block holds only one).
     """
-    merged: RunRow = {**child_row, "variant": variant, "repetition_index": repetition_index}
+    inner_total = max(1, int(child_row.get("repetitions") or 1))
+    inner_idx = child_row.get("repetition_index")
+    merged: RunRow = {
+        **child_row,
+        "variant": variant,
+        "repetitions": outer_reps * inner_total,
+        # Aggregate rows carry no per-repetition index; anchor them at the rep.
+        "repetition_index": rep * inner_total
+        + (inner_idx if isinstance(inner_idx, int) and inner_idx >= 0 else 0),
+    }
     if custom:
         merged["custom"] = custom
     return merged
@@ -195,11 +212,23 @@ def run_variants(
     started = False
     failures = 0
 
+    outer_reps = max(1, repetitions)
+    no_profiling = ProfileConfig()
+
     # Repetition-major: rep0 over all variants, then rep1, … (A B A B …).
-    for rep in range(max(1, repetitions)):
+    for rep in range(outer_reps):
         for name in order:
+            # Profiling is an out-of-loop pass with a fixed per-variant artifact
+            # path: run it on the first repetition only, or every later rep
+            # would redo the expensive pass just to overwrite the same file.
             result = _run_child(
-                variants[name], pattern, literal, tags or [], gb_args, profiling, name
+                variants[name],
+                pattern,
+                literal,
+                tags or [],
+                gb_args,
+                profiling if rep == 0 else no_profiling,
+                name,
             )
             if result is None:
                 failures += 1
@@ -208,14 +237,20 @@ def run_variants(
             if not started:
                 raw = _pseudo_raw_context(child_ctx, session_id, session_tag, order)
                 if reporter is not None and reporter.report_context(raw) is False:
+                    # A veto can arrive after sinks already opened resources in
+                    # report_context (Fanout calls every child): close them.
+                    if fn := getattr(reporter, "finalize", None):
+                        fn()
                     return failures + 1
                 started = True
             if reporter is not None:
-                # Overlay variant / rep index and the child's custom context.
+                # Overlay variant / rep identity and the child's custom context.
                 child_custom = child_ctx.get("custom")
                 reporter.report_runs(
                     [
-                        _merge_row(row, variant=name, repetition_index=rep, custom=child_custom)
+                        _merge_row(
+                            row, variant=name, rep=rep, outer_reps=outer_reps, custom=child_custom
+                        )
                         for row in rows
                     ]
                 )

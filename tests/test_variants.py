@@ -47,14 +47,25 @@ def _full_row(**overrides: object) -> RunRow:
 def test_merge_row_overlays_variant_and_rep() -> None:
     # A child row already is a RunRow; the merge overlays the orchestration's
     # variant and repetition index while preserving every other field.
-    out = _merge_row(_full_row(), variant="engine-a", repetition_index=3, custom=None)
+    out = _merge_row(_full_row(), variant="engine-a", rep=3, outer_reps=5, custom=None)
     assert out["name"] == "bench.py::f"
     assert out["real_time"] == 12.5
     assert out["time_unit"] == "ns"
     assert out["counters"] == {"items": 5.0}
     assert out["variant"] == "engine-a"
     assert out["repetition_index"] == 3  # orchestration rep, overriding the child's 0
+    assert out["repetitions"] == 5  # total merged repetitions
     assert "custom" not in out  # no per-suite context → no custom key
+
+
+def test_merge_row_composes_inner_gb_repetitions() -> None:
+    # A child that itself ran N inner GB repetitions keeps them distinct in the
+    # merged output: index = outer_rep * inner_total + inner_index.
+    for inner_idx in range(3):
+        row = _full_row(repetitions=3, repetition_index=inner_idx)
+        out = _merge_row(row, variant="a", rep=1, outer_reps=2, custom=None)
+        assert out["repetition_index"] == 3 + inner_idx
+        assert out["repetitions"] == 6
 
 
 def test_pseudo_raw_context_undoes_projection() -> None:
@@ -97,8 +108,9 @@ def test_run_variants_rejects_positional_paths(capsys: pytest.CaptureFixture[str
             pattern=None,
             tags=None,
             min_time=None,
+            min_warmup_time=None,
+            random_interleaving=False,
             repetitions=None,
-            extra=[],
             paths=["some/path.py"],
             session_tag=None,
             append=False,
@@ -110,7 +122,7 @@ def test_merge_row_carries_per_variant_custom() -> None:
     # The orchestrator stamps each variant's set_context() values onto its rows
     # so the merged file records every variant's own engine, not just the first.
     out = _merge_row(
-        _full_row(), variant="duckdb", repetition_index=0, custom={"engine": "duckdb 1.5.3"}
+        _full_row(), variant="duckdb", rep=0, outer_reps=1, custom={"engine": "duckdb 1.5.3"}
     )
     assert out["custom"] == {"engine": "duckdb 1.5.3"}
 
@@ -128,7 +140,7 @@ def test_merge_row_preserves_child_memory_block() -> None:
             "allocations_per_iteration": 7.0,
         }
     )
-    out = _merge_row(row, variant="a", repetition_index=0, custom=None)
+    out = _merge_row(row, variant="a", rep=0, outer_reps=1, custom=None)
     assert out["memory"]["peak_bytes"] == 2048
     assert out["memory"]["allocations_per_iteration"] == 7.0
 
@@ -197,14 +209,12 @@ def test_run_variant_end_to_end(tmp_path: Path, variant_files: tuple[Path, Path]
 
     rows = [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
     benches = [r for r in rows if "name" in r]
-    # 2 variants × 2 repetitions × 1 benchmark = 4 rows, all under one session.
-    assert len(benches) == 4
+    # Pure NDJSON: 2 variants × 2 repetitions × 1 benchmark = 4 self-contained rows.
+    assert len(rows) == len(benches) == 4
     assert {r["variant"] for r in benches} == {"a", "b"}
     assert {r["repetition_index"] for r in benches} == {0, 1}
-    ctx = next(r["context"] for r in rows if "context" in r)
-    session_ids = {r.get("session_id") for r in rows if "context" in r}
-    assert len(session_ids) == 1  # one shared session across children
-    assert ctx["variants"] == ["a", "b"]
+    # One shared session across children, stamped on every row.
+    assert len({r["session_id"] for r in benches}) == 1
 
     # And compare can pivot it. --by variant defaults to --key func, so the
     # variant columns line up on the function name without an explicit --key.
@@ -226,20 +236,21 @@ def test_run_variant_reports_failed_child(tmp_path: Path, variant_files: tuple[P
     assert "failed" in res.stderr or "No such file" in res.stderr or "no benchmarks" in res.stderr
 
 
-@pytest.mark.skipif(find_spec("pyarrow") is None, reason="pyarrow not installed")
-def test_run_variant_parquet_has_variant_column(
+def test_run_variant_jsonl_has_variant_field(
     tmp_path: Path, variant_files: tuple[Path, Path]
 ) -> None:
-    import pyarrow.parquet as pq
+    import json as _json
 
     a, b = variant_files
-    out = tmp_path / "r.parquet"
+    out = tmp_path / "r.jsonl"
     res = _mew(
         "run", f"--variant=a={a}", f"--variant=b={b}", "--min-time=10x", f"-o={out}", cwd=tmp_path
     )
     assert res.returncode == 0, res.stderr
-    variants = {row["variant"] for row in pq.read_table(out).to_pylist()}
-    assert variants == {"a", "b"}
+    rows = [_json.loads(ln) for ln in out.read_text().splitlines()]
+    assert {row["variant"] for row in rows} == {"a", "b"}
+    # Merged rows are self-contained: one shared session id stamped on all.
+    assert len({row["session_id"] for row in rows}) == 1
 
 
 _BENCH_CTX_A = """
