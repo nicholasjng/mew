@@ -167,13 +167,20 @@ class _RunProjector:
         *,
         memory_profiles: dict[str, MemoryProfile] | None = None,
         cpu_profiles: dict[str, CPUProfile] | None = None,
+        skipped_rows: list[RunRow] | None = None,
     ) -> None:
         self._inner = inner
         self._mem = memory_profiles or {}
         self._cpu = cpu_profiles or {}
+        # Pre-built skipped RunRows, flushed right after the context so they land
+        # before `finalize` (where the Parquet reporter writes its file).
+        self._skipped_rows = skipped_rows or []
 
     def report_context(self, context: dict[str, Any]) -> bool:
-        return self._inner.report_context(context)
+        ok = self._inner.report_context(context)
+        if self._skipped_rows:
+            self._inner.report_runs(self._skipped_rows)
+        return ok
 
     def report_runs(self, runs: list[Run]) -> None:
         from mew.reporter import _run_to_dict
