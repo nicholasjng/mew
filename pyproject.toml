@@ -1,11 +1,9 @@
 [build-system]
-# The floor doubles as `tool.scikit-build.minimum-version` below, so raising it
-# opts into the 1.x default behaviours instead of emulating the 0.10 era.
 requires = ["scikit-build-core >=1.0,<2", "nanobind >=2.13"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "mew"
+name = "mew-bench"
 dynamic = ["version"]
 description = "A CLI for microbenchmarking Python code snippets."
 readme = "README.md"
@@ -13,6 +11,35 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "Nicholas Junge", email = "nicho.junge@gmail.com" }]
 dependencies = []
+keywords = [
+    "benchmark",
+    "benchmarking",
+    "microbenchmark",
+    "performance",
+    "google-benchmark",
+    "profiling",
+    "nanobind",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading :: 2 - Beta",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Benchmark",
+    "Typing :: Typed",
+]
 
 [project.urls]
 Documentation = "https://mew.readthedocs.io"
@@ -51,19 +78,16 @@ typing = [
 ]
 
 [tool.uv]
-# Build mew against the project .venv so includes from Python packages
+default-groups = ["build", "typing"]
+# Build against the project .venv so includes from Python packages
 # (nanobind etc.) in compile_commands.json survive across rebuilds.
-no-build-isolation-package = ["mew"]
+no-build-isolation-package = ["mew-bench"]
 # exclude dependency versions newer than one week
 exclude-newer = "1 week"
 # ...except the toolchain, which we want at the latest release: ruff and ty are
 # dev tools whose diagnostics we track upstream, and nanobind is pinned in
 # lockstep with the C++ bindings it generates.
 exclude-newer-package = { ruff = false, ty = false, nanobind = false }
-# Require the "build" group due to no build isolation. "typing" is default so
-# that .venv/bin/ty always exists for Zed's language server, which would
-# otherwise break whenever a bare `uv run` re-synced the group away.
-default-groups = ["build", "typing"]
 
 [project.scripts]
 mew = "mew.cli:main"
@@ -87,9 +111,11 @@ BENCHMARK_ENABLE_INSTALL = "OFF"
 CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
 
 [[tool.scikit-build.overrides]]
-# Free-threaded interpreters (abi flag "t") can't use the stable ABI, so the
-# `cp312` abi3 tag above is invalid there: clear py-api for a version-specific
-# free-threaded wheel.
+if.python-version = "<3.12"
+wheel.py-api = ""
+
+[[tool.scikit-build.overrides]]
+# Free-threaded interpreters can't use the stable ABI.
 if.abi-flags = "t"
 wheel.py-api = ""
 
@@ -104,6 +130,20 @@ if.env.MEW_TSAN = "1"
 build-dir = "build/tsan"
 cmake.build-type = "Debug"
 cmake.args = ["-DMEW_TSAN=ON"]
+
+[tool.cibuildwheel]
+build = ["cp311-*", "cp312-*", "cp314t-*"]
+archs = ["auto64"]
+build-frontend = "build[uv]"
+test-groups = ["test"]
+test-command = "pytest {project}/tests -n auto"
+
+[[tool.cibuildwheel.overrides]]
+# duckdb publishes neither a free-threaded nor a musllinux wheel, so skip its installation
+# to avoid a build from source. All tests using it are behind an importorskip barrier.
+select = ["*t-*", "*-musllinux*"]
+test-groups = []
+test-requires = ["pytest >=8", "pytest-xdist>=3.8.0", "numpy>=2.4.6"]
 
 [tool.ruff]
 line-length = 100
