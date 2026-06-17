@@ -1,6 +1,6 @@
 # Comparisons and regression gating
 
-`mew compare` diffs two or more result files (`.json`, `.jsonl`, or `.parquet`; every sink `mew run -o` writes).
+`mew compare` diffs two or more result files (`.json`, `.jsonl`, or `.jsonl.gz`; every sink `mew run -o` writes).
 The first is the baseline; later files are diffed against it.
 With `--fail-on-regression`, it also acts as a CI gate, returning exit code 2 when any benchmark drifts in the wrong direction by more than the threshold.
 
@@ -15,7 +15,7 @@ $ mew compare --stddev baseline.json head.json    # show stddev cols if present
 
 Supported metrics: `real_time` (default), `cpu_time`, `iterations`.
 For `iterations`, higher is better, so the regression direction is inverted under the hood.
-Files produced with `--profile-memory` additionally support `memory.peak_bytes`, `memory.total_bytes`, `memory.total_allocations`, and `memory.allocations_per_iteration`:
+Files produced with `--profile-memory` additionally support `memory.peak_bytes` and `memory.allocations_per_iteration`:
 
 ```console
 $ mew compare -m memory.peak_bytes baseline.json head.json
@@ -55,10 +55,10 @@ When a file contains per-repetition rows (`--repetitions N`), rows whose coeffic
 Each `mew run` is one *session* (see [](context.md#session-identity)). Normally each run writes its own file and you compare files, the recommended shape for CI. For local before/after experiments, though, it's handy to keep both runs in one file with `--append`, then address them by `path@selector`:
 
 ```console
-$ mew run --session-tag before -o results.parquet
+$ mew run --session-tag before -o results.jsonl
 # ... change something ...
-$ mew run --session-tag after --append -o results.parquet
-$ mew compare results.parquet@before results.parquet@after
+$ mew run --session-tag after --append -o results.jsonl
+$ mew compare results.jsonl@before results.jsonl@after
 ```
 
 A selector picks one session from a multi-session file:
@@ -102,15 +102,6 @@ reason = "Bubble sort is intentionally slow; skip the gate."
 Patterns use {func}`fnmatch.fnmatchcase` against the full benchmark name.
 Each rule must include a `reason` so the allowlist stays explainable. A
 rule must either set `ignore=true` or `threshold_pct=<float>`.
-
-Inline allowlist entries are accepted for ad-hoc runs:
-
-```console
-$ mew compare --allow 'bench_io.py::*:15' --allow 'bench_bubble:*' \
-              --fail-on-regression 5 baseline.json head.json
-```
-
-Bare patterns ignore; the `PATTERN:PCT` syntax raises the threshold to `PCT`.
 
 ## Verdicts
 

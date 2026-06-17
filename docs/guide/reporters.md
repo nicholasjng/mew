@@ -14,8 +14,8 @@ never a live `Run`).
 
 {class}`~mew.RichReporter`
 : Streams one row per Run as a formatted, colorized table. The default for
-  `mew run` when no `-o` is given. Optional columns: `Peak Mem` /
-  `Total Alloc` (via `show_memory=True`) and `Samples` / `Hottest Frame`
+  `mew run` when no `-o` is given. Optional columns: `Peak Mem`
+  (via `show_memory=True`) and `Samples` / `Hottest Frame`
   (via `show_cpu=True`). The CLI exposes those options via
   `--profile-memory` / `--sample`.
 
@@ -25,14 +25,6 @@ never a live `Run`).
   `finalize()`. Pass `output=Path(...)`, a text stream, or omit for
   stdout.
 
-{class}`~mew.ParquetReporter`
-: One row per Run, static schema, user context flattened. Requires
-  `pyarrow` (`pip install 'mew[dev]'` or `pip install pyarrow`). Counters
-  are a `MAP<string, double>`. The user-defined context goes into a JSON
-  string column named `custom`; query with e.g. DuckDB's `json_extract`;
-  session identity lands as `session_id` / `session_tag` string columns
-  (see [](context.md)).
-
 {class}`~mew.Fanout`
 : Broadcasts each callback to a list of reporters. Used internally by
   `mew run` when multiple `-o` sinks are supplied. `report_context()`
@@ -41,12 +33,17 @@ never a live `Run`).
 
 ## Choosing a sink
 
-| Use case                                  | Recommended sink                |
-| ----------------------------------------- | ------------------------------- |
-| Interactive iteration on a laptop         | `RichReporter` (default)        |
-| Capture a baseline for `mew compare`      | `JSONReporter` (`-o b.json`)    |
-| Long-running results, SQL analytics       | `ParquetReporter` (`-o b.pq`)   |
-| Console output + persisted artifact       | `-o -` plus `-o file.{json,pq}` |
+| Use case                                  | Recommended sink                   |
+| ----------------------------------------- | ---------------------------------- |
+| Interactive iteration on a laptop         | `RichReporter` (default)           |
+| Capture a baseline for `mew compare`      | `JSONReporter` (`-o b.json`)       |
+| Growing archive, SQL analytics            | `JSONLReporter` (`-o b.jsonl[.gz]`) |
+| Console output + persisted artifact       | `-o -` plus `-o file.{json,jsonl}` |
+
+JSONL rows are self-contained (each carries its session identity and `custom`
+context), so an archive is plain NDJSON that analytical tools read directly —
+no export step, no extra dependency. `.jsonl.gz` compresses the archive;
+`--append` adds each run as a new gzip member, so appends stay cheap.
 
 ## Custom reporters
 
@@ -87,19 +84,38 @@ from mew import REGISTRY, run
 run(REGISTRY.all(), reporter=MetricsExporter(sink))
 ```
 
-## DuckDB recipes
+## SQL and dataframe recipes
+
+The JSONL archive is directly intelligible to DuckDB, pandas, and polars —
+nested blocks (`custom`, `memory`) arrive as structs, and gzip is handled
+transparently (polars: decompress first).
 
 ```sql
--- 95th percentile real_time per benchmark
+-- 95th percentile real_time per benchmark (also works on 'results.jsonl.gz')
 SELECT name, quantile_cont(real_time, 0.95) AS p95
-FROM 'results.parquet'
+FROM 'results.jsonl'
 GROUP BY name
 ORDER BY p95 DESC;
 
--- Custom context drill-down
-SELECT name,
-       json_extract(custom, '$.dataset.size') AS size,
-       avg(real_time) AS mean_time
-FROM 'results.parquet'
+-- Custom context drill-down: nested blocks are structs, not JSON strings
+SELECT name, custom.dataset.size AS size, avg(real_time) AS mean_time
+FROM 'results.jsonl'
 GROUP BY name, size;
+```
+
+```python
+import pandas as pd
+df = pd.read_json("results.jsonl.gz", lines=True)   # compression inferred
+
+import polars as pl
+df = pl.read_ndjson("results.jsonl")
+```
+
+Need Parquet for a data-lake handoff? Convert after the fact — one line,
+including many files at once:
+
+```sql
+COPY (FROM 'results.jsonl') TO 'results.parquet';
+COPY (FROM read_json_auto(['a.jsonl', 'b.jsonl.gz'], union_by_name=true))
+  TO 'archive.parquet';
 ```
