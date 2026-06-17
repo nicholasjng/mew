@@ -39,6 +39,11 @@ class RunType(enum.StrEnum):
     aggregate = "aggregate"
 
 class BenchmarkName:
+    """
+    A registered name split into its parts.
+    Google Benchmark assembles these into the reported `function/args/min_time:...` string; `str()` renders it.
+    """
+
     @property
     def function_name(self) -> str: ...
     @property
@@ -181,32 +186,75 @@ class State:
         Return a context manager that pauses timing for the duration of the `with` block.
         """
 
-    def skip_with_error(self, msg: str) -> None: ...
-    def skip_with_message(self, msg: str) -> None: ...
-    def set_label(self, label: str) -> None: ...
-    def set_iteration_time(self, seconds: float) -> None: ...
-    def set_items_processed(self, items: int) -> None: ...
-    def set_bytes_processed(self, n_bytes: int) -> None: ...
+    def skip_with_error(self, msg: str) -> None:
+        """Abort this benchmark and mark it failed; the row reports as skipped."""
+
+    def skip_with_message(self, msg: str) -> None:
+        """
+        Abort this benchmark without marking it an error (e.g. an unmet precondition).
+        """
+
+    def set_label(self, label: str) -> None:
+        """Attach a free-form label to this benchmark's reported row."""
+
+    def set_iteration_time(self, seconds: float) -> None:
+        """
+        Report the elapsed time of one iteration yourself. Only honored when the benchmark sets `use_manual_time`.
+        """
+
+    def set_items_processed(self, items: int) -> None:
+        """Record how many items the body handled, reported as items/second."""
+
+    def set_bytes_processed(self, n_bytes: int) -> None:
+        """Record how many bytes the body handled, reported as bytes/second."""
+
     def set_counter(
         self, name: str, value: float, flags: CounterFlags = CounterFlags.kDefaults
-    ) -> None: ...
-    def range(self, pos: int = 0) -> int: ...
+    ) -> None:
+        """
+        Attach a user-defined counter, surfaced in `RunRow['counters']`.
+        `flags` controls how Google Benchmark normalizes it (see `CounterFlags`).
+        """
+
+    def range(self, pos: int = 0) -> int:
+        """
+        The `pos`-th range argument this benchmark was registered with.
+        `@parametrize` / `@product` families use `range(0)` as the case index; the trampoline reads it to bind that case's kwargs and label.
+        """
+
     @property
-    def range_size(self) -> int: ...
+    def range_size(self) -> int:
+        """Number of range arguments available to `range`."""
+
     @property
-    def iterations(self) -> int: ...
+    def iterations(self) -> int:
+        """Iterations completed so far; the total once the loop finishes."""
+
     @property
-    def threads(self) -> int: ...
+    def threads(self) -> int:
+        """Total number of threads in this run (1 unless threaded mode is on)."""
+
     @property
-    def thread_index(self) -> int: ...
+    def thread_index(self) -> int:
+        """Index of the thread owning this State, in `[0, threads)`."""
+
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """The registered benchmark name."""
+
     @property
-    def skipped(self) -> bool: ...
+    def skipped(self) -> bool:
+        """Whether this benchmark was skipped, by either skip_with_* call."""
+
     @property
-    def error_occurred(self) -> bool: ...
+    def error_occurred(self) -> bool:
+        """
+        Whether the skip came from `skip_with_error` rather than `skip_with_message`.
+        """
+
     @property
-    def max_iterations(self) -> int: ...
+    def max_iterations(self) -> int:
+        """Iteration count Google Benchmark budgeted for this run."""
 
 class BenchmarkHandle:
     """
@@ -215,16 +263,44 @@ class BenchmarkHandle:
     Invalidated by the next `clear_registered_benchmarks()` call or interpreter shutdown; using a stale handle is undefined behaviour.
     """
 
-    def min_time(self, seconds: float) -> BenchmarkHandle: ...
-    def min_warmup_time(self, seconds: float) -> BenchmarkHandle: ...
-    def iterations(self, n: int) -> BenchmarkHandle: ...
-    def repetitions(self, n: int) -> BenchmarkHandle: ...
-    def unit(self, unit: TimeUnit) -> BenchmarkHandle: ...
-    def use_real_time(self) -> BenchmarkHandle: ...
-    def use_manual_time(self) -> BenchmarkHandle: ...
-    def measure_process_cpu_time(self) -> BenchmarkHandle: ...
-    def report_aggregates_only(self, value: bool = True) -> BenchmarkHandle: ...
-    def dense_range(self, start: int, limit: int, step: int = 1) -> BenchmarkHandle: ...
+    def min_time(self, seconds: float) -> BenchmarkHandle:
+        """Run at least this many seconds before reporting."""
+
+    def min_warmup_time(self, seconds: float) -> BenchmarkHandle:
+        """Warm up for this many seconds before measuring."""
+
+    def iterations(self, n: int) -> BenchmarkHandle:
+        """Run exactly `n` iterations instead of timing out on `min_time`."""
+
+    def repetitions(self, n: int) -> BenchmarkHandle:
+        """
+        Repeat the whole benchmark `n` times; variance metrics need at least 2.
+        """
+
+    def unit(self, unit: TimeUnit) -> BenchmarkHandle:
+        """Time unit for the reported per-iteration durations."""
+
+    def use_real_time(self) -> BenchmarkHandle:
+        """Report wall-clock rather than CPU time as the primary measure."""
+
+    def use_manual_time(self) -> BenchmarkHandle:
+        """
+        Take timings from `State.set_iteration_time` instead of the built-in timer.
+        """
+
+    def measure_process_cpu_time(self) -> BenchmarkHandle:
+        """
+        Measure CPU time across the whole process, not just the running thread.
+        """
+
+    def report_aggregates_only(self, value: bool = True) -> BenchmarkHandle:
+        """Emit only the aggregate rows, suppressing per-repetition ones."""
+
+    def dense_range(self, start: int, limit: int, step: int = 1) -> BenchmarkHandle:
+        """
+        Register one case per value in `[start, limit]`, readable via `State.range`.
+        """
+
     def threads(self, n: int) -> BenchmarkHandle:
         """
         Run the benchmark with `n` threads, each with its own State and timer.
@@ -236,10 +312,17 @@ class BenchmarkHandle:
         Run the benchmark once per thread count in [min_threads, max_threads], stepping by the range multiplier (powers of two). See `threads` for the free-threading requirement.
         """
 
-    def arg(self, value: int) -> BenchmarkHandle: ...
-    def arg_name(self, name: str) -> BenchmarkHandle: ...
+    def arg(self, value: int) -> BenchmarkHandle:
+        """
+        Register one case with a single range argument, readable via `State.range`.
+        """
+
+    def arg_name(self, name: str) -> BenchmarkHandle:
+        """Name the first range argument; appears in the reported benchmark name."""
+
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """The registered benchmark name."""
 
 def register_benchmark(name: str, fn: Callable) -> BenchmarkHandle:
     """
