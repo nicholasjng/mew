@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import json
-import sys
 
 import pytest
 
@@ -19,7 +18,7 @@ def _run_one(reporter):
         for _ in state:
             pass
 
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=reporter)
+    mew.run(min_time="1x", reporter=reporter)
 
 
 def test_json_reporter_writes_to_file(tmp_path):
@@ -51,36 +50,6 @@ def test_json_reporter_writes_to_stream():
     assert doc["benchmarks"][0]["iterations"] >= 1
 
 
-def test_json_reporter_buffers_non_owned_sink_on_windows(monkeypatch):
-    # On Windows a non-owned sink (e.g. a stdout pipe) can claim seekable() yet
-    # mishandle the seek, duplicating content. So it must buffer and emit exactly
-    # one document at finalize — never the seek-rewrite path.
-    monkeypatch.setattr(sys, "platform", "win32")
-    buf = io.StringIO()
-    assert buf.seekable()  # seekable, yet must NOT stream on Windows when non-owned
-    rep = JSONReporter(output=buf)
-    rep.report_context({"host_name": "h", "num_cpus": 1})
-    rep.report_runs([_fake_row("a::one"), _fake_row("a::two")])
-    assert buf.getvalue() == ""  # buffered: nothing written before finalize
-    rep.finalize()
-    doc = json.loads(buf.getvalue())  # exactly one valid document, no "Extra data"
-    assert [b["name"] for b in doc["benchmarks"]] == ["a::one", "a::two"]
-
-
-def test_json_reporter_streams_to_seekable_sink_off_windows(monkeypatch):
-    # Off Windows a seekable sink still streams (Ctrl-C-survivable): the document
-    # is valid after the header and after each flush, not only at finalize. This
-    # is the `mew run --format json > out.json` shell-redirect case on POSIX.
-    monkeypatch.setattr(sys, "platform", "linux")
-    buf = io.StringIO()
-    rep = JSONReporter(output=buf)
-    rep.report_context({"host_name": "h", "num_cpus": 1})
-    assert json.loads(buf.getvalue())["benchmarks"] == []  # header streamed, valid now
-    rep.report_runs([_fake_row("a::one")])
-    assert [b["name"] for b in json.loads(buf.getvalue())["benchmarks"]] == ["a::one"]
-    rep.finalize()
-
-
 def _fake_row(name: str, label: str = "") -> RunRow:
     """A minimal RunRow dict, the shape reporters now consume directly."""
     return {
@@ -106,31 +75,26 @@ def _fake_row(name: str, label: str = "") -> RunRow:
     }
 
 
-def test_json_reporter_file_is_valid_after_each_flush_without_finalize(tmp_path):
-    """The streamed file must parse as a complete document at every flush —
-    a Ctrl-C between flushes leaves a usable file, not a dangling `[`."""
+def test_json_reporter_streams_forward_only(tmp_path):
+    """GB-style: rows land on disk as they arrive, the closer only at finalize.
+
+    The document parses only after finalize; JSONL is the interruption-safe format.
+    """
     out = tmp_path / "results.json"
     rep = JSONReporter(output=out)
     rep.report_context({"host_name": "h", "num_cpus": 4})
 
-    # After the header alone: valid document, context present, empty benchmarks.
-    doc = json.loads(out.read_text())
-    assert doc["context"]["host_name"] == "h"
-    assert doc["benchmarks"] == []
-
     rep.report_runs([_fake_row("a::one"), _fake_row("a::two")])
-    # Still valid mid-run, before finalize() — this is the Ctrl-C survivability.
-    doc = json.loads(out.read_text())
-    assert [b["name"] for b in doc["benchmarks"]] == ["a::one", "a::two"]
+    partial = out.read_text()
+    assert "a::one" in partial and "a::two" in partial  # streamed, not buffered
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(partial)  # open-ended until finalize, like GB itself
 
     rep.report_runs([_fake_row("a::three")])
-    doc = json.loads(out.read_text())
-    assert [b["name"] for b in doc["benchmarks"]] == ["a::one", "a::two", "a::three"]
-
     rep.finalize()
-    # finalize() doesn't corrupt or duplicate anything.
     doc = json.loads(out.read_text())
-    assert len(doc["benchmarks"]) == 3
+    assert doc["context"]["host_name"] == "h"
+    assert [b["name"] for b in doc["benchmarks"]] == ["a::one", "a::two", "a::three"]
 
 
 def test_jsonl_reporter_duckdb_query_round_trip(tmp_path):
@@ -225,7 +189,7 @@ def test_rich_reporter_shows_label_column_for_families():
 
     buf = io.StringIO()
     rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False), show_label=True)
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=rep)
+    mew.run(min_time="1x", reporter=rep)
     out = buf.getvalue()
     assert "Label" in out  # header
     assert "small" in out and "big" in out  # case labels rendered per row
@@ -244,7 +208,7 @@ def test_rich_reporter_left_ellipsizes_long_names():
     buf = io.StringIO()
     # Narrow width forces truncation; the meaningful function suffix must survive.
     rep = RichReporter(terminal=Terminal(file=buf, width=60, color=False))
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=rep)
+    mew.run(min_time="1x", reporter=rep)
     out = buf.getvalue()
     assert "…" in out
     assert "bench_the_actual_function" in out
@@ -274,7 +238,7 @@ def test_jsonl_reporter_streams_one_object_per_line(tmp_path):
             pass
 
     out = tmp_path / "results.jsonl"
-    mew.run(argv=["mew", "--benchmark_min_time=1x"], reporter=JSONLReporter(output=out))
+    mew.run(min_time="1x", reporter=JSONLReporter(output=out))
 
     lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
     rows = [json.loads(ln) for ln in lines]  # each line is independently valid JSON
