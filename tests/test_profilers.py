@@ -200,6 +200,78 @@ def test_xctrace_run_passes_time_limit(tmp_path, monkeypatch):
     assert cmd[cmd.index("--time-limit") + 1] == "10s"
 
 
+_EXPORT_XML = (
+    b'<trace-query-result><node><row><backtrace id="b">'
+    b'<frame id="f2" name="work" addr="0x2"/><frame id="f1" name="main" addr="0x1"/>'
+    b"</backtrace></row></node></trace-query-result>"
+)
+
+
+def test_xctrace_speedscope_format_folds_each_trace_to_collapsed_text(tmp_path, monkeypatch):
+    # record/export share the one `subprocess` module, so one dispatching stand-in:
+    # `record` is a no-op; `export` writes the fixture XML to its stdout file.
+    def run(cmd, **kwargs):
+        if "export" in cmd:
+            kwargs["stdout"].write(_EXPORT_XML.decode())
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(xctrace.subprocess, "run", run)
+
+    artifacts = XctraceProfiler().run(
+        [_entry("bench.py::f")], output_dir=tmp_path, iterations=1000, format="speedscope"
+    )
+    (path,) = artifacts.values()
+    # Artifact is the folded text, not the `.trace`, root-first and speedscope-shaped.
+    assert path.suffix == ".txt"
+    assert path.read_text() == "main;work 1\n"
+
+
+@pytest.mark.parametrize("fmt", ["auto", "xctrace"])
+def test_xctrace_native_formats_keep_the_trace_bundle(fmt, tmp_path, monkeypatch):
+    # `auto` and its tool-named alias `xctrace` both record natively — no export,
+    # the artifact is the `.trace` bundle.
+    calls, runner = _recording_runner()
+    monkeypatch.setattr(xctrace.subprocess, "run", runner)
+
+    artifacts = XctraceProfiler().run(
+        [_entry("bench.py::f")], output_dir=tmp_path, iterations=1000, format=fmt
+    )
+    (path,) = artifacts.values()
+    assert path.suffix == ".trace"
+    assert not any("export" in cmd for cmd in calls)  # native: recorded, never exported
+
+
+def test_profile_rejects_format_unsupported_by_backend(monkeypatch):
+    from mew import cli, profilers
+
+    class _FakeBackend:
+        name = "perf"
+        FORMATS = ("auto",)  # perf can't produce the xctrace-native format
+
+    monkeypatch.setattr(profilers, "select", lambda _p: _FakeBackend())
+    # Validated before discovery, so it exits without touching the (empty) registry.
+    with pytest.raises(SystemExit) as exc:
+        cli.profile([], profiler="perf", format="xctrace")
+    assert exc.value.code == 2
+
+
+def test_xctrace_open_routes_collapsed_to_speedscope(tmp_path, monkeypatch):
+    opened: list[Path] = []
+    monkeypatch.setattr(xctrace, "open_speedscope_artifact", lambda p: opened.append(p))
+    instruments, runner = _recording_runner()
+    monkeypatch.setattr(xctrace.subprocess, "run", runner)
+
+    backend = XctraceProfiler()
+    backend.open_artifact(tmp_path / "x.collapsed.txt")
+    backend.open_artifact(tmp_path / "x.trace")
+    assert opened == [tmp_path / "x.collapsed.txt"]  # text → speedscope
+    assert instruments and instruments[0][:3] == [
+        "open",
+        "-a",
+        "Instruments",
+    ]  # bundle → Instruments
+
+
 # --- backend selection -------------------------------------------------------
 
 
