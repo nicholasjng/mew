@@ -92,9 +92,6 @@ def _build_context(context: dict[str, Any]) -> dict[str, Any]:
         ctx["session_id"] = session_id
     if session_tag := context.get("session_tag"):
         ctx["session_tag"] = session_tag
-    # Declared variant order (baseline first), set by the --variant orchestrator.
-    if variants := context.get("variants"):
-        ctx["variants"] = variants
     custom = context.get("custom")
     if custom:
         ctx["custom"] = custom
@@ -131,8 +128,7 @@ def _run_to_dict(r: Run) -> RunRow:
     }
 
 
-# Closing `]}` of the streamed doc, rewritten over itself each flush so the file
-# stays valid JSON.
+# Closing `]}` of the streamed doc, written once at finalize (GB-style).
 _JSON_CLOSER = "\n  ]\n}\n"
 
 
@@ -170,16 +166,12 @@ def _close_sink(fh: TextIO | None, owns_fh: bool) -> None:
 class JSONReporter:
     """Emit a single ``{"context": ..., "benchmarks": [...]}`` document, GB-style.
 
-    To a **seekable** sink it streams: writes context + empty array up front, then
-    each :meth:`report_runs` seeks over the closing ``]}`` and re-writes it, so the
-    file stays valid JSON after every flush (survives Ctrl-C). This covers a file
-    we opened and a stdout/stream redirected to a regular file. A non-seekable sink
-    (a terminal, a pipe) buffers and writes once at :meth:`finalize`.
-
-    The one exception is a sink we did **not** open, on **Windows**: a stdout pipe
-    there can report ``seekable()`` yet not honor the seek, duplicating content
-    (the rows land after an already-closed empty document). So a non-owned sink on
-    Windows buffers regardless of its ``seekable()`` self-report.
+    Streams forward-only, exactly like Google Benchmark's own JSON reporter:
+    :meth:`report_context` writes the context and the opening bracket, each
+    :meth:`report_runs` appends rows, and :meth:`finalize` writes the closing
+    ``]}``. Never seeks, so files, pipes, and stdout behave identically. The
+    document is valid JSON only after finalize; for an interruption-safe
+    archive use :class:`JSONLReporter`.
 
     Parameters
     ----------
@@ -190,58 +182,31 @@ class JSONReporter:
 
     def __init__(self, *, output: Path | TextIO | None = None) -> None:
         self._output = output
-        self._context: dict[str, Any] = {}
-        self._runs: list[RunRow] = []  # buffered (non-seekable) path only
         self._fh: TextIO | None = None
         self._owns_fh = False
-        self._streaming = False
-        # Byte offset of the closer, i.e. where the next row gets written.
-        self._reopen_pos = 0
         self._first_row = True
 
     def report_context(self, context: dict[str, Any]) -> bool:
-        self._context = dict(context)
         self._fh, self._owns_fh = _open_sink(self._output)
-        # Stream into any seekable sink (file, or stdout redirected to a file).
-        # Exception: a non-owned sink on Windows; a stdout pipe there can claim
-        # seekable() but mishandle the seek and duplicate content, so buffer it.
-        trust_seek = self._owns_fh or sys.platform != "win32"
-        self._streaming = trust_seek and self._fh.seekable()
-        if self._streaming:
-            # default=str: don't crash on Path/datetime; lossy by design.
-            ctx = _indent_block(json.dumps(_build_context(context), indent=2, default=str), 2)
-            self._fh.write('{\n  "context": ' + ctx + ',\n  "benchmarks": [')
-            self._reopen_pos = self._fh.tell()
-            self._fh.write(_JSON_CLOSER)
-            self._fh.flush()
+        # default=str: don't crash on Path/datetime; lossy by design.
+        ctx = _indent_block(json.dumps(_build_context(context), indent=2, default=str), 2)
+        self._fh.write('{\n  "context": ' + ctx + ',\n  "benchmarks": [')
+        self._fh.flush()
         return True
 
     def report_runs(self, runs: list[RunRow]) -> None:
-        if not self._streaming:
-            self._runs.extend(runs)
-            return
         assert self._fh is not None  # report_context runs first, always
-        # Overwrite the closer with rows, then re-close. Rows are >> the closer,
-        # so no stale bytes; empty `runs` just rewrites it in place.
-        self._fh.seek(self._reopen_pos)
         for row in runs:
             prefix = "" if self._first_row else ","
             self._first_row = False
             rendered = _indent_block(json.dumps(row, indent=2, default=str), 4)
             self._fh.write(f"{prefix}\n    {rendered}")
-        self._reopen_pos = self._fh.tell()
-        self._fh.write(_JSON_CLOSER)
         self._fh.flush()
 
     def finalize(self) -> None:
-        if not self._streaming:
-            # Non-seekable sink: emit the whole document in one shot.
-            assert self._fh is not None
-            doc = {
-                "context": _build_context(self._context),
-                "benchmarks": self._runs,
-            }
-            self._fh.write(json.dumps(doc, indent=2, default=str) + "\n")
+        if self._fh is not None:
+            self._fh.write(_JSON_CLOSER)
+            self._fh.flush()
         _close_sink(self._fh, self._owns_fh)
 
 
