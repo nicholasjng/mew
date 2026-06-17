@@ -49,6 +49,27 @@ def _sampling_pause(
 
 @dataclass(frozen=True, slots=True)
 class CPUProfile:
+    """Per-case CPU summary captured by pyinstrument.
+
+    Sampled out of the timing loop, so the figures are independent of the
+    measured run; ``state.pause()`` regions are excluded.
+
+    Attributes
+    ----------
+    profiler : str
+        Name of the sampling backend, always ``"pyinstrument"``.
+    wall_time : float
+        Seconds the sampled execution took, including sampler overhead.
+    sample_count : int
+        Stack samples collected. A low count means the body is too fast for the
+        interval; raise ``inner_iterations``.
+    top_function : str
+        Hottest frame by self time, as ``function (file.py:lineno)``.
+        ``"<no samples>"`` when nothing was captured.
+    top_function_total_self_time : float
+        Seconds of self time attributed to ``top_function``.
+    """
+
     profiler: str
     wall_time: float
     sample_count: int

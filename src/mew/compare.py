@@ -1,15 +1,14 @@
 """Compare benchmark result files: deltas, speedups, optional stddev.
 
-Structured as three stages so future features feed the same renderer:
+Structured as three stages so new comparison dimensions feed the same renderer:
 
 1. **Load** (:func:`_load_sessions`): read a result file into per-session
    sample groups, discarding nothing.
-2. **Select** (:func:`_select_latest`): resolve the groups to one sample set
-   per file, today always "latest session per name, with a warning"; session
-   selectors (``path@tag``) will slot in here.
-3. **Render** (:func:`_render`): compare a list of labelled columns. File
-   comparisons produce one column per file; a variant pivot would produce one
-   column per variant from a single file.
+2. **Select** (:func:`_select_latest`, :func:`_resolve_session`): resolve the
+   groups to one sample set per file, either by ``path@selector`` or by
+   defaulting to the latest session per name.
+3. **Render** (:func:`_render`): compare a list of labelled columns, one per
+   file or (under ``--by variant``) one per variant of a single file.
 """
 
 from __future__ import annotations
@@ -55,6 +54,22 @@ _CTX_SKEW_FIELDS = ("host_name", "num_cpus", "cpu_scaling_enabled")
 
 @dataclass(frozen=True, slots=True)
 class Sample:
+    """One benchmark's reduced measurement, the unit every column compares.
+
+    Attributes
+    ----------
+    name : str
+        Canonical ``file.py::func[label]`` name, re-keyed per the match key.
+    value : float
+        Center across the benchmark's per-repetition rows (median by default).
+    stddev : float or None
+        Sample stddev across repetitions; ``None`` for a single repetition.
+    time_unit : str or None
+        Unit ``value`` is expressed in; ``None`` for unitless metrics.
+    session_date : str or None
+        Date of the session this sample came from, for provenance display.
+    """
+
     name: str
     value: float
     stddev: float | None
@@ -855,7 +870,8 @@ def compare(
 ) -> int:
     """Compare benchmark result files and render a comparison table.
 
-    The last file is the baseline; earlier files show their value plus percent delta and speedup against it.
+    The last file is the baseline; earlier files show their value plus percent
+    delta and speedup against it.
 
     Parameters
     ----------
@@ -863,10 +879,8 @@ def compare(
         Result files (JSON, JSONL, or JSONL.gz); the last is treated as the
         baseline (``mew compare head.json baseline.json`` reads like "compare
         head against baseline"). A ``path@selector`` argument picks one session
-        from a multi-session file: ``@latest``/``@earliest``, ``@~N`` (N back
-        from latest), an exact ``session_tag``, or a ``session_id`` prefix
-        (≥4 chars). Repeat one file with two selectors to compare two of its
-        sessions (``results.jsonl@after results.jsonl@before``).
+        from a multi-session file; see docs/guide/regressions.md for the
+        selector grammar.
     metric : str, default "real_time"
         Metric to compare.
         One of ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or (for files

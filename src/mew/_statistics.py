@@ -36,7 +36,7 @@ def _gmean(values: list[float]) -> float:
 
 
 def _percentile(q: int) -> Statistic:
-    """A stdlib percentile reducer for ``q`` in 0–100 (linear interpolation)."""
+    """A stdlib percentile reducer for ``q`` in 0-100 (linear interpolation)."""
 
     def reduce(values: list[float]) -> float:
         if q <= 0:

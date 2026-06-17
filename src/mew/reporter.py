@@ -142,10 +142,8 @@ def _open_sink(output: Path | TextIO | None, mode: str = "w") -> tuple[TextIO, b
     """Resolve ``output`` to ``(file, owns_it)``.
 
     A Path is opened (owned), ``None`` → stdout, a stream is used as-is. ``mode``
-    applies only to a Path sink (``"a"`` appends a new session). A ``.gz`` Path
-    opens through gzip; appending writes a new gzip *member*, which every
-    multi-member-aware reader (Python, DuckDB, pandas) decompresses as one
-    stream, so archive appends stay O(new data).
+    applies only to a Path sink. Appending to a ``.gz`` Path writes a new gzip
+    member rather than recompressing, keeping archive appends O(new data).
     """
     if isinstance(output, Path):
         if output.name.endswith(".gz"):
@@ -220,13 +218,9 @@ _ROW_STAMP_OPTIONAL = ("session_id", "session_tag", "custom")
 class JSONLReporter:
     """Stream one self-contained JSON object per Run, one per line, flushed as runs land.
 
-    Append-only (works on pipes): a long suite leaves a growing, ``tail``-able file
-    that survives interruption. Every row carries its session identity (date, host,
-    ``session_id``/``session_tag``, ``custom``), so the file is plain NDJSON that
-    DuckDB / pandas / polars query directly (no header join needed) and converts
-    to Parquet with a one-liner (see docs/guide/reporters.md). A ``.gz`` path
-    writes a gzip archive; ``--append`` adds a new gzip member, so appends stay
-    cheap on compressed archives too.
+    Append-only, so it works on pipes and survives interruption. Every row carries
+    its own session identity, making the file plain NDJSON (see
+    docs/guide/reporters.md for querying it).
 
     Parameters
     ----------
@@ -237,12 +231,10 @@ class JSONLReporter:
         Open a Path sink in append mode, adding this run's rows as a new session.
         Ignored for stream / stdout sinks.
     header : bool, default False
-        Channel mode: write a ``{"context": {...}}`` line before the rows and
-        leave the rows bare (identity lives in the header only). Used by the
-        ``--variant`` worker, whose parent re-projects the context and stamps
-        its own shared session onto the merged rows; row-stamping here would
-        let the child's throwaway session identity shadow the parent's. File
-        sinks stay pure NDJSON with self-contained rows.
+        Channel mode: write a ``{"context": {...}}`` line and leave the rows bare.
+        Used by the ``--variant`` worker, whose parent stamps its own shared session
+        onto the merged rows; row-stamping here would let the child's throwaway
+        identity shadow the parent's.
     """
 
     def __init__(

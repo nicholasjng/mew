@@ -1,8 +1,9 @@
 """User-defined benchmark context.
 
-A process-global ``dict[str, Any]`` populated via :func:`set_context` and :func:`update_context`.
-Dotted keys nest, so ``set_context("dataset.size", 1024)`` yields ``{"dataset": {"size": 1024}}``.
-A snapshot is merged into the reporter's context dict under ``ctx["custom"]`` when :func:`mew.run` starts.
+A process-global ``dict[str, Any]`` populated via :func:`set_context` and
+:func:`update_context`. Dotted keys nest, so ``set_context("dataset.size", 1024)``
+yields ``{"dataset": {"size": 1024}}``. A snapshot is merged into the reporter's
+context dict under ``ctx["custom"]`` when :func:`mew.run` starts.
 """
 
 from __future__ import annotations

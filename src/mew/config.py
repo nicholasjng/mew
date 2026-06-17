@@ -25,6 +25,24 @@ class SessionTagSpec:
 
 @dataclass(slots=True)
 class Config:
+    """Resolved ``[tool.mew]`` settings.
+
+    Attributes
+    ----------
+    benchpaths : list[str]
+        Directories searched when no path argument is given, relative to
+        ``project_root``.
+    python_files : list[str]
+        Glob patterns identifying benchmark files during discovery.
+    session_tag : SessionTagSpec
+        Whether and how to derive the automatic session tag.
+    statistic : str or None
+        Default ``mew compare`` reducer; ``None`` keeps the median.
+    project_root : Path or None
+        Directory of the ``pyproject.toml`` these settings came from; ``None``
+        when no file was found and defaults are in use.
+    """
+
     benchpaths: list[str] = field(default_factory=lambda: ["benchmarks"])
     python_files: list[str] = field(default_factory=lambda: ["bench_*.py", "*_bench.py"])
     session_tag: SessionTagSpec = field(default_factory=SessionTagSpec)
@@ -79,6 +97,28 @@ def _parse_session_tag(raw: Any) -> SessionTagSpec:
 
 
 def load(start: Path | None = None) -> Config:
+    """Read ``[tool.mew]`` from the nearest ``pyproject.toml``.
+
+    Parameters
+    ----------
+    start : Path, optional
+        Directory to start the upward search from; defaults to the cwd.
+
+    Returns
+    -------
+    Config
+        Settings from the first ``pyproject.toml`` found walking upward, or
+        all-default settings if there is none. The first file found wins even
+        when it has no ``[tool.mew]`` table.
+
+    Raises
+    ------
+    ValueError
+        If a config field has the wrong shape.
+    TypeError
+        If ``[tool.mew.session-tag]`` is not a table, or one of its fields has
+        the wrong type.
+    """
     cwd = (start or Path.cwd()).resolve()
     for parent in [cwd, *cwd.parents]:
         candidate = parent / "pyproject.toml"

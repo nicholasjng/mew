@@ -26,7 +26,7 @@ import os
 import sys
 from pathlib import Path
 
-from mew import discovery as _discovery
+from mew import _discovery
 from mew._registry import REGISTRY
 from mew.reporter import JSONLReporter
 from mew.runner import run as _run
