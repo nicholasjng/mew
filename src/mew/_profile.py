@@ -113,6 +113,10 @@ class _ProfileState:
         self._i += 1
 
     def keep_running_batch(self, n: int) -> bool:
+        # Mirror the real binding's validation: without it, state.batches(0)
+        # would loop forever in profiling passes but raise in the timed run.
+        if n <= 0:
+            raise ValueError("batch size must be positive")
         if self._i < self._n:
             self._loop_begin()
             self._i += n
@@ -173,12 +177,13 @@ class _RunProjector:
         self._mem = memory_profiles or {}
         self._cpu = cpu_profiles or {}
         # Pre-built skipped RunRows, flushed right after the context so they land
-        # before `finalize` (where the Parquet reporter writes its file).
+        # before `finalize` (where buffering reporters write their file).
         self._skipped_rows = skipped_rows or []
 
     def report_context(self, context: dict[str, Any]) -> bool:
         ok = self._inner.report_context(context)
-        if self._skipped_rows:
+        # A reporter that vetoed the session must not receive rows.
+        if ok is not False and self._skipped_rows:
             self._inner.report_runs(self._skipped_rows)
         return ok
 

@@ -10,8 +10,6 @@ timed ``Run`` rows.
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -59,10 +57,6 @@ class Profiler(Protocol):
         """Record each case; return artifact paths keyed like :func:`iter_entry_cases`."""
         ...
 
-    def open_artifact(self, path: Path) -> None:
-        """Open ``path`` in the backend's viewer (best-effort; may be a no-op)."""
-        ...
-
 
 def worker_argv(*, file: str, entry_name: str, case: int, iterations: int) -> list[str]:
     """The shared ``python -m mew._subprocess_worker ...`` tail every backend wraps."""
@@ -106,25 +100,22 @@ def each_case(
             yield key, entry.file, entry.name, rng, output_dir / f"{slug(key)}{ext}"
 
 
-def open_speedscope_artifact(path: Path) -> None:
-    """Open a speedscope artifact: local viewer if present, else the web app.
-
-    Shared by backends whose artifact is speedscope-loadable (py-spy, perf).
-    """
-    if shutil.which("speedscope"):
-        subprocess.run(["speedscope", str(path)], check=False)
-    else:
-        print(f"mew: open {path} at https://speedscope.app", file=sys.stderr)
-
-
 def parse_seconds(dur: str) -> float:
-    """``'10s'`` / ``'500ms'`` / ``'5'`` → float seconds.
+    """``'10s'`` / ``'500ms'`` / ``'1m'`` / ``'5'`` → float seconds.
 
     For backends without a native duration flag (perf wraps the worker in ``timeout``;
     py-spy takes integer ``--duration`` seconds). xctrace passes its ``--time-limit``
-    string through unparsed.
+    string through unparsed. An unparseable value is a CLI error, not a traceback.
     """
     dur = dur.strip()
-    if dur.endswith("ms"):
-        return float(dur[:-2]) / 1000
-    return float(dur[:-1] if dur.endswith("s") else dur)
+    try:
+        if dur.endswith("ms"):  # before "m": "500ms" is not minutes
+            return float(dur[:-2]) / 1000
+        if dur.endswith("m"):
+            return float(dur[:-1]) * 60
+        return float(dur[:-1] if dur.endswith("s") else dur)
+    except ValueError:
+        raise SystemExit(
+            f"mew: invalid --time-limit {dur!r}; use seconds ('10s', '0.5'), "
+            "milliseconds ('500ms'), or minutes ('1m')"
+        ) from None

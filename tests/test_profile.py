@@ -345,6 +345,27 @@ def test_cpu_profile_expands_family_keyed_per_case():
     assert set(profiles) == {f"{name}/case:0", f"{name}/case:1"}
 
 
+def test_cpu_profile_html_reuses_stats_pass(tmp_path):
+    # The HTML report renders from the sessions the stats pass already
+    # captured; requesting it must not re-execute the suite.
+    pytest.importorskip("pyinstrument")
+    from mew.cpu import profile as cpu_profile
+
+    calls: list[int] = []
+
+    @mew.benchmark
+    def bench_counted(state):
+        calls.append(1)
+        for _ in state:
+            sum(range(100))
+
+    out = tmp_path / "report.html"
+    profiles = cpu_profile(mew.REGISTRY.all(), output=out, inner_iterations=10)
+    assert profiles  # stats still collected
+    assert out.is_file() and out.stat().st_size > 0
+    assert len(calls) == 1  # one execution, not one per output
+
+
 def test_cpu_profile_excludes_paused_regions():
     pytest.importorskip("pyinstrument")
     import time
@@ -424,46 +445,42 @@ def test_json_reporter_omits_memory_and_cpu_when_absent(tmp_path):
     assert "cpu_profile" not in bench
 
 
-def test_parquet_reporter_emits_memory_and_cpu_columns(tmp_path):
-    pytest.importorskip("pyarrow")
-    pq = pytest.importorskip("pyarrow.parquet")
-    from mew.reporter import ParquetReporter
+def test_jsonl_reporter_emits_memory_and_cpu_blocks(tmp_path):
+    from mew.reporter import JSONLReporter
 
-    name = "test::bench_pq"
+    name = "test::bench_jl"
 
     @mew.benchmark(name=name)
-    def bench_pq(state):
+    def bench_jl(state):
         for _ in state:
             pass
 
-    out = tmp_path / "out.parquet"
+    out = tmp_path / "out.jsonl"
     mew.run(
         argv=["mew", "--benchmark_min_time=1x"],
-        reporter=ParquetReporter(output=out),
+        reporter=JSONLReporter(output=out),
         memory_profiles={name: _fake_mem()},
         cpu_profiles={name: _fake_cpu()},
     )
 
-    row = pq.read_table(out).to_pylist()[0]
-    assert json.loads(row["memory"])["peak_bytes"] == 1024
-    assert json.loads(row["cpu_profile"])["sample_count"] == 500
+    row = json.loads(out.read_text().splitlines()[0])
+    assert row["memory"]["peak_bytes"] == 1024
+    assert row["cpu_profile"]["sample_count"] == 500
 
 
-def test_parquet_reporter_nulls_profile_columns_when_absent(tmp_path):
-    pytest.importorskip("pyarrow")
-    pq = pytest.importorskip("pyarrow.parquet")
-    from mew.reporter import ParquetReporter
+def test_jsonl_reporter_omits_profile_blocks_when_absent(tmp_path):
+    from mew.reporter import JSONLReporter
 
     @mew.benchmark
-    def bench_pq2(state):
+    def bench_jl2(state):
         for _ in state:
             pass
 
-    out = tmp_path / "out.parquet"
+    out = tmp_path / "out.jsonl"
     mew.run(
         argv=["mew", "--benchmark_min_time=1x"],
-        reporter=ParquetReporter(output=out),
+        reporter=JSONLReporter(output=out),
     )
-    row = pq.read_table(out).to_pylist()[0]
-    assert row["memory"] is None
-    assert row["cpu_profile"] is None
+    row = json.loads(out.read_text().splitlines()[0])
+    assert "memory" not in row
+    assert "cpu_profile" not in row

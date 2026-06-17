@@ -283,23 +283,6 @@ def test_profile_rejects_format_unsupported_by_backend(monkeypatch):
     assert exc.value.code == 2
 
 
-def test_xctrace_open_routes_collapsed_to_speedscope(tmp_path, monkeypatch):
-    opened: list[Path] = []
-    monkeypatch.setattr(xctrace, "open_speedscope_artifact", lambda p: opened.append(p))
-    instruments, runner = _recording_runner()
-    monkeypatch.setattr(xctrace.subprocess, "run", runner)
-
-    backend = XctraceProfiler()
-    backend.open_artifact(tmp_path / "mew.speedscope.json")
-    backend.open_artifact(tmp_path / "x.trace")
-    assert opened == [tmp_path / "mew.speedscope.json"]  # JSON → speedscope
-    assert instruments and instruments[0][:3] == [
-        "open",
-        "-a",
-        "Instruments",
-    ]  # bundle → Instruments
-
-
 # --- backend selection -------------------------------------------------------
 
 
@@ -327,6 +310,22 @@ def test_select_auto_errors_with_sample_hint_when_none_available(monkeypatch):
     monkeypatch.setattr(XctraceProfiler, "unavailable_reason", lambda self: "no Xcode")
     with pytest.raises(SystemExit, match="mew run --sample"):
         profilers.select("auto")
+
+
+def test_parse_seconds_units():
+    from mew.profilers.base import parse_seconds
+
+    assert parse_seconds("10s") == 10.0
+    assert parse_seconds("500ms") == 0.5
+    assert parse_seconds("1m") == 60.0
+    assert parse_seconds("0.5") == 0.5
+
+
+def test_parse_seconds_invalid_is_clean_error():
+    from mew.profilers.base import parse_seconds
+
+    with pytest.raises(SystemExit, match="invalid --time-limit"):
+        parse_seconds("1h")
 
 
 def test_pyspy_unavailable_on_macos(monkeypatch):
