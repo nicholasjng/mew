@@ -32,7 +32,7 @@ Reporters receive it under `ctx["custom"]`:
 
 ## Session identity
 
-Every {func}`mew.run` invocation is one *session* with a generated `session_id` (a time-ordered UUIDv7), persisted in the context block (JSON/JSONL) or as per-row columns (Parquet).
+Every {func}`mew.run` invocation is one *session* with a generated `session_id` (a time-ordered UUIDv7), persisted in the JSON context block and stamped onto every JSONL row.
 This keeps runs distinguishable when several land in one archive, even two in the same wall-clock second.
 
 `session_tag` is the human label next to it: pass `mew run --session-tag before` (or `session_tag=` on {func}`mew.run`).
@@ -41,8 +41,7 @@ Note `--session-tag` labels the run's *output*, unrelated to `-t/--tag`, which s
 
 ## Dotted keys
 
-Dotted keys produce nested dicts, handy for SQL drill-downs against the
-Parquet sink:
+Dotted keys produce nested dicts, handy for SQL drill-downs against a JSONL archive:
 
 ```python
 mew.set_context("dataset.size", 1000)
@@ -53,8 +52,8 @@ mew.set_context("dataset.kind", "uniform")
 A DuckDB query on the resulting run data might look like:
 
 ```sql
-SELECT json_extract(custom, '$.dataset.size') AS size, real_time
-FROM 'results.parquet';
+SELECT custom.dataset.size AS size, real_time
+FROM 'results.jsonl';
 ```
 
 ## API surface
@@ -64,4 +63,4 @@ FROM 'results.parquet';
 - {func}`mew.get_context`: snapshot the current state (deep-copied).
 - {func}`mew.clear_context`: wipe all entries.
 
-JSON-friendly values are strongly preferred: the JSON and Parquet sinks serialize with `str()` by default, which loses information.
+JSON-friendly values are strongly preferred: the file sinks serialize with `str()` by default, which loses information.

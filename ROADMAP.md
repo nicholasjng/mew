@@ -16,10 +16,12 @@ Legend: ✅ shipped · 🟡 partially shipped · ⬜ not started.
   co-compatibility question is resolved — pass both, nanobind picks.
 
 - ✅ **Expose Google Benchmark's threaded mode.** Shipped:
-  `BenchmarkHandle.threads(n)`, `.thread_range(min, max)`, `.thread_per_cpu()`
+  `BenchmarkHandle.threads(n)`, `.thread_range(min, max)`
   (`src/_mew/registry.cpp`); `threads: int` / `thread_range: tuple[int, int]` on
   `BenchmarkOptions`, plumbed through `runner._apply_options` and `@product`'s
-  explicit kwargs. **Correction to the original note:** threaded mode does *not*
+  explicit kwargs. (`.thread_per_cpu()` was bound but never reachable from the
+  decorator surface and got dropped in the audit; `thread_range` covers the
+  scaling use case.) **Correction to the original note:** threaded mode does *not*
   "serialise" on a GIL interpreter — it **deadlocks**. The trampoline holds the
   GIL across Google Benchmark's per-thread start barrier (`StartStopBarrier`),
   so thread 0 waits for siblings that can never acquire the GIL to reach the

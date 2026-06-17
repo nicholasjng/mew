@@ -29,7 +29,7 @@ session, the `variant` name, and the repetition index before fanning out to your
 real sinks.
 
 Every reporter works unchanged: the live table gains a `Variant` column, and
-`-o results.{jsonl,json,parquet}` captures the merged file.
+`-o results.{jsonl,jsonl.gz,json}` captures the merged file.
 
 ```console
 $ mew run --variant duckdb=bench_duckdb.py --variant ducky=bench_ducky.py --repetitions 5
@@ -41,7 +41,7 @@ bench_scan.py::bench_scan  │ ducky   │  240,000 │  4.1 µs │  4.0 µs
 …
 ```
 
-`--min-time` and `--benchmark-option` are forwarded to each child;
+`--min-time`, `--min-warmup-time`, and `--random-interleaving` are forwarded to each child;
 `--repetitions N` is realized as N separate child invocations (not a Google
 Benchmark flag), which is what gives the repetition-major interleaving. If a
 child fails, the parent warns on stderr, keeps the rows that did land, and exits
@@ -101,7 +101,8 @@ $ mew compare results.jsonl --by variant --metric memory.allocations_per_iterati
 ```
 
 Use `memory.allocations_per_iteration` for cross-engine allocation comparisons;
-a faster engine inflates the raw `memory.total_allocations` (see
-[](profiling-memory.md)). HTML artifacts (`--flamegraph`, `--sample-html`) are
+a faster engine inflates the raw allocation count, which is why the cumulative
+`total_allocations` is recorded in result files but not offered as a compare
+metric (see [](profiling-memory.md)). HTML artifacts (`--flamegraph`, `--sample-html`) are
 written one per variant, with the variant name spliced into the filename
 (`alloc.html` → `alloc.duckdb.html`), so the variants don't overwrite each other.

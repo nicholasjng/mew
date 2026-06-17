@@ -15,7 +15,7 @@
 .. autoclass:: JSONReporter
    :members:
 
-.. autoclass:: ParquetReporter
+.. autoclass:: JSONLReporter
    :members:
 
 .. autoclass:: Fanout

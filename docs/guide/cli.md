@@ -12,7 +12,7 @@ $ mew run benchmarks/bench_sort.py         # one file
 $ mew run -k 'sort' -t hot-path            # filter by name + tag (OR within tag)
 $ mew run --min-time 1s --repetitions 5    # variance-friendly run
 $ mew run -o results.json -o -             # JSON file + Rich console
-$ mew run --benchmark-option=--benchmark_enable_random_interleaving=true   # raw GB passthrough
+$ mew run --repetitions 5 --random-interleaving   # decorrelate repeats from drift
 ```
 
 ### Path selectors
@@ -32,7 +32,7 @@ Pass `-o` (repeatable):
 
 - `-` or `stdout`: terminal output, formatted by `--format`.
 - `*.json`: Google Benchmark-shaped JSON document.
-- `*.parquet` or `*.pq`: one row per Run.
+- `*.jsonl.gz`: same rows, gzip-compressed (appends add a new gzip member).
 
 Duplicate sinks (two stdout sinks, or two writers pointing at the same path) are an error.
 
@@ -51,7 +51,7 @@ $ mew run --format json | jq '.benchmarks | length'
 format. (It mirrors Google Benchmark's `--benchmark_format`, which sets the
 console format while `--benchmark_out` handles files.)
 
-`--append` adds the run as a new session to an existing `.jsonl` / `.parquet` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-sessions-in-one-file).
+`--append` adds the run as a new session to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-sessions-in-one-file).
 
 ### Selecting from stdin
 
@@ -107,7 +107,7 @@ Picks a backend (`xctrace` (macOS), `py-spy` (Linux/Windows), or `perf` (Linux))
 
 ```console
 $ mew profile                       # auto-select the platform's native profiler
-$ mew profile -p xctrace --open     # record and open in Instruments.app
+$ mew profile -p xctrace            # record a .trace for Instruments.app
 $ mew profile -k bench_sort         # filter like `mew run`
 ```
 
@@ -119,7 +119,6 @@ $ mew profile -k bench_sort         # filter like `mew run`
 | `--time-limit DUR`   | Hard cap per recording, e.g. `10s`.                          |
 | `--template NAME`    | (xctrace) Instruments template; default `Time Profiler`.    |
 | `--separate`         | (xctrace) One bundle per case instead of one combined.       |
-| `--open`             | Open the artifact(s) in their viewer when done.              |
 
 When `auto` finds no native profiler (e.g. macOS without Xcode), it points you
 to `mew run --sample` for in-process Python sampling. See {doc}`profiling-native`.
@@ -138,7 +137,7 @@ Exit code `1` if nothing matches.
 
 ## `mew compare`
 
-Compare two or more result files (`.json`, `.jsonl`, or `.parquet`). The first is the baseline; subsequent files are diffed against it.
+Compare two or more result files (`.json`, `.jsonl`, or `.jsonl.gz`). The first is the baseline; subsequent files are diffed against it.
 
 ```console
 $ mew compare baseline.json head.json
@@ -151,7 +150,7 @@ See [](regressions.md) for matching, metrics, the regression gate, and allowlist
 
 ## `mew completions`
 
-Print a shell-completion script for `bash`, `zsh`, `fish`, or `powershell` to
+Print a shell-completion script for `bash`, `zsh`, or `fish` to
 stdout. The scripts are generated from the CLI itself, so they stay in sync with
 the commands and flags. They complete subcommands, per-command options, file
 paths for path arguments, and fixed choices (`--format`, `--profiler`, the shell
@@ -171,9 +170,6 @@ $ mew completions zsh > ~/.mew-completions.zsh
 
 # fish
 $ mew completions fish > ~/.config/fish/completions/mew.fish
-
-# PowerShell: dot-source the file from $PROFILE
-$ mew completions powershell > ~/.mew-completions.ps1
 ```
 
 The `eval` one-liner (`eval "$(mew completions zsh)"` in your rc) also works, but

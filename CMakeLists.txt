@@ -31,7 +31,8 @@ endif()
 # objects stay instrumented; the per-target repeat below is required for
 # nanobind's stubgen sanitizer detector.
 option(MEW_ASAN "Build with AddressSanitizer" OFF)
-if(DEFINED ENV{MEW_ASAN} AND NOT MEW_ASAN)
+# Compare the value, not just DEFINED: `MEW_ASAN=0 cmake …` must not enable it.
+if(NOT MEW_ASAN AND DEFINED ENV{MEW_ASAN} AND "$ENV{MEW_ASAN}")
     set(MEW_ASAN ON)
 endif()
 if(MEW_ASAN)
@@ -42,7 +43,7 @@ endif()
 # ThreadSanitizer build, driven by -DMEW_TSAN=ON or MEW_TSAN=1 in the env.
 # Mutually exclusive with ASAN — the two runtimes can't co-load.
 option(MEW_TSAN "Build with ThreadSanitizer" OFF)
-if(DEFINED ENV{MEW_TSAN} AND NOT MEW_TSAN)
+if(NOT MEW_TSAN AND DEFINED ENV{MEW_TSAN} AND "$ENV{MEW_TSAN}")
     set(MEW_TSAN ON)
 endif()
 if(MEW_TSAN AND MEW_ASAN)

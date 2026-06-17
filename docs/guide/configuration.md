@@ -9,12 +9,6 @@ benchpaths = ["benchmarks"]
 # Glob patterns for benchmark file discovery.
 python-files = ["bench_*.py", "*_bench.py"]
 
-[tool.mew.benchmark-options]
-# Sticky Google Benchmark flags applied to every `mew run`.
-# CLI-supplied flags appear later in argv and override these.
-min-time = 0.5
-repetitions = 5
-
 # Whether and how the auto session tag is derived. Omit the table to derive
 # automatically (jj, then git). `enabled = false` turns it off (an explicit
 # --session-tag is still honored). `tool`/`args` are the command: any tool,
@@ -25,27 +19,25 @@ tool = "git"
 args = ["describe", "--tags", "--always"]
 ```
 
-## Resolution order (last wins)
+## Where measurement settings live
 
-1. Defaults from {class}`mew.config.Config`.
-2. `[tool.mew.benchmark-options]` keys, formatted as `--benchmark_<key>[=value]`.
-3. CLI flags: `--min-time`, `--repetitions`, `-o`/`--output`.
-4. `--benchmark-option` raw passthrough, for anything `mew` doesn't model directly.
+The config file holds *project* settings (discovery paths, session tagging,
+regression rules); measurement settings deliberately live elsewhere, where they
+are visible next to what they affect:
 
-## `benchmark-options` keys
-
-Keys are the short Google Benchmark flag names (kebab-case here, coerced before the `--benchmark_` flag is built). Only **measurement** flags apply: mew installs its own reporter, so Google Benchmark's *display/output* flags (`format`, `out`, `color`, `display-aggregates-only`) are ignored; some, like `out`, would even write a stray second file in GB's format. Use `--format` for stdout shape and `-o` for output sinks instead.
-
-| Key                      | Effect                                                          |
-| ------------------------ | --------------------------------------------------------------- |
-| `min-time`               | `--benchmark_min_time=<value>` (seconds, or `<N>x` iterations)  |
-| `min-warmup-time`        | Warm up for this long before timing                             |
-| `repetitions`            | Repeat each benchmark N times (variance metrics need ≥ 2)       |
-| `iterations`             | Force a fixed iteration count                                   |
-| `report-aggregates-only` | Emit only aggregate rows (mean/median/stddev), not per-rep ones |
+- **Per benchmark** — decorator options (`min_time=`, `repetitions=`,
+  `iterations=`, `unit=`, …), versioned with the benchmark itself. These take
+  precedence over any global flag.
+- **Per invocation** — `mew run` flags (`--min-time`, `--min-warmup-time`,
+  `--repetitions`, `--random-interleaving`), so a result's provenance is the
+  command that produced it. For persistent invocation defaults, use your task
+  runner (justfile, Makefile, CI yaml) — the flags stay visible at the call
+  site.
 
 ## Picking sensible defaults
 
-- Set `min-time = 0.5` (or higher) for CI runs where you want stable timings.
+- Pass `--min-time 0.5` (or higher) in CI runs where you want stable timings.
 - Local iteration: leave it at Google Benchmark's default for faster feedback.
-- Set `repetitions = 5` if you compare with `mew compare`; variance metrics depend on it.
+- Pass `--repetitions 5` if you compare with `mew compare`; variance metrics
+  depend on it, and `--random-interleaving` decorrelates the repeats from
+  thermal/load drift.

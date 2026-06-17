@@ -33,7 +33,7 @@ All options are optional and map 1:1 to Google Benchmark concepts:
 | `threads`                    | Run the body with _N_ threads (free-threaded only; see below). |
 | `thread_range`               | `(min, max)`: run once per thread count, powers of two.        |
 
-Defaults live in your `pyproject.toml` `[tool.mew.benchmark_options]` and are overridden by per-decorator options and by CLI flags.
+Per-benchmark decorator options take precedence over the global `mew run` flags (`--min-time`, `--repetitions`, ...).
 See [](configuration.md).
 
 ## Naming

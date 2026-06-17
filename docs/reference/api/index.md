@@ -7,6 +7,8 @@ decorators
 state
 runner
 reporters
+compare
+profiling
 context
 registry
 config
@@ -32,8 +34,9 @@ importable from `mew` directly:
    Reporter
    RichReporter
    JSONReporter
-   ParquetReporter
+   JSONLReporter
    Fanout
+   RunRow
    Run
    RunType
    TimeUnit

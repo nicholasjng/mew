@@ -34,14 +34,17 @@ iterations. `-k` / `-t` narrow the set like `mew run`; `--slowest N` keeps only
 the N slowest benchmarks, where the time is worth spending:
 
 ```console
-$ mew profile --slowest 5                       # quick timing pass ranks, then profiles
-$ mew profile --slowest 5 --rank-from run.json  # rank by a prior run's real_time
+$ mew profile --slowest 5     # quick timing pass ranks, then profiles
 ```
 
-Without `--rank-from`, `mew profile` runs a short in-process timing pass to rank
-(approximate, but no setup); point `--rank-from` at a `mew run -o` result file
-(`.json` / `.jsonl` / `.parquet`) to rank by recorded timings instead. A
-parametrized family is ranked by its slowest case.
+`--slowest` runs a short in-process timing pass to rank (approximate, but no
+setup); a parametrized family is ranked by its slowest case. To select by any
+other criterion — recorded timings from a result file, a hand-written list —
+pipe names to `--stdin`:
+
+```console
+$ mew list -n | head -5 | mew profile --stdin   # or any external ranking
+```
 
 ## Basics (xctrace / macOS)
 
@@ -55,9 +58,12 @@ $ sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 Then record and open in Instruments:
 
 ```console
-$ mew profile --open
-$ mew profile -k bench_sort --open      # filter benchmarks like `mew run`
+$ mew profile
+$ mew profile -k bench_sort      # filter benchmarks like `mew run`
 ```
+
+`mew profile` prints each artifact path; open a `.trace` bundle with
+`open -a Instruments <path>`.
 
 By default all cases land in one `mew.trace` bundle with one run per case
 (navigate with Instruments' run picker). Pass `--separate` for one
@@ -118,12 +124,11 @@ and load into [speedscope.app](https://www.speedscope.app/):
 
 ```console
 $ mew profile -p py-spy            # *.speedscope.json per case
-$ mew profile -p perf              # *.perf.txt per case (raw *.data kept alongside)
-$ mew profile -p py-spy --open     # opens via the `speedscope` CLI if installed
+$ mew profile -p perf              # *.perf.txt per case
 ```
 
-If `npx speedscope` / the `speedscope` CLI isn't installed, `--open` prints the
-artifact path to drag onto speedscope.app instead.
+Drag an artifact onto speedscope.app (or open it with the `speedscope` CLI, if
+installed).
 
 ## Why a separate command
 
