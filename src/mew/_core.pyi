@@ -8,6 +8,15 @@ BENCHMARK_COMMIT: str = "a8460680f0df91fd26205e0931708a26c3b4094d"
 
 BENCHMARK_VERSION: str = "v1.9.5-74-ga8460680"
 
+def preload_system_info() -> None:
+    """
+    Force Google Benchmark's lazy CPU/system-info probes to run now.
+    Their platform diagnostics go straight to fd 2 (e.g. the macOS
+    hw.cpufrequency sysctl failure); calling this under a scoped fd-2
+    redirect keeps that noise out of user-visible stderr without
+    silencing the benchmark run itself.
+    """
+
 class TimeUnit(enum.StrEnum):
     """Time unit used for reported per-iteration durations."""
 
@@ -215,7 +224,6 @@ class BenchmarkHandle:
     def use_manual_time(self) -> BenchmarkHandle: ...
     def measure_process_cpu_time(self) -> BenchmarkHandle: ...
     def report_aggregates_only(self, value: bool = True) -> BenchmarkHandle: ...
-    def display_aggregates_only(self, value: bool = True) -> BenchmarkHandle: ...
     def dense_range(self, start: int, limit: int, step: int = 1) -> BenchmarkHandle: ...
     def threads(self, n: int) -> BenchmarkHandle:
         """
@@ -226,11 +234,6 @@ class BenchmarkHandle:
     def thread_range(self, min_threads: int, max_threads: int) -> BenchmarkHandle:
         """
         Run the benchmark once per thread count in [min_threads, max_threads], stepping by the range multiplier (powers of two). See `threads` for the free-threading requirement.
-        """
-
-    def thread_per_cpu(self) -> BenchmarkHandle:
-        """
-        Run the benchmark with one thread per CPU. See `threads` for the free-threading requirement.
         """
 
     def arg(self, value: int) -> BenchmarkHandle: ...
