@@ -73,16 +73,24 @@ def fold_samples(source: str | Path | IO[bytes]) -> Counter[tuple[str, ...]]:
 
     # iterparse fires `end` for a <frame> before its enclosing <backtrace>, and for
     # the <backtrace> before its <row>; so at a backtrace's `end` its frame children
-    # are fully populated. We resolve there and clear the row afterwards to bound memory.
-    context = ET.iterparse(source, events=("end",))
-    for _event, elem in context:
+    # are fully populated. We resolve there and drop the row afterwards. Clearing
+    # the row alone is not enough — the emptied elements would stay attached to
+    # their parent and memory would still grow O(#samples) — so we track the
+    # open-element stack and delete finished rows from the enclosing table.
+    stack: list[ET.Element] = []
+    for event, elem in ET.iterparse(source, events=("start", "end")):
+        if event == "start":
+            stack.append(elem)
+            continue
+        stack.pop()
         tag = elem.tag
         if tag == "backtrace":
-            stack = _resolve_backtrace(elem, frames, backtraces)
-            if stack:  # skip rows whose backtrace didn't resolve to any frame
-                folded[stack] += 1
-        elif tag == "row":
+            resolved = _resolve_backtrace(elem, frames, backtraces)
+            if resolved:  # skip rows whose backtrace didn't resolve to any frame
+                folded[resolved] += 1
+        elif tag == "row" and stack:
             elem.clear()  # frame/backtrace defs are in our dicts now; drop the XML
+            del stack[-1][:]  # detach finished rows from the parent table
     return folded
 
 
@@ -213,11 +221,13 @@ def fold_trace(trace: Path, *, exe: str | None = None) -> Counter[tuple[str, ...
     xml = export_xml(trace, trace.with_suffix(".xctrace.xml"), exe=exe)
     folded = fold_samples(xml)
     if not folded:
+        # Keep the export around: the error message points at it.
         raise SystemExit(
             f"mew: no samples parsed from {trace} (export at {xml}). The benchmark may "
             f"be too short to sample, or this Xcode emits a different table schema than "
             f"{_XPATH!r}; check `xctrace export --input {trace} --toc`."
         )
+    xml.unlink(missing_ok=True)  # intermediate only; the fold has everything
     return folded
 
 

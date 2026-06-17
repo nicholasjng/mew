@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mew._profile import iter_entry_cases
-from mew.profilers.base import Capabilities, open_speedscope_artifact, slug, worker_argv
+from mew.profilers.base import Capabilities, slug, worker_argv
 
 if TYPE_CHECKING:
     from collections import Counter
@@ -26,12 +26,6 @@ if TYPE_CHECKING:
 DEFAULT_TEMPLATE = "Time Profiler"
 #: Name of the combined trace bundle written when ``separate`` is false.
 COMBINED_NAME = "mew.trace"
-#: Output formats this backend accepts. ``auto`` (the platform-agnostic default,
-#: mirroring ``--profiler auto``) and its tool-named alias ``xctrace`` both yield
-#: the native Instruments ``.trace`` bundle; ``speedscope`` folds it to a
-#: speedscope JSON document (one profile per case). ``pprof`` is the planned
-#: sibling (see ROADMAP); the same format axis that gates perf.
-FORMATS = ("auto", "xctrace", "speedscope")
 
 
 class XctraceProfiler:
@@ -40,6 +34,14 @@ class XctraceProfiler:
     name = "xctrace"
     capabilities = Capabilities(native_frames=True, platforms=frozenset({"darwin"}))
     viewer_hint = "Instruments.app"
+    #: Output formats this backend accepts — a class attribute because the CLI
+    #: reads it off the backend instance (`getattr(backend, "FORMATS", ...)`).
+    #: ``auto`` (the platform-agnostic default, mirroring ``--profiler auto``)
+    #: and its tool-named alias ``xctrace`` both yield the native Instruments
+    #: ``.trace`` bundle; ``speedscope`` folds it to a speedscope JSON document
+    #: (one profile per case). ``pprof`` is the planned sibling (see ROADMAP);
+    #: the same format axis that gates perf.
+    FORMATS = ("auto", "xctrace", "speedscope")
 
     def unavailable_reason(self) -> str | None:
         if sys.platform != "darwin":
@@ -119,6 +121,11 @@ class XctraceProfiler:
                     from mew.profilers._xctrace_export import fold_trace
 
                     folded[key] = fold_trace(dest, exe=exe)
+                    # The per-case bundle was only an intermediate for the fold;
+                    # the speedscope JSON is the deliverable. (fold_trace already
+                    # removed its XML export; both survive on a failed fold, for
+                    # debugging.)
+                    shutil.rmtree(dest, ignore_errors=True)
                 else:
                     artifacts[key] = dest
 
@@ -147,13 +154,6 @@ class XctraceProfiler:
                 )
                 for key, tally in folded.items()
             }
-        # One document, N profiles; every key resolves to it (CLI dedups on open).
+        # One document, N profiles; every key resolves to it.
         dest = write_speedscope_json(folded, output_dir / "mew.speedscope.json")
         return dict.fromkeys(folded, dest)
-
-    def open_artifact(self, path: Path) -> None:
-        # speedscope JSON / collapsed text → speedscope; a `.trace` → Instruments.
-        if path.suffix in (".json", ".txt"):
-            open_speedscope_artifact(path)
-        else:
-            subprocess.run(["open", "-a", "Instruments", str(path)], check=False)

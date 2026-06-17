@@ -19,13 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mew.profilers.base import (
-    Capabilities,
-    each_case,
-    open_speedscope_artifact,
-    parse_seconds,
-    worker_argv,
-)
+from mew.profilers.base import Capabilities, each_case, parse_seconds, worker_argv
 
 if TYPE_CHECKING:
     from mew._registry import Entry
@@ -79,35 +73,42 @@ class PerfProfiler:
             if time_limit:
                 # perf records until the child exits; bound the child with timeout(1).
                 worker = ["timeout", str(parse_seconds(time_limit)), *worker]
-            subprocess.run(
-                [
-                    perf,
-                    "record",
-                    "-g",
-                    "--call-graph",
-                    "dwarf",
-                    "-F",
-                    str(rate),
-                    "-o",
-                    str(data),
-                    "--",
-                    *worker,
-                ],
-                check=True,
-            )
+            record = [
+                perf,
+                "record",
+                "-g",
+                "--call-graph",
+                "dwarf",
+                "-F",
+                str(rate),
+                "-o",
+                str(data),
+                "--",
+                *worker,
+            ]
+            proc = subprocess.run(record, check=False)
+            # perf propagates the workload's exit status, and timeout(1) exits
+            # 124 when the cap fires — the *intended* outcome of --time-limit,
+            # not a failure. Everything else is a real error.
+            expected = (0, 124) if time_limit else (0,)
+            if proc.returncode not in expected:
+                raise subprocess.CalledProcessError(proc.returncode, record)
             # `perf script` text is loadable as-is by speedscope.app.
             with open(dest, "w") as fh:
                 subprocess.run([perf, "script", "-i", str(data)], check=True, stdout=fh)
 
-            if not dest.read_text().strip():
+            # Bounded read, not read_text(): dwarf unwinding at -F 1000 makes
+            # the script output far too large to load just to test emptiness.
+            with dest.open() as fh:
+                head = fh.read(4096)
+            if not head.strip():
                 raise SystemExit(
                     f"mew: perf recorded no samples for {key!r}. The benchmark likely "
                     f"failed to run (check the output above) or was too short to sample "
                     f"(raise --iterations / --rate). Artifact: {dest}"
                 )
+            # The raw perf.data (often 10-100x the text) was only an intermediate.
+            data.unlink(missing_ok=True)
             artifacts[key] = dest
 
         return artifacts
-
-    def open_artifact(self, path: Path) -> None:
-        open_speedscope_artifact(path)

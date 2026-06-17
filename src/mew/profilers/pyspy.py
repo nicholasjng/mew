@@ -10,19 +10,14 @@ containers (see docker/profile.Dockerfile).
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from mew.profilers.base import (
-    Capabilities,
-    each_case,
-    open_speedscope_artifact,
-    parse_seconds,
-    worker_argv,
-)
+from mew.profilers.base import Capabilities, each_case, parse_seconds, worker_argv
 
 if TYPE_CHECKING:
     from mew._registry import Entry
@@ -68,7 +63,8 @@ class PySpyProfiler:
             ]
             if time_limit:
                 # Stops sampling after N seconds even if the body runs longer.
-                cmd += ["--duration", str(int(parse_seconds(time_limit)))]
+                # py-spy rejects --duration 0, so a sub-second cap rounds up.
+                cmd += ["--duration", str(max(1, math.ceil(parse_seconds(time_limit))))]
             cmd += ["--"]
             cmd += worker_argv(file=file, entry_name=name, case=case, iterations=iterations)
             subprocess.run(cmd, check=True)
@@ -86,6 +82,3 @@ class PySpyProfiler:
             artifacts[key] = dest
 
         return artifacts
-
-    def open_artifact(self, path: Path) -> None:
-        open_speedscope_artifact(path)
