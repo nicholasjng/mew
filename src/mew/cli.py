@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any
 
 import mew.config as _config
 from mew import (
-    BENCHMARK_COMMIT,
     BENCHMARK_VERSION,
     REGISTRY,
     Entry,
@@ -39,7 +38,9 @@ from mew._registry import compile_name_filter, narrow_entry
 if TYPE_CHECKING:
     from mew._variants import ProfileConfig
 
-_VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_COMMIT[:12]} {BENCHMARK_VERSION})"
+# BENCHMARK_VERSION is a git describe (`v1.9.5-74-ga8460680`), so it already
+# carries the commit; the full SHA stays available as `mew.BENCHMARK_COMMIT`.
+_VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
 
 def _load_config_or_exit() -> _config.Config:
