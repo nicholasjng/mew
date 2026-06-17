@@ -15,7 +15,6 @@ from mew.regressions import (
     BenchmarkVerdict,
     RegressionConfig,
     Verdict,
-    _parse_inline,
     load_config,
     render_panel,
 )
@@ -60,15 +59,30 @@ def test_evaluate_ignored_rule() -> None:
 def test_evaluate_per_rule_threshold_under() -> None:
     rule = AllowRule(pattern="b*", reason="noisy", threshold_pct=20.0)
     cfg = RegressionConfig(default_threshold_pct=5.0, rules=(rule,))
-    assert cfg.evaluate("bench_x", 15.0).verdict is Verdict.OK
+    # Under the rule's raised threshold but over the default: soft warning.
+    v = cfg.evaluate("bench_x", 15.0)
+    assert v.verdict is Verdict.ALLOWED_OVER
+    assert v.rule is rule
+    # Under both thresholds: plain OK.
+    assert cfg.evaluate("bench_x", 3.0).verdict is Verdict.OK
 
 
 def test_evaluate_per_rule_threshold_over() -> None:
     rule = AllowRule(pattern="b*", reason="noisy", threshold_pct=20.0)
     cfg = RegressionConfig(default_threshold_pct=5.0, rules=(rule,))
+    # Over even the rule's raised threshold: the allowance is exhausted, so the
+    # gate must fail — a raised threshold is not an unlimited escape hatch.
     v = cfg.evaluate("bench_x", 25.0)
-    assert v.verdict is Verdict.ALLOWED_OVER
+    assert v.verdict is Verdict.REGRESSED
     assert v.rule is rule
+
+
+def test_evaluate_tightened_rule_threshold() -> None:
+    # A rule may also tighten the threshold below the default.
+    rule = AllowRule(pattern="b*", reason="hot path", threshold_pct=2.0)
+    cfg = RegressionConfig(default_threshold_pct=5.0, rules=(rule,))
+    assert cfg.evaluate("bench_x", 3.0).verdict is Verdict.REGRESSED
+    assert cfg.evaluate("bench_x", 1.0).verdict is Verdict.OK
 
 
 def test_evaluate_iterations_higher_is_better() -> None:
@@ -137,22 +151,10 @@ reason = "??"
         load_config(default_threshold_pct=5.0, path=py)
 
 
-def test_inline_allow_parses_threshold() -> None:
-    rule = _parse_inline("bench_x:20")
-    assert rule.pattern == "bench_x"
-    assert rule.threshold_pct == 20.0
-    assert rule.ignore is False
-
-
-def test_inline_allow_bare_pattern_ignores() -> None:
-    rule = _parse_inline("bench_x")
-    assert rule.ignore is True
-    assert rule.threshold_pct is None
-
-
-def test_inline_allow_bad_threshold() -> None:
-    with pytest.raises(SystemExit, match="bad threshold"):
-        _parse_inline("bench_x:not_a_number")
+def test_load_config_explicit_missing_path_errors(tmp_path: Path) -> None:
+    # A typo'd --regressions-config must not silently gate with defaults.
+    with pytest.raises(SystemExit, match="regressions config not found"):
+        load_config(default_threshold_pct=5.0, path=tmp_path / "regresions.toml")
 
 
 def test_render_panel_exit_codes() -> None:
@@ -204,25 +206,43 @@ def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixtu
     assert "b " in err or "  b " in err  # benchmark name appears in panel
 
 
-def test_compare_inline_allow_lifts_threshold(tmp_path: Path) -> None:
+def test_compare_config_allow_lifts_threshold(tmp_path: Path) -> None:
     base = tmp_path / "base.json"
     other = tmp_path / "other.json"
     _write_json(base, [_row("b", 100.0)])
     _write_json(other, [_row("b", 120.0)])  # +20%
-    cfg = load_config(default_threshold_pct=5.0, inline_allows=["b:50"])
+    py = tmp_path / "regressions.toml"
+    py.write_text(
+        """
+[[tool.mew.regressions.allow]]
+pattern = "b"
+threshold_pct = 50.0
+reason = "noisy"
+"""
+    )
+    cfg = load_config(default_threshold_pct=5.0, path=py)
     code = compare(
         [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
     )
-    # 20% > 5% default but rule allows up to 50% — allowed_over → exit 0.
+    # 20% > 5% default but the rule allows up to 50% — allowed_over → exit 0.
     assert code == 0
 
 
-def test_compare_inline_allow_ignore_skips_gating(tmp_path: Path) -> None:
+def test_compare_config_allow_ignore_skips_gating(tmp_path: Path) -> None:
     base = tmp_path / "base.json"
     other = tmp_path / "other.json"
     _write_json(base, [_row("b", 100.0)])
     _write_json(other, [_row("b", 200.0)])  # +100%
-    cfg = load_config(default_threshold_pct=5.0, inline_allows=["b"])  # ignore
+    py = tmp_path / "regressions.toml"
+    py.write_text(
+        """
+[[tool.mew.regressions.allow]]
+pattern = "b"
+ignore = true
+reason = "known-flaky"
+"""
+    )
+    cfg = load_config(default_threshold_pct=5.0, path=py)
     code = compare(
         [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
     )

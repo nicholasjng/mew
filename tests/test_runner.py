@@ -388,3 +388,71 @@ def test_state_batches_rejects_non_positive_n():
     cap = Capture()
     mew.run(argv=["mew"], reporter=cap, filter=".*")
     assert seen == [ValueError]
+
+
+def test_state_range_out_of_bounds_raises():
+    # GB's own guard is an assert (compiled out in Release); the binding must
+    # raise instead of reading past the range vector.
+    seen: list[type] = []
+
+    @mew.benchmark(iterations=1)
+    def bench_norange(state):
+        try:
+            state.range(0)  # not parametrized: no range arguments
+        except IndexError as e:
+            seen.append(type(e))
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(argv=_argv_fast(), reporter=cap)
+    assert seen == [IndexError]
+
+
+def test_keyboard_interrupt_stops_run_and_propagates():
+    """KeyboardInterrupt/SystemExit in a body must abort the run, not become a
+    skipped row while the remaining benchmarks execute."""
+    bodies: list[str] = []
+
+    @mew.benchmark(iterations=1)
+    def bench_a_interrupts(state):
+        bodies.append("a")
+        for _ in state:
+            pass
+        raise KeyboardInterrupt
+
+    @mew.benchmark(iterations=1)
+    def bench_b_never_runs(state):
+        bodies.append("b")
+        for _ in state:
+            pass
+
+    cap = Capture()
+    with pytest.raises(KeyboardInterrupt):
+        mew.run(argv=_argv_fast(), reporter=cap)
+    assert bodies == ["a"]
+
+    # The interrupt is consumed: a follow-up run starts clean and completes.
+    @mew.benchmark(iterations=1)
+    def bench_c(state):
+        for _ in state:
+            pass
+
+    cap2 = Capture()
+    entries = [e for e in mew._registry.REGISTRY.all() if "bench_c" in e.name]
+    assert mew.run(entries, argv=_argv_fast(), reporter=cap2) == 1
+    assert [r["skipped"] for r in cap2.runs] == [False]
+
+
+def test_benchmark_body_stderr_is_visible(capfd: pytest.CaptureFixture[str]):
+    # fd 2 must stay live during the run: only GB's system-info probes are
+    # silenced, not user output from benchmark bodies.
+    @mew.benchmark(iterations=1)
+    def bench_noisy(state):
+        for _ in state:
+            pass
+        print("body stderr marker", file=sys.stderr, flush=True)
+
+    cap = Capture()
+    mew.run(argv=_argv_fast(), reporter=cap)
+    assert "body stderr marker" in capfd.readouterr().err

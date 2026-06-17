@@ -72,6 +72,39 @@ def test_list_no_matches_exits_nonzero(benchdir, tmp_path):
     assert res.returncode == 1
 
 
+def test_list_missing_default_benchpath_is_clean(tmp_path):
+    # A fresh project without benchmarks/ is "nothing found", not a traceback.
+    res = _mew("list", cwd=tmp_path)
+    assert res.returncode == 1
+    assert "no benchmarks found" in res.stderr
+    assert "Traceback" not in res.stderr
+
+
+def test_explicit_missing_path_is_clean_error(tmp_path):
+    res = _mew("list", "nonexistent_dir", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "path does not exist" in res.stderr
+    assert "Traceback" not in res.stderr
+
+
+def test_list_works_from_subdirectory(benchdir, tmp_path):
+    # Config benchpaths anchor at the project root (pyproject.toml), not cwd.
+    (tmp_path / "pyproject.toml").write_text("[tool.mew]\n")
+    sub = tmp_path / "src" / "pkg"
+    sub.mkdir(parents=True)
+    res = _mew("list", cwd=sub)
+    assert res.returncode == 0, res.stderr
+    assert "bench_one" in res.stdout
+
+
+def test_malformed_config_is_clean_error(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[tool.mew]\nbenchpaths = 42\n")
+    res = _mew("list", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "invalid [tool.mew] config" in res.stderr
+    assert "Traceback" not in res.stderr
+
+
 def test_list_pattern_is_regex(benchdir, tmp_path):
     # Alternation matches both fixture benchmarks; anchoring narrows to one.
     res = _mew("list", str(benchdir), "-k", "bench_(one|two)", cwd=tmp_path)
@@ -238,11 +271,10 @@ def test_list_show_tags(benchdir, tmp_path):
     assert "[cpu]" in res.stdout
 
 
-def test_run_parquet_output(benchdir, tmp_path):
-    pytest.importorskip("pyarrow")
+def test_run_jsonl_output_is_duckdb_queryable(benchdir, tmp_path):
     duckdb = pytest.importorskip("duckdb")
 
-    out = tmp_path / "results.parquet"
+    out = tmp_path / "results.jsonl"
     res = _mew(
         "run",
         str(benchdir),
@@ -253,15 +285,13 @@ def test_run_parquet_output(benchdir, tmp_path):
         cwd=tmp_path,
     )
     assert res.returncode == 0, res.stderr
-    rows = duckdb.connect().execute(f"SELECT name FROM '{out}'").fetchall()
+    rows = duckdb.connect().execute(f"SELECT name, session_id FROM '{out}'").fetchall()
     assert len(rows) == 3
-    assert all("bench_" in r[0] for r in rows)
+    assert all("bench_" in r[0] and r[1] for r in rows)
 
 
-def test_run_parquet_pq_extension_accepted(benchdir, tmp_path):
-    pytest.importorskip("pyarrow")
-
-    out = tmp_path / "results.pq"
+def test_run_jsonl_gz_extension_accepted(benchdir, tmp_path):
+    out = tmp_path / "results.jsonl.gz"
     res = _mew(
         "run",
         str(benchdir),
@@ -272,20 +302,37 @@ def test_run_parquet_pq_extension_accepted(benchdir, tmp_path):
         cwd=tmp_path,
     )
     assert res.returncode == 0, res.stderr
-    assert out.exists()
+    import gzip
+
+    with gzip.open(out, "rt") as fh:
+        lines = fh.read().splitlines()
+    assert len(lines) == 3  # pure NDJSON: one row per benchmark, no header
 
 
-def test_run_benchmark_options_from_pyproject(benchdir, tmp_path):
-    # `iterations = 1` matches `--benchmark_min_time=1x`: GB runs each
-    # benchmark exactly once. The CLI doesn't expose this directly, so a
-    # successful single-iter run proves the config flowed through.
-    (tmp_path / "pyproject.toml").write_text('[tool.mew.benchmark_options]\nmin_time = "1x"\n')
+def test_run_promoted_gb_flags_accepted(benchdir, tmp_path):
+    # The promoted global knobs translate to GB flags GB actually accepts —
+    # a bad flag would make benchmark::Initialize exit() before any run.
     out = tmp_path / "results.json"
-    res = _mew("run", str(benchdir), "-o", str(out), cwd=tmp_path)
+    res = _mew(
+        "run",
+        str(benchdir),
+        "--min-time",
+        "1x",
+        "--min-warmup-time",
+        "0",
+        "--repetitions",
+        "2",
+        "--random-interleaving",
+        "-o",
+        str(out),
+        cwd=tmp_path,
+    )
     assert res.returncode == 0, res.stderr
     doc = json.loads(out.read_text())
-    assert len(doc["benchmarks"]) == 3
-    assert all(b["iterations"] == 1 for b in doc["benchmarks"])
+    # 3 benchmarks x 2 repetitions, plus GB aggregate rows for the repeats.
+    per_rep = [b for b in doc["benchmarks"] if not b.get("aggregate_name")]
+    assert len(per_rep) == 6
+    assert all(b["iterations"] == 1 for b in per_rep)
 
 
 def test_run_stdin_round_trip(benchdir):
@@ -503,45 +550,14 @@ def test_select_slowest_quick_pass():
         for _ in state:
             sum(range(200_000))
 
-    # No result file → a quick in-process timing pass ranks; the fast one drops.
-    top2 = _select_slowest(mew.REGISTRY.all(), 2, rank_from=None)
+    # A quick in-process timing pass ranks; the fast one drops.
+    top2 = _select_slowest(mew.REGISTRY.all(), 2)
     assert len(top2) == 2
     assert _ends(top2, "bench_slow") and _ends(top2, "bench_mid")
     assert not _ends(top2, "bench_fast")
 
 
-def test_select_slowest_from_result_file(tmp_path):
-    import mew
-    from mew.cli import _select_slowest
-
-    @mew.benchmark
-    def bench_a(state):
-        for _ in state:
-            pass
-
-    @mew.benchmark
-    def bench_b(state):
-        for _ in state:
-            pass
-
-    entries = mew.REGISTRY.all()
-    name_a = next(e.name for e in entries if e.name.endswith("bench_a"))
-    name_b = next(e.name for e in entries if e.name.endswith("bench_b"))
-    # bench_b is the slower one in the recorded file.
-    doc = {
-        "context": {},
-        "benchmarks": [
-            {"name": name_a, "real_time": 10.0, "aggregate_name": ""},
-            {"name": name_b, "real_time": 99.0, "aggregate_name": ""},
-        ],
-    }
-    f = tmp_path / "r.json"
-    f.write_text(json.dumps(doc))
-    (top1,) = _select_slowest(entries, 1, rank_from=f)
-    assert top1.name == name_b
-
-
-def test_select_slowest_ranks_family_by_slowest_case(tmp_path):
+def test_select_slowest_ranks_family_by_slowest_case(monkeypatch):
     import mew
     from mew.cli import _select_slowest
 
@@ -559,18 +575,15 @@ def test_select_slowest_ranks_family_by_slowest_case(tmp_path):
     fam = next(e.name for e in entries if e.case_labels is not None)
     plain = next(e.name for e in entries if e.case_labels is None)
     # Family's slow case (with a GB option suffix) beats the plain benchmark;
-    # the family's time is the max over its cases.
-    doc = {
-        "context": {},
-        "benchmarks": [
-            {"name": f"{fam}/case:0", "real_time": 1.0, "aggregate_name": ""},
-            {"name": f"{fam}/case:1/min_time:0.200", "real_time": 99.0, "aggregate_name": ""},
-            {"name": plain, "real_time": 50.0, "aggregate_name": ""},
-        ],
-    }
-    f = tmp_path / "r.json"
-    f.write_text(json.dumps(doc))
-    (top1,) = _select_slowest(entries, 1, rank_from=f)
+    # the family's time is the max over its cases. Stub the timing pass so the
+    # suffix-stripping logic is exercised with deterministic numbers.
+    rows = [
+        {"name": f"{fam}/case:0", "real_time": 1.0, "aggregate_name": ""},
+        {"name": f"{fam}/case:1/min_time:0.200", "real_time": 99.0, "aggregate_name": ""},
+        {"name": plain, "real_time": 50.0, "aggregate_name": ""},
+    ]
+    monkeypatch.setattr("mew.cli._quick_timing_pass", lambda entries: rows)
+    (top1,) = _select_slowest(entries, 1)
     assert top1.name == fam
 
 
@@ -589,7 +602,6 @@ def test_completions_unknown_shell_errors(tmp_path):
         ("bash", "complete -F _mew mew"),
         ("zsh", "compdef _mew mew"),
         ("fish", "complete -c mew"),
-        ("powershell", "Register-ArgumentCompleter"),
     ],
 )
 def test_completions_generate(shell, marker, tmp_path):
@@ -622,7 +634,34 @@ def test_completions_bash_functional(tmp_path):
     assert "run" in complete("mew ru", 1)  # subcommand
     assert "--pattern" in complete("mew run --pa", 2)  # option flag
     assert set(complete("mew run --format ''", 3)) == {"json", "jsonl", "rich"}  # choices
-    assert set(complete("mew completions ''", 2)) == {"bash", "zsh", "fish", "powershell"}
+    assert set(complete("mew completions ''", 2)) == {"bash", "zsh", "fish"}
+
+
+def test_completions_profile_format_has_backend_values(tmp_path):
+    # run and profile share the `format` dest but have disjoint value sets;
+    # profile must not offer run's rich/json/jsonl.
+    bash = _mew("completions", "bash", cwd=tmp_path).stdout
+    profile_block = bash[bash.index("    profile)") :]
+    line = next(ln for ln in profile_block.splitlines() if "--format" in ln and "compgen" in ln)
+    assert "speedscope" in line and "xctrace" in line
+    assert "jsonl" not in line
+
+
+def test_completions_bash_positional_falls_back_to_files(tmp_path):
+    # run/list/profile take `path[::filter]` selectors; bash completes the path part.
+    bash = _mew("completions", "bash", cwd=tmp_path).stdout
+    run_block = bash[bash.index("    run)") : bash.index("    profile)")]
+    assert 'COMPREPLY=( $(compgen -f -- "$cur") )\n        ;;' in run_block
+
+
+def test_completions_zsh_repeatable_options_star_form(tmp_path):
+    zsh = _mew("completions", "zsh", cwd=tmp_path).stdout
+    # Repeatable -t/--tag: `*` prefix and braces outside the quotes; no
+    # self-exclusion that would stop zsh offering it a second time.
+    assert "'*'{-t,--tag}'" in zsh
+    assert "(-t --tag)" not in zsh
+    # Non-repeatable multi-flag options keep the exclusion group.
+    assert "'(-k --pattern)'{-k,--pattern}'" in zsh
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh not installed")
