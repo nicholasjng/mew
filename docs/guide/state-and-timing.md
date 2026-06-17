@@ -74,6 +74,43 @@ Reporters print both `Real` and `CPU` columns; the difference is informative:
 
 Set `use_real_time=True` if your benchmark's primary metric is wall-clock time.
 
+## Threaded benchmarks (free-threading)
+
+Google Benchmark can run a single benchmark body concurrently across _N_ threads.
+mew exposes this through the `threads` and `thread_range` options:
+
+```python
+@mew.benchmark(threads=4)
+def bench_parallel(state):
+    lo, hi = partition(len(DATA), state.threads, state.thread_index)
+    for _ in state:
+        process(DATA[lo:hi])
+```
+
+Each thread gets its own `State` and timer; `state.threads` is the thread count
+and `state.thread_index` is this thread's 0-based id — use them to partition work
+so the threads don't all redo the same thing. `thread_range=(1, 8)` runs the
+benchmark once per thread count `1, 2, 4, 8` so you can chart scaling.
+
+:::{warning}
+**Threaded mode requires a free-threaded interpreter (CPython 3.13t+).**
+On a stock (GIL) interpreter the benchmark trampoline holds the GIL across Google
+Benchmark's per-thread start barrier, so the worker threads would deadlock rather
+than run. mew detects this up front: by default it **warns and skips** the
+threaded benchmarks (emitting a `skipped` row for each) and runs the rest, so a
+mixed suite still works on stock CPython — run it again on a `python3.13t` build
+(where mew's extension ships with the GIL disabled, `Py_MOD_GIL_NOT_USED`) to
+execute them. Pass `mew run --strict` (or `mew.run(strict=True)`) to turn the
+skip into a hard `RuntimeError` instead — useful in CI where the threaded
+benchmarks are the point and a silent skip would hide a misconfiguration.
+:::
+
+Counters and labels follow Google Benchmark's convention: `set_counter` /
+`set_items_processed` are summed across threads into the merged result, so set
+per-thread values and let the merge total them, or guard one-shot calls with
+`if state.thread_index == 0`. Thread-safety of the benchmark body itself is your
+responsibility — _N_ threads invoke the same Python callable at once.
+
 ## Manual time
 
 Some benchmarks need their own clock — e.g. GPU work where the CPU launches the kernel and waits asynchronously.

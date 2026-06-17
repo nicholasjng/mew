@@ -65,6 +65,60 @@ MEW_ASAN=1 LD_PRELOAD="$(clang -print-file-name=libclang_rt.asan.so) $(clang -pr
 scripts/asan-pytest.sh
 ```
 
+## Free-threaded (3.13t+) build
+
+mew's extension is built with nanobind's `FREE_THREADED` flag. nanobind keeps
+the stable-ABI (`cp312`) wheel on a stock interpreter and switches to a
+version-specific free-threaded wheel (`Py_MOD_GIL_NOT_USED`) on a free-threaded
+one — the two ABIs are mutually exclusive on 3.13/3.14, so the
+`if.abi-flags = "t"` override in `pyproject.toml` drops `wheel.py-api` there.
+
+Build a separate free-threaded editable install in `.venv-ft` so it doesn't
+clobber the default `.venv`:
+
+```console
+$ uv python install 3.13t
+$ UV_PROJECT_ENVIRONMENT=.venv-ft uv sync --python 3.13t
+```
+
+Confirm the GIL stays disabled after importing the extension:
+
+```console
+$ .venv-ft/bin/python -c "import sys, mew._core; assert not sys._is_gil_enabled()"
+```
+
+Threaded benchmarks (`threads` / `thread_range`) only run here — on a GIL
+interpreter mew raises rather than deadlocking on Google Benchmark's start
+barrier. Run the dependency-light suite (the result-path deps don't ship 3.13t
+wheels yet):
+
+```console
+$ UV_PROJECT_ENVIRONMENT=.venv-ft uv run --with pytest --no-sync python -m pytest \
+    tests/test_runner.py tests/test_api.py tests/test_reporter.py
+```
+
+## ThreadSanitizer
+
+Once threaded-mode benchmarks are in play, a TSAN build smokes out data races
+the ASAN build can't see. It mirrors the ASAN flow (lands in `build/tsan/`, and
+is mutually exclusive with ASAN):
+
+```console
+$ MEW_TSAN=1 uv sync --all-groups --reinstall-package=mew
+```
+
+Preload the TSAN runtime when running, the same way ASAN needs preloading
+(`clang -print-file-name=libclang_rt.tsan.so` on Linux); on macOS there's a
+wrapper script that handles the SIP workaround:
+
+```console
+$ scripts/tsan-pytest.sh
+```
+
+Race reports on the free-threaded path are most useful run against a benchmark
+that uses `threads` with a deliberately-racy body, so point `VIRTUAL_ENV` at a
+free-threaded, TSAN-built `.venv-ft` (see the script header).
+
 ## Building the documentation locally
 
 ```console
