@@ -257,7 +257,7 @@ def test_run_options_iterations_applied():
     assert cap.runs[0]["iterations"] == 42
 
 
-def test_run_filter_selects_subset():
+def test_run_entries_select_subset():
     @mew.benchmark
     def bench_a(state):
         for _ in state:
@@ -269,7 +269,7 @@ def test_run_filter_selects_subset():
             pass
 
     cap = Capture()
-    mew.run(min_time="1x", reporter=cap, filter="bench_a")
+    mew.run(mew.REGISTRY.filter("bench_a"), min_time="1x", reporter=cap)
     names = [r["name"] for r in cap.runs]
     assert all("bench_a" in n for n in names)
     assert not any("bench_b" in n for n in names)
@@ -295,7 +295,7 @@ def test_state_pause_context_manager_excludes_work_from_timing():
                 seen.append("inside")
 
     cap = Capture()
-    mew.run(reporter=cap, filter=".*")
+    mew.run(reporter=cap)
     assert cap.runs[0]["iterations"] == 1
     assert cap.runs[1]["iterations"] == 1
     assert seen == ["inside"]
@@ -319,7 +319,7 @@ def test_state_pause_excludes_paused_work_from_real_time():
                 sum(range(WORK))
 
     cap = Capture()
-    mew.run(reporter=cap, filter=".*")
+    mew.run(reporter=cap)
     unpaused, paused = cap.runs
     paused_time = paused["real_accumulated_time"]
     unpaused_time = unpaused["real_accumulated_time"]
@@ -341,7 +341,7 @@ def test_state_pause_resumes_on_exception():
     cap = Capture()
     # Body completes normally because the exception is swallowed; ScopedPauseTiming's
     # destructor still resumes timing as the with-block unwinds.
-    mew.run(reporter=cap, filter=".*")
+    mew.run(reporter=cap)
     assert cap.runs[0]["iterations"] == 1
 
 
@@ -361,7 +361,7 @@ def test_state_batches_drives_body_in_multiples_of_n():
                 body_calls.append(1)
 
     cap = Capture()
-    mew.run(reporter=cap, filter=".*")
+    mew.run(reporter=cap)
     # 3 batches × 4 = 12 body calls; GB reports the actual count, not the cap.
     assert cap.runs[0]["iterations"] == 12
     assert len(body_calls) == 12
@@ -380,7 +380,7 @@ def test_state_batches_rejects_non_positive_n():
             pass
 
     cap = Capture()
-    mew.run(reporter=cap, filter=".*")
+    mew.run(reporter=cap)
     assert seen == [ValueError]
 
 

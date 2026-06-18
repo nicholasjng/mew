@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sys
@@ -463,10 +464,12 @@ class Fanout:
             r.report_runs(runs)
 
     def finalize(self) -> None:
-        for r in self._reporters:
-            fn = getattr(r, "finalize", None)
-            if callable(fn):
-                fn()
+        # ExitStack unwinds LIFO, so register in reverse to finalize in call order.
+        with contextlib.ExitStack() as stack:
+            for r in reversed(self._reporters):
+                fn = getattr(r, "finalize", None)
+                if callable(fn):
+                    stack.callback(fn)
 
 
 __all__ = [

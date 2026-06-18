@@ -12,6 +12,7 @@ from typing import cast
 
 import pytest
 
+import mew.config as _config
 from mew._typing import RunRow
 from mew._variants import ProfileConfig, _merge_row, _pseudo_raw_context
 from mew.cli import _parse_variants, _run_variants_cmd
@@ -103,6 +104,7 @@ def test_run_variants_rejects_positional_paths(capsys: pytest.CaptureFixture[str
     with pytest.raises(SystemExit):
         _run_variants_cmd(
             ["a=x.py"],
+            cfg=_config.Config(),
             output=[],
             pattern=None,
             tags=None,
