@@ -450,3 +450,24 @@ def test_benchmark_body_stderr_is_visible(capfd: pytest.CaptureFixture[str]):
     cap = Capture()
     mew.run(min_time="1x", reporter=cap)
     assert "body stderr marker" in capfd.readouterr().err
+
+
+def test_gb_flags_do_not_leak_across_runs():
+    """GB flags are process-global: a knob set for one run() must not apply to
+    the next run() in the same process that didn't ask for it."""
+
+    @mew.benchmark
+    def bench_leak(state):
+        for _ in state:
+            pass
+
+    entries = mew.REGISTRY.all()
+    cap = Capture()
+    mew.run(entries, min_time="1x", repetitions=2, reporter=cap)
+    per_rep = [r for r in cap.runs if not r.get("aggregate_name")]
+    assert len(per_rep) == 2
+
+    cap = Capture()
+    mew.run(entries, min_time="1x", reporter=cap)  # no repetitions requested
+    per_rep = [r for r in cap.runs if not r.get("aggregate_name")]
+    assert len(per_rep) == 1
