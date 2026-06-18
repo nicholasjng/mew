@@ -579,12 +579,18 @@ def compare(
     stddev: bool = False,
     by: str | None = None,
     baseline: str | None = None,
+    statistic: str | None = None,
     fail_on_regression: float | None = None,
     regressions_config: Path | None = None,
     allow: list[str] | None = None,
 ) -> None:
     """Compare benchmark result files; the first file is the baseline."""
+    from mew._statistics import resolve_statistic
     from mew.compare import compare as _compare
+
+    # --statistic wins; else fall back to [tool.mew] statistic; else stdlib median.
+    spec = statistic if statistic is not None else _config.load().statistic
+    reduce = resolve_statistic(spec) if spec is not None else None
 
     allow = allow or []
     cfg = None
@@ -606,6 +612,7 @@ def compare(
         show_stddev=stddev,
         by=by,
         baseline=baseline,
+        statistic=reduce,
         regressions=cfg,
     )
     if code:
@@ -986,6 +993,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="pivot dimension: `variant` compares variants within one --variant file.",
     )
     p.add_argument("--baseline", help="with --by variant, the baseline variant (default: first).")
+    p.add_argument(
+        "--statistic",
+        help="reducer over per-repetition values for display and the regression gate. "
+        "A built-in name (min, max, mean, median, gmean, a pNN percentile like p95, "
+        "or any `statistics` function) or an importable `module.path:attr` "
+        "(e.g. scipy.stats:gmean; needs numpy). Default: median. Overrides "
+        "[tool.mew] statistic.",
+    )
     p.add_argument(
         "--fail-on-regression",
         type=float,

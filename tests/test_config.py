@@ -19,6 +19,30 @@ def test_load_defaults_when_no_pyproject(tmp_path: Path):
     assert cfg.benchpaths == ["benchmarks"]
     assert cfg.benchmark_options == {}
     assert cfg.session_tag.tool is None  # unset → auto (jj then git)
+    assert cfg.statistic is None
+
+
+def test_load_statistic_reference(tmp_path: Path):
+    _write(
+        tmp_path,
+        """
+        [tool.mew]
+        statistic = "scipy.stats:gmean"
+        """,
+    )
+    assert load(tmp_path).statistic == "scipy.stats:gmean"
+
+
+def test_load_rejects_non_string_statistic(tmp_path: Path):
+    _write(
+        tmp_path,
+        """
+        [tool.mew]
+        statistic = 95
+        """,
+    )
+    with pytest.raises(ValueError, match="statistic must be a 'module.path:attr' string"):
+        load(tmp_path)
 
 
 def test_load_kebab_case_keys_coerce_to_snake(tmp_path: Path):

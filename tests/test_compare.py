@@ -7,9 +7,11 @@ import json
 from importlib.util import find_spec
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from mew._console import Terminal
+from mew._statistics import reduce_statistic, resolve_statistic
 from mew.compare import (
     _aggregate_group,
     _load,
@@ -67,6 +69,112 @@ def test_aggregate_group_median_and_stddev() -> None:
     median, stddev = _aggregate_group(rows, "real_time")
     assert median == 6.0
     assert stddev is not None and stddev > 0
+
+
+def test_aggregate_group_custom_statistic_replaces_center() -> None:
+    # max(1,2,3,100)=100 instead of the median 2.5; stddev is unchanged.
+    rows = [_row("b", v) for v in (1.0, 2.0, 3.0, 100.0)]
+    median, base_stddev = _aggregate_group(rows, "real_time")
+    center, stddev = _aggregate_group(rows, "real_time", np.max)
+    assert median == 2.5
+    assert center == 100.0
+    assert stddev == base_stddev
+
+
+def test_aggregate_group_custom_statistic_gets_list() -> None:
+    seen: list[object] = []
+
+    def reduce(a):  # noqa: ANN001
+        seen.append(a)
+        return sum(a) / len(a)
+
+    rows = [_row("b", 2.0), _row("b", 4.0)]
+    center, _ = _aggregate_group(rows, "real_time", reduce)
+    assert center == 3.0
+    # mew hands every reducer the raw per-repetition list (numpy/scipy accept it).
+    assert seen[0] == [2.0, 4.0]
+    assert isinstance(seen[0], list)
+
+
+def test_reduce_statistic_casts_result_to_float() -> None:
+    # A numpy scalar return is fine — `reduce_statistic` casts with float(...).
+    out = reduce_statistic(lambda a: np.percentile(a, 95), [1.0, 2.0, 3.0])
+    assert isinstance(out, float)
+
+
+def test_resolve_statistic_imports_callable() -> None:
+    fn = resolve_statistic("numpy:median")
+    assert fn is np.median
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        ("min", 1.0),
+        ("max", 9.0),
+        ("median", 5.0),
+        ("mean", 5.0),
+        ("p50", 5.0),
+        ("p100", 9.0),
+        ("p0", 1.0),
+    ],
+)
+def test_resolve_statistic_builtin_names(spec: str, expected: float) -> None:
+    stat = resolve_statistic(spec)
+    assert reduce_statistic(stat, [1.0, 5.0, 9.0]) == expected
+
+
+def test_resolve_statistic_percentile_picks_tail() -> None:
+    stat = resolve_statistic("p90")
+    # 90th percentile of 1..10 (linear interpolation) is 9.1.
+    assert reduce_statistic(stat, [float(i) for i in range(1, 11)]) == pytest.approx(9.1)
+
+
+def test_resolve_statistic_falls_back_to_statistics_module() -> None:
+    stat = resolve_statistic("stdev")  # not a curated alias, but stdlib statistics has it
+    assert reduce_statistic(stat, [2.0, 4.0, 6.0]) == pytest.approx(2.0)
+
+
+def test_builtin_statistic_is_stdlib_backed() -> None:
+    # Built-ins resolve to stdlib callables — no numpy on this path.
+    stat = resolve_statistic("p95")
+    assert "numpy" not in getattr(stat, "__module__", "")
+    # p95 of [1,2,3] is 2.9 (linear interpolation, matching numpy.percentile).
+    assert reduce_statistic(stat, [1.0, 2.0, 3.0]) == pytest.approx(2.9)
+
+
+@pytest.mark.parametrize(
+    ("spec", "match"),
+    [
+        ("nope", "unknown name"),
+        ("p150", "between 0 and 100"),
+        (":median", "expected a 'module.path:attr'"),
+        ("numpy:", "expected a 'module.path:attr'"),
+        ("does_not_exist_pkg:fn", "cannot import module"),
+        ("numpy:not_a_real_attr", "has no attribute"),
+        ("numpy:pi", "is not callable"),
+    ],
+)
+def test_resolve_statistic_errors(spec: str, match: str) -> None:
+    with pytest.raises(SystemExit, match=match):
+        resolve_statistic(spec)
+
+
+def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    # Both files: a tight cluster plus one outlier. median ignores it; max picks it.
+    _write_json(base, [_row("b", 1.0), _row("b", 2.0), _row("b", 99.0)])
+    _write_json(other, [_row("b", 1.0), _row("b", 2.0), _row("b", 51.0)])
+
+    console = Console(record=True, width=200)
+    code = compare([base, other], statistic=np.max, console=console)
+    assert code == 0
+    out = console.export_text()
+    # Center is the max (99 vs 51), and the delta reflects those, not the medians.
+    assert "99.00 ns" in out
+    assert "51.00 ns" in out
+    assert "-48.48%" in out
 
 
 def test_load_ignores_gb_aggregate_rows(tmp_path: Path) -> None:
@@ -565,11 +673,26 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
     out = console.export_text()
     assert "1.0 MB" in out  # byte-formatted baseline
     assert "+100.00%" in out
+    # Memory isn't a speedup: the ratio column is neutrally labelled.
+    assert "ratio" in out
+    assert "speedup" not in out
 
     console = Console(record=True, width=200)
     code = compare([base, other], metric="memory.total_allocations", console=console)
     assert code == 0
     assert "-50.00%" in console.export_text()
+
+
+def test_compare_time_metric_keeps_speedup_header(tmp_path: Path) -> None:
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    _write_json(base, [_row("bench_x", 100.0)])
+    _write_json(other, [_row("bench_x", 80.0)])
+    console = Console(record=True, width=200)
+    compare([base, other], metric="real_time", console=console)
+    out = console.export_text()
+    assert "speedup" in out
+    assert "ratio" not in out
 
 
 def test_compare_allocations_per_iteration_is_speed_independent(tmp_path: Path) -> None:
