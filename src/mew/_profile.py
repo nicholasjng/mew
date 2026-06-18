@@ -132,7 +132,7 @@ class _ProfileState:
         # Injected factory (CPU suspends sampling); None → no-op (memory measures setup).
         return self._pause() if self._pause is not None else nullcontext()
 
-    def set_counter(self, name: str, value: float) -> None:
+    def set_counter(self, name: str, value: float, flags: int = 0) -> None:
         pass
 
     def set_label(self, label: str) -> None:
