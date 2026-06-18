@@ -22,7 +22,7 @@ import statistics
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from mew._console import Span, Table, Terminal, sgr
 from mew._registry import compile_name_filter
@@ -146,7 +146,7 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if path.name.endswith(".gz"):
         import gzip
 
-        def _open(p: Path):  # noqa: ANN202
+        def _open(p: Path) -> TextIO:
             return gzip.open(p, "rt")
     else:
         _open = Path.open
@@ -274,14 +274,8 @@ def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dic
     return renamed
 
 
-def _read_rows(
-    path: Path, metric: str = "real_time"
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Dispatch on suffix to read ``(rows, file_ctx)`` from a result file.
-
-    ``metric`` is accepted for call-site symmetry; JSON/JSONL are streaming
-    readers and read every field regardless.
-    """
+def _read_rows(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Dispatch on suffix to read ``(rows, file_ctx)`` from a result file."""
     name = path.name.lower()
     if name.endswith(".json"):
         return _rows_from_json(path)
@@ -352,7 +346,7 @@ def _load_sessions(
     Nothing is discarded here; collapsing to one sample set per file is the select
     stage's job (:func:`_select_latest` today, ``path@…`` selectors later).
     """
-    rows, file_ctx = _read_rows(path, metric)
+    rows, file_ctx = _read_rows(path)
 
     sessions: list[SessionData] = []
     # ISO-8601 dates sort lexicographically in chronological order.
@@ -376,7 +370,7 @@ def _load_variant_columns(
     ``--variant`` run), then group its rows by ``variant``. Variant order follows first
     encounter, which is the declared/baseline-first order the orchestrator writes.
     """
-    rows, file_ctx = _read_rows(path, metric)
+    rows, file_ctx = _read_rows(path)
     by_session = _group_by_session(rows, file_ctx)
     if not by_session:
         return []

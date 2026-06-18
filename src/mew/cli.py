@@ -65,6 +65,7 @@ def _benchpath_selectors(cfg: _config.Config) -> list[_discovery.Selector]:
 def _collect(
     paths: list[str],
     *,
+    cfg: _config.Config,
     pattern: str | None,
     tags: list[str] | None = None,
     literal: bool = False,
@@ -79,7 +80,6 @@ def _collect(
     against benchmarks discovered the normal way (positional paths / benchpaths),
     so it round-trips regardless of cwd.
     """
-    cfg = _load_config_or_exit()
     pairs: list[tuple[_discovery.Selector, bool]] = [(_discovery.parse(p), literal) for p in paths]
     name_filters: list[str] = []
     if stdin:
@@ -167,7 +167,9 @@ def list_(
 ) -> None:
     """List discovered benchmarks without running them."""
     with _discovery.discovered():
-        entries = _collect_or_exit(paths, pattern=pattern, tags=tag or None, literal=literal)
+        entries = _collect_or_exit(
+            paths, cfg=_load_config_or_exit(), pattern=pattern, tags=tag or None, literal=literal
+        )
         for e in entries:
             tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
             # --names-only drops the `file.py::` prefix for a cwd-independent id.
@@ -280,24 +282,24 @@ def _parse_variants(specs: list[str]) -> dict[str, Path]:
     return parsed
 
 
-def _load_config_and_session_tag(session_tag: str | None) -> tuple[_config.Config, str | None]:
-    """Load the project config and default the session tag from the VCS when unset.
+def _derive_session_tag(cfg: _config.Config, session_tag: str | None) -> str | None:
+    """Default the session tag from the VCS when unset.
 
     Default is the change id from the ``[tool.mew.session-tag]`` command (auto: jj, then
     git), unless disabled via ``[tool.mew.session-tag] enabled = false``.
     Shared by the plain and ``--variant`` run paths.
     """
-    cfg = _load_config_or_exit()
     if session_tag is None and cfg.session_tag.enabled:
         from mew._session import derive_session_tag
 
         session_tag = derive_session_tag(tool=cfg.session_tag.tool, args=cfg.session_tag.args)
-    return cfg, session_tag
+    return session_tag
 
 
 def _run_variants_cmd(
     specs: list[str],
     *,
+    cfg: _config.Config,
     output: list[str],
     stdout_format: str = "rich",
     pattern: str | None,
@@ -321,7 +323,7 @@ def _run_variants_cmd(
 
     profiling = profiling or ProfileConfig()
     variants = _parse_variants(specs)
-    _, session_tag = _load_config_and_session_tag(session_tag)
+    session_tag = _derive_session_tag(cfg, session_tag)
 
     # Repetitions become separate child invocations, so they are NOT forwarded
     # to the children; the other global knobs are.
@@ -389,11 +391,18 @@ def run(
     if stdin and variant:
         print("--stdin and --variant are mutually exclusive", file=sys.stderr)
         raise SystemExit(2)
+    if strict and variant:
+        # --strict is not forwarded to the variant children; erroring beats
+        # silently running with the skip-and-warn default.
+        print("--strict and --variant are mutually exclusive", file=sys.stderr)
+        raise SystemExit(2)
+    cfg = _load_config_or_exit()
     if variant:
         from mew._variants import ProfileConfig
 
         _run_variants_cmd(
             variant,
+            cfg=cfg,
             output=output,
             stdout_format=format,
             pattern=pattern,
@@ -421,10 +430,10 @@ def run(
     # discovered(): bench modules stay live for the run, cleaned up at exit.
     with _discovery.discovered():
         entries = _collect_or_exit(
-            paths, pattern=pattern, tags=tag or None, literal=literal, stdin=stdin
+            paths, cfg=cfg, pattern=pattern, tags=tag or None, literal=literal, stdin=stdin
         )
 
-        _, session_tag = _load_config_and_session_tag(session_tag)
+        session_tag = _derive_session_tag(cfg, session_tag)
 
         reporters = _build_reporters(
             output,
@@ -520,6 +529,7 @@ def profile(
     paths: list[str],
     *,
     pattern: str | None = None,
+    literal: bool = False,
     tag: list[str] | None = None,
     stdin: bool = False,
     slowest: int | None = None,
@@ -554,7 +564,14 @@ def profile(
         raise SystemExit(2)
 
     with _discovery.discovered():
-        entries = _collect_or_exit(paths, pattern=pattern, tags=tag or None, stdin=stdin)
+        entries = _collect_or_exit(
+            paths,
+            cfg=_load_config_or_exit(),
+            pattern=pattern,
+            tags=tag or None,
+            literal=literal,
+            stdin=stdin,
+        )
         if slowest is not None:
             if slowest < 1:
                 print("--slowest must be >= 1", file=sys.stderr)
@@ -898,6 +915,7 @@ def _add_profile_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "-k", "--pattern", help="Only profile benchmarks whose name matches this regex (re.search)."
     )
+    p.add_argument("-F", "--literal", action="store_true", help="Match -k as a literal string.")
     _add_tag_arg(p)
     p.add_argument(
         "--stdin",

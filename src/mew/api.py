@@ -59,7 +59,7 @@ def _source_file(fn: BenchmarkFn) -> str | None:
         return None
 
 
-def _check_options(options: Mapping[str, object]) -> None:
+def _check_options(options: Mapping[str, Any]) -> None:
     extra = set(options) - _OptionKeys
     if extra:
         raise TypeError(f"unknown option(s): {sorted(extra)}")
@@ -70,9 +70,10 @@ def _check_options(options: Mapping[str, object]) -> None:
         # the union rather than one overriding the other.
         raise TypeError("threads and thread_range are mutually exclusive")
 
-    if (tr := options.get("thread_range")) is not None:
+    tr: tuple[int, int] | None = options.get("thread_range")
+    if tr is not None:
         try:
-            lo, hi = tr  # ty: ignore[not-iterable]
+            lo, hi = tr
         except (TypeError, ValueError):
             raise TypeError(f"thread_range must be a (min, max) pair, got {tr!r}") from None
         if int(lo) < 1 or int(hi) < int(lo):
