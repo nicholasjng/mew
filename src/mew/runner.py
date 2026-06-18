@@ -157,9 +157,16 @@ def _gb_argv(
     selection is Python-side (:meth:`Registry.filter` / ``entries``), and GB's
     output/reporting flags would fight mew's own reporters. A new global knob
     earns a keyword on :func:`run`, not an argv passthrough.
+
+    Every knob is emitted on every call, pinned to GB's own default when unset:
+    GB flags are process-global, so a value parsed for one run would otherwise
+    silently apply to every later :func:`run` in the same process (e.g.
+    ``repetitions=2`` once → doubled rows forever after). Per-benchmark
+    decorator options still win over these globals inside GB.
     """
-    argv = ["mew"]
-    if min_time is not None:
+    if min_time is None:
+        mt = "0.5s"  # GB's default min time
+    else:
         # A bare number means seconds, but GB deprecates the suffix-less form
         # (one "should have a suffix" line per benchmark on stderr): stamp the
         # `s`. Non-numeric strings ("100x", "0.5s") pass through untouched.
@@ -170,14 +177,13 @@ def _gb_argv(
             pass
         else:
             mt += "s"
-        argv.append(f"--benchmark_min_time={mt}")
-    if min_warmup_time is not None:
-        argv.append(f"--benchmark_min_warmup_time={min_warmup_time}")
-    if repetitions is not None:
-        argv.append(f"--benchmark_repetitions={repetitions}")
-    if random_interleaving:
-        argv.append("--benchmark_enable_random_interleaving=true")
-    return argv
+    return [
+        "mew",
+        f"--benchmark_min_time={mt}",
+        f"--benchmark_min_warmup_time={min_warmup_time if min_warmup_time is not None else 0}",
+        f"--benchmark_repetitions={repetitions if repetitions is not None else 1}",
+        f"--benchmark_enable_random_interleaving={'true' if random_interleaving else 'false'}",
+    ]
 
 
 def run(
