@@ -220,7 +220,7 @@ class BenchmarkHandle:
     def threads(self, n: int) -> BenchmarkHandle:
         """
         Run the benchmark with `n` threads, each with its own State and timer.
-        Requires a free-threaded interpreter (CPython 3.13t+): under the GIL the trampoline holds the GIL across Google Benchmark's per-thread start barrier, so the workers deadlock rather than run. On a GIL build mew warns and skips threaded benchmarks by default (see mew.run).
+        Requires a free-threaded interpreter: under the GIL the trampoline holds the GIL across Google Benchmark's per-thread start barrier, so the workers deadlock rather than run. On a GIL build mew warns and skips threaded benchmarks by default (see mew.run).
         """
 
     def thread_range(self, min_threads: int, max_threads: int) -> BenchmarkHandle:

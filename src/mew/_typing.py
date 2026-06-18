@@ -65,7 +65,7 @@ class BenchmarkOptions(TypedDict, total=False):
 
     ``threads`` and ``thread_range`` enable Google Benchmark's threaded mode (each
     thread gets its own ``State`` and timer). They **require** a free-threaded
-    interpreter (CPython 3.13t+): under the GIL the trampoline holds the GIL across
+    interpreter: under the GIL the trampoline holds the GIL across
     Google Benchmark's per-thread start barrier, so the workers deadlock rather
     than run. On a GIL build :func:`mew.run` warns and skips threaded benchmarks
     by default (``strict=True`` raises instead). ``thread_range`` runs once per

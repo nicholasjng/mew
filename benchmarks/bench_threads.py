@@ -1,9 +1,9 @@
 """Free-threading scaling: independent work scales, contended work doesn't.
 
 **Free-threaded only.** Both benchmarks set ``thread_range``, so ``mew run``
-refuses them on a stock (GIL) interpreter — run on a ``python3.13t`` build:
+refuses them on a stock (GIL) interpreter — run on a ``python3.14t`` build:
 
-    $ uv run --python 3.13t mew run benchmarks/bench_threads.py --tag ft
+    $ uv run --python 3.14t mew run benchmarks/bench_threads.py --tag ft
 
 Each runs the *same* CPU-bound kernel at 1, 2, 4, 8 threads. They differ only in
 whether the kernel touches shared state:

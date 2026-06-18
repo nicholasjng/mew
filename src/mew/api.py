@@ -345,8 +345,8 @@ def product(
     report_aggregates_only : bool
         Suppress per-repetition rows when ``repetitions > 1``.
     threads : int, optional
-        Run each case with this many threads. Requires a free-threaded interpreter
-        (CPython 3.13t+); on a GIL build :func:`mew.run` warns and skips threaded
+        Run each case with this many threads. Requires a free-threaded interpreter;
+        on a GIL build :func:`mew.run` warns and skips threaded
         benchmarks by default. See :class:`~mew._typing.BenchmarkOptions`.
     thread_range : tuple[int, int], optional
         Run each case once per thread count in ``[min, max]`` (powers of two).

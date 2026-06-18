@@ -64,15 +64,6 @@ Legend: ✅ shipped · 🟡 partially shipped · ⬜ not started.
 
 ## Reporter / output
 
-- ⬜ **Streaming `report_runs` rather than batched.** Today
-  `PyReporter::ReportRuns` (`src/_mew/reporter.cpp`) gets a `std::vector<Run>`
-  and copies every entry into a Python list before invoking the callback.
-  For long parametrized families with many repetitions this peaks memory at
-  `O(runs)` for no benefit; the reporter doesn't aggregate, it just writes.
-  Switching the callback contract to "called once per `Run`" would keep peak
-  memory bounded and let progress reporters render rows as they complete. The
-  Python-side `Fanout` wrapper would need the same per-run callback shape.
-
 - ✅ **Per-case discovery in `mew list`.** Shipped: `mew list --show-cases`
   expands each family into one row per case (`name[label]`), and `-F` / `--literal`
   lets a displayed `name[label]` be pasted into `-k` to run a single case without

@@ -204,18 +204,18 @@ def run(
         names = ", ".join(e.name for e in threaded[:3])
         more = f" (+{len(threaded) - 3} more)" if len(threaded) > 3 else ""
         reason = (
-            "threaded benchmarks require a free-threaded interpreter (CPython "
-            "3.13t+); this interpreter has the GIL enabled, where threaded mode "
+            "threaded benchmarks require a free-threaded interpreter; "
+            "this interpreter has the GIL enabled, where threaded mode "
             "would deadlock on Google Benchmark's start barrier"
         )
         if strict:
             raise RuntimeError(
-                f"{reason}. Affected: {names}{more}. Run on a 3.13t build, drop "
-                f"the threads option, or pass strict=False to skip them."
+                f"{reason}. Affected: {names}{more}. Run on a free-threaded build, "
+                f"drop the threads option, or pass strict=False to skip them."
             )
         warnings.warn(
             f"skipping {len(threaded)} threaded benchmark(s) on a GIL interpreter "
-            f"({names}{more}) — run on a 3.13t build to execute them; {reason}.",
+            f"({names}{more}) — run on a free-threaded build to execute them; {reason}.",
             RuntimeWarning,
             stacklevel=2,
         )

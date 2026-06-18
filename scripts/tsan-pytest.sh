@@ -6,7 +6,7 @@
 #   - Activate the uv-managed venv (VIRTUAL_ENV set). For race detection on
 #     threaded benchmarks, use a free-threaded interpreter (e.g. .venv-ft):
 #         UV_PROJECT_ENVIRONMENT=.venv-ft MEW_TSAN=1 \
-#             uv sync --python 3.13t --all-groups --reinstall-package=mew
+#             uv sync --python 3.14t --all-groups --no-install-package duckdb --reinstall-package=mew
 #   - Otherwise build the TSAN editable install into the active venv:
 #         MEW_TSAN=1 uv sync --all-groups --reinstall-package=mew
 #

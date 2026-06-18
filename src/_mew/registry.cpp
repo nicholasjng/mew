@@ -36,7 +36,7 @@ void register_registry(nb::module_& m) {
              nb::rv_policy::reference)
         .def("threads", &benchmark::Benchmark::Threads, "n"_a, nb::rv_policy::reference,
              "Run the benchmark with `n` threads, each with its own State and timer.\n"
-             "Requires a free-threaded interpreter (CPython 3.13t+): under the GIL the "
+             "Requires a free-threaded interpreter: under the GIL the "
              "trampoline holds the GIL across Google Benchmark's per-thread start "
              "barrier, so the workers deadlock rather than run. On a GIL build mew "
              "warns and skips threaded benchmarks by default (see mew.run).")
