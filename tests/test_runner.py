@@ -3,30 +3,11 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
 
 import pytest
+from _helpers import Capture
 
 import mew
-
-
-class Capture:
-    """Minimal Reporter that just stashes everything for assertion."""
-
-    def __init__(self) -> None:
-        self.context: dict[str, Any] | None = None
-        self.runs: list[Any] = []
-        self.finalized = False
-
-    def report_context(self, context):
-        self.context = context
-        return True
-
-    def report_runs(self, runs):
-        self.runs.extend(runs)
-
-    def finalize(self):
-        self.finalized = True
 
 
 def test_run_single_benchmark_captures_one_run():

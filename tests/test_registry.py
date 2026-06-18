@@ -24,6 +24,18 @@ def test_add_and_clear():
     assert len(r) == 0
 
 
+def test_add_rejects_duplicate_name():
+    r = Registry()
+    r.add(Entry(name="a", fn=lambda s: None))
+    with pytest.raises(ValueError, match="already registered"):
+        r.add(Entry(name="a", fn=lambda s: None))
+    assert len(r) == 1
+    # clear() resets the name set alongside the entries.
+    r.clear()
+    r.add(Entry(name="a", fn=lambda s: None))
+    assert len(r) == 1
+
+
 def test_filter_substring():
     r = Registry()
     r.add(Entry(name="foo::a", fn=lambda s: None))

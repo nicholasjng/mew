@@ -213,6 +213,89 @@ def test_product_needs_at_least_one_iterable():
                 pass
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",
+        "   ",
+        "a::b",  # stdin selector / file-prefix separator
+        "a[b",  # case-addressing brackets
+        "a]b",
+        "a\nb",  # line-oriented list/stdin output
+        "f/min_time:0.5",  # stripped by canonical_name on read
+        "f/case:0",
+        "f/threads:4",
+    ],
+)
+def test_benchmark_rejects_structurally_confusing_names(bad):
+    with pytest.raises(ValueError, match="benchmark name"):
+
+        @mew.benchmark(name=bad)
+        def _bench(state):
+            for _ in state:
+                pass
+
+    assert REGISTRY.all() == []  # nothing half-registered
+
+
+def test_benchmark_allows_slash_hierarchy_names():
+    # `/` grouping (the Google Benchmark convention) stays legal.
+    @mew.benchmark(name="suite/sort/insertion")
+    def _bench(state):
+        for _ in state:
+            pass
+
+    (entry,) = REGISTRY.all()
+    assert entry.name == "suite/sort/insertion"
+
+
+def test_parametrize_rejects_structurally_confusing_ids():
+    with pytest.raises(ValueError, match="case label"):
+
+        @mew.parametrize([{"n": 1}], ids=["a::b"])
+        def _bench(state, n):
+            for _ in state:
+                pass
+
+    assert REGISTRY.all() == []
+
+
+def test_parametrize_rejects_structurally_confusing_derived_labels():
+    # The label derives from the parameter value ("s=x[1]"); ids= is the
+    # escape hatch for values whose repr collides with case addressing.
+    with pytest.raises(ValueError, match="case label"):
+
+        @mew.parametrize([{"s": "x[1]"}])
+        def _bench(state, s):
+            for _ in state:
+                pass
+
+    assert REGISTRY.all() == []
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"iterations": 0},
+        {"repetitions": -1},
+        {"threads": 0},
+        {"min_time": 0.0},
+        {"min_warmup_time": -0.1},
+    ],
+)
+def test_decorators_reject_out_of_range_options(options):
+    # Google Benchmark guards these with asserts compiled out of release
+    # builds, so mew validates at decoration time.
+    with pytest.raises(TypeError, match="must be"):
+
+        @mew.benchmark(**options)
+        def _bench(state):
+            for _ in state:
+                pass
+
+    assert REGISTRY.all() == []  # nothing half-registered
+
+
 def test_double_registration_raises():
     with pytest.raises(RuntimeError, match="already registered"):
 

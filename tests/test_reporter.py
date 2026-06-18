@@ -198,7 +198,7 @@ def test_rich_reporter_shows_label_column_for_families():
 def test_rich_reporter_left_ellipsizes_long_names():
     from mew._console import Terminal
 
-    name = "benchmarks/some/deeply/nested/path/bench_module.py::bench_the_actual_function"
+    name = "benchmarks/some/deeply/nested/path/bench_module/bench_the_actual_function"
 
     @mew.benchmark(name=name)
     def bench_x(state):

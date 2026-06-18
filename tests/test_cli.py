@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from _helpers import row as _row, write_pair as _write_pair
 
 FIXTURE = """
     import mew
@@ -475,12 +476,9 @@ def test_run_filter_by_tag(mew_cli, benchdir, tmp_path):
 
 
 def test_compare_regression_threshold_requires_percent_suffix(mew_cli, tmp_path):
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    base.write_text(json.dumps({"context": {}, "benchmarks": []}))
-    other.write_text(json.dumps({"context": {}, "benchmarks": []}))
+    other, base = _write_pair(tmp_path, other=[], base=[])
     res = mew_cli("compare", str(other), str(base), "--regression-threshold", "5", cwd=tmp_path)
-    assert res.returncode != 0
+    assert res.returncode == 2  # usage error, not the "nothing matched" exit 1
     assert "--regression-threshold" in res.stderr
     assert "'5'" in res.stderr
 
@@ -488,24 +486,16 @@ def test_compare_regression_threshold_requires_percent_suffix(mew_cli, tmp_path)
 def test_compare_regression_threshold_alone_is_report_only(mew_cli, tmp_path):
     # A regression is detected and printed, but without --exit-non-zero-on-regression
     # the command still exits 0 — the panel is informational, not a gate.
-    from _helpers import row as _row, write_json as _write_json
-
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 100.0)])
-    _write_json(other, [_row("b", 120.0)])  # +20%, well over 5%
+    # +20%, well over 5%:
+    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     res = mew_cli("compare", str(other), str(base), "--regression-threshold", "5%", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     assert "❌" in res.stderr
 
 
 def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path):
-    from _helpers import row as _row, write_json as _write_json
-
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 100.0)])
-    _write_json(other, [_row("b", 120.0)])  # +20%, well over 5%
+    # +20%, well over 5%:
+    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     res = mew_cli(
         "compare",
         str(other),
@@ -517,6 +507,23 @@ def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path):
     )
     assert res.returncode == 2
     assert "❌" in res.stderr
+
+
+def test_compare_exit_non_zero_on_regression_gates_alone(mew_cli, tmp_path):
+    # Without --regression-threshold / --regressions-config the gate flag
+    # implies gating at the default threshold instead of silently no-opping.
+    # +20%, over the 5% default:
+    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
+    res = mew_cli("compare", str(other), str(base), "--exit-non-zero-on-regression", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "❌" in res.stderr
+
+
+def test_run_invalid_min_warmup_time_is_usage_error(mew_cli, tmp_path):
+    # argparse type errors exit 2 (usage), not 1 (the "nothing matched" code).
+    res = mew_cli("run", "--min-warmup-time", "nonsense", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "--min-warmup-time" in res.stderr
 
 
 # --- mew profile --slowest selection (in-process; no profiler backend needed) ---
