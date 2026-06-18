@@ -54,7 +54,7 @@ allocations, or `mew profile` for native C frames via Instruments / py-spy / per
 :::{grid-item-card} Compare
 :link: guide/regressions
 :link-type: doc
-`mew compare baseline.json head.json --fail-on-regression 5` for CI
+`mew compare head.json baseline.json --regression-threshold 5% --exit-non-zero-on-regression` for CI
 regression gates with an allowlist.
 :::
 
