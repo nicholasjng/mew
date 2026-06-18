@@ -139,7 +139,18 @@ def _collect_stats(entries: list[Entry], iterations: int) -> dict[str, MemoryPro
             for key, rng in iter_entry_cases(entry):
                 dest = root / f"capture-{i}.bin"
                 i += 1
-                if not _capture_case(entry.fn, rng, dest, iterations, warmup):
+                # Warn and move on when a body raises: the timed run turns the
+                # same error into a skipped row and continues, so one broken
+                # benchmark must not abort the whole profiling pass either.
+                try:
+                    entered = _capture_case(entry.fn, rng, dest, iterations, warmup)
+                except Exception as e:
+                    print(
+                        f"warning: {key}: body raised during memory capture; skipping ({e!r})",
+                        file=sys.stderr,
+                    )
+                    continue
+                if not entered:
                     print(
                         f"warning: {key}: body never iterated its state; skipping memory capture",
                         file=sys.stderr,
@@ -173,8 +184,17 @@ def _write_flamegraph(entries: list[Entry], path: Path) -> None:
         combined = Path(tmpdir) / "combined.bin"
         with memray.Tracker(combined):
             for entry in entries:
-                for _, rng in iter_entry_cases(entry):
-                    entry.fn(_ProfileState(range_value=rng))
+                for key, rng in iter_entry_cases(entry):
+                    # A raising body drops out of the combined graph but must
+                    # not lose the other cases' (already tracked) allocations.
+                    try:
+                        entry.fn(_ProfileState(range_value=rng))
+                    except Exception as e:
+                        print(
+                            f"warning: {key}: body raised during flame-graph capture; "
+                            f"skipping ({e!r})",
+                            file=sys.stderr,
+                        )
         reader = memray.FileReader(combined)
         reporter = FlameGraphReporter.from_snapshot(
             reader.get_high_watermark_allocation_records(merge_threads=True),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
@@ -112,14 +113,24 @@ def _collect_stats(
     for entry in entries:
         for key, rng in iter_entry_cases(entry):
             prof = pyinstrument.Profiler(interval=interval, async_mode="disabled")
-            with prof:
-                entry.fn(
-                    _ProfileState(
-                        n_iterations=inner_iterations,
-                        range_value=rng,
-                        pause=_sampling_pause(prof),
+            # Warn and move on when a body raises: the timed run turns the same
+            # error into a skipped row and continues, so one broken benchmark
+            # must not abort the whole sampling pass either.
+            try:
+                with prof:
+                    entry.fn(
+                        _ProfileState(
+                            n_iterations=inner_iterations,
+                            range_value=rng,
+                            pause=_sampling_pause(prof),
+                        )
                     )
+            except Exception as e:
+                print(
+                    f"warning: {key}: body raised during CPU sampling; skipping ({e!r})",
+                    file=sys.stderr,
                 )
+                continue
             session = prof.last_session
             # Set on context-manager exit; always present here.
             assert session is not None

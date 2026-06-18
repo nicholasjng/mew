@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mew._profile import iter_entry_cases
-from mew.profilers.base import Capabilities, slug, worker_argv
+from mew.profilers.base import slug, worker_argv
 
 if TYPE_CHECKING:
     from collections import Counter
@@ -32,7 +32,6 @@ class XctraceProfiler:
     """Records Instruments traces via ``xctrace`` (macOS only)."""
 
     name = "xctrace"
-    capabilities = Capabilities(native_frames=True, platforms=frozenset({"darwin"}))
     viewer_hint = "Instruments.app"
     #: Output formats this backend accepts — a class attribute because the CLI
     #: reads it off the backend instance (`getattr(backend, "FORMATS", ...)`).
@@ -47,7 +46,11 @@ class XctraceProfiler:
         if sys.platform != "darwin":
             return "xctrace is macOS-only"
         exe = shutil.which("xctrace") or "/usr/bin/xctrace"
-        probe = subprocess.run([exe, "version"], capture_output=True, text=True)
+        try:
+            probe = subprocess.run([exe, "version"], capture_output=True, text=True)
+        except OSError:
+            # Not even the /usr/bin shim exists (stripped-down macOS).
+            return "xctrace not found; install Xcode"
         if probe.returncode != 0:
             # The /usr/bin shim needs full Xcode; Command Line Tools alone won't do.
             return (

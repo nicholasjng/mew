@@ -1,16 +1,17 @@
-"""xctrace ``.trace`` → speedscope (collapsed text or multi-profile JSON).
+"""xctrace ``.trace`` → speedscope multi-profile JSON.
 
 ``xctrace`` won't emit speedscope/pprof directly, but ``xctrace export`` dumps the
-Time Profiler samples as XML, which we fold into stacks. From the folded stacks we
-write either Brendan-Gregg collapsed text (one profile per file) or speedscope's
-own JSON (which packs many profiles into one file behind a dropdown, handy for a
-big parametrized family where you want to cycle through cases).
+Time Profiler samples as XML, which we fold into stacks and write as speedscope's
+JSON (which packs many profiles into one file behind a dropdown, handy for a big
+parametrized family where you want to cycle through cases).
 
-xctrace stores a backtrace leaf-first; both output formats want root-first, so we
-reverse it (:data:`_LEAF_FIRST`). We export ``table[@schema="time-profile"]``
+We export ``table[@schema="time-profile"]``
 (:data:`_XPATH`); some Xcode versions may surface CPU samples under a different
 schema name instead. Every sample is weighted 1 (a count), so the JSON ``unit`` is
 ``"none"`` — not a timing weight.
+
+xctrace stores a backtrace leaf-first; speedscope wants root-first, so we
+reverse it (:data:`_LEAF_FIRST`).
 
 Port of the algorithm in inferno's ``collapse/xctrace.rs``, trimmed to what we
 need: stdlib :mod:`xml.etree.ElementTree` streaming replaces ``quick_xml`` (and
@@ -33,15 +34,12 @@ from typing import IO
 #: Discover the available tables for a given trace with ``xctrace export --toc``.
 _XPATH = '/trace-toc[1]/run[1]/data[1]/table[@schema="time-profile"]'
 
-#: xctrace lists each backtrace leaf (innermost) frame first; both output formats
-#: are root-first, so we reverse. Matches inferno's behaviour.
+#: xctrace lists each backtrace leaf (innermost) frame first; speedscope is
+#: root-first, so we reverse. Matches inferno's behaviour.
 _LEAF_FIRST = True
 
 #: speedscope file-format schema URL stamped into the JSON document.
 _SPEEDSCOPE_SCHEMA = "https://www.speedscope.app/file-format-schema.json"
-
-#: A folded stack tally: root-first frame-label tuple → sample count.
-Folded = Counter  # alias for readability in signatures (Counter[tuple[str, ...]])
 
 
 def fold_samples(source: str | Path | IO[bytes]) -> Counter[tuple[str, ...]]:
@@ -117,18 +115,6 @@ def _resolve_backtrace(
     return tuple(labels)
 
 
-def write_collapsed(folded: Counter[tuple[str, ...]], dest: Path) -> Path:
-    """Write a folded tally to ``dest`` as Brendan-Gregg collapsed text. Returns ``dest``.
-
-    One profile per file; sorted for deterministic output. speedscope.app imports
-    this format directly.
-    """
-    with dest.open("w") as fh:
-        for stack, count in sorted(folded.items()):
-            fh.write(f"{';'.join(stack)} {count}\n")
-    return dest
-
-
 def _sampled_profile(
     name: str,
     folded: Counter[tuple[str, ...]],
@@ -144,7 +130,7 @@ def _sampled_profile(
     weights: list[int] = []
     for stack, count in sorted(folded.items()):  # sorted → deterministic output
         idxs: list[int] = []
-        for label in stack:  # root-first, same order as the collapsed text
+        for label in stack:  # root-first
             i = intern.get(label)
             if i is None:
                 i = intern[label] = len(frames)
