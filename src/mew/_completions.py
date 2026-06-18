@@ -4,8 +4,9 @@ Rolled by hand (no dependency): introspect the parser — subcommands, their
 options, and each value's completion kind (file / fixed choices / none) — and
 emit a completion script per shell. ``mew completions <shell>`` prints it for
 ``eval`` or install. Static: command and option names, file completion for path
-args, and fixed choices (``--format``, ``--profiler``, the shell list); no live
-benchmark-name completion.
+args, and fixed choices (``--format``, ``--profiler``, the shell list). The zsh
+script additionally completes live benchmark names, ``name[label]`` cases, and
+tags by shelling out to ``mew __complete`` (which reads the completion cache).
 """
 
 from __future__ import annotations
@@ -39,6 +40,10 @@ def _value_kind(action: argparse.Action) -> str | list[str] | None:
     if action.choices:
         return [str(c) for c in action.choices]
     dest = action.dest
+    if dest == "pattern":
+        return "benchmarks"  # -k/--pattern: complete name[label] forms
+    if dest == "tag":
+        return "tags"
     if dest == "format":
         from mew.cli import _STDOUT_FORMATS  # source of truth, avoids drift
 
@@ -49,8 +54,9 @@ def _value_kind(action: argparse.Action) -> str | list[str] | None:
         return ["auto", *sorted(profilers._BACKENDS)]
     if getattr(action, "type", None) is Path:
         return "file"
-    if not action.option_strings:  # positional → all of mew's are paths
-        return "file"
+    if not action.option_strings:  # positional
+        # `paths` accepts `file::name` selectors; `files` (compare) is plain paths.
+        return "selector" if dest == "paths" else "file"
     if dest == "output":  # run's `-o` takes `-`/`stdout` and file paths
         return "file"
     return None
@@ -65,6 +71,8 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
     grouped: dict[int, _Cmd] = {}
     order: list[int] = []
     for name, subp in sub.choices.items():
+        if name.startswith("_"):  # hidden internal command (e.g. __complete)
+            continue
         key = id(subp)
         if key not in grouped:
             grouped[key] = _Cmd(names=[], help=help_by_name.get(name, ""))
@@ -144,12 +152,34 @@ def _zdesc(help_text: str) -> str:
     return s.translate(str.maketrans({"'": "", "[": "", "]": "", "`": "", ":": ";"}))
 
 
+# Dynamic callbacks: shell out to `mew __complete <kind>`, which reads the
+# completion cache (never imports bench files). `_mew_selectors` only offers
+# benchmark names once the user has typed `file.py::`, else falls back to files.
+_ZSH_DYNAMIC = r"""
+_mew_patterns() { local -a x; x=( ${(f)"$(mew __complete cases 2>/dev/null)"} ); (( $#x )) && compadd -- $x }
+_mew_tags()     { local -a x; x=( ${(f)"$(mew __complete tags  2>/dev/null)"} ); (( $#x )) && compadd -- $x }
+_mew_selectors() {
+  if [[ $words[CURRENT] == *::* ]]; then
+    local pfx=${words[CURRENT]%%::*}::
+    local -a x; x=( ${(f)"$(mew __complete names 2>/dev/null)"} )
+    (( $#x )) && compadd -P "$pfx" -- $x
+  else
+    _files
+  fi
+}
+"""
+
+
 def _zsh_spec(o: _Opt) -> str:
     flagpart = "{" + ",".join(o.flags) + "}" if len(o.flags) > 1 else o.flags[0]
     spec = f"'({' '.join(o.flags)}){flagpart}[{_zdesc(o.help)}]"
     if o.takes_value:
         if o.value == "file":
             spec += ":path:_files"
+        elif o.value == "benchmarks":
+            spec += ":pattern:_mew_patterns"
+        elif o.value == "tags":
+            spec += ":tag:_mew_tags"
         elif isinstance(o.value, list):
             spec += f":value:({' '.join(o.value)})"
         else:
@@ -159,7 +189,12 @@ def _zsh_spec(o: _Opt) -> str:
 
 def _zsh(parser: argparse.ArgumentParser) -> str:
     cmds = _commands(parser)
-    out = ["_mew() {", '  local curcontext="$curcontext" state line', "  _arguments -C \\"]
+    out = [
+        _ZSH_DYNAMIC,
+        "_mew() {",
+        '  local curcontext="$curcontext" state line',
+        "  _arguments -C \\",
+    ]
     out.append("    '1: :->command' \\")
     out.append("    '*:: :->args'")
     out.append("  case $state in")
@@ -175,6 +210,8 @@ def _zsh(parser: argparse.ArgumentParser) -> str:
         specs = [_zsh_spec(o) for o in c.opts]
         if c.positional == "file":
             specs.append("'*:path:_files'")
+        elif c.positional == "selector":
+            specs.append("'*:selector:_mew_selectors'")
         elif isinstance(c.positional, list):
             specs.append(f"'*:value:({' '.join(c.positional)})'")
         out.append("          _arguments \\")
