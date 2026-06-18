@@ -40,6 +40,7 @@ test = [
     "duckdb >=1.1",
     "numpy>=2.4.6",
     "pytest >=8",
+    "pytest-xdist>=3.8.0",
 ]
 typing = [ "ty>=0.0.42" ]  # used in GitHub Actions only.
 
