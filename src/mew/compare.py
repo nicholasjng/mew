@@ -20,6 +20,7 @@ import math
 import re
 import statistics
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
@@ -530,8 +531,13 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def _ctx_summary(ctx: dict[str, Any]) -> str:
-    """One provenance line per column: session, host, cpus, scaling, date, custom.*."""
+def _ctx_summary(ctx: dict[str, Any], *, exclude: Iterable[str] = ()) -> str:
+    """One provenance line per column: session, host, cpus, scaling, date, custom.*.
+
+    ``exclude`` skips custom keys already shown in that column's diff-annotated
+    label, so e.g. ``engine=...`` isn't printed twice on the same line.
+    """
+    exclude = set(exclude)
     parts: list[str] = []
     if ctx.get("session_tag"):
         parts.append(f"session={ctx['session_tag']}")
@@ -546,6 +552,8 @@ def _ctx_summary(ctx: dict[str, Any]) -> str:
     if ctx.get("date"):
         parts.append(f"date={str(ctx['date'])[:19]}")
     for k, v in _flatten(ctx.get("custom") or {}).items():
+        if k in exclude:
+            continue
         parts.append(f"{k}={v}")
     return " ".join(parts)
 
@@ -672,18 +680,22 @@ def _render(
 
     _warn_context_skew(columns)
     # Custom-context keys that differ (e.g. engine=duckdb 1.5.3) annotate the
-    # column labels, so an apples-vs-oranges comparison documents itself.
+    # per-column context line above the table, so an apples-vs-oranges
+    # comparison documents itself without stealing width from table headers
+    # (which use the bare label instead; see `labels` below).
     diffs = _custom_diffs([c.context for c in columns])
-    labels = [
+    annotated_labels = [
         f"{c.label} ({', '.join(f'{k}={v}' for k, v in diff.items())})" if diff else c.label
         for c, diff in zip(columns, diffs, strict=True)
     ]
 
     term = console or Terminal()
-    for label, c in zip(labels, columns, strict=True):
+    for label, c, diff in zip(annotated_labels, columns, diffs, strict=True):
         if c.context:
-            term.print(sgr(f"{label}: {_ctx_summary(c.context)}", "dim", enabled=term.color))
+            summary = _ctx_summary(c.context, exclude=diff.keys())
+            term.print(sgr(f"{label}: {summary}", "dim", enabled=term.color))
 
+    labels = [c.label for c in columns]
     table = Table(title=f"Comparison ({metric})")
     table.add_column("Benchmark", flex=True)
     table.add_column(f"{labels[0]} (baseline)", justify="right")
