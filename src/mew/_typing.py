@@ -131,6 +131,8 @@ class BenchmarkFn(Protocol):
 
     __name__: str
     __qualname__: str
-    __globals__: dict[str, Any]
+
+    @property
+    def __globals__(self) -> dict[str, Any]: ...
 
     def __call__(self, state: State, /, *args: Any, **kwargs: Any) -> None: ...
