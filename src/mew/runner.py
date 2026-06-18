@@ -265,6 +265,7 @@ def run(
             _skipped_row(e.name, _requested_threads(e.options), skip_msg) for e in threaded
         ]
         selected = [e for e in selected if not _is_threaded(e.options)]
+        threaded = []  # filtered out of `selected`; none run this call
 
     rep = _to_single_reporter(reporter)
     # The binding merges extra_context into the GB context before calling
@@ -316,7 +317,7 @@ def run(
 
     # Only reached on a free-threaded build (threaded entries are skipped above
     # under the GIL), where the warmup avoids the attach deadlock.
-    if any(_is_threaded(e.options) for e in selected):
+    if threaded:
         _warmup_free_threading()
     # Trigger GB's noisy system-info probes with fd 2 silenced, then run with
     # stderr live so user output and GB run-time diagnostics get through.

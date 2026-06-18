@@ -734,23 +734,7 @@ def _add_tag_arg(p: argparse.ArgumentParser) -> None:
     )
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    """Build the argparse command tree. Each subparser sets ``_func`` to its handler."""
-    parser = argparse.ArgumentParser(
-        prog="mew",
-        description="Microbenchmarking for Python via Google Benchmark.",
-        formatter_class=_CommandHelpFormatter,
-        # git-style: global options up front, then `<command> [<args>]`, instead
-        # of argparse's default `{list,ls,run,…} ...` enumeration.
-        usage="mew [-h] [--version] <command> [<args>]",
-    )
-    parser.add_argument("--version", action="version", version=_VERSION)
-    # metavar `<command>` keeps the command list out of curly braces; prog="mew"
-    # so each subcommand's own usage reads `mew run …` (not the parent's usage
-    # string, which argparse would otherwise splice in).
-    sub = parser.add_subparsers(dest="_command", title="commands", metavar="<command>", prog="mew")
-
-    # mew list / ls
+def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "list",
         aliases=["ls"],
@@ -787,7 +771,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(_func=list_)
 
-    # mew run
+
+def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "run", help="Discover and run benchmarks.", formatter_class=_CommandHelpFormatter
     )
@@ -902,7 +887,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(_func=run)
 
-    # mew profile
+
+def _add_profile_cmd(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "profile",
         help="Profile benchmarks out-of-process (native frames).",
@@ -976,7 +962,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(_func=profile)
 
-    # mew compare
+
+def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "compare", help="Compare benchmark result files.", formatter_class=_CommandHelpFormatter
     )
@@ -1026,7 +1013,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(_func=compare)
 
-    # mew completions
+
+def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
     from mew._completions import SHELLS
 
     p = sub.add_parser(
@@ -1047,6 +1035,29 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("__complete")
     p.add_argument("kind", choices=["names", "cases", "tags"])
     p.set_defaults(_func=_complete)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argparse command tree. Each subparser sets ``_func`` to its handler."""
+    parser = argparse.ArgumentParser(
+        prog="mew",
+        description="Microbenchmarking for Python via Google Benchmark.",
+        formatter_class=_CommandHelpFormatter,
+        # git-style: global options up front, then `<command> [<args>]`, instead
+        # of argparse's default `{list,ls,run,…} ...` enumeration.
+        usage="mew [-h] [--version] <command> [<args>]",
+    )
+    parser.add_argument("--version", action="version", version=_VERSION)
+    # metavar `<command>` keeps the command list out of curly braces; prog="mew"
+    # so each subcommand's own usage reads `mew run …` (not the parent's usage
+    # string, which argparse would otherwise splice in).
+    sub = parser.add_subparsers(dest="_command", title="commands", metavar="<command>", prog="mew")
+
+    _add_list_cmd(sub)
+    _add_run_cmd(sub)
+    _add_profile_cmd(sub)
+    _add_compare_cmd(sub)
+    _add_completions_cmd(sub)
 
     return parser
 
