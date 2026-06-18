@@ -588,15 +588,22 @@ _NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
 _TIME_METRICS = frozenset({"real_time", "cpu_time"})
 
 
-def _scale_time(value: float, unit: str | None) -> tuple[float, str]:
-    """Rescale a raw ``(value, unit)`` pair to whichever of s/ms/us/ns keeps the
-    mantissa >= 1, e.g. ``(6995135790.99, "ns")`` -> ``(7.00, "s")``.
+def _to_ns(value: float, unit: str | None) -> float:
+    """Normalize a ``(value, unit)`` pair to nanoseconds.
 
     Google Benchmark reports every value in one declared unit (``ns`` unless
-    the benchmark calls ``SetTimeUnit``), so raw values regularly run to ten
-    digits; this is display-only and doesn't touch the delta/speedup math.
+    the benchmark calls ``SetTimeUnit``); two files being compared can declare
+    different units (e.g. one produced with ``--benchmark_time_unit=us``), so
+    delta/speedup math must go through this, not raw ``sample.value``.
     """
-    ns = value * _NS_PER_UNIT.get(unit or "ns", 1.0)
+    return value * _NS_PER_UNIT.get(unit or "ns", 1.0)
+
+
+def _scale_time(value: float, unit: str | None) -> tuple[float, str]:
+    """Rescale a raw ``(value, unit)`` pair to whichever of s/ms/us/ns keeps the
+    mantissa >= 1, e.g. ``(6995135790.99, "ns")`` -> ``(7.00, "s")``. Display-only.
+    """
+    ns = _to_ns(value, unit)
     for threshold, out_unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):
         if abs(ns) >= threshold:
             return ns / threshold, out_unit
@@ -622,7 +629,7 @@ def _fmt_stddev(sample: Sample, metric: str) -> str:
     if metric not in _TIME_METRICS:
         return f"{sample.stddev:.2f}"
     _, unit = _scale_time(sample.value, sample.time_unit)
-    scaled = sample.stddev * _NS_PER_UNIT.get(sample.time_unit or "ns", 1.0) / _NS_PER_UNIT[unit]
+    scaled = _to_ns(sample.stddev, sample.time_unit) / _NS_PER_UNIT[unit]
     return f"{scaled:.2f} {unit}"
 
 
@@ -750,18 +757,23 @@ def _render(
         row: list[Any] = [name, _value_cell(base, metric)]
         if show_stddev:
             row.append(_fmt_stddev(base, metric))
+        # Time metrics compare in nanoseconds so a declared-unit mismatch across
+        # files (e.g. one produced with --benchmark_time_unit=us) doesn't turn
+        # into a bogus delta; other metrics have no per-file unit to skew on.
+        base_value = _to_ns(base.value, base.time_unit) if is_time_metric else base.value
         for idx, c in enumerate(columns[1:]):
             s = c.samples[name]
             if is_time_metric and base.time_unit != s.time_unit:
                 unit_skew[name] = (base.time_unit, s.time_unit)
-            if base.value:
-                delta = (s.value - base.value) / base.value
+            s_value = _to_ns(s.value, s.time_unit) if is_time_metric else s.value
+            if base_value:
+                delta = (s_value - base_value) / base_value
             else:
                 # A zero baseline must not mask a nonzero contender as +0.00%.
-                delta = 0.0 if not s.value else float("inf")
+                delta = 0.0 if not s_value else float("inf")
             # "How much better is the contender": contender/baseline for
             # higher-is-better metrics, baseline/contender otherwise.
-            num, den = (s.value, base.value) if higher_is_better else (base.value, s.value)
+            num, den = (s_value, base_value) if higher_is_better else (base_value, s_value)
             speedup = num / den if den else float("inf")
             delta_text, delta_style = _fmt_delta(delta, higher_is_better=higher_is_better)
             row.append(_value_cell(s, metric))
@@ -781,9 +793,9 @@ def _render(
         name, (a, b) = next(iter(unit_skew.items()))
         extra = f" (+{len(unit_skew) - 1} more)" if len(unit_skew) > 1 else ""
         print(
-            f"warning: {len(unit_skew)} benchmark(s) declare different time units "
-            f"across files (e.g. {name!r}: {a!r} vs {b!r}){extra}; raw values are "
-            "compared without conversion, so deltas are not meaningful",
+            f"note: {len(unit_skew)} benchmark(s) declare different time units "
+            f"across files (e.g. {name!r}: {a!r} vs {b!r}){extra}; values are "
+            "normalized to a common unit before comparing",
             file=sys.stderr,
         )
 

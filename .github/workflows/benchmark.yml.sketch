@@ -6,7 +6,7 @@
 #     swamps most real regressions.
 #   * Both runs must execute on the same physical machine for the comparison
 #     to be meaningful — keep them in one job, not two.
-#   * --benchmark_repetitions=5 gives `mew compare` enough samples to compute
+#   * --repetitions 5 gives `mew compare` enough samples to compute
 #     a useful stddev. Tune up for noisier hardware.
 
 name: benchmarks
@@ -45,7 +45,7 @@ jobs:
       - name: Install (master)
         run: uv sync --all-extras
       - name: Benchmark master
-        run: uv run mew run benchmarks/ -o master.parquet --gb --benchmark_repetitions=5
+        run: uv run mew run benchmarks/ -o master.jsonl --repetitions 5
 
       # --- PR head ---
       - name: Check out PR head
@@ -53,7 +53,7 @@ jobs:
       - name: Install (PR)
         run: uv sync --all-extras
       - name: Benchmark PR
-        run: uv run mew run benchmarks/ -o pr.parquet --gb --benchmark_repetitions=5
+        run: uv run mew run benchmarks/ -o pr.jsonl --repetitions 5
 
       # --- compare ---
       - name: Compare
@@ -62,7 +62,7 @@ jobs:
         # `[tool.mew.regressions]` in pyproject.toml. Use `continue-on-error`
         # while you calibrate thresholds, then remove it to start gating merges.
         run: |
-          uv run mew compare master.parquet pr.parquet \
+          uv run mew compare master.jsonl pr.jsonl \
             --stddev \
             --fail-on-regression 5 \
             | tee compare.txt
@@ -71,8 +71,8 @@ jobs:
         with:
           name: benchmarks
           path: |
-            master.parquet
-            pr.parquet
+            master.jsonl
+            pr.jsonl
             compare.txt
 
       - name: Render PR comment body
