@@ -140,12 +140,22 @@ def narrow_entry(
 class Registry:
     def __init__(self) -> None:
         self._entries: list[Entry] = []
+        self._names: set[str] = set()
 
     def add(self, entry: Entry) -> None:
+        # Two entries sharing a name would run as indistinguishable rows and
+        # merge into one distribution on compare.
+        if entry.name in self._names:
+            raise ValueError(
+                f"a benchmark named {entry.name!r} is already registered; "
+                "pass a unique name= to disambiguate"
+            )
+        self._names.add(entry.name)
         self._entries.append(entry)
 
     def clear(self) -> None:
         self._entries.clear()
+        self._names.clear()
 
     def all(self) -> list[Entry]:
         return list(self._entries)

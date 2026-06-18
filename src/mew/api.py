@@ -17,6 +17,7 @@ else:
 from mew._core import TimeUnit
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
+from mew.reporter import _CASE_SUFFIX_RE, _OPTION_SUFFIXES_RE
 
 _REGISTERED_ATTR = "__mew_registered__"
 
@@ -63,8 +64,16 @@ def _check_options(options: Mapping[str, Any]) -> None:
     extra = set(options) - _OptionKeys
     if extra:
         raise TypeError(f"unknown option(s): {sorted(extra)}")
-    # Validate at decoration time, not deep inside the run: the decorator is
-    # where the mistake is on screen.
+    # Validate at decoration time, where the mistake is on screen. GB guards
+    # these values with asserts compiled out of release builds, so bad values
+    # would otherwise misbehave silently.
+    for key in ("iterations", "repetitions", "threads"):
+        if (v := options.get(key)) is not None and int(v) < 1:
+            raise TypeError(f"{key} must be >= 1, got {v!r}")
+    if (v := options.get("min_time")) is not None and float(v) <= 0:
+        raise TypeError(f"min_time must be positive, got {v!r}")
+    if (v := options.get("min_warmup_time")) is not None and float(v) < 0:
+        raise TypeError(f"min_warmup_time must be >= 0, got {v!r}")
     if options.get("threads") is not None and options.get("thread_range") is not None:
         # GB *accumulates* thread counts, so passing both would silently run
         # the union rather than one overriding the other.
@@ -78,6 +87,36 @@ def _check_options(options: Mapping[str, Any]) -> None:
             raise TypeError(f"thread_range must be a (min, max) pair, got {tr!r}") from None
         if int(lo) < 1 or int(hi) < int(lo):
             raise TypeError(f"thread_range must satisfy 1 <= min <= max, got {tr!r}")
+
+
+def _check_addressable(text: str, what: str) -> None:
+    """Reject constructs in a user-supplied name/label that collide with mew's
+    addressing grammar. Auto-derived names are well-formed by construction; an
+    explicit ``name=`` or case label is not."""
+    if not text.strip():
+        raise ValueError(f"{what} must not be empty")
+    for bad, why in (
+        ("\n", "list output and --stdin selection are line-oriented"),
+        ("\r", "list output and --stdin selection are line-oriented"),
+        ("::", "'::' separates path::filter selectors and the file prefix"),
+        ("[", "'[...]' addresses family cases (name[label])"),
+        ("]", "'[...]' addresses family cases (name[label])"),
+    ):
+        if bad in text:
+            raise ValueError(f"{what} {text!r} must not contain {bad!r}; {why}")
+
+
+def _check_name(name: str) -> None:
+    _check_addressable(name, "benchmark name")
+    # canonical_name strips these when results are read back, so the benchmark
+    # would silently regroup under the stripped name in compare/display.
+    stripped = _CASE_SUFFIX_RE.sub("", _OPTION_SUFFIXES_RE.sub("", name))
+    if stripped != name:
+        raise ValueError(
+            f"benchmark name {name!r} ends in a Google Benchmark option/case "
+            f"suffix, which mew strips when reading results (regrouping it as "
+            f"{stripped!r}); pick a name without a reserved trailing suffix"
+        )
 
 
 def _normalize_tags(tags: Iterable[str] | str | None) -> frozenset[str]:
@@ -154,6 +193,8 @@ def benchmark(
         immediately; omit to apply options first (``@benchmark(min_time=...)``).
     name : str, optional
         Override the auto-derived ``path/to/file.py::qualname`` registration name.
+        Must not contain ``::``, ``[``/``]``, or newlines, or end in a Google
+        Benchmark option suffix; these collide with how names are addressed.
     tags : Iterable[str] or str, optional
         Labels used by ``mew run --tag <name>`` for filtering. A single string is one tag.
     **options
@@ -167,7 +208,9 @@ def benchmark(
     Raises
     ------
     TypeError
-        If ``options`` contains an unknown key.
+        If ``options`` contains an unknown key or an out-of-range value.
+    ValueError
+        If ``name`` collides with mew's addressing grammar (see above).
     RuntimeError
         If the same function is already registered via another decorator.
 
@@ -179,6 +222,8 @@ def benchmark(
     ...         sorted([3, 1, 2])
     """
     _check_options(options)
+    if name is not None:
+        _check_name(name)
     norm_tags = _normalize_tags(tags)
 
     def deco(target: BenchmarkFn) -> BenchmarkFn:
@@ -217,6 +262,8 @@ def _register_family(
             raise ValueError(f"ids has {len(ids)} entries but parameters has {len(variants)}")
     if not variants:
         raise ValueError("parametrize/product needs at least one case")
+    if name is not None:
+        _check_name(name)
 
     # Guard before adding: a failed double-registration must not leave a
     # second entry in the registry.
@@ -225,6 +272,10 @@ def _register_family(
     base_name = name or _qualified_name(target, file)
     cases = [dict(kw) for kw in variants]
     labels = list(ids) if ids is not None else [_default_id(kw) for kw in cases]
+    # Labels are spliced into `name[label]` addressing, so they carry the same
+    # structural constraints as names; ids= overrides a derived label.
+    for label in labels:
+        _check_addressable(label, "case label")
     if len(set(labels)) != len(labels):
         from collections import Counter
 
@@ -308,9 +359,10 @@ def parametrize(
     Raises
     ------
     ValueError
-        If ``ids`` length doesn't match ``parameters``.
+        If ``ids`` length doesn't match ``parameters``, or a name/label
+        collides with mew's addressing grammar (``::``, ``[``/``]``, newlines).
     TypeError
-        If ``options`` contains an unknown key.
+        If ``options`` contains an unknown key or an out-of-range value.
     RuntimeError
         If the same function is already registered via another decorator.
 
@@ -390,6 +442,9 @@ def product(
     ------
     TypeError
         If no iterables are supplied.
+    ValueError
+        If a name/label collides with mew's addressing grammar
+        (``::``, ``[``/``]``, newlines).
     RuntimeError
         If the same function is already registered via another decorator.
 
