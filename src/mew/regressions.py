@@ -153,7 +153,7 @@ def load_config(
         if candidate.is_file():
             source = candidate
 
-    if source is not None and source.is_file():
+    if source is not None:
         with source.open("rb") as fh:
             doc = tomllib.load(fh)
         table = doc.get("tool", {}).get("mew", {}).get("regressions", {})

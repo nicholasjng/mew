@@ -9,7 +9,6 @@ instead of collapsing to "latest by timestamp" with second-granularity ties.
 from __future__ import annotations
 
 import os
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -62,6 +61,13 @@ def derive_session_tag(
 
 def _run_vcs(cwd: Path | None, program: str, args: list[str]) -> str | None:
     """Run ``program args`` and return its stripped stdout, or None on failure/empty."""
+    # Deferred: this module is on the `import mew` path, and subprocess (~6ms)
+    # should only be paid by commands that actually derive a session tag.
+    import shutil
+    import subprocess
+
+    if shutil.which(program) is None:
+        return None
     try:
         proc = subprocess.run(
             [program, *args], capture_output=True, text=True, timeout=5, cwd=cwd, check=False
