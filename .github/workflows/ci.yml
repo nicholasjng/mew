@@ -16,7 +16,7 @@ jobs:
     name: lint · prek + ty
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -42,7 +42,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -59,25 +59,22 @@ jobs:
         run: uv run pytest
 
   free-threaded:
-    name: free-threaded · py3.13t
+    name: free-threaded · py3.14t
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
-          python-version: "3.13t"
+          python-version: "3.14t"
           enable-cache: true
 
-      # The result-path deps (pyarrow, duckdb, memray, pyinstrument) don't
-      # publish 3.13t wheels yet, so this installs only the build group needed to
-      # compile and import the extension. Grow the test subset below as upstream
-      # free-threaded wheels appear.
-      - name: Build mew on the free-threaded interpreter
-        run: uv sync
+      # duckdb has no 3.14t wheel yet.
+      - name: Install project and its dependencies
+        run: uv sync --all-extras --group test --no-install-package duckdb
 
       - name: Assert the GIL stays disabled after import
         run: |
@@ -89,21 +86,14 @@ jobs:
           print("OK: GIL disabled after `import mew._core`")
           PY
 
-      # Dependency-light subset: core registration, running (including the
-      # threaded-mode guard), reporting, and session identity. Tests needing
-      # pyarrow/duckdb skip cleanly via importorskip.
-      - name: Run the dependency-light test subset
-        run: |
-          uv run --no-sync --with pytest python -m pytest -q \
-            tests/test_api.py tests/test_registry.py tests/test_runner.py \
-            tests/test_reporter.py tests/test_context.py tests/test_config.py \
-            tests/test_discovery.py tests/test_regressions.py tests/test_session.py
+      - name: Run tests
+        run: uv run --no-sync pytest
 
   docs:
     name: docs · sphinx
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
