@@ -6,18 +6,11 @@ write either Brendan-Gregg collapsed text (one profile per file) or speedscope's
 own JSON (which packs many profiles into one file behind a dropdown, handy for a
 big parametrized family where you want to cycle through cases).
 
-Status: **prototype.** The folding (:func:`fold_samples`) is validated against a
-synthetic fixture mirroring the documented export shape, not yet against a real
-Xcode-recorded trace. Three things to pin against a live trace before promoting it:
-
-1. **Schema name.** We export ``table[@schema="time-profile"]``; some Xcode
-   versions surface the CPU samples under ``time-sample``. See :data:`_XPATH`.
-2. **Frame order.** xctrace stores a backtrace leaf-first; both output formats want
-   root-first, so we reverse (:data:`_LEAF_FIRST`). Flip if a real trace shows the
-   flame graph upside down.
-3. **Sample weighting.** We weight every sample 1 (a count), so the JSON ``unit``
-   is ``"none"``. Threading xctrace's per-sample interval through would let the
-   flame graph read as time.
+xctrace stores a backtrace leaf-first; both output formats want root-first, so we
+reverse it (:data:`_LEAF_FIRST`). We export ``table[@schema="time-profile"]``
+(:data:`_XPATH`); some Xcode versions may surface CPU samples under a different
+schema name instead. Every sample is weighted 1 (a count), so the JSON ``unit`` is
+``"none"`` — not a timing weight.
 
 Port of the algorithm in inferno's ``collapse/xctrace.rs``, trimmed to what we
 need: stdlib :mod:`xml.etree.ElementTree` streaming replaces ``quick_xml`` (and
