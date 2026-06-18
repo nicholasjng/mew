@@ -93,12 +93,12 @@ so the threads don't all redo the same thing. `thread_range=(1, 8)` runs the
 benchmark once per thread count `1, 2, 4, 8` so you can chart scaling.
 
 :::{warning}
-**Threaded mode requires a free-threaded interpreter (CPython 3.13t+).**
+**Threaded mode requires a free-threaded interpreter (CPython 3.14t+).**
 On a stock (GIL) interpreter the benchmark trampoline holds the GIL across Google
 Benchmark's per-thread start barrier, so the worker threads would deadlock rather
 than run. mew detects this up front: by default it **warns and skips** the
 threaded benchmarks (emitting a `skipped` row for each) and runs the rest, so a
-mixed suite still works on stock CPython — run it again on a `python3.13t` build
+mixed suite still works on stock CPython — run it again on a free-threaded build
 (where mew's extension ships with the GIL disabled, `Py_MOD_GIL_NOT_USED`) to
 execute them. Pass `mew run --strict` (or `mew.run(strict=True)`) to turn the
 skip into a hard `RuntimeError` instead — useful in CI where the threaded

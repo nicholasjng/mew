@@ -80,7 +80,7 @@ MEW_ASAN=1 LD_PRELOAD="$(clang -print-file-name=libclang_rt.asan.so) $(clang -pr
 scripts/asan-pytest.sh
 ```
 
-## Free-threaded (3.13t+) build
+## Free-threaded (3.14t+) build
 
 mew's extension is built with nanobind's `FREE_THREADED` flag. nanobind keeps
 the stable-ABI (`cp312`) wheel on a stock interpreter and switches to a
@@ -92,8 +92,8 @@ Build a separate free-threaded editable install in `.venv-ft` so it doesn't
 clobber the default `.venv`:
 
 ```console
-$ uv python install 3.13t
-$ UV_PROJECT_ENVIRONMENT=.venv-ft uv sync --python 3.13t
+# duckdb does not ship wheels with free-threading support yet.
+$ UV_PROJECT_ENVIRONMENT=.venv-ft uv sync --python 3.14t --all-extras --all-groups --no-install-package duckdb
 ```
 
 Confirm the GIL stays disabled after importing the extension:
@@ -103,13 +103,10 @@ $ .venv-ft/bin/python -c "import sys, mew._core; assert not sys._is_gil_enabled(
 ```
 
 Threaded benchmarks (`threads` / `thread_range`) only run here — on a GIL
-interpreter mew raises rather than deadlocking on Google Benchmark's start
-barrier. Run the dependency-light suite (the result-path deps don't ship 3.13t
-wheels yet):
+interpreter, mew skips them with a warning to avoid deadlocking on Google Benchmark's start barrier.
 
 ```console
-$ UV_PROJECT_ENVIRONMENT=.venv-ft uv run --with pytest --no-sync python -m pytest \
-    tests/test_runner.py tests/test_api.py tests/test_reporter.py
+$ UV_PROJECT_ENVIRONMENT=.venv-ft uv run pytest
 ```
 
 ## ThreadSanitizer
@@ -119,7 +116,7 @@ the ASAN build can't see. It mirrors the ASAN flow (lands in `build/tsan/`, and
 is mutually exclusive with ASAN):
 
 ```console
-$ MEW_TSAN=1 uv sync --all-groups --reinstall-package=mew
+$ MEW_TSAN=1 uv sync --all-extras --all-groups --no-install-package duckdb --reinstall-package=mew
 ```
 
 Preload the TSAN runtime when running, the same way ASAN needs preloading
