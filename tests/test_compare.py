@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 
 import numpy as np
 import pytest
+from _helpers import Console, row as _row, write_json as _write_json, write_jsonl as _write_jsonl
 
-from mew._console import Terminal
 from mew._statistics import reduce_statistic, resolve_statistic
 from mew.compare import (
     _aggregate_group,
@@ -21,37 +20,6 @@ from mew.compare import (
     _split_selector,
     compare,
 )
-
-
-class Console(Terminal):
-    """A capture terminal mirroring rich's record/export_text shape, color off."""
-
-    def __init__(self, *, record: bool = True, width: int = 80) -> None:
-        self._buf = io.StringIO()
-        super().__init__(file=self._buf, width=width, color=False)
-
-    def export_text(self) -> str:
-        return self._buf.getvalue()
-
-
-def _make_doc(benches: list[dict]) -> dict:
-    return {"context": {}, "benchmarks": benches}
-
-
-def _row(name: str, real_time: float, **extra) -> dict:
-    return {
-        "name": name,
-        "real_time": real_time,
-        "cpu_time": real_time,
-        "iterations": 1000,
-        "time_unit": "ns",
-        "aggregate_name": "",
-        **extra,
-    }
-
-
-def _write_json(path: Path, benches: list[dict]) -> None:
-    path.write_text(json.dumps(_make_doc(benches)))
 
 
 def test_load_basic(tmp_path: Path) -> None:
@@ -170,7 +138,7 @@ def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
     _write_json(base, [_row("b", 1.0), _row("b", 2.0), _row("b", 99.0)])
     _write_json(other, [_row("b", 1.0), _row("b", 2.0), _row("b", 51.0)])
 
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([base, other], statistic=np.max, console=console)
     assert code == 0
     out = console.export_text()
@@ -202,7 +170,7 @@ def test_compare_speedup_signs(tmp_path: Path, capsys: pytest.CaptureFixture[str
     _write_json(base, [_row("bench_x", 100.0), _row("bench_y", 50.0)])
     _write_json(other, [_row("bench_x", 80.0), _row("bench_y", 75.0)])
 
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([base, other], console=console)
     assert code == 0
     out = console.export_text()
@@ -223,7 +191,7 @@ def test_compare_warns_on_missing_names(tmp_path: Path, capsys: pytest.CaptureFi
     _write_json(base, [_row("bench_x", 100.0), _row("bench_only_in_base", 1.0)])
     _write_json(other, [_row("bench_x", 80.0)])
 
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([base, other], console=console)
     assert code == 0
     err = capsys.readouterr().err
@@ -239,7 +207,7 @@ def test_compare_empty_overlap(tmp_path: Path, capsys: pytest.CaptureFixture[str
     other = tmp_path / "other.json"
     _write_json(base, [_row("a", 1.0)])
     _write_json(other, [_row("b", 1.0)])
-    code = compare([base, other], console=Console(record=True))
+    code = compare([base, other], console=Console())
     assert code == 1
     assert "no overlapping benchmarks" in capsys.readouterr().err
 
@@ -249,7 +217,7 @@ def test_compare_pattern_filter(tmp_path: Path) -> None:
     other = tmp_path / "other.json"
     _write_json(base, [_row("alpha", 10.0), _row("beta", 20.0)])
     _write_json(other, [_row("alpha", 5.0), _row("beta", 40.0)])
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([base, other], pattern="alpha", console=console)
     assert code == 0
     out = console.export_text()
@@ -262,7 +230,7 @@ def test_compare_pattern_is_regex(tmp_path: Path) -> None:
     other = tmp_path / "other.json"
     _write_json(base, [_row("alpha", 10.0), _row("beta", 20.0), _row("gamma", 30.0)])
     _write_json(other, [_row("alpha", 5.0), _row("beta", 40.0), _row("gamma", 15.0)])
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     # Alternation selects two of the three; the third is filtered out.
     assert compare([base, other], pattern="alpha|gamma", console=console) == 0
     out = console.export_text()
@@ -277,7 +245,7 @@ def test_compare_invalid_pattern_errors(tmp_path: Path) -> None:
     _write_json(base, [_row("alpha", 10.0)])
     _write_json(other, [_row("alpha", 5.0)])
     with pytest.raises(SystemExit, match="invalid benchmark filter pattern"):
-        compare([base, other], pattern="foo(", console=Console(record=True))
+        compare([base, other], pattern="foo(", console=Console())
 
 
 def test_compare_requires_two_files(tmp_path: Path) -> None:
@@ -295,7 +263,7 @@ def test_compare_stddev_column(tmp_path: Path) -> None:
     other = tmp_path / "other.json"
     _write_json(base, [_row("b", 95.0), _row("b", 100.0), _row("b", 105.0)])
     _write_json(other, [_row("b", 78.0), _row("b", 80.0), _row("b", 82.0)])
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([base, other], show_stddev=True, console=console)
     assert code == 0
     out = console.export_text()
@@ -323,12 +291,6 @@ def test_load_multi_session_keeps_latest(
     assert "2026-05-01" in err
 
 
-def _write_jsonl(path: Path, benches: list[dict], context: dict | None = None) -> None:
-    lines = [json.dumps({"context": context or {}})]
-    lines += [json.dumps(b) for b in benches]
-    path.write_text("\n".join(lines) + "\n")
-
-
 def test_load_jsonl(tmp_path: Path) -> None:
     p = tmp_path / "a.jsonl"
     _write_jsonl(p, [_row("bench_x", 10.0)], context={"host_name": "h1"})
@@ -349,7 +311,7 @@ def test_compare_jsonl_files(tmp_path: Path) -> None:
     other = tmp_path / "other.jsonl"
     _write_jsonl(base, [_row("bench_x", 100.0)])
     _write_jsonl(other, [_row("bench_x", 50.0)])
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     assert compare([base, other], console=console) == 0
     assert "×2.000" in console.export_text()
 
@@ -376,8 +338,8 @@ def test_compare_key_func_matches_across_suites(tmp_path: Path) -> None:
     _write_json(base, [_row("bench_ducky.py::bench_select", 100.0)])
     _write_json(other, [_row("bench_duckdb.py::bench_select", 80.0)])
 
-    console = Console(record=True, width=200)
-    assert compare([base, other], console=Console(record=True)) == 1  # no overlap by name
+    console = Console(width=200)
+    assert compare([base, other], console=Console()) == 1  # no overlap by name
     code = compare([base, other], key="func", console=console)
     assert code == 0
     out = console.export_text()
@@ -466,7 +428,7 @@ def test_resolve_session_ambiguous_tag(tmp_path: Path) -> None:
 
 def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
     p = _two_session_file(tmp_path)
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([Path(f"{p}@before"), Path(f"{p}@after")], console=console)
     assert code == 0
     out = console.export_text()
@@ -490,23 +452,17 @@ def test_compare_prints_context_and_warns_on_skew(
 ) -> None:
     base = tmp_path / "base.json"
     other = tmp_path / "other.json"
-    base.write_text(
-        json.dumps(
-            {
-                "context": {"host_name": "h1", "num_cpus": 8, "custom": {"engine": "ducky 0.1"}},
-                "benchmarks": [_row("bench_x", 100.0)],
-            }
-        )
+    _write_json(
+        base,
+        [_row("bench_x", 100.0)],
+        context={"host_name": "h1", "num_cpus": 8, "custom": {"engine": "ducky 0.1"}},
     )
-    other.write_text(
-        json.dumps(
-            {
-                "context": {"host_name": "h2", "num_cpus": 4, "custom": {"engine": "duckdb 1.5.3"}},
-                "benchmarks": [_row("bench_x", 80.0)],
-            }
-        )
+    _write_json(
+        other,
+        [_row("bench_x", 80.0)],
+        context={"host_name": "h2", "num_cpus": 4, "custom": {"engine": "duckdb 1.5.3"}},
     )
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     assert compare([base, other], console=console) == 0
     out = console.export_text()
     # Per-file provenance headers.
@@ -526,9 +482,9 @@ def test_compare_no_skew_warning_when_contexts_match(
     base = tmp_path / "base.json"
     other = tmp_path / "other.json"
     ctx = {"host_name": "h1", "num_cpus": 8}
-    base.write_text(json.dumps({"context": ctx, "benchmarks": [_row("bench_x", 100.0)]}))
-    other.write_text(json.dumps({"context": ctx, "benchmarks": [_row("bench_x", 80.0)]}))
-    assert compare([base, other], console=Console(record=True, width=200)) == 0
+    _write_json(base, [_row("bench_x", 100.0)], context=ctx)
+    _write_json(other, [_row("bench_x", 80.0)], context=ctx)
+    assert compare([base, other], console=Console(width=200)) == 0
     assert "differ in" not in capsys.readouterr().err
 
 
@@ -580,7 +536,7 @@ def test_compare_aligns_files_run_with_different_min_time(tmp_path: Path) -> Non
     other = tmp_path / "other.json"
     _write_json(base, [_row("a.py::bench_x/case:0/min_time:0.200", 100.0, label="n=10")])
     _write_json(other, [_row("a.py::bench_x/case:0/min_time:0.500", 80.0, label="n=10")])
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     assert compare([base, other], console=console) == 0
     out = console.export_text()
     assert "a.py::bench_x[n=10]" in out
@@ -609,7 +565,7 @@ def test_load_variant_columns_pivots(tmp_path: Path) -> None:
 
 
 def test_compare_by_variant(tmp_path: Path) -> None:
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([_variant_file(tmp_path)], by="variant", console=console)
     assert code == 0
     out = console.export_text()
@@ -618,7 +574,7 @@ def test_compare_by_variant(tmp_path: Path) -> None:
 
 
 def test_compare_by_variant_baseline(tmp_path: Path) -> None:
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([_variant_file(tmp_path)], by="variant", baseline="b", console=console)
     assert code == 0
     out = console.export_text()
@@ -670,7 +626,7 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
     _write_json(base, [_mem_row("bench_x", 1.0, peak=1 << 20, allocs=100)])
     _write_json(other, [_mem_row("bench_x", 1.0, peak=1 << 21, allocs=50)])
 
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([base, other], metric="memory.peak_bytes", console=console)
     assert code == 0
     out = console.export_text()
@@ -680,7 +636,7 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
     assert "ratio" in out
     assert "speedup" not in out
 
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([base, other], metric="memory.allocations_per_iteration", console=console)
     assert code == 0
     assert "-50.00%" in console.export_text()
@@ -691,7 +647,7 @@ def test_compare_time_metric_keeps_speedup_header(tmp_path: Path) -> None:
     other = tmp_path / "other.json"
     _write_json(base, [_row("bench_x", 100.0)])
     _write_json(other, [_row("bench_x", 80.0)])
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     compare([base, other], metric="real_time", console=console)
     out = console.export_text()
     assert "speedup" in out
@@ -707,7 +663,7 @@ def test_compare_allocations_per_iteration_is_speed_independent(tmp_path: Path) 
     _write_json(base, [_mem_row("bench_x", 1.0, peak=1 << 20, allocs=1000, iterations=100)])
     _write_json(other, [_mem_row("bench_x", 1.0, peak=1 << 20, allocs=500, iterations=50)])
 
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([base, other], metric="memory.allocations_per_iteration", console=console)
     assert code == 0
     out = console.export_text()
@@ -722,7 +678,7 @@ def test_compare_memory_metric_without_data_hints_profile_flag(
     other = tmp_path / "other.json"
     _write_json(base, [_row("bench_x", 1.0)])
     _write_json(other, [_row("bench_x", 1.0)])
-    code = compare([base, other], metric="memory.peak_bytes", console=Console(record=True))
+    code = compare([base, other], metric="memory.peak_bytes", console=Console())
     assert code == 1
     assert "--profile-memory" in capsys.readouterr().err
 
@@ -733,7 +689,7 @@ def test_compare_marks_high_cv_rows(tmp_path: Path) -> None:
     # Baseline reps scatter wildly (CV >> 25%); other is steady.
     _write_json(base, [_row("b", 40.0), _row("b", 100.0), _row("b", 160.0)])
     _write_json(other, [_row("b", 99.0), _row("b", 100.0), _row("b", 101.0)])
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     assert compare([base, other], console=console) == 0
     out = console.export_text()
     assert "(!)" in out
@@ -745,7 +701,7 @@ def test_compare_no_cv_marker_on_steady_rows(tmp_path: Path) -> None:
     other = tmp_path / "other.json"
     _write_json(base, [_row("b", 99.0), _row("b", 100.0), _row("b", 101.0)])
     _write_json(other, [_row("b", 49.0), _row("b", 50.0), _row("b", 51.0)])
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     assert compare([base, other], console=console) == 0
     assert "(!)" not in console.export_text()
 
@@ -917,7 +873,7 @@ def _two_session_jsonl(tmp_path: Path) -> Path:
 
 def test_compare_two_sessions_of_one_jsonl_file(tmp_path: Path) -> None:
     p = _two_session_jsonl(tmp_path)
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     assert compare([Path(f"{p}@before"), Path(f"{p}@after")], console=console) == 0
     out = console.export_text()
     assert "-20.00%" in out  # 100 -> 80: both sessions resolved from row-level identity
@@ -935,7 +891,7 @@ def test_compare_jsonl_gz_roundtrip(tmp_path: Path) -> None:
     other = tmp_path / "other.jsonl.gz"
     write(base, [_row("bench_x", 100.0)])
     write(other, [_row("bench_x", 50.0)])
-    console = Console(record=True, width=200)
+    console = Console(width=200)
     code = compare([base, other], console=console)
     assert code == 0
     out = console.export_text()

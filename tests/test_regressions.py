@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import io
-import json
 from pathlib import Path
 
 import pytest
+from _helpers import Console, row as _row, write_json as _write_json
 
-from mew._console import Terminal
 from mew.compare import compare
 from mew.regressions import (
     AllowRule,
@@ -18,22 +16,6 @@ from mew.regressions import (
     load_config,
     render_panel,
 )
-
-
-def _row(name: str, real_time: float, **extra) -> dict:
-    return {
-        "name": name,
-        "real_time": real_time,
-        "cpu_time": real_time,
-        "iterations": 1000,
-        "time_unit": "ns",
-        "aggregate_name": "",
-        **extra,
-    }
-
-
-def _write_json(path: Path, benches: list[dict]) -> None:
-    path.write_text(json.dumps({"context": {}, "benchmarks": benches}))
 
 
 def test_evaluate_within_threshold() -> None:
@@ -185,9 +167,7 @@ def test_compare_passes_when_under_threshold(tmp_path: Path) -> None:
     _write_json(base, [_row("b", 100.0)])
     _write_json(other, [_row("b", 102.0)])  # +2%
     cfg = RegressionConfig(default_threshold_pct=5.0)
-    code = compare(
-        [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
-    )
+    code = compare([base, other], regressions=cfg, console=Console(width=200))
     assert code == 0
 
 
@@ -197,9 +177,7 @@ def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixtu
     _write_json(base, [_row("b", 100.0)])
     _write_json(other, [_row("b", 120.0)])  # +20%
     cfg = RegressionConfig(default_threshold_pct=5.0)
-    code = compare(
-        [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
-    )
+    code = compare([base, other], regressions=cfg, console=Console(width=200))
     assert code == 2
     err = capsys.readouterr().err
     assert "❌" in err
@@ -221,9 +199,7 @@ reason = "noisy"
 """
     )
     cfg = load_config(default_threshold_pct=5.0, path=py)
-    code = compare(
-        [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
-    )
+    code = compare([base, other], regressions=cfg, console=Console(width=200))
     # 20% > 5% default but the rule allows up to 50% — allowed_over → exit 0.
     assert code == 0
 
@@ -243,9 +219,7 @@ reason = "known-flaky"
 """
     )
     cfg = load_config(default_threshold_pct=5.0, path=py)
-    code = compare(
-        [base, other], regressions=cfg, console=Terminal(file=io.StringIO(), width=200, color=False)
-    )
+    code = compare([base, other], regressions=cfg, console=Console(width=200))
     assert code == 0
 
 
@@ -259,6 +233,6 @@ def test_compare_iterations_metric_regression(tmp_path: Path) -> None:
         [base, other],
         metric="iterations",
         regressions=cfg,
-        console=Terminal(file=io.StringIO(), width=200, color=False),
+        console=Console(width=200),
     )
     assert code == 2
