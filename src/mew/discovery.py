@@ -7,8 +7,10 @@ API and carries no stability guarantee.
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import hashlib
 import importlib.util
+import os
 import sys
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -44,6 +46,7 @@ def collect_files(
     *,
     file_patterns: Iterable[str],
 ) -> list[Path]:
+    patterns = list(file_patterns)
     seen: set[Path] = set()
     out: list[Path] = []
     for sel in selectors:
@@ -54,9 +57,21 @@ def collect_files(
         if path.is_file():
             candidates = [path]
         else:
+            # One tree walk matched against every pattern; rglob would re-walk
+            # the tree once per pattern, and this also runs on every Tab press
+            # (the completion cache's freshness check). A pattern without a `/`
+            # matches file names at any depth (rglob-style); one with a `/`
+            # matches the path relative to the selector root.
             candidates = []
-            for pat in file_patterns:
-                candidates.extend(sorted(path.rglob(pat)))
+            for dirpath, _, filenames in os.walk(path):
+                reldir = os.path.relpath(dirpath, path)
+                for fname in filenames:
+                    rel = fname if reldir == os.curdir else os.path.join(reldir, fname)
+                    # Slash-separated for matching, so `/` patterns work on Windows.
+                    rel = rel.replace(os.sep, "/")
+                    if any(fnmatch.fnmatch(rel if "/" in pat else fname, pat) for pat in patterns):
+                        candidates.append(Path(dirpath, fname))
+            candidates.sort()
         for p in candidates:
             if p not in seen:
                 seen.add(p)

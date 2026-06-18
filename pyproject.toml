@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "mew"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A CLI for microbenchmarking Python code snippets."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -63,6 +63,10 @@ wheel.packages = ["src/mew"]
 wheel.py-api = "cp312"
 cmake.version = ">=3.21"
 cmake.build-type = "Release"
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "src/mew/__init__.py"
 
 [tool.scikit-build.cmake.define]
 BENCHMARK_ENABLE_TESTING = "OFF"

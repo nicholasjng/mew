@@ -11,7 +11,6 @@ column are left-ellipsized; there is no wrapping or East-Asian width handling.
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 from typing import TextIO
 
@@ -36,6 +35,8 @@ def sgr(text: str, *styles: str, enabled: bool = True) -> str:
 
 
 def terminal_width(default: int = 80) -> int:
+    import shutil
+
     return shutil.get_terminal_size((default, 24)).columns
 
 
@@ -145,14 +146,13 @@ class Table:
             for i, cell in enumerate(row):
                 widths[i] = max(widths[i], _visible_len(cell))
 
-        flex_idx = [i for i, f in enumerate(self._flex) if f]
-        if flex_idx:
+        # At most one flex column (the benchmark name); it absorbs leftover width.
+        flex = next((i for i, f in enumerate(self._flex) if f), None)
+        if flex is not None:
             overhead = (len(self._headers) - 1) * len(_COL_SEP)
-            fixed = sum(w for i, w in enumerate(widths) if i not in flex_idx)
-            avail = width - fixed - overhead
-            share = max(1, avail // len(flex_idx))
-            for i in flex_idx:
-                widths[i] = max(len(self._headers[i]), min(widths[i], share))
+            fixed = sum(w for i, w in enumerate(widths) if i != flex)
+            avail = max(1, width - fixed - overhead)
+            widths[flex] = max(len(self._headers[flex]), min(widths[flex], avail))
 
         lines: list[str] = []
         if self.title:
