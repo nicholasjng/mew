@@ -137,8 +137,9 @@ def load_config(
 ) -> RegressionConfig:
     """Build a :class:`RegressionConfig`.
 
-    Reads ``[tool.mew.regressions]`` from ``path`` (or ``pyproject.toml`` in the cwd
-    when ``path`` is ``None``). Rules are searched in file order.
+    Reads ``[tool.mew.regressions]`` from ``path`` (or, when ``path`` is ``None``,
+    the nearest ``pyproject.toml`` walking up from the cwd, mirroring how
+    ``[tool.mew]`` config is found). Rules are searched in file order.
     """
     rules: list[AllowRule] = []
     threshold = default_threshold
@@ -149,9 +150,12 @@ def load_config(
         # defaults; only the implicit pyproject.toml probe may come up empty.
         raise SystemExit(f"regressions config not found: {source}")
     if source is None:
-        candidate = Path.cwd() / "pyproject.toml"
-        if candidate.is_file():
-            source = candidate
+        cwd = Path.cwd().resolve()
+        for parent in [cwd, *cwd.parents]:
+            candidate = parent / "pyproject.toml"
+            if candidate.is_file():
+                source = candidate
+                break
 
     if source is not None:
         with source.open("rb") as fh:

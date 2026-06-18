@@ -8,7 +8,7 @@ parametrized family where you want to cycle through cases).
 We export ``table[@schema="time-profile"]``
 (:data:`_XPATH`); some Xcode versions may surface CPU samples under a different
 schema name instead. Every sample is weighted 1 (a count), so the JSON ``unit`` is
-``"none"`` — not a timing weight.
+``"none"``, not a timing weight.
 
 xctrace stores a backtrace leaf-first; speedscope wants root-first, so we
 reverse it (:data:`_LEAF_FIRST`).
@@ -62,12 +62,11 @@ def fold_samples(source: str | Path | IO[bytes]) -> Counter[tuple[str, ...]]:
     backtraces: dict[str, list[str]] = {}
     folded: Counter[tuple[str, ...]] = Counter()
 
-    # iterparse fires `end` for a <frame> before its enclosing <backtrace>, and for
-    # the <backtrace> before its <row>; so at a backtrace's `end` its frame children
-    # are fully populated. We resolve there and drop the row afterwards. Clearing
-    # the row alone is not enough — the emptied elements would stay attached to
-    # their parent and memory would still grow O(#samples) — so we track the
-    # open-element stack and delete finished rows from the enclosing table.
+    # iterparse fires `end` for frames before their <backtrace> and for the
+    # backtrace before its <row>, so a backtrace resolves fully at its own
+    # `end`. Clearing the row alone is not enough (emptied elements stay
+    # attached to the parent, growing O(#samples)), so we track the open stack
+    # and delete finished rows from the enclosing table.
     stack: list[ET.Element] = []
     for event, elem in ET.iterparse(source, events=("start", "end")):
         if event == "start":

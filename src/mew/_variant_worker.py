@@ -72,12 +72,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sample-html", default=None, type=Path, dest="sample_html")
     ns = ap.parse_args(argv)
 
-    # Isolate the data channel. The parent parses our stdout as JSONL, but the
-    # benchmarked user code (and Google Benchmark) share this process and may
-    # write to stdout; a single stray print would corrupt the stream and abort
-    # the whole --variant run. Preserve the real stdout fd for the reporter, then
-    # point fd 1 at stderr so any other write lands on the (separately captured,
-    # never parsed) stderr channel instead.
+    # Isolate the data channel: the parent parses our stdout as JSONL, and a
+    # stray print from user code or GB would corrupt it. Keep the real stdout
+    # fd for the reporter and point fd 1 at stderr, the never-parsed channel.
     sys.stdout.flush()
     data_fd = os.dup(1)
     os.dup2(2, 1)

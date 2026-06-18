@@ -85,10 +85,9 @@ def import_file(path: Path) -> None:
     Prepends the parent dir to ``sys.path`` (pytest ``prepend`` mode) so a bench file
     can import a sibling; left in place so run-time-deferred imports still resolve.
     """
-    # Stable module name from the resolved path so reimports are no-ops. A
-    # content-addressed digest (not the salted built-in hash) keeps the name
-    # deterministic across processes and collision-resistant, so two distinct
-    # bench files can't map to the same synthetic module and shadow each other.
+    # Stable module name from the resolved path so reimports are no-ops; a
+    # content-addressed digest keeps it deterministic across processes and
+    # collision-resistant, unlike the salted built-in hash.
     resolved = path.resolve()
     digest = hashlib.sha1(str(resolved).encode()).hexdigest()[:16]
     mod_name = f"mew._bench_{digest}"

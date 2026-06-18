@@ -74,7 +74,7 @@ def _merge_row(
 
     A child may itself run N inner Google Benchmark repetitions (via
     ``--benchmark_repetitions`` in the forwarded args or a decorator option), so
-    the merged index composes outer × inner — a flat overwrite with the outer
+    the merged index composes outer × inner; a flat overwrite with the outer
     index would collapse distinct inner measurements onto one index. With a
     single inner repetition this reduces to ``repetition_index=rep``,
     ``repetitions=outer_reps``.
@@ -263,7 +263,6 @@ def run_variants(
                     return failures + 1
                 started = True
             if reporter is not None:
-                # Overlay variant / rep identity and the child's custom context.
                 child_custom = child_ctx.get("custom")
                 reporter.report_runs(
                     [
