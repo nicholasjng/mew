@@ -50,7 +50,7 @@ def _benchpath_selectors(cfg: _config.Config) -> list[_discovery.Selector]:
     """Selectors for the config benchpaths, anchored at the project root.
 
     Config paths are declared next to pyproject.toml, so they must resolve
-    against it — not the cwd — for `mew run`/`list` to work from a subdirectory.
+    against it, not the cwd, for `mew run`/`list` to work from a subdirectory.
     """
     root = cfg.project_root or Path.cwd()
     selectors: list[_discovery.Selector] = []
@@ -91,13 +91,11 @@ def _collect(
                 pairs.append((_discovery.parse(line), True))
             else:
                 name_filters.append(line)
-    # Need files to import. Positional args and `::` stdin selectors supply them;
-    # otherwise fall back to benchpaths, unless stdin was given but empty, where
-    # an empty pipe should select nothing rather than the whole suite.
+    # Files to import come from positional args and `::` stdin selectors, else
+    # benchpaths; an empty stdin pipe must select nothing, not the whole suite.
     if not pairs and (name_filters or not stdin):
-        # A missing default benchpath is "nothing to discover" (a fresh project
-        # should get "no benchmarks found"), not a hard error like a mistyped
-        # positional path.
+        # A missing default benchpath means "nothing to discover" in a fresh
+        # project, not a hard error like a mistyped positional path.
         pairs = [(s, literal) for s in _benchpath_selectors(cfg) if s.path.exists()]
 
     try:
@@ -110,18 +108,15 @@ def _collect(
     for f in files:
         _discovery.import_file(f)
 
-    # Opportunistic completion-cache refresh from the full discovered set. Gate on
-    # default discovery so a targeted run (positional paths / stdin) doesn't
-    # overwrite the full-suite cache with a subset.
+    # Refresh the completion cache only on default discovery, so a targeted run
+    # (positional paths / stdin) doesn't overwrite the full-suite cache.
     if not paths and not stdin:
         from mew import _completion_cache as _cc
 
         _cc.refresh(cfg.project_root or Path.cwd(), files, REGISTRY.all())
 
-    # Per-selector filter and each path-less stdin name are OR'd together (and
-    # AND'd with the global -k). Compiled up front (literal where the source says
-    # so) so a bad pattern fails before any run; a partial family match narrows
-    # it to the matching cases.
+    # Per-selector filters and path-less stdin names OR together, then AND with
+    # the global -k. Compiled up front so a bad pattern fails before any run.
     try:
         selector_res = [compile_name_filter(s.filter, literal=lit) for s, lit in pairs if s.filter]
         selector_res += [compile_name_filter(n, literal=True) for n in name_filters]
@@ -625,8 +620,14 @@ def compare(
     spec = statistic if statistic is not None else _load_config_or_exit().statistic
     reduce = resolve_statistic(spec) if spec is not None else None
 
+    # Any regression flag opts into gating, so the gate flag alone is not a
+    # silent no-op; it gates at the default threshold.
     cfg = None
-    if regression_threshold is not None or regressions_config is not None:
+    if (
+        regression_threshold is not None
+        or regressions_config is not None
+        or exit_non_zero_on_regression
+    ):
         from mew.regressions import load_config
 
         cfg = load_config(
@@ -742,22 +743,23 @@ def _warmup_seconds(value: str) -> float:
     """argparse type for --min-warmup-time: '0.2', '200ms', '1m' → seconds."""
     from mew.profilers.base import parse_seconds
 
-    return parse_seconds(value, flag="--min-warmup-time")
+    try:
+        return parse_seconds(value, flag="--min-warmup-time")
+    except SystemExit as e:
+        # ArgumentTypeError gets argparse's usage-error exit (2); SystemExit
+        # would exit 1, colliding with the "nothing matched" code.
+        raise argparse.ArgumentTypeError(str(e).removeprefix("mew: ")) from e
 
 
 def _percent(value: str) -> float:
     """argparse type for --regression-threshold: '5%' → 5.0. Requires the '%' suffix
     so the flag reads unambiguously at the call site, not just in --help."""
-    if not value.endswith("%"):
-        raise SystemExit(
-            f"mew: invalid --regression-threshold {value!r}; expected a percent, e.g. '5%'"
-        )
     try:
+        if not value.endswith("%"):
+            raise ValueError
         return float(value[:-1])
     except ValueError:
-        raise SystemExit(
-            f"mew: invalid --regression-threshold {value!r}; expected a percent, e.g. '5%'"
-        ) from None
+        raise argparse.ArgumentTypeError(f"expected a percent like '5%', got {value!r}") from None
 
 
 def _add_tag_arg(p: argparse.ArgumentParser) -> None:
@@ -1050,8 +1052,10 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--exit-non-zero-on-regression",
         action="store_true",
-        help="exit 2 if any benchmark regressed past the threshold. Without this, "
-        "the regression panel is informational only and the exit code is unaffected.",
+        help="exit 2 if any benchmark regressed past the threshold (the "
+        "[tool.mew.regressions] default when no --regression-threshold is given). "
+        "Without this, the regression panel is informational only and the exit "
+        "code is unaffected.",
     )
     p.add_argument(
         "--regressions-config",
