@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -216,6 +217,11 @@ def test_run_projector_finalize_is_optional_on_inner():
     _RunProjector(NoFinalize()).finalize()
 
 
+@pytest.mark.skipif(
+    not getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="memray does not track allocations on a free-threaded interpreter "
+    "(returns empty profiles), so the per-case byte comparison is meaningless",
+)
 def test_memory_profile_expands_family_keyed_per_case():
     pytest.importorskip("memray")
     from mew.memory import profile as mem_profile

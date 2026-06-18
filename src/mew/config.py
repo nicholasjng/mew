@@ -35,6 +35,9 @@ class Config:
     # become `--benchmark_<key>=<value>` (or `--benchmark_<key>` for bool True).
     benchmark_options: dict[str, Any] = field(default_factory=dict)
     session_tag: SessionTagSpec = field(default_factory=SessionTagSpec)
+    # Default `mew compare` reducer: a built-in name or "module.path:attr" ref
+    # (see _statistics.resolve_statistic); None keeps the median. --statistic wins.
+    statistic: str | None = None
     project_root: Path | None = None
 
 
@@ -81,11 +84,15 @@ def load(start: Path | None = None) -> Config:
                 f"invalid time unit {unit!r} in [tool.mew.benchmark-options]; "
                 f"expected one of {sorted(_VALID_UNITS)}"
             )
+        statistic = tool.get("statistic")
+        if statistic is not None and not isinstance(statistic, str):
+            raise ValueError("[tool.mew] statistic must be a 'module.path:attr' string")
         return Config(
             benchpaths=list(tool.get("benchpaths", ["benchmarks"])),
             python_files=list(tool.get("python_files", ["bench_*.py", "*_bench.py"])),
             benchmark_options=benchmark_options,
             session_tag=_parse_session_tag(tool.get("session_tag", {})),
+            statistic=statistic,
             project_root=parent,
         )
     return Config()

@@ -26,6 +26,7 @@ from typing import Any
 
 from mew._console import Span, Table, Terminal, sgr
 from mew._registry import compile_name_filter
+from mew._statistics import Statistic, reduce_statistic
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
 from mew.reporter import _fmt_bytes, canonical_name
 
@@ -266,14 +267,23 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
     return value.get(tail) if isinstance(value, dict) else None
 
 
-def _aggregate_group(rows: list[dict[str, Any]], metric: str) -> tuple[float, float | None]:
-    """Median and (sample) stddev across a group of per-repetition rows."""
+def _aggregate_group(
+    rows: list[dict[str, Any]], metric: str, statistic: Statistic | None = None
+) -> tuple[float, float | None]:
+    """Center and (sample) stddev across a group of per-repetition rows.
+
+    The center is the median by default (stdlib, no numpy); ``statistic`` swaps in
+    a custom reducer (p95, geometric mean, …) via :func:`reduce_statistic`. stddev
+    stays the spread measure either way, feeding the noise (CV) flag.
+    """
     values = [float(v) for r in rows if (v := _metric_value(r, metric)) is not None]
     if not values:
         raise ValueError(f"no {metric!r} values in group")
-    median = statistics.median(values)
+    center = (
+        reduce_statistic(statistic, values) if statistic is not None else statistics.median(values)
+    )
     stddev = statistics.stdev(values) if len(values) > 1 else None
-    return median, stddev
+    return center, stddev
 
 
 def _normalize_name(name: str, key: str) -> str:
@@ -320,18 +330,21 @@ def _read_rows(
 
 
 def _samples_from_groups(
-    groups: dict[str, list[dict[str, Any]]], metric: str, date: str | None
+    groups: dict[str, list[dict[str, Any]]],
+    metric: str,
+    date: str | None,
+    statistic: Statistic | None = None,
 ) -> dict[str, Sample]:
-    """Aggregate per-name row groups into median/stddev :class:`Sample`s."""
+    """Aggregate per-name row groups into center/stddev :class:`Sample`s."""
     samples: dict[str, Sample] = {}
     for name, group in groups.items():
         try:
-            median, stddev = _aggregate_group(group, metric)
+            center, stddev = _aggregate_group(group, metric, statistic)
         except ValueError:
             continue
         samples[name] = Sample(
             name=name,
-            value=median,
+            value=center,
             stddev=stddev,
             time_unit=group[0].get("time_unit"),
             session_date=date,
@@ -365,7 +378,9 @@ def _group_by_name(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]
     return groups
 
 
-def _load_sessions(path: Path, metric: str) -> list[SessionData]:
+def _load_sessions(
+    path: Path, metric: str, statistic: Statistic | None = None
+) -> list[SessionData]:
     """Load every session in a result file, sorted by ascending date.
 
     Nothing is discarded here; collapsing to one sample set per file is the select
@@ -377,7 +392,7 @@ def _load_sessions(path: Path, metric: str) -> list[SessionData]:
     # ISO-8601 dates sort lexicographically in chronological order.
     for skey, session_rows in sorted(_group_by_session(rows, file_ctx).items()):
         groups = _group_by_name(session_rows)
-        samples = _samples_from_groups(groups, metric, skey[0] or None)
+        samples = _samples_from_groups(groups, metric, skey[0] or None, statistic)
         first_group = next(iter(groups.values()), [])
         ctx = _session_context(first_group[0] if first_group else {}, file_ctx)
         sessions.append(
@@ -387,7 +402,7 @@ def _load_sessions(path: Path, metric: str) -> list[SessionData]:
 
 
 def _load_variant_columns(
-    path: Path, metric: str, key: str
+    path: Path, metric: str, key: str, statistic: Statistic | None = None
 ) -> list[tuple[str, dict[str, Sample], dict[str, Any]]]:
     """Pivot one file's latest session into ``(variant, samples, context)`` columns.
 
@@ -410,7 +425,7 @@ def _load_variant_columns(
         if variant is None:
             continue  # rows from a non-variant run; nothing to pivot
         groups = _group_by_name(variant_rows)
-        samples = _samples_from_groups(groups, metric, latest[0] or None)
+        samples = _samples_from_groups(groups, metric, latest[0] or None, statistic)
         rep_row = next(iter(groups.values()))[0]
         ctx = _session_context(rep_row, file_ctx)
         samples = _normalize_samples(samples, key, f"{path}[variant={variant}]")
@@ -540,17 +555,25 @@ def _parquet_session_index(path: Path) -> list[SessionData] | None:
 
 
 def _load_parquet_selected(
-    path: Path, metric: str, index: list[SessionData], selector: str
+    path: Path,
+    metric: str,
+    index: list[SessionData],
+    selector: str,
+    statistic: Statistic | None = None,
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
     """Resolve ``selector`` against the cheap index, then read only that session's rows."""
     chosen = _resolve_session(path, index, selector)
     rows = _read_parquet(path, metric, filters=[("session_id", "==", chosen.key[2])])
-    samples = _samples_from_groups(_group_by_name(rows), metric, chosen.key[0] or None)
+    samples = _samples_from_groups(_group_by_name(rows), metric, chosen.key[0] or None, statistic)
     return samples, _session_context(rows[0] if rows else {}, {})
 
 
 def _load(
-    path: Path, metric: str, key: str = "name", selector: str | None = None
+    path: Path,
+    metric: str,
+    key: str = "name",
+    selector: str | None = None,
+    statistic: Statistic | None = None,
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
     """Load a result file into one sample set: load → select → re-key.
 
@@ -559,9 +582,9 @@ def _load(
     that session's rows (cheap index pass resolves it first).
     """
     if selector is not None and (index := _parquet_session_index(path)) is not None:
-        samples, ctx = _load_parquet_selected(path, metric, index, selector)
+        samples, ctx = _load_parquet_selected(path, metric, index, selector, statistic)
     else:
-        sessions = _load_sessions(path, metric)
+        sessions = _load_sessions(path, metric, statistic)
         if selector is None:
             samples, ctx = _select_latest(path, sessions)
         else:
@@ -657,6 +680,12 @@ def _fmt_speedup(speedup: float) -> str:
     return f"×{speedup:.3f}"
 
 
+def _ratio_header(metric: str) -> str:
+    """Header for the baseline/candidate ratio column ("speedup" for time, "ratio"
+    for memory, where less isn't "faster")."""
+    return "ratio" if metric in _MEMORY_METRICS else "speedup"
+
+
 def _value_cell(sample: Sample, metric: str) -> str | list[Span]:
     """The value text, with a red ``±N% (!)`` marker when repetitions scatter too much."""
     value = _fmt_value(sample, metric)
@@ -743,7 +772,7 @@ def _render(
     for lbl in labels[1:]:
         table.add_column(lbl, justify="right")
         table.add_column("Δ%", justify="right")
-        table.add_column("speedup", justify="right")
+        table.add_column(_ratio_header(metric), justify="right")
         if show_stddev:
             table.add_column("± stddev", justify="right")
 
@@ -781,9 +810,11 @@ def _render(
     return 0
 
 
-def _variant_columns(path: Path, metric: str, key: str, baseline: str | None) -> list[_Column]:
+def _variant_columns(
+    path: Path, metric: str, key: str, baseline: str | None, statistic: Statistic | None = None
+) -> list[_Column]:
     """Build comparison columns by pivoting one file's variants, baseline first."""
-    loaded = _load_variant_columns(path, metric, key)
+    loaded = _load_variant_columns(path, metric, key, statistic)
     names = [v for v, _, _ in loaded]
     if not names:
         raise SystemExit(f"{path}: no 'variant' data to pivot; produce it with `mew run --variant`")
@@ -808,6 +839,7 @@ def compare(
     show_stddev: bool = False,
     by: str | None = None,
     baseline: str | None = None,
+    statistic: Statistic | None = None,
     regressions: RegressionConfig | None = None,
     console: Terminal | None = None,
 ) -> int:
@@ -851,6 +883,12 @@ def compare(
     baseline : str, optional
         With ``by="variant"``, which variant is the baseline (default: the
         first one written).
+    statistic : Callable[[list[float]], float], optional
+        Reducer over each benchmark's per-repetition values, used as the displayed
+        center and the regression-gate value (stddev is unaffected). Receives a
+        ``list[float]`` and returns a float-castable scalar; defaults to
+        ``statistics.median``. The CLI resolves ``--statistic`` to one of these via
+        :func:`mew._statistics.resolve_statistic`.
     regressions : RegressionConfig, optional
         If given, gate the second file against the baseline and append a regression panel.
     console : mew._console.Terminal, optional
@@ -876,7 +914,7 @@ def compare(
     if by == "variant":
         if len(files) != 1:
             raise SystemExit("mew compare --by variant takes exactly one result file")
-        columns = _variant_columns(files[0], metric, key, baseline)
+        columns = _variant_columns(files[0], metric, key, baseline, statistic)
     elif by is not None:
         raise SystemExit(f"unknown --by dimension {by!r}; only 'variant' is supported")
     else:
@@ -886,7 +924,7 @@ def compare(
         paths = [p for p, _ in parsed]
         columns = []
         for path, selector in parsed:
-            samples, ctx = _load(path, metric, key, selector)
+            samples, ctx = _load(path, metric, key, selector, statistic)
             base = _label(path, paths)
             label = f"{base}@{selector}" if selector else base
             columns.append(
