@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 import sys
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -22,22 +21,11 @@ if TYPE_CHECKING:
     from mew._registry import Entry
 
 
-@dataclass(frozen=True, slots=True)
-class Capabilities:
-    """What a profiler can do, used for ``auto`` selection and messaging."""
-
-    #: Captures native (C/C++) stack frames; the reason these backends exist.
-    native_frames: bool
-    #: ``sys.platform`` values the backend supports.
-    platforms: frozenset[str]
-
-
 @runtime_checkable
 class Profiler(Protocol):
     """An out-of-process profiler backend."""
 
     name: str
-    capabilities: Capabilities
     #: Human-facing hint for where to view the artifact, e.g. ``"Instruments.app"``.
     viewer_hint: str
 

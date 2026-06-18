@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mew.profilers.base import Capabilities, each_case, parse_seconds, worker_argv
+from mew.profilers.base import each_case, parse_seconds, worker_argv
 
 if TYPE_CHECKING:
     from mew._registry import Entry
@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
 class PerfProfiler:
     name = "perf"
-    capabilities = Capabilities(native_frames=True, platforms=frozenset({"linux"}))
     viewer_hint = "speedscope.app (import the perf-script text)"
 
     def unavailable_reason(self) -> str | None:

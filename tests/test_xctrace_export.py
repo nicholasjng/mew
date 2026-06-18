@@ -1,4 +1,4 @@
-"""Prototype xctrace XML → speedscope (collapsed text + multi-profile JSON).
+"""Prototype xctrace XML → speedscope multi-profile JSON.
 
 The folder/emitters are exercised against a synthetic fixture mirroring the
 documented ``xctrace export`` shape (the id/ref dedup, leaf-first frames) — no Xcode
@@ -58,12 +58,6 @@ def test_unsymbolicated_frame_falls_back_to_address() -> None:
         b'<frame id="f" addr="0xdead"/></backtrace></row></node></trace-query-result>'
     )
     assert xe.fold_samples(io.BytesIO(xml)) == {("0xdead",): 1}
-
-
-def test_write_collapsed_is_sorted_and_speedscope_shaped(tmp_path: Path) -> None:
-    dest = tmp_path / "out.collapsed.txt"
-    xe.write_collapsed(xe.fold_samples(io.BytesIO(_XML)), dest)
-    assert dest.read_text() == "main;other 1\nmain;work 2\n"
 
 
 def test_speedscope_json_single_profile_shape(tmp_path: Path) -> None:

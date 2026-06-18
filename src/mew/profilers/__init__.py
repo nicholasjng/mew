@@ -15,13 +15,12 @@ from __future__ import annotations
 
 import sys
 
-from mew.profilers.base import Capabilities, Profiler, worker_argv
+from mew.profilers.base import Profiler, worker_argv
 from mew.profilers.perf import PerfProfiler
 from mew.profilers.pyspy import PySpyProfiler
 from mew.profilers.xctrace import XctraceProfiler
 
 __all__ = [
-    "Capabilities",
     "Profiler",
     "select",
     "worker_argv",
