@@ -262,3 +262,34 @@ def test_jsonl_reporter_flushes_incrementally(tmp_path):
     assert len(lines) == 1
     assert json.loads(lines[0])["name"] == "f::bench"
     rep.finalize()
+
+
+def test_fanout_finalize_runs_every_sink_despite_failure():
+    """One sink failing to finalize (e.g. full disk) must not skip the others."""
+    from mew.reporter import Fanout
+
+    calls: list[str] = []
+
+    class Ok:
+        def __init__(self, tag: str) -> None:
+            self.tag = tag
+
+        def report_context(self, context) -> bool:
+            return True
+
+        def report_runs(self, runs) -> None:
+            pass
+
+        def finalize(self) -> None:
+            calls.append(self.tag)
+
+    class Boom(Ok):
+        def finalize(self) -> None:
+            super().finalize()
+            raise RuntimeError("disk full")
+
+    fanout = Fanout([Boom("boom"), Ok("ok")])
+    with pytest.raises(RuntimeError, match="disk full"):
+        fanout.finalize()
+    # The failing sink ran first (call order preserved), the healthy one still ran.
+    assert calls == ["boom", "ok"]

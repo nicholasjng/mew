@@ -150,25 +150,33 @@ def _gb_argv(
     min_warmup_time: float | None,
     repetitions: int | None,
     random_interleaving: bool,
-    filter: str | None,
 ) -> list[str]:
     """Google Benchmark argv for the structured global knobs.
 
-    Deliberately closed: per-benchmark knobs live on the decorators, and GB's
+    Deliberately closed: per-benchmark knobs live on the decorators, benchmark
+    selection is Python-side (:meth:`Registry.filter` / ``entries``), and GB's
     output/reporting flags would fight mew's own reporters. A new global knob
     earns a keyword on :func:`run`, not an argv passthrough.
     """
     argv = ["mew"]
     if min_time is not None:
-        argv.append(f"--benchmark_min_time={min_time}")
+        # A bare number means seconds, but GB deprecates the suffix-less form
+        # (one "should have a suffix" line per benchmark on stderr): stamp the
+        # `s`. Non-numeric strings ("100x", "0.5s") pass through untouched.
+        mt = str(min_time)
+        try:
+            float(mt)
+        except ValueError:
+            pass
+        else:
+            mt += "s"
+        argv.append(f"--benchmark_min_time={mt}")
     if min_warmup_time is not None:
         argv.append(f"--benchmark_min_warmup_time={min_warmup_time}")
     if repetitions is not None:
         argv.append(f"--benchmark_repetitions={repetitions}")
     if random_interleaving:
         argv.append("--benchmark_enable_random_interleaving=true")
-    if filter:
-        argv.append(f"--benchmark_filter={filter}")
     return argv
 
 
@@ -176,7 +184,6 @@ def run(
     entries: Sequence[Entry] | None = None,
     *,
     reporter: Reporter | Iterable[Reporter] | None = None,
-    filter: str | None = None,
     min_time: str | float | None = None,
     min_warmup_time: float | None = None,
     repetitions: int | None = None,
@@ -200,9 +207,6 @@ def run(
     reporter : Reporter, Iterable[Reporter], or None, optional
         A single reporter, an iterable of reporters (multiplexed via :class:`Fanout`),
         or ``None`` for Google Benchmark's default console reporter.
-    filter : str, optional
-        Google Benchmark name-filter regex applied to the registered names.
-        Prefer :meth:`Registry.filter` plus ``entries`` for Python-side selection.
     min_time : str or float, optional
         Global minimum time per benchmark: seconds (``0.5``) or a fixed
         iteration count (``"100x"``). Per-benchmark ``min_time`` options win.
@@ -296,7 +300,7 @@ def run(
             rep.finalize()
         return 0
 
-    cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, filter)
+    cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving)
 
     # Clear before registering so a second mew.run() in the same process
     # doesn't double-register entries.

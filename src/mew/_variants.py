@@ -184,7 +184,17 @@ def _run_child(
     for line in proc.stdout.splitlines():
         if not line.strip():
             continue
-        obj = json.loads(line)
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            # The worker redirects fd 1, but native code can still write to the
+            # real stdout before that happens; a stray line must not abort the
+            # whole --variant run with a traceback.
+            print(
+                f"warning: variant child ({file}): ignoring non-JSON output line: {line[:80]!r}",
+                file=sys.stderr,
+            )
+            continue
         if "name" in obj:
             rows.append(obj)
         else:
