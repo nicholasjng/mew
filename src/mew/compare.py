@@ -584,6 +584,25 @@ def _custom_diffs(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{k: f.get(k) for k in differing if k in f} for f in flats]
 
 
+_NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
+_TIME_METRICS = frozenset({"real_time", "cpu_time"})
+
+
+def _scale_time(value: float, unit: str | None) -> tuple[float, str]:
+    """Rescale a raw ``(value, unit)`` pair to whichever of s/ms/us/ns keeps the
+    mantissa >= 1, e.g. ``(6995135790.99, "ns")`` -> ``(7.00, "s")``.
+
+    Google Benchmark reports every value in one declared unit (``ns`` unless
+    the benchmark calls ``SetTimeUnit``), so raw values regularly run to ten
+    digits; this is display-only and doesn't touch the delta/speedup math.
+    """
+    ns = value * _NS_PER_UNIT.get(unit or "ns", 1.0)
+    for threshold, out_unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):
+        if abs(ns) >= threshold:
+            return ns / threshold, out_unit
+    return ns, "ns"
+
+
 def _fmt_value(sample: Sample, metric: str) -> str:
     if metric == "memory.allocations_per_iteration":  # fractional per-call count
         return f"{sample.value:,.1f}"
@@ -591,8 +610,20 @@ def _fmt_value(sample: Sample, metric: str) -> str:
         return f"{int(sample.value):,}"
     if metric in _MEMORY_METRICS:  # remaining memory metrics are byte-valued
         return _fmt_bytes(int(sample.value))
-    unit = sample.time_unit or ""
-    return f"{sample.value:.2f} {unit}".rstrip()
+    scaled, unit = _scale_time(sample.value, sample.time_unit)
+    return f"{scaled:.2f} {unit}"
+
+
+def _fmt_stddev(sample: Sample, metric: str) -> str:
+    """Stddev cell, scaled by the same unit as its paired value cell so the two
+    stay comparable at a glance instead of showing raw ns next to human-scaled s."""
+    if sample.stddev is None:
+        return "-"
+    if metric not in _TIME_METRICS:
+        return f"{sample.stddev:.2f}"
+    _, unit = _scale_time(sample.value, sample.time_unit)
+    scaled = sample.stddev * _NS_PER_UNIT.get(sample.time_unit or "ns", 1.0) / _NS_PER_UNIT[unit]
+    return f"{scaled:.2f} {unit}"
 
 
 def _fmt_delta(delta: float, *, higher_is_better: bool = False) -> tuple[str, str]:
@@ -718,7 +749,7 @@ def _render(
         base = baseline[name]
         row: list[Any] = [name, _value_cell(base, metric)]
         if show_stddev:
-            row.append(f"{base.stddev:.2f}" if base.stddev is not None else "-")
+            row.append(_fmt_stddev(base, metric))
         for idx, c in enumerate(columns[1:]):
             s = c.samples[name]
             if is_time_metric and base.time_unit != s.time_unit:
@@ -737,7 +768,7 @@ def _render(
             row.append([(delta_text, delta_style)] if delta_style else delta_text)
             row.append(_fmt_speedup(speedup))
             if show_stddev:
-                row.append(f"{s.stddev:.2f}" if s.stddev is not None else "-")
+                row.append(_fmt_stddev(s, metric))
             # Gate only against the first non-baseline column; the rightmost
             # columns are informational in a multi-file comparison.
             if regressions is not None and idx == 0:
