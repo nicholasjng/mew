@@ -68,7 +68,7 @@ def _collect(
             else:
                 name_filters.append(line)
     # Need files to import. Positional args and `::` stdin selectors supply them;
-    # otherwise fall back to benchpaths — unless stdin was given but empty, where
+    # otherwise fall back to benchpaths, unless stdin was given but empty, where
     # an empty pipe should select nothing rather than the whole suite.
     if not pairs and (name_filters or not stdin):
         pairs = [(_discovery.parse(p), literal) for p in cfg.benchpaths]
@@ -632,7 +632,7 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
       styling wraps matches *after* argparse lays the text out (ANSI codes around
       disjoint regex matches add no visible characters), so column alignment is
       untouched; it falls back to plain when stdout isn't a TTY or ``NO_COLOR``
-      is set — keeping pipes, CI logs, and the docs ``--help`` capture clean.
+      is set, keeping pipes, CI logs, and the docs ``--help`` capture clean.
     """
 
     def _format_action(self, action: argparse.Action) -> str:
@@ -683,7 +683,7 @@ def _complete(kind: str) -> None:
 
     Reads the completion cache (refreshed by run/list/profile). Never imports bench
     files, so it's instant and works from a `uv tool`-installed `mew` outside the
-    project venv. Prints nothing on a cache miss — completion silently falls back.
+    project venv. Prints nothing on a cache miss; completion silently falls back.
     """
     from mew import _completion_cache as cache
 
@@ -720,7 +720,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="mew",
         description="Microbenchmarking for Python via Google Benchmark.",
         formatter_class=_CommandHelpFormatter,
-        # git-style: global options up front, then `<command> [<args>]` — instead
+        # git-style: global options up front, then `<command> [<args>]`, instead
         # of argparse's default `{list,ls,run,…} ...` enumeration.
         usage="mew [-h] [--version] <command> [<args>]",
     )
@@ -951,7 +951,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Output format (backend-specific; validated against the chosen `-p`). "
         "`auto` (default) is each backend's native output. For xctrace: `xctrace` "
         "is the native `.trace` bundle; `speedscope` folds each trace to a "
-        "speedscope JSON document — one `mew.speedscope.json` with a profile per "
+        "speedscope JSON document, one `mew.speedscope.json` with a profile per "
         "case (cycle via the dropdown), or per-case files under --separate.",
     )
     p.add_argument(
@@ -1035,7 +1035,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(_func=completions)
 
-    # mew __complete <kind> — internal; drives dynamic shell completion. No help=
+    # mew __complete <kind>: internal; drives dynamic shell completion. No help=
     # keeps it out of `mew --help`; the leading `_` makes _completions skip it.
     p = sub.add_parser("__complete")
     p.add_argument("kind", choices=["names", "cases", "tags"])

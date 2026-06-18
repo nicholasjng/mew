@@ -63,6 +63,6 @@ See [](../guide/parametrize-product.md) for full semantics.
 
 ## Next steps
 
-- [](concepts.md) — how `mew` thinks about benchmarks, families, and timings.
-- [](../guide/profiling-cpu.md) — turn a slow benchmark into a flame graph.
-- [](../guide/regressions.md) — fail CI when a benchmark regresses by more than _N_ %.
+- [](concepts.md): how `mew` thinks about benchmarks, families, and timings.
+- [](../guide/profiling-cpu.md): turn a slow benchmark into a flame graph.
+- [](../guide/regressions.md): fail CI when a benchmark regresses by more than _N_ %.

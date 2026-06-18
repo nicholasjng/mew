@@ -42,4 +42,4 @@ The flame graph is a self-contained HTML page you can open directly in a browser
 - Memray captures Python-level allocations. C extensions allocating directly through `malloc` may or may not show up, depending on the extension.
 - Like CPU profiling, the memory pass is **separate** from the timing pass, so the memory column won't line up with the iteration count from the timing column.
 - Memray's tracker has measurable overhead. Treat allocations as approximate when they're already small.
-- The loop-scoped capture applies to the stats columns. The `--flamegraph` capture wraps whole bodies (one tracker across all selected benchmarks), so setup allocations do appear there — useful when the fixture itself is the thing you're hunting.
+- The loop-scoped capture applies to the stats columns. The `--flamegraph` capture wraps whole bodies (one tracker across all selected benchmarks), so setup allocations do appear there, useful when the fixture itself is the thing you're hunting.

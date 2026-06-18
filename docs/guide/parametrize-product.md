@@ -1,6 +1,6 @@
 # Parametrizations
 
-Two decorators register benchmark _families_ — one body, many variants.
+Two decorators register benchmark _families_: one body, many variants.
 
 ## `@mew.parametrize`
 

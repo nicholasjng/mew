@@ -1,4 +1,4 @@
-// State bindings — wraps benchmark::State for Python iteration and metrics.
+// State bindings: wraps benchmark::State for Python iteration and metrics.
 
 #include <benchmark/benchmark.h>
 #include <nanobind/nanobind.h>

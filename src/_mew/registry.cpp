@@ -1,4 +1,4 @@
-// Registry bindings — register a Python callable as a Google Benchmark,
+// Registry bindings: register a Python callable as a Google Benchmark,
 // exposing the Benchmark* as a chainable handle.
 
 #include <benchmark/benchmark.h>

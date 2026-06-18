@@ -1,4 +1,4 @@
-"""py-spy backend — native-frame sampling on Linux/Windows.
+"""py-spy backend: native-frame sampling on Linux/Windows.
 
 ``py-spy record --native`` launches the worker, samples Python + native C stacks
 from the outside, and writes speedscope JSON (a portable format the browser

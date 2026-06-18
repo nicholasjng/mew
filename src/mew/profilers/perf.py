@@ -1,12 +1,12 @@
-"""Linux ``perf`` backend — native-frame profiling via the kernel.
+"""Linux ``perf`` backend: native-frame profiling via the kernel.
 
 ``perf record`` launches the worker and samples it; ``perf script`` then emits a
 text format that speedscope.app imports directly (the same portable target as the
 py-spy backend). ``--call-graph dwarf`` is used so stacks unwind without
-frame-pointer-compiled binaries — heavier, but it works on stock interpreters.
+frame-pointer-compiled binaries; heavier, but it works on stock interpreters.
 
 Recording needs a ``perf`` whose version matches the running kernel and usually a
-lowered ``kernel.perf_event_paranoid`` — easy on a real Linux host/VM (incl. CI
+lowered ``kernel.perf_event_paranoid``, easy on a real Linux host/VM (incl. CI
 runners), awkward under Docker Desktop. See docs/guide/profiling-native.md.
 """
 
@@ -53,7 +53,7 @@ class PerfProfiler:
             )
         if probe.returncode != 0:
             return (
-                "perf can't record here — perf_event_paranoid likely blocks it. "
+                "perf can't record here; perf_event_paranoid likely blocks it. "
                 "Lower it (`sudo sysctl kernel.perf_event_paranoid=1`) or grant "
                 "CAP_PERFMON/CAP_SYS_ADMIN (e.g. a privileged container)."
             )

@@ -1,7 +1,7 @@
 """Generate static shell-completion scripts from the argparse parser.
 
-Rolled by hand (no dependency): introspect the parser — subcommands, their
-options, and each value's completion kind (file / fixed choices / none) — and
+Rolled by hand (no dependency): introspect the parser (subcommands, their
+options, and each value's completion kind: file / fixed choices / none) and
 emit a completion script per shell. ``mew completions <shell>`` prints it for
 ``eval`` or install. Static: command and option names, file completion for path
 args, and fixed choices (``--format``, ``--profiler``, the shell list). The zsh

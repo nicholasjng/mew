@@ -57,7 +57,7 @@ $ mew compare results.jsonl --by variant
 $ mew compare results.jsonl --by variant --baseline duckdb   # pick the baseline column
 ```
 
-`--by variant` defaults `--key` to `func` — every variant shares the same
+`--by variant` defaults `--key` to `func`; every variant shares the same
 `file.py::` prefix, so columns line up on the function name automatically. The
 first variant written is the baseline unless `--baseline` says otherwise. See
 [](regressions.md) for the matching rules and metrics.
@@ -65,7 +65,7 @@ first variant written is the baseline unless `--baseline` says otherwise. See
 ## Per-variant context
 
 Call {func}`mew.set_context` in each benchmark file to record what makes that
-variant different — usually the engine and its version. Each variant's context
+variant different, usually the engine and its version. Each variant's context
 is kept separately and surfaces as a per-column annotation, so version skew
 documents itself:
 
@@ -100,7 +100,7 @@ $ mew run --variant duckdb=bench_duckdb.py --variant ducky=bench_ducky.py \
 $ mew compare results.jsonl --by variant --metric memory.allocations_per_iteration
 ```
 
-Use `memory.allocations_per_iteration` for cross-engine allocation comparisons —
+Use `memory.allocations_per_iteration` for cross-engine allocation comparisons;
 a faster engine inflates the raw `memory.total_allocations` (see
 [](profiling-memory.md)). HTML artifacts (`--flamegraph`, `--sample-html`) are
 written one per variant, with the variant name spliced into the filename

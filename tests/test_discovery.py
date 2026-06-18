@@ -117,12 +117,15 @@ def test_discovered_unloads_only_what_it_added(tmp_path, _restore_sys_path):
     """,
     )
     parent = str(tmp_path.resolve())
-    mod_name = f"mew._bench_{abs(hash(bench.resolve()))}"
 
     with discovery.discovered():
+        before = set(sys.modules)
         discovery.import_file(bench)
         entry = next(e for e in REGISTRY.all() if "bench_x" in e.name)
-        assert mod_name in sys.modules  # present while the block is open
+        # Exactly one synthetic bench module appears while the block is open.
+        added = {m for m in set(sys.modules) - before if m.startswith("mew._bench_")}
+        assert len(added) == 1
+        mod_name = added.pop()
         assert parent in sys.path
 
     # Boundary cleanup: our synthetic module and path insert are gone...

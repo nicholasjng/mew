@@ -60,5 +60,5 @@ See [](../guide/reporters.md).
 ## Context
 
 `mew.set_context()` and `mew.update_context()` populate a process-global metadata dict that's merged into every reporter's context under the `custom` key.
-Use it to stamp results with a git SHA, dataset identifiers, hardware tags — anything you'd later want to filter on.
+Use it to stamp results with a git SHA, dataset identifiers, or hardware tags, anything you'd later want to filter on.
 See [](../guide/context.md).

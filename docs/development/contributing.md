@@ -25,7 +25,7 @@ When adding a public API, please add a test covering the happy path and one for 
 
 `tests/test_profilers_native.py` exercises the out-of-process backends behind
 `mew profile`. They skip unless the tool is actually *usable* on the host, so
-they stay inert in normal runs and on macOS — opt in by running them where the
+they stay inert in normal runs and on macOS; opt in by running them where the
 tooling exists. They aren't in CI: the privilege requirements below don't fit
 GitHub-hosted runners, so these backends are validated locally / on a real Linux
 box.
@@ -45,7 +45,7 @@ $ sudo sysctl kernel.perf_event_paranoid=1
 $ uv run pytest tests/test_profilers_native.py -k perf
 ```
 
-Locked-down hosts can't do that — GitHub-hosted runners ship
+Locked-down hosts can't do that: GitHub-hosted runners ship
 `perf_event_paranoid=4` and won't let you change it. There, grant the capability
 instead via a privileged/capped container (`docker run --cap-add=PERFMON
 --cap-add=SYS_ADMIN`, or `--privileged`). Where neither is possible the perf test
@@ -68,5 +68,5 @@ The docs CI job mirrors readthedocs' `fail_on_warning: true`; broken cross refer
 Please open a GitHub issue, ideally with:
 
 - `mew --version` output (includes the bundled Google Benchmark commit).
-- Minimal reproduction — a `bench_*.py` and the exact `mew run` invocation.
+- Minimal reproduction: a `bench_*.py` and the exact `mew run` invocation.
 - What you expected vs. what actually happened.

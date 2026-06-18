@@ -197,7 +197,7 @@ class JSONReporter:
         self._context = dict(context)
         self._fh, self._owns_fh = _open_sink(self._output)
         # Stream into any seekable sink (file, or stdout redirected to a file).
-        # Exception: a non-owned sink on Windows — a stdout pipe there can claim
+        # Exception: a non-owned sink on Windows; a stdout pipe there can claim
         # seekable() but mishandle the seek and duplicate content, so buffer it.
         trust_seek = self._owns_fh or sys.platform != "win32"
         self._streaming = trust_seek and self._fh.seekable()
@@ -404,7 +404,7 @@ class RichReporter:
         if len(name) > w["name"]:
             name = "…" + name[-(w["name"] - 1) :]
 
-        # Skipped rows carry no timing — render the reason in place of the
+        # Skipped rows carry no timing; render the reason in place of the
         # numeric columns and dim the whole line so it reads as "didn't run".
         if row["skipped"]:
             reason = row["skip_message"] or "skipped"
