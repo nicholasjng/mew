@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 SHELLS = ("bash", "zsh", "fish")
 
@@ -79,7 +80,10 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
     # Group by parser identity: argparse stores aliases as extra keys → same parser.
     grouped: dict[int, _Cmd] = {}
     order: list[int] = []
-    for name, subp in sub.choices.items():
+    # The isinstance narrowing leaves _SubParsersAction unparameterized, so its
+    # choices values type as `object`.
+    choices = cast(dict[str, argparse.ArgumentParser], sub.choices)
+    for name, subp in choices.items():
         if name.startswith("_"):  # hidden internal command (e.g. __complete)
             continue
         key = id(subp)
@@ -90,7 +94,7 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
                 if a.option_strings:
                     grouped[key].opts.append(
                         _Opt(
-                            a.option_strings,
+                            list(a.option_strings),
                             a.help or "",
                             a.nargs != 0,
                             _value_kind(a, name),
