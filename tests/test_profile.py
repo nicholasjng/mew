@@ -6,6 +6,7 @@ import json
 import sys
 
 import pytest
+from _helpers import Capture
 
 import mew
 from mew._profile import (
@@ -147,28 +148,17 @@ def test_iter_entry_cases_drives_distinct_cases():
 
 
 def test_run_projector_attaches_profiles_to_rows_by_name():
-    seen = {}
-
-    class CapturingReporter:
-        def report_context(self, ctx):
-            return True
-
-        def report_runs(self, rows):
-            # The projector emits RunRow dicts; profiles are dict keys, absent
-            # when no profile was attached for that case.
-            for row in rows:
-                seen[row["name"]] = (row.get("memory"), row.get("cpu_profile"))
-
-        def finalize(self):
-            pass
-
+    cap = Capture()
     wrapped = _RunProjector(
-        CapturingReporter(),
+        cap,
         memory_profiles={"a": _fake_mem()},
         cpu_profiles={"b": _fake_cpu()},
     )
     wrapped.report_runs([_proj_run("a"), _proj_run("b"), _proj_run("c")])
 
+    # The projector emits RunRow dicts; profiles are dict keys, absent when no
+    # profile was attached for that case.
+    seen = {row["name"]: (row.get("memory"), row.get("cpu_profile")) for row in cap.runs}
     assert seen["a"][0] is not None and seen["a"][1] is None
     assert seen["b"][0] is None and seen["b"][1] is not None
     assert seen["c"] == (None, None)
@@ -177,21 +167,9 @@ def test_run_projector_attaches_profiles_to_rows_by_name():
 def test_run_projector_matches_family_cases_by_structured_name():
     """A family run carries `/min_time:…` in benchmark_name() but the profile dict
     is keyed by `entry.name/case:N` — match on the structured parts, not the full name."""
-    seen = {}
-
-    class CapturingReporter:
-        def report_context(self, ctx):
-            return True
-
-        def report_runs(self, rows):
-            for row in rows:
-                seen[row["name"]] = row.get("memory")
-
-        def finalize(self):
-            pass
-
+    cap = Capture()
     wrapped = _RunProjector(
-        CapturingReporter(),
+        cap,
         memory_profiles={"bench::f/case:0": _fake_mem(), "bench::f/case:1": _fake_mem()},
     )
     wrapped.report_runs(
@@ -201,6 +179,7 @@ def test_run_projector_matches_family_cases_by_structured_name():
         ]
     )
 
+    seen = {row["name"]: row.get("memory") for row in cap.runs}
     assert seen["bench::f/case:0/min_time:0.200"] is not None
     assert seen["bench::f/case:1/min_time:0.200"] is not None
 
@@ -394,7 +373,7 @@ def test_cpu_profile_excludes_paused_regions():
 
 
 def test_json_reporter_emits_memory_and_cpu_blocks(tmp_path):
-    name = "test::bench_explicit"
+    name = "test/bench_explicit"
 
     @mew.benchmark(name=name)
     def bench_y(state):
@@ -448,7 +427,7 @@ def test_json_reporter_omits_memory_and_cpu_when_absent(tmp_path):
 def test_jsonl_reporter_emits_memory_and_cpu_blocks(tmp_path):
     from mew.reporter import JSONLReporter
 
-    name = "test::bench_jl"
+    name = "test/bench_jl"
 
     @mew.benchmark(name=name)
     def bench_jl(state):

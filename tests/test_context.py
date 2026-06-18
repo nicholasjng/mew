@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 import pytest
+from _helpers import Capture
 
 import mew
 from mew.reporter import JSONReporter
@@ -108,22 +108,6 @@ def test_get_context_returns_a_snapshot():
     assert mew.get_context() == {"a": {"nested": 1}}
 
 
-class _Capture:
-    def __init__(self) -> None:
-        self.context: dict | None = None
-        self.runs: list = []
-
-    def report_context(self, context: dict[str, Any]) -> bool:
-        self.context = context
-        return True
-
-    def report_runs(self, runs: list[mew.RunRow]) -> None:
-        self.runs.extend(runs)
-
-    def finalize(self):
-        pass
-
-
 def test_context_flows_into_reporter():
     mew.set_context("dataset.size", 1024)
     mew.set_context("commit", "abc")
@@ -133,7 +117,7 @@ def test_context_flows_into_reporter():
         for _ in state:
             pass
 
-    cap = _Capture()
+    cap = Capture()
     mew.run(min_time="1x", reporter=cap)
     assert cap.context is not None
     assert cap.context["custom"] == {
@@ -148,7 +132,7 @@ def test_no_custom_key_when_context_is_empty():
         for _ in state:
             pass
 
-    cap = _Capture()
+    cap = Capture()
     mew.run(min_time="1x", reporter=cap)
     assert cap.context is not None
     # No injection means no `custom` key shoved into the dict.
@@ -165,7 +149,7 @@ def test_context_snapshot_is_captured_at_run_start():
         for _ in state:
             pass
 
-    cap = _Capture()
+    cap = Capture()
     mew.run(min_time="1x", reporter=cap)
     assert cap.context is not None
     assert cap.context["custom"] == {"snapshot_phase": "before"}

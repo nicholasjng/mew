@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from _helpers import Console, row as _row, write_json as _write_json
+from _helpers import Console, row as _row, write_pair as _write_pair
 
 from mew.compare import compare
 from mew.regressions import (
@@ -139,6 +139,30 @@ def test_load_config_explicit_missing_path_errors(tmp_path: Path) -> None:
         load_config(default_threshold=5.0, path=tmp_path / "regresions.toml")
 
 
+def test_load_config_walks_up_from_subdirectory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Mirrors [tool.mew] config discovery: allow rules apply no matter which
+    # subdirectory `mew compare` runs from.
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[tool.mew.regressions]
+default_threshold = 7.5
+
+[[tool.mew.regressions.allow]]
+pattern = "bench_noisy*"
+reason = "known noisy"
+ignore = true
+"""
+    )
+    sub = tmp_path / "sub" / "dir"
+    sub.mkdir(parents=True)
+    monkeypatch.chdir(sub)
+    cfg = load_config(default_threshold=5.0)
+    assert cfg.default_threshold == 7.5
+    assert cfg.rules and cfg.rules[0].pattern == "bench_noisy*"
+
+
 def test_render_panel_exit_codes() -> None:
     rule = AllowRule(pattern="x", reason="r", threshold=99.0)
     # Pure OK: no panel, exit 0.
@@ -160,20 +184,16 @@ def test_render_panel_exit_codes() -> None:
 
 
 def test_compare_passes_when_under_threshold(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 100.0)])
-    _write_json(other, [_row("b", 102.0)])  # +2%
+    # +2%:
+    other, base = _write_pair(tmp_path, other=[_row("b", 102.0)], base=[_row("b", 100.0)])
     cfg = RegressionConfig(default_threshold=5.0)
     code = compare([other, base], regressions=cfg, console=Console(width=200))
     assert code == 0
 
 
 def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 100.0)])
-    _write_json(other, [_row("b", 120.0)])  # +20%
+    # +20%:
+    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     cfg = RegressionConfig(default_threshold=5.0)
     code = compare([other, base], regressions=cfg, console=Console(width=200))
     assert code == 2
@@ -183,10 +203,8 @@ def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixtu
 
 
 def test_compare_config_allow_lifts_threshold(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 100.0)])
-    _write_json(other, [_row("b", 120.0)])  # +20%
+    # +20%:
+    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     py = tmp_path / "regressions.toml"
     py.write_text(
         """
@@ -203,10 +221,8 @@ reason = "noisy"
 
 
 def test_compare_config_allow_ignore_skips_gating(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 100.0)])
-    _write_json(other, [_row("b", 200.0)])  # +100%
+    # +100%:
+    other, base = _write_pair(tmp_path, other=[_row("b", 200.0)], base=[_row("b", 100.0)])
     py = tmp_path / "regressions.toml"
     py.write_text(
         """
@@ -222,10 +238,12 @@ reason = "known-flaky"
 
 
 def test_compare_iterations_metric_regression(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 1.0, iterations=1000)])
-    _write_json(other, [_row("b", 1.0, iterations=800)])  # -20% iters = slower
+    # -20% iters = slower:
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", 1.0, iterations=800)],
+        base=[_row("b", 1.0, iterations=1000)],
+    )
     cfg = RegressionConfig(default_threshold=5.0)
     code = compare(
         [other, base],

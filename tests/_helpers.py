@@ -1,4 +1,4 @@
-"""Shared test helpers: result-file builders and a capture terminal.
+"""Shared test helpers: result-file builders, a capture terminal, a capture reporter.
 
 The row/write_* builders encode the on-disk result-file contract (the shape
 mew's JSON/JSONL sinks write) in one place; the compare and regressions tests
@@ -30,6 +30,30 @@ class Console(Terminal):
         return self._buf.getvalue()
 
 
+class Capture:
+    """Minimal Reporter that stashes context, rows, and the finalize call.
+
+    The canonical fake for tests that only observe what a reporter receives;
+    scenario-shaped fakes (a vetoing ``report_context``, a missing ``finalize``, ...)
+    stay local to their test.
+    """
+
+    def __init__(self) -> None:
+        self.context: dict[str, Any] | None = None
+        self.runs: list[Any] = []
+        self.finalized = False
+
+    def report_context(self, context: dict[str, Any]) -> bool:
+        self.context = context
+        return True
+
+    def report_runs(self, runs: list[Any]) -> None:
+        self.runs.extend(runs)
+
+    def finalize(self) -> None:
+        self.finalized = True
+
+
 def row(name: str, real_time: float, **extra: Any) -> dict:
     """A minimal per-repetition result row, as mew's sinks write it."""
     return {
@@ -53,3 +77,25 @@ def write_jsonl(path: Path, benches: list[dict], context: dict | None = None) ->
     lines = [json.dumps({"context": context or {}})]
     lines += [json.dumps(b) for b in benches]
     path.write_text("\n".join(lines) + "\n")
+
+
+def write_pair(
+    tmp_path: Path,
+    *,
+    other: list[dict],
+    base: list[dict],
+    other_context: dict | None = None,
+    base_context: dict | None = None,
+    suffix: str = ".json",
+) -> tuple[Path, Path]:
+    """Write an ``(other, base)`` result-file pair for two-file compare tests.
+
+    Returned in ``compare([other, base])`` argument order (the CLI convention:
+    baseline last), so call sites read ``other, base = write_pair(...)``.
+    """
+    writer = write_jsonl if suffix.endswith(".jsonl") else write_json
+    other_path = tmp_path / f"other{suffix}"
+    base_path = tmp_path / f"base{suffix}"
+    writer(other_path, other, context=other_context)
+    writer(base_path, base, context=base_context)
+    return other_path, base_path

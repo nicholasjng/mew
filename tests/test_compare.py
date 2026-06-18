@@ -7,7 +7,13 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from _helpers import Console, row as _row, write_json as _write_json, write_jsonl as _write_jsonl
+from _helpers import (
+    Console,
+    row as _row,
+    write_json as _write_json,
+    write_jsonl as _write_jsonl,
+    write_pair as _write_pair,
+)
 
 from mew._statistics import reduce_statistic, resolve_statistic
 from mew.compare import (
@@ -132,11 +138,12 @@ def test_resolve_statistic_errors(spec: str, match: str) -> None:
 
 
 def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
     # Both files: a tight cluster plus one outlier. median ignores it; max picks it.
-    _write_json(base, [_row("b", 1.0), _row("b", 2.0), _row("b", 99.0)])
-    _write_json(other, [_row("b", 1.0), _row("b", 2.0), _row("b", 51.0)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", 1.0), _row("b", 2.0), _row("b", 51.0)],
+        base=[_row("b", 1.0), _row("b", 2.0), _row("b", 99.0)],
+    )
 
     console = Console(width=200)
     code = compare([other, base], statistic=np.max, console=console)
@@ -165,10 +172,11 @@ def test_load_ignores_gb_aggregate_rows(tmp_path: Path) -> None:
 
 
 def test_compare_speedup_signs(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("bench_x", 100.0), _row("bench_y", 50.0)])
-    _write_json(other, [_row("bench_x", 80.0), _row("bench_y", 75.0)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("bench_x", 80.0), _row("bench_y", 75.0)],
+        base=[_row("bench_x", 100.0), _row("bench_y", 50.0)],
+    )
 
     console = Console(width=200)
     code = compare([other, base], console=console)
@@ -186,10 +194,11 @@ def test_compare_speedup_signs(tmp_path: Path, capsys: pytest.CaptureFixture[str
 
 
 def test_compare_warns_on_missing_names(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("bench_x", 100.0), _row("bench_only_in_base", 1.0)])
-    _write_json(other, [_row("bench_x", 80.0)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("bench_x", 80.0)],
+        base=[_row("bench_x", 100.0), _row("bench_only_in_base", 1.0)],
+    )
 
     console = Console(width=200)
     code = compare([other, base], console=console)
@@ -203,20 +212,18 @@ def test_compare_warns_on_missing_names(tmp_path: Path, capsys: pytest.CaptureFi
 
 
 def test_compare_empty_overlap(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("a", 1.0)])
-    _write_json(other, [_row("b", 1.0)])
+    other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("a", 1.0)])
     code = compare([other, base], console=Console())
     assert code == 1
     assert "no overlapping benchmarks" in capsys.readouterr().err
 
 
 def test_compare_pattern_filter(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("alpha", 10.0), _row("beta", 20.0)])
-    _write_json(other, [_row("alpha", 5.0), _row("beta", 40.0)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("alpha", 5.0), _row("beta", 40.0)],
+        base=[_row("alpha", 10.0), _row("beta", 20.0)],
+    )
     console = Console(width=200)
     code = compare([other, base], pattern="alpha", console=console)
     assert code == 0
@@ -226,10 +233,11 @@ def test_compare_pattern_filter(tmp_path: Path) -> None:
 
 
 def test_compare_pattern_is_regex(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("alpha", 10.0), _row("beta", 20.0), _row("gamma", 30.0)])
-    _write_json(other, [_row("alpha", 5.0), _row("beta", 40.0), _row("gamma", 15.0)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("alpha", 5.0), _row("beta", 40.0), _row("gamma", 15.0)],
+        base=[_row("alpha", 10.0), _row("beta", 20.0), _row("gamma", 30.0)],
+    )
     console = Console(width=200)
     # Alternation selects two of the three; the third is filtered out.
     assert compare([other, base], pattern="alpha|gamma", console=console) == 0
@@ -240,10 +248,7 @@ def test_compare_pattern_is_regex(tmp_path: Path) -> None:
 
 
 def test_compare_invalid_pattern_errors(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("alpha", 10.0)])
-    _write_json(other, [_row("alpha", 5.0)])
+    other, base = _write_pair(tmp_path, other=[_row("alpha", 5.0)], base=[_row("alpha", 10.0)])
     with pytest.raises(SystemExit, match="invalid benchmark filter pattern"):
         compare([other, base], pattern="foo(", console=Console())
 
@@ -259,10 +264,11 @@ def test_compare_unknown_metric(tmp_path: Path) -> None:
 
 
 def test_compare_stddev_column(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 95.0), _row("b", 100.0), _row("b", 105.0)])
-    _write_json(other, [_row("b", 78.0), _row("b", 80.0), _row("b", 82.0)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", 78.0), _row("b", 80.0), _row("b", 82.0)],
+        base=[_row("b", 95.0), _row("b", 100.0), _row("b", 105.0)],
+    )
     console = Console(width=200)
     code = compare([other, base], show_stddev=True, console=console)
     assert code == 0
@@ -300,17 +306,38 @@ def test_load_jsonl(tmp_path: Path) -> None:
 
 
 def test_load_jsonl_rejects_invalid_line(tmp_path: Path) -> None:
+    # A clean CLI error naming the file and line, not a ValueError traceback.
     p = tmp_path / "a.jsonl"
     p.write_text('{"context": {}}\nnot json\n')
-    with pytest.raises(ValueError, match="invalid JSON"):
+    with pytest.raises(SystemExit, match="a.jsonl:2: invalid JSON"):
         _load(p, "real_time")
 
 
+def test_load_rejects_malformed_json(tmp_path: Path) -> None:
+    p = tmp_path / "a.json"
+    p.write_text("not json")
+    with pytest.raises(SystemExit, match="a.json: invalid JSON"):
+        _load(p, "real_time")
+
+
+def test_load_rejects_json_without_benchmarks_array(tmp_path: Path) -> None:
+    p = tmp_path / "a.json"
+    p.write_text("[1, 2]")  # valid JSON, wrong shape
+    with pytest.raises(SystemExit, match="missing 'benchmarks' array"):
+        _load(p, "real_time")
+
+
+def test_compare_missing_file_is_clean_error(tmp_path: Path) -> None:
+    present = tmp_path / "a.json"
+    _write_json(present, [_row("bench_x", 10.0)])
+    with pytest.raises(SystemExit, match="result file not found"):
+        compare([present, tmp_path / "missing.json"], console=Console())
+
+
 def test_compare_jsonl_files(tmp_path: Path) -> None:
-    base = tmp_path / "base.jsonl"
-    other = tmp_path / "other.jsonl"
-    _write_jsonl(base, [_row("bench_x", 100.0)])
-    _write_jsonl(other, [_row("bench_x", 50.0)])
+    other, base = _write_pair(
+        tmp_path, other=[_row("bench_x", 50.0)], base=[_row("bench_x", 100.0)], suffix=".jsonl"
+    )
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
     assert "×2.000" in console.export_text()
@@ -450,17 +477,12 @@ def test_load_with_selector(tmp_path: Path) -> None:
 def test_compare_prints_context_and_warns_on_skew(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(
-        base,
-        [_row("bench_x", 100.0)],
-        context={"host_name": "h1", "num_cpus": 8, "custom": {"engine": "ducky 0.1"}},
-    )
-    _write_json(
-        other,
-        [_row("bench_x", 80.0)],
-        context={"host_name": "h2", "num_cpus": 4, "custom": {"engine": "duckdb 1.5.3"}},
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("bench_x", 80.0)],
+        base=[_row("bench_x", 100.0)],
+        other_context={"host_name": "h2", "num_cpus": 4, "custom": {"engine": "duckdb 1.5.3"}},
+        base_context={"host_name": "h1", "num_cpus": 8, "custom": {"engine": "ducky 0.1"}},
     )
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
@@ -479,11 +501,14 @@ def test_compare_prints_context_and_warns_on_skew(
 def test_compare_no_skew_warning_when_contexts_match(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
     ctx = {"host_name": "h1", "num_cpus": 8}
-    _write_json(base, [_row("bench_x", 100.0)], context=ctx)
-    _write_json(other, [_row("bench_x", 80.0)], context=ctx)
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("bench_x", 80.0)],
+        base=[_row("bench_x", 100.0)],
+        other_context=ctx,
+        base_context=ctx,
+    )
     assert compare([other, base], console=Console(width=200)) == 0
     assert "differ in" not in capsys.readouterr().err
 
@@ -532,10 +557,11 @@ def test_load_option_stripping_spares_path_segments(tmp_path: Path) -> None:
 
 
 def test_compare_aligns_files_run_with_different_min_time(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("a.py::bench_x/case:0/min_time:0.200", 100.0, label="n=10")])
-    _write_json(other, [_row("a.py::bench_x/case:0/min_time:0.500", 80.0, label="n=10")])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("a.py::bench_x/case:0/min_time:0.500", 80.0, label="n=10")],
+        base=[_row("a.py::bench_x/case:0/min_time:0.200", 100.0, label="n=10")],
+    )
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
     out = console.export_text()
@@ -621,10 +647,11 @@ def _mem_row(name: str, real_time: float, peak: int, allocs: int, *, iterations:
 
 
 def test_compare_memory_metric(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_mem_row("bench_x", 1.0, peak=1 << 20, allocs=100)])
-    _write_json(other, [_mem_row("bench_x", 1.0, peak=1 << 21, allocs=50)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_mem_row("bench_x", 1.0, peak=1 << 21, allocs=50)],
+        base=[_mem_row("bench_x", 1.0, peak=1 << 20, allocs=100)],
+    )
 
     console = Console(width=200)
     code = compare([other, base], metric="memory.peak_bytes", console=console)
@@ -643,10 +670,9 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
 
 
 def test_compare_time_metric_keeps_speedup_header(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("bench_x", 100.0)])
-    _write_json(other, [_row("bench_x", 80.0)])
+    other, base = _write_pair(
+        tmp_path, other=[_row("bench_x", 80.0)], base=[_row("bench_x", 100.0)]
+    )
     console = Console(width=200)
     compare([other, base], metric="real_time", console=console)
     out = console.export_text()
@@ -657,11 +683,12 @@ def test_compare_time_metric_keeps_speedup_header(tmp_path: Path) -> None:
 def test_compare_allocations_per_iteration_is_speed_independent(tmp_path: Path) -> None:
     # The whole point of item 0: two engines whose raw total_allocations differ
     # only because they ran a different iteration count compare *equal* per-iter.
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
     # Same per-call allocations (10), captured over different iteration counts.
-    _write_json(base, [_mem_row("bench_x", 1.0, peak=1 << 20, allocs=1000, iterations=100)])
-    _write_json(other, [_mem_row("bench_x", 1.0, peak=1 << 20, allocs=500, iterations=50)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_mem_row("bench_x", 1.0, peak=1 << 20, allocs=500, iterations=50)],
+        base=[_mem_row("bench_x", 1.0, peak=1 << 20, allocs=1000, iterations=100)],
+    )
 
     console = Console(width=200)
     code = compare([other, base], metric="memory.allocations_per_iteration", console=console)
@@ -674,21 +701,19 @@ def test_compare_allocations_per_iteration_is_speed_independent(tmp_path: Path) 
 def test_compare_memory_metric_without_data_hints_profile_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("bench_x", 1.0)])
-    _write_json(other, [_row("bench_x", 1.0)])
+    other, base = _write_pair(tmp_path, other=[_row("bench_x", 1.0)], base=[_row("bench_x", 1.0)])
     code = compare([other, base], metric="memory.peak_bytes", console=Console())
     assert code == 1
     assert "--profile-memory" in capsys.readouterr().err
 
 
 def test_compare_marks_high_cv_rows(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
     # Baseline reps scatter wildly (CV >> 25%); other is steady.
-    _write_json(base, [_row("b", 40.0), _row("b", 100.0), _row("b", 160.0)])
-    _write_json(other, [_row("b", 99.0), _row("b", 100.0), _row("b", 101.0)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", 99.0), _row("b", 100.0), _row("b", 101.0)],
+        base=[_row("b", 40.0), _row("b", 100.0), _row("b", 160.0)],
+    )
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
     out = console.export_text()
@@ -697,10 +722,11 @@ def test_compare_marks_high_cv_rows(tmp_path: Path) -> None:
 
 
 def test_compare_no_cv_marker_on_steady_rows(tmp_path: Path) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 99.0), _row("b", 100.0), _row("b", 101.0)])
-    _write_json(other, [_row("b", 49.0), _row("b", 50.0), _row("b", 51.0)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", 49.0), _row("b", 50.0), _row("b", 51.0)],
+        base=[_row("b", 99.0), _row("b", 100.0), _row("b", 101.0)],
+    )
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
     assert "(!)" not in console.export_text()
@@ -806,10 +832,7 @@ def test_load_excludes_skipped_rows(tmp_path: Path) -> None:
 
 def test_compare_zero_baseline_shows_infinite_delta(tmp_path: Path) -> None:
     # A zero baseline against a nonzero contender must not read as +0.00%.
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 0.0)])
-    _write_json(other, [_row("b", 50.0)])
+    other, base = _write_pair(tmp_path, other=[_row("b", 50.0)], base=[_row("b", 0.0)])
     console = Console(width=200)
     compare([other, base], console=console)
     assert "+∞%" in console.export_text()
@@ -827,10 +850,11 @@ def test_fmt_delta_colors_by_improvement_direction() -> None:
 
 def test_compare_iterations_speedup_direction(tmp_path: Path) -> None:
     # +20% iterations is a ×1.2 speedup, not ×0.83.
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 1.0, iterations=1000)])
-    _write_json(other, [_row("b", 1.0, iterations=1200)])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", 1.0, iterations=1200)],
+        base=[_row("b", 1.0, iterations=1000)],
+    )
     console = Console(width=200)
     compare([other, base], metric="iterations", console=console)
     assert "×1.200" in console.export_text()
@@ -839,10 +863,11 @@ def test_compare_iterations_speedup_direction(tmp_path: Path) -> None:
 def test_compare_warns_on_time_unit_skew(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 100.0)])  # ns
-    _write_json(other, [_row("b", 0.1, time_unit="us")])
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", 0.1, time_unit="us")],
+        base=[_row("b", 100.0)],  # ns
+    )
     compare([other, base], console=Console(width=200))
     err = capsys.readouterr().err
     assert "different time units" in err
@@ -851,10 +876,7 @@ def test_compare_warns_on_time_unit_skew(
 def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
     # `stdev` needs two values; a single-repetition file must fail loudly, not
     # silently drop every benchmark and report "no overlapping benchmarks".
-    base = tmp_path / "base.json"
-    other = tmp_path / "other.json"
-    _write_json(base, [_row("b", 100.0)])
-    _write_json(other, [_row("b", 120.0)])
+    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     statistic = resolve_statistic("statistics:stdev")
     with pytest.raises(SystemExit, match="--statistic failed on 'b'"):
         compare([other, base], statistic=statistic, console=Console(width=200))
