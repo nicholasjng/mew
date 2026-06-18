@@ -32,7 +32,6 @@ class Reporter(Protocol):
         dicts (runs projected from the C++ ``Run``).
     """
 
-    # Positional-only: the C++ runner calls these positionally.
     def report_context(self, context: dict[str, Any], /) -> bool: ...
     def report_runs(self, runs: list[RunRow], /) -> None: ...
 
