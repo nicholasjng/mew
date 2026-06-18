@@ -87,8 +87,8 @@ class PerfProfiler:
             ]
             proc = subprocess.run(record, check=False)
             # perf propagates the workload's exit status, and timeout(1) exits
-            # 124 when the cap fires — the *intended* outcome of --time-limit,
-            # not a failure. Everything else is a real error.
+            # 124 when the cap fires, the intended outcome of --time-limit.
+            # Everything else is a real error.
             expected = (0, 124) if time_limit else (0,)
             if proc.returncode not in expected:
                 raise subprocess.CalledProcessError(proc.returncode, record)

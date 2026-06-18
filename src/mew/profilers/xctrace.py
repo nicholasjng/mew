@@ -33,13 +33,9 @@ class XctraceProfiler:
 
     name = "xctrace"
     viewer_hint = "Instruments.app"
-    #: Output formats this backend accepts — a class attribute because the CLI
-    #: reads it off the backend instance (`getattr(backend, "FORMATS", ...)`).
-    #: ``auto`` (the platform-agnostic default, mirroring ``--profiler auto``)
-    #: and its tool-named alias ``xctrace`` both yield the native Instruments
-    #: ``.trace`` bundle; ``speedscope`` folds it to a speedscope JSON document
-    #: (one profile per case). ``pprof`` is the planned sibling (see ROADMAP);
-    #: the same format axis that gates perf.
+    #: Output formats the CLI validates --format against. ``auto`` and the
+    #: tool-named alias ``xctrace`` both yield the native Instruments ``.trace``
+    #: bundle; ``speedscope`` folds it to speedscope JSON (one profile per case).
     FORMATS = ("auto", "xctrace", "speedscope")
 
     def unavailable_reason(self) -> str | None:
@@ -109,7 +105,6 @@ class XctraceProfiler:
 
                 cmd = [exe, "record", "--template", template, "--output", str(dest)]
                 if append:
-                    # Add this case as another run inside the existing bundle.
                     cmd.append("--append-run")
                 if time_limit:
                     cmd += ["--time-limit", time_limit]
@@ -124,10 +119,8 @@ class XctraceProfiler:
                     from mew.profilers._xctrace_export import fold_trace
 
                     folded[key] = fold_trace(dest, exe=exe)
-                    # The per-case bundle was only an intermediate for the fold;
-                    # the speedscope JSON is the deliverable. (fold_trace already
-                    # removed its XML export; both survive on a failed fold, for
-                    # debugging.)
+                    # The bundle was only an intermediate for the fold; it and
+                    # the XML export survive a failed fold, for debugging.
                     shutil.rmtree(dest, ignore_errors=True)
                 else:
                     artifacts[key] = dest

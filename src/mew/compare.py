@@ -32,9 +32,9 @@ from mew.regressions import BenchmarkVerdict, RegressionConfig, report
 from mew.reporter import _fmt_bytes, canonical_name
 
 # `memory.total_bytes` and `memory.total_allocations` stay in stored files but
-# are not compare metrics: total_bytes duplicates peak_bytes for comparison
-# purposes, and total_allocations is documented as not comparable across runs
-# of differing iteration count — allocations_per_iteration is the comparable form.
+# are not compare metrics: total_bytes duplicates peak_bytes, and
+# total_allocations is not comparable across differing iteration counts
+# (allocations_per_iteration is the comparable form).
 _MEMORY_METRICS = frozenset(
     {
         "memory.peak_bytes",
@@ -113,8 +113,11 @@ def _is_measurement_row(row: dict[str, Any]) -> bool:
 
 
 def _rows_from_json(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    doc = json.loads(path.read_text())
-    benchmarks = doc.get("benchmarks")
+    try:
+        doc = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{path}: invalid JSON: {e}") from e
+    benchmarks = doc.get("benchmarks") if isinstance(doc, dict) else None
     if not isinstance(benchmarks, list):
         raise ValueError(f"{path}: missing 'benchmarks' array")
     ctx = doc.get("context") or {}
@@ -136,7 +139,7 @@ _SEGMENT_FIELDS = (
 def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Read the JSONL sink (plain or gzip): one self-contained row per line.
 
-    Current files are pure NDJSON — every row carries its session identity.
+    Current files are pure NDJSON; every row carries its session identity.
     Files from older versions (and the --variant worker channel) interleave
     ``{"context": ...}`` header lines with rows; rows inherit their segment's
     identity for those, and ``file_ctx`` is the last segment's context.
@@ -151,9 +154,8 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             return gzip.open(p, "rt")
     else:
         _open = Path.open
-    # Stream line-by-line: a growing --append archive can be large;
-    # read_text().splitlines() would hold the whole file plus a list of every
-    # line in memory at once, on top of the parsed rows.
+    # Stream line-by-line: a growing --append archive can be large, and
+    # read_text() would hold the whole file in memory on top of the parsed rows.
     with _open(path) as fh:
         for lineno, line in enumerate(fh, start=1):
             if not line.strip():
@@ -276,13 +278,27 @@ def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dic
 
 
 def _read_rows(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Dispatch on suffix to read ``(rows, file_ctx)`` from a result file."""
+    """Dispatch on suffix to read ``(rows, file_ctx)`` from a result file.
+
+    A missing or unparseable input is a CLI-level error, so read/parse failures
+    surface as ``SystemExit`` with a one-line message, not a traceback.
+    """
     name = path.name.lower()
     if name.endswith(".json"):
-        return _rows_from_json(path)
-    if name.endswith((".jsonl", ".jsonl.gz")):
-        return _rows_from_jsonl(path)
-    raise SystemExit(f"unsupported result file: {path} (use .json, .jsonl, or .jsonl.gz)")
+        reader = _rows_from_json
+    elif name.endswith((".jsonl", ".jsonl.gz")):
+        reader = _rows_from_jsonl
+    else:
+        raise SystemExit(f"unsupported result file: {path} (use .json, .jsonl, or .jsonl.gz)")
+    try:
+        return reader(path)
+    except FileNotFoundError as e:
+        raise SystemExit(f"result file not found: {path}") from e
+    except OSError as e:
+        raise SystemExit(f"cannot read result file {path}: {e.strerror or e}") from e
+    except ValueError as e:
+        # _rows_from_* messages already carry path (and line) context.
+        raise SystemExit(str(e)) from e
 
 
 def _samples_from_groups(
@@ -717,10 +733,9 @@ def _render(
             )
 
     _warn_context_skew(columns)
-    # Custom-context keys that differ (e.g. engine=duckdb 1.5.3) annotate the
-    # per-column context line above the table, so an apples-vs-oranges
-    # comparison documents itself without stealing width from table headers
-    # (which use the bare label instead; see `labels` below).
+    # Custom-context keys that differ (e.g. engine=...) annotate the per-column
+    # context line, so an apples-vs-oranges comparison documents itself without
+    # stealing table-header width.
     diffs = _custom_diffs([c.context for c in columns])
     annotated_labels = [
         f"{c.label} ({', '.join(f'{k}={v}' for k, v in diff.items())})" if diff else c.label
@@ -757,9 +772,8 @@ def _render(
         row: list[Any] = [name, _value_cell(base, metric)]
         if show_stddev:
             row.append(_fmt_stddev(base, metric))
-        # Time metrics compare in nanoseconds so a declared-unit mismatch across
-        # files (e.g. one produced with --benchmark_time_unit=us) doesn't turn
-        # into a bogus delta; other metrics have no per-file unit to skew on.
+        # Time metrics compare in nanoseconds so a declared-unit mismatch
+        # across files doesn't turn into a bogus delta.
         base_value = _to_ns(base.value, base.time_unit) if is_time_metric else base.value
         for idx, c in enumerate(columns[1:]):
             s = c.samples[name]
@@ -918,9 +932,8 @@ def compare(
             raise SystemExit("mew compare needs at least two result files")
         parsed = [_split_selector(str(p)) for p in files]
         paths = [p for p, _ in parsed]
-        # CLI convention: the *last* file is the baseline (`mew compare head.json
-        # baseline.json` reads like "compare head against baseline"); `_render`
-        # internally still expects columns[0] to be the baseline column.
+        # CLI convention: the last file is the baseline ("compare head against
+        # baseline"), while `_render` expects columns[0] to be the baseline.
         ordered = [parsed[-1], *parsed[:-1]]
         columns = []
         for path, selector in ordered:
