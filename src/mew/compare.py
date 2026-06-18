@@ -802,7 +802,7 @@ def _render(
     term.print(table)
 
     if regressions is not None:
-        return report(verdicts, default_threshold_pct=regressions.default_threshold_pct)
+        return report(verdicts, default_threshold=regressions.default_threshold)
     return 0
 
 
@@ -841,17 +841,18 @@ def compare(
 ) -> int:
     """Compare benchmark result files and render a comparison table.
 
-    The first file is the baseline; later files show their value plus percent delta and speedup against it.
+    The last file is the baseline; earlier files show their value plus percent delta and speedup against it.
 
     Parameters
     ----------
     files : list[Path]
-        Result files (JSON, JSONL, or JSONL.gz); the first is treated as the
-        baseline. A ``path@selector`` argument picks one session from a
-        multi-session file: ``@latest``/``@earliest``, ``@~N`` (N back from
-        latest), an exact ``session_tag``, or a ``session_id`` prefix
+        Result files (JSON, JSONL, or JSONL.gz); the last is treated as the
+        baseline (``mew compare head.json baseline.json`` reads like "compare
+        head against baseline"). A ``path@selector`` argument picks one session
+        from a multi-session file: ``@latest``/``@earliest``, ``@~N`` (N back
+        from latest), an exact ``session_tag``, or a ``session_id`` prefix
         (≥4 chars). Repeat one file with two selectors to compare two of its
-        sessions (``results.jsonl@before results.jsonl@after``).
+        sessions (``results.jsonl@after results.jsonl@before``).
     metric : str, default "real_time"
         Metric to compare.
         One of ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or (for files
@@ -917,8 +918,12 @@ def compare(
             raise SystemExit("mew compare needs at least two result files")
         parsed = [_split_selector(str(p)) for p in files]
         paths = [p for p, _ in parsed]
+        # CLI convention: the *last* file is the baseline (`mew compare head.json
+        # baseline.json` reads like "compare head against baseline"); `_render`
+        # internally still expects columns[0] to be the baseline column.
+        ordered = [parsed[-1], *parsed[:-1]]
         columns = []
-        for path, selector in parsed:
+        for path, selector in ordered:
             samples, ctx = _load(path, metric, key, selector, statistic)
             base = _label(path, paths)
             label = f"{base}@{selector}" if selector else base

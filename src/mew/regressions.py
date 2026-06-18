@@ -37,7 +37,7 @@ class AllowRule:
     pattern: str
     reason: str
     ignore: bool = False
-    threshold_pct: float | None = None
+    threshold: float | None = None
 
     def matches(self, name: str) -> bool:
         return fnmatch.fnmatchcase(name, self.pattern)
@@ -55,7 +55,7 @@ class BenchmarkVerdict:
 
 @dataclass(frozen=True, slots=True)
 class RegressionConfig:
-    default_threshold_pct: float
+    default_threshold: float
     rules: tuple[AllowRule, ...] = ()
 
     def find_rule(self, name: str) -> AllowRule | None:
@@ -91,12 +91,12 @@ class RegressionConfig:
         # Magnitude in the "worse" direction: slower for time metrics, fewer
         # iters (negative delta) for iterations.
         magnitude = -delta_pct if higher_is_better else delta_pct
-        rule_threshold = rule.threshold_pct if rule is not None else None
-        threshold = rule_threshold if rule_threshold is not None else self.default_threshold_pct
+        rule_threshold = rule.threshold if rule is not None else None
+        threshold = rule_threshold if rule_threshold is not None else self.default_threshold
 
         if magnitude > threshold:
             return BenchmarkVerdict(name, delta_pct, Verdict.REGRESSED, rule)
-        if rule_threshold is not None and magnitude > self.default_threshold_pct:
+        if rule_threshold is not None and magnitude > self.default_threshold:
             return BenchmarkVerdict(name, delta_pct, Verdict.ALLOWED_OVER, rule)
         return BenchmarkVerdict(name, delta_pct, Verdict.OK, rule)
 
@@ -107,9 +107,9 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
         raise ValueError(f"{source}: allow rule missing 'pattern'")
 
     ignore = bool(raw.get("ignore", False))
-    threshold = raw.get("threshold_pct")
+    threshold = raw.get("threshold")
     if threshold is not None and not isinstance(threshold, int | float):
-        raise ValueError(f"{source}: allow rule {pattern!r}: threshold_pct must be a number")
+        raise ValueError(f"{source}: allow rule {pattern!r}: threshold must be a number")
 
     reason = raw.get("reason")
     if not isinstance(reason, str) or not reason.strip():
@@ -119,20 +119,20 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
 
     if not ignore and threshold is None:
         raise ValueError(
-            f"{source}: allow rule {pattern!r}: set either ignore=true or threshold_pct=<float>"
+            f"{source}: allow rule {pattern!r}: set either ignore=true or threshold=<float>"
         )
 
     return AllowRule(
         pattern=pattern,
         reason=reason.strip(),
         ignore=ignore,
-        threshold_pct=float(threshold) if threshold is not None else None,
+        threshold=float(threshold) if threshold is not None else None,
     )
 
 
 def load_config(
     *,
-    default_threshold_pct: float,
+    default_threshold: float,
     path: Path | None = None,
 ) -> RegressionConfig:
     """Build a :class:`RegressionConfig`.
@@ -141,7 +141,7 @@ def load_config(
     when ``path`` is ``None``). Rules are searched in file order.
     """
     rules: list[AllowRule] = []
-    threshold = default_threshold_pct
+    threshold = default_threshold
 
     source: Path | None = path
     if source is not None and not source.is_file():
@@ -157,18 +157,18 @@ def load_config(
         with source.open("rb") as fh:
             doc = tomllib.load(fh)
         table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
-        if "default_threshold_pct" in table:
-            threshold = float(table["default_threshold_pct"])
+        if "default_threshold" in table:
+            threshold = float(table["default_threshold"])
         for raw in table.get("allow", []):
             rules.append(_coerce_rule(raw, source=source))
 
-    return RegressionConfig(default_threshold_pct=threshold, rules=tuple(rules))
+    return RegressionConfig(default_threshold=threshold, rules=tuple(rules))
 
 
 def render_panel(
     verdicts: list[BenchmarkVerdict],
     *,
-    default_threshold_pct: float,
+    default_threshold: float,
 ) -> tuple[str, int]:
     """Format the regression panel and compute the exit code.
 
@@ -190,14 +190,14 @@ def render_panel(
     if not (regressed or allowed_over or ignored):
         return "", 0
 
-    lines = [f"Regressions (threshold +{default_threshold_pct:.1f}%):"]
+    lines = [f"Regressions (threshold +{default_threshold:.1f}%):"]
     for v in regressed:
         lines.append(f"  ❌ {v.name}   {v.delta_pct:+.2f}%")
     for v in allowed_over:
         assert v.rule is not None
         lines.append(
             f"  ⚠️  {v.name}   {v.delta_pct:+.2f}%   "
-            f"(allowlisted: {v.rule.threshold_pct:.1f}% threshold; {v.rule.reason})"
+            f"(allowlisted: {v.rule.threshold:.1f}% threshold; {v.rule.reason})"
         )
     for v in ignored:
         assert v.rule is not None
@@ -218,9 +218,9 @@ def render_panel(
 def report(
     verdicts: list[BenchmarkVerdict],
     *,
-    default_threshold_pct: float,
+    default_threshold: float,
 ) -> int:
-    text, code = render_panel(verdicts, default_threshold_pct=default_threshold_pct)
+    text, code = render_panel(verdicts, default_threshold=default_threshold)
     if text:
         print(text, file=sys.stderr)
     return code

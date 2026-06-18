@@ -471,6 +471,54 @@ def test_run_filter_by_tag(mew_cli, benchdir, tmp_path):
     assert all("bench_two" in n for n in names)
 
 
+# --- mew compare: --regression-threshold / --exit-non-zero-on-regression ---
+
+
+def test_compare_regression_threshold_requires_percent_suffix(mew_cli, tmp_path):
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    base.write_text(json.dumps({"context": {}, "benchmarks": []}))
+    other.write_text(json.dumps({"context": {}, "benchmarks": []}))
+    res = mew_cli("compare", str(other), str(base), "--regression-threshold", "5", cwd=tmp_path)
+    assert res.returncode != 0
+    assert "--regression-threshold" in res.stderr
+    assert "'5'" in res.stderr
+
+
+def test_compare_regression_threshold_alone_is_report_only(mew_cli, tmp_path):
+    # A regression is detected and printed, but without --exit-non-zero-on-regression
+    # the command still exits 0 — the panel is informational, not a gate.
+    from _helpers import row as _row, write_json as _write_json
+
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    _write_json(base, [_row("b", 100.0)])
+    _write_json(other, [_row("b", 120.0)])  # +20%, well over 5%
+    res = mew_cli("compare", str(other), str(base), "--regression-threshold", "5%", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "❌" in res.stderr
+
+
+def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path):
+    from _helpers import row as _row, write_json as _write_json
+
+    base = tmp_path / "base.json"
+    other = tmp_path / "other.json"
+    _write_json(base, [_row("b", 100.0)])
+    _write_json(other, [_row("b", 120.0)])  # +20%, well over 5%
+    res = mew_cli(
+        "compare",
+        str(other),
+        str(base),
+        "--regression-threshold",
+        "5%",
+        "--exit-non-zero-on-regression",
+        cwd=tmp_path,
+    )
+    assert res.returncode == 2
+    assert "❌" in res.stderr
+
+
 # --- mew profile --slowest selection (in-process; no profiler backend needed) ---
 
 

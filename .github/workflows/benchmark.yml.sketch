@@ -57,14 +57,15 @@ jobs:
 
       # --- compare ---
       - name: Compare
-        # `--fail-on-regression 5` fails the job if any benchmark is more than
-        # 5% slower than master. Per-benchmark allowlists live in
-        # `[tool.mew.regressions]` in pyproject.toml. Use `continue-on-error`
-        # while you calibrate thresholds, then remove it to start gating merges.
+        # `--regression-threshold 5%` always prints the panel; add
+        # `--exit-non-zero-on-regression` once you trust the threshold to start
+        # gating merges. Per-benchmark allowlists live in
+        # `[tool.mew.regressions]` in pyproject.toml.
         run: |
-          uv run mew compare master.jsonl pr.jsonl \
+          uv run mew compare pr.jsonl master.jsonl \
             --stddev \
-            --fail-on-regression 5 \
+            --regression-threshold 5% \
+            --exit-non-zero-on-regression \
             | tee compare.txt
 
       - uses: actions/upload-artifact@v4

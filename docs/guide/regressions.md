@@ -1,16 +1,16 @@
 # Comparisons and regression gating
 
 `mew compare` diffs two or more result files (`.json`, `.jsonl`, or `.jsonl.gz`; every sink `mew run -o` writes).
-The first is the baseline; later files are diffed against it.
-With `--fail-on-regression`, it also acts as a CI gate, returning exit code 2 when any benchmark drifts in the wrong direction by more than the threshold.
+The last is the baseline; earlier files are diffed against it (`mew compare head.json baseline.json` reads like "compare head against baseline").
+With `--regression-threshold` it also computes and prints a regression panel; add `--exit-non-zero-on-regression` to turn that into a CI gate, returning exit code 2 when any benchmark drifts in the wrong direction by more than the threshold.
 
 ## Basic comparison
 
 ```console
-$ mew compare baseline.json head.json
-$ mew compare --metric cpu_time baseline.json head.json
-$ mew compare --pattern 'sort' baseline.json head.json
-$ mew compare --stddev baseline.json head.json    # show stddev cols if present
+$ mew compare head.json baseline.json
+$ mew compare --metric cpu_time head.json baseline.json
+$ mew compare --pattern 'sort' head.json baseline.json
+$ mew compare --stddev head.json baseline.json    # show stddev cols if present
 ```
 
 Supported metrics: `real_time` (default), `cpu_time`, `iterations`.
@@ -18,7 +18,7 @@ For `iterations`, higher is better, so the regression direction is inverted unde
 Files produced with `--profile-memory` additionally support `memory.peak_bytes` and `memory.allocations_per_iteration`:
 
 ```console
-$ mew compare -m memory.peak_bytes baseline.json head.json
+$ mew compare -m memory.peak_bytes head.json baseline.json
 $ mew compare -m memory.allocations_per_iteration ducky.jsonl duckdb.jsonl
 ```
 
@@ -58,7 +58,7 @@ Each `mew run` is one *session* (see [](context.md#session-identity)). Normally 
 $ mew run --session-tag before -o results.jsonl
 # ... change something ...
 $ mew run --session-tag after --append -o results.jsonl
-$ mew compare results.jsonl@before results.jsonl@after
+$ mew compare results.jsonl@after results.jsonl@before
 ```
 
 A selector picks one session from a multi-session file:
@@ -75,10 +75,10 @@ This is deliberately not a query engine over a growing archive: for "the most re
 ## Gating CI
 
 ```console
-$ mew compare --fail-on-regression 5 baseline.json head.json
+$ mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json baseline.json
 ```
 
-The threshold is in percent: with `--fail-on-regression 5`, any benchmark more than 5% slower than baseline causes a nonzero exit, so a CI workflow fails directly from a failed comparison.
+The threshold is a percent, and the `%` is required (`--regression-threshold 5` is a CLI error, not a silent "5 percent"). `--regression-threshold` alone always prints the regression panel; only `--exit-non-zero-on-regression` turns a regression into a nonzero exit — so a CI workflow only fails once you opt in, and you can calibrate thresholds locally by watching the panel without risking a red build.
 
 ## Allowlist
 
@@ -86,11 +86,11 @@ Keep an allowlist of expected drift in `pyproject.toml`:
 
 ```toml
 [tool.mew.regressions]
-default_threshold_pct = 5.0
+default_threshold = 5.0
 
 [[tool.mew.regressions.allow]]
 pattern = "benchmarks/bench_io.py::*"
-threshold_pct = 15.0
+threshold = 15.0
 reason = "I/O is noisy on the CI runner; raise the bar."
 
 [[tool.mew.regressions.allow]]
@@ -101,7 +101,7 @@ reason = "Bubble sort is intentionally slow; skip the gate."
 
 Patterns use {func}`fnmatch.fnmatchcase` against the full benchmark name.
 Each rule must include a `reason` so the allowlist stays explainable. A
-rule must either set `ignore=true` or `threshold_pct=<float>`.
+rule must either set `ignore=true` or `threshold=<float>`.
 
 ## Verdicts
 
@@ -112,7 +112,7 @@ rule must either set `ignore=true` or `threshold_pct=<float>`.
 | `ALLOWED_OVER`  | Over the default, but a rule raised the bar. Shown as a warning, not a failure. |
 | `IGNORED`       | A matching rule says skip gating entirely. Listed for visibility.                |
 
-The panel printed to stderr surfaces all four buckets; the regressed list drives the exit code.
+The panel printed to stderr surfaces all four buckets; the regressed list drives the exit code (only when `--exit-non-zero-on-regression` is set).
 
 ## A typical CI workflow
 
@@ -125,7 +125,7 @@ The panel printed to stderr surfaces all four buckets; the regressed list drives
   run: mew run --min-time 1s -o head.json
 
 - name: Gate on regressions
-  run: mew compare --fail-on-regression 5 baseline.json head.json
+  run: mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json baseline.json
 ```
 
 Then persist `head.json` (e.g. via `actions/cache` keyed on the merged SHA) so the next run on `main` becomes the next baseline.

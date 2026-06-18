@@ -613,10 +613,11 @@ def compare(
     by: str | None = None,
     baseline: str | None = None,
     statistic: str | None = None,
-    fail_on_regression: float | None = None,
+    regression_threshold: float | None = None,
+    exit_non_zero_on_regression: bool = False,
     regressions_config: Path | None = None,
 ) -> None:
-    """Compare benchmark result files; the first file is the baseline."""
+    """Compare benchmark result files; the last file is the baseline."""
     from mew._statistics import resolve_statistic
     from mew.compare import compare as _compare
 
@@ -625,11 +626,11 @@ def compare(
     reduce = resolve_statistic(spec) if spec is not None else None
 
     cfg = None
-    if fail_on_regression is not None or regressions_config is not None:
+    if regression_threshold is not None or regressions_config is not None:
         from mew.regressions import load_config
 
         cfg = load_config(
-            default_threshold_pct=fail_on_regression if fail_on_regression is not None else 5.0,
+            default_threshold=regression_threshold if regression_threshold is not None else 5.0,
             path=regressions_config,
         )
 
@@ -645,6 +646,10 @@ def compare(
         statistic=reduce,
         regressions=cfg,
     )
+    # The regression panel is informational unless the caller opted into gating;
+    # a `no overlap` (1) or `--by variant` usage error still propagates as-is.
+    if code == 2 and not exit_non_zero_on_regression:
+        code = 0
     if code:
         raise SystemExit(code)
 
@@ -738,6 +743,21 @@ def _warmup_seconds(value: str) -> float:
     from mew.profilers.base import parse_seconds
 
     return parse_seconds(value, flag="--min-warmup-time")
+
+
+def _percent(value: str) -> float:
+    """argparse type for --regression-threshold: '5%' → 5.0. Requires the '%' suffix
+    so the flag reads unambiguously at the call site, not just in --help."""
+    if not value.endswith("%"):
+        raise SystemExit(
+            f"mew: invalid --regression-threshold {value!r}; expected a percent, e.g. '5%'"
+        )
+    try:
+        return float(value[:-1])
+    except ValueError:
+        raise SystemExit(
+            f"mew: invalid --regression-threshold {value!r}; expected a percent, e.g. '5%'"
+        ) from None
 
 
 def _add_tag_arg(p: argparse.ArgumentParser) -> None:
@@ -985,7 +1005,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "compare", help="Compare benchmark result files.", formatter_class=_CommandHelpFormatter
     )
-    p.add_argument("files", nargs="+", type=Path, help="Result files; the first is the baseline.")
+    p.add_argument("files", nargs="+", type=Path, help="Result files; the last is the baseline.")
     p.add_argument(
         "-m",
         "--metric",
@@ -1020,9 +1040,18 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         "[tool.mew] statistic.",
     )
     p.add_argument(
-        "--fail-on-regression",
-        type=float,
-        help="exit 2 if any benchmark is slower than baseline by more than this percent.",
+        "--regression-threshold",
+        type=_percent,
+        metavar="<N%>",
+        help="regression magnitude that triggers a REGRESSED verdict, e.g. `5%%`. "
+        "Always prints the regression panel; pair with --exit-non-zero-on-regression "
+        "to also fail the command. Defaults to [tool.mew.regressions] default_threshold.",
+    )
+    p.add_argument(
+        "--exit-non-zero-on-regression",
+        action="store_true",
+        help="exit 2 if any benchmark regressed past the threshold. Without this, "
+        "the regression panel is informational only and the exit code is unaffected.",
     )
     p.add_argument(
         "--regressions-config",
