@@ -7,8 +7,8 @@
 - Python 3.11+
 - CMake ≥ 3.21
 - A C++17 compiler (Clang, GCC, MSVC).
-- [`uv`](https://docs.astral.sh/uv/) — recommended for environments and locking.
-- [`prek`](https://pre-commit.com/) — pre-commit runner used in CI.
+- [`uv`](https://docs.astral.sh/uv/): recommended for environments and locking.
+- [`prek`](https://pre-commit.com/): pre-commit runner used in CI.
 
 ## One-time setup
 
@@ -18,7 +18,7 @@ $ uvx prek install
 ```
 
 `uv sync` builds the C++ extension into the project's `.venv` via scikit-build-core.
-The `[tool.uv]` config in `pyproject.toml` opts out of build isolation, so nanobind include paths in `compile_commands.json` survive wheel builds — useful for C++ language servers like `clangd`.
+The `[tool.uv]` config in `pyproject.toml` opts out of build isolation, so nanobind include paths in `compile_commands.json` survive wheel builds, useful for C++ language servers like `clangd`.
 
 ## Rebuilding after a C++ change
 
@@ -37,10 +37,10 @@ $ cmake --build build/cp312-abi3-macosx_26_0_arm64
 
 The `build/{wheel_tag}` tree persists across rebuilds for fast incremental
 compiles. After bumping a native dependency (e.g. nanobind), object files in it
-may have been compiled against the old headers — and because ninja decides what
+may have been compiled against the old headers, and because ninja decides what
 to recompile from file timestamps, a freshly installed header whose mtime
-doesn't exceed the cached object can be skipped. This is usually not what you want,
-and can result in linker errors and ABI mismatches. You can force a clean rebuild with:
+doesn't exceed the cached object can be skipped, which can cause linker errors
+and ABI mismatches. Force a clean rebuild with:
 
 ```console
 $ rm -rf build/
@@ -85,7 +85,7 @@ scripts/asan-pytest.sh
 mew's extension is built with nanobind's `FREE_THREADED` flag. nanobind keeps
 the stable-ABI (`cp312`) wheel on a stock interpreter and switches to a
 version-specific free-threaded wheel (`Py_MOD_GIL_NOT_USED`) on a free-threaded
-one — the two ABIs are mutually exclusive on 3.13/3.14, so the
+one; the two ABIs are mutually exclusive on 3.13/3.14, so the
 `if.abi-flags = "t"` override in `pyproject.toml` drops `wheel.py-api` there.
 
 Build a separate free-threaded editable install in `.venv-ft` so it doesn't
@@ -102,7 +102,7 @@ Confirm the GIL stays disabled after importing the extension:
 $ .venv-ft/bin/python -c "import sys, mew._core; assert not sys._is_gil_enabled()"
 ```
 
-Threaded benchmarks (`threads` / `thread_range`) only run here — on a GIL
+Threaded benchmarks (`threads` / `thread_range`) only run here; on a GIL
 interpreter, mew skips them with a warning to avoid deadlocking on Google Benchmark's start barrier.
 
 ```console

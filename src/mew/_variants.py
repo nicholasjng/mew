@@ -1,6 +1,6 @@
 """Orchestrate ``mew run --variant``: one subprocess per (variant × repetition).
 
-For "same logical suite, N mutually-incompatible processes" — rival engines that
+For "same logical suite, N mutually-incompatible processes": rival engines that
 statically link the same library, GIL vs free-threaded interpreters, Python
 versions, ASAN vs Release builds. Each variant runs in its own child
 (:mod:`mew._variant_worker`); this orchestrator is the single writer.

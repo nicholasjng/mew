@@ -3,7 +3,7 @@
 A reporter is a Python class with `report_context(context)` and `report_runs(runs)` methods, plus an optional `finalize()`.
 The C++ runner calls them in the main thread with the GIL held.
 
-`report_runs` receives a list of {class}`~mew.RunRow` dicts — each one a
+`report_runs` receives a list of {class}`~mew.RunRow` dicts, each one a
 completed run projected from the C++ `Run` at the binding boundary, with any
 `memory` / `cpu_profile` blocks already attached. Reporters read dict keys
 (`row["real_time"]`, `row.get("memory")`), so the same reporter serves both
@@ -29,14 +29,14 @@ never a live `Run`).
 : One row per Run, static schema, user context flattened. Requires
   `pyarrow` (`pip install 'mew[dev]'` or `pip install pyarrow`). Counters
   are a `MAP<string, double>`. The user-defined context goes into a JSON
-  string column named `custom` — query with e.g. DuckDB's `json_extract`;
+  string column named `custom`; query with e.g. DuckDB's `json_extract`;
   session identity lands as `session_id` / `session_tag` string columns
   (see [](context.md)).
 
 {class}`~mew.Fanout`
 : Broadcasts each callback to a list of reporters. Used internally by
   `mew run` when multiple `-o` sinks are supplied. `report_context()`
-  returns `all(...)` — Google Benchmark halts when any reporter returns
+  returns `all(...)`: Google Benchmark halts when any reporter returns
   `False`, so the strictest sub-reporter wins.
 
 ## Choosing a sink

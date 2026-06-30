@@ -1,6 +1,6 @@
 """Out-of-process, native-frame profiler backends for ``mew profile``.
 
-These capture C/native stacks by sampling the whole process from outside — what
+These capture C/native stacks by sampling the whole process from outside, what
 in-process samplers can't do. In-process Python sampling (pyinstrument) lives on
 ``mew run --sample`` and is deliberately *not* a backend here.
 

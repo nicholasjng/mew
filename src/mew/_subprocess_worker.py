@@ -12,7 +12,7 @@ Invoked as::
 
 It re-imports the benchmark file (decorator side-effects repopulate
 :data:`REGISTRY`), looks the entry up by name, and drives its body via
-:class:`mew._profile._ProfileState` — the same out-of-loop runner the memory/CPU
+:class:`mew._profile._ProfileState`, the same out-of-loop runner the memory/CPU
 profilers use, so ``state.range``/family trampolines behave identically. The fresh
 interpreter means the ``sys.modules`` caching in
 :func:`mew.discovery.import_file` never bites here.

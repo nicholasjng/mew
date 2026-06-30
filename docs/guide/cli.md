@@ -1,6 +1,6 @@
 # Command-line interface
 
-The `mew` CLI has three commands. For a generated help reference, see [](../reference/cli.md).
+For the generated help reference, see [](../reference/cli.md).
 
 ## `mew run`
 
@@ -30,16 +30,16 @@ Per-selector filters are OR'd with the global `-k`.
 
 Pass `-o` (repeatable):
 
-- `-` or `stdout` — terminal output, formatted by `--format`.
-- `*.json` — Google Benchmark-shaped JSON document.
-- `*.parquet` or `*.pq` — one row per Run.
+- `-` or `stdout`: terminal output, formatted by `--format`.
+- `*.json`: Google Benchmark-shaped JSON document.
+- `*.parquet` or `*.pq`: one row per Run.
 
 Duplicate sinks (two stdout sinks, or two writers pointing at the same path) are an error.
 
 ### stdout format
 
 `--format` sets the format of stdout output: `rich` (default table), `json`, or
-`jsonl`. Use `json`/`jsonl` to pipe machine-readable rows downstream — mew's own
+`jsonl`. Use `json`/`jsonl` to pipe machine-readable rows downstream; mew's own
 messages go to stderr, so stdout stays clean:
 
 ```console
@@ -51,12 +51,12 @@ $ mew run --format json | jq '.benchmarks | length'
 format. (It mirrors Google Benchmark's `--benchmark_format`, which sets the
 console format while `--benchmark_out` handles files.)
 
-`--append` adds the run as a new session to an existing `.jsonl` / `.parquet` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually — see [](regressions.md#comparing-sessions-in-one-file).
+`--append` adds the run as a new session to an existing `.jsonl` / `.parquet` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-sessions-in-one-file).
 
 ### Selecting from stdin
 
 `--stdin` reads newline-delimited selectors from standard input, so you can pipe
-a filtered `mew list` straight into a run — no `xargs`. Each line is matched
+a filtered `mew list` straight into a run, no `xargs`. Each line is matched
 **literally**, so a displayed `name[label]` (brackets and all) works without
 escaping. Lines come in two shapes:
 
@@ -157,7 +157,7 @@ the commands and flags. They complete subcommands, per-command options, file
 paths for path arguments, and fixed choices (`--format`, `--profiler`, the shell
 list).
 
-The generated scripts are **static** — they never call `mew` at completion time.
+The generated scripts are **static**: they never call `mew` at completion time.
 So prefer installing them as a **file**, generated once: shell startup then has
 no dependency on `mew` being importable, which matters when `mew` lives only in a
 virtualenv (e.g. Homebrew Python, where you can't install into the interpreter).
@@ -166,23 +166,23 @@ virtualenv (e.g. Homebrew Python, where you can't install into the interpreter).
 # bash
 $ mew completions bash > ~/.local/share/bash-completion/completions/mew
 
-# zsh — write a file, then `source ~/.mew-completions.zsh` in ~/.zshrc after compinit
+# zsh: write a file, then `source ~/.mew-completions.zsh` in ~/.zshrc after compinit
 $ mew completions zsh > ~/.mew-completions.zsh
 
 # fish
 $ mew completions fish > ~/.config/fish/completions/mew.fish
 
-# PowerShell — dot-source the file from $PROFILE
+# PowerShell: dot-source the file from $PROFILE
 $ mew completions powershell > ~/.mew-completions.ps1
 ```
 
 The `eval` one-liner (`eval "$(mew completions zsh)"` in your rc) also works, but
-it re-runs `mew` at every shell startup — so **guard it**, or you'll get a
+it re-runs `mew` at every shell startup, so **guard it**, or you'll get a
 `command not found: mew` on every new shell when no venv is active:
 
 ```console
 $ command -v mew >/dev/null 2>&1 && eval "$(mew completions zsh)"
 ```
 
-Completion is static — it does not run the suite, so it won't complete benchmark
+Completion is static: it does not run the suite, so it won't complete benchmark
 *names*. Pipe `mew list --names-only` if you want those.

@@ -1,6 +1,6 @@
 """On-disk completion cache: benchmark names/cases/tags keyed by bench-file mtimes.
 
-Tab completion must never import bench files — it's slow, and a `uv tool`-installed
+Tab completion must never import bench files: it's slow, and a `uv tool`-installed
 `mew` lacks the project's deps. So `mew run`/`list`/`profile` write this cache as a
 side effect of their normal discovery, and `mew __complete` only ever reads it.
 """

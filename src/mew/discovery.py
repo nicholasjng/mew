@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import sys
 from collections.abc import Iterable, Iterator, Sequence
@@ -10,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-# Tracked so unload() drops exactly what import_file added — and nothing else.
+# Tracked so unload() drops exactly what import_file added, and nothing else.
 _loaded_modules: list[str] = []
 _inserted_paths: list[str] = []
 
@@ -65,9 +66,13 @@ def import_file(path: Path) -> None:
     Prepends the parent dir to ``sys.path`` (pytest ``prepend`` mode) so a bench file
     can import a sibling; left in place so run-time-deferred imports still resolve.
     """
-    # Stable module name from the resolved path so reimports are no-ops.
+    # Stable module name from the resolved path so reimports are no-ops. A
+    # content-addressed digest (not the salted built-in hash) keeps the name
+    # deterministic across processes and collision-resistant, so two distinct
+    # bench files can't map to the same synthetic module and shadow each other.
     resolved = path.resolve()
-    mod_name = f"mew._bench_{abs(hash(resolved))}"
+    digest = hashlib.sha1(str(resolved).encode()).hexdigest()[:16]
+    mod_name = f"mew._bench_{digest}"
     if mod_name in sys.modules:
         return
     parent = str(resolved.parent)
@@ -91,7 +96,7 @@ def unload() -> None:
     """Drop the synthetic bench modules and ``sys.path`` entries import_file added.
 
     Safe post-*run*: each ``Entry.fn`` keeps its namespace alive via ``__globals__``,
-    so the pop doesn't break execution. Sibling/third-party modules are left alone —
+    so the pop doesn't break execution. Sibling/third-party modules are left alone;
     pruning them from ``sys.modules`` risks half-initialized-module bugs.
     """
     while _loaded_modules:

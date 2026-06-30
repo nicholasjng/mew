@@ -12,7 +12,7 @@ TimeUnitStr = Literal["ns", "us", "ms", "s"]
 
 
 class RunRow(TypedDict):
-    """One benchmark run, serialized — the contract every reporter consumes.
+    """One benchmark run, serialized: the contract every reporter consumes.
 
     Reporters read these dicts, never the live C++ :class:`~mew._core.Run`. The
     base keys (``name``, ``real_time``, ``cpu_time``, ``iterations``,

@@ -33,15 +33,15 @@ Reporters receive it under `ctx["custom"]`:
 ## Session identity
 
 Every {func}`mew.run` invocation is one *session* with a generated `session_id` (a time-ordered UUIDv7), persisted in the context block (JSON/JSONL) or as per-row columns (Parquet).
-This keeps runs distinguishable when several land in one archive — even two in the same wall-clock second.
+This keeps runs distinguishable when several land in one archive, even two in the same wall-clock second.
 
 `session_tag` is the human label next to it: pass `mew run --session-tag before` (or `session_tag=` on {func}`mew.run`).
 With no tag, the CLI derives one from your VCS' change id (jj, then git). `[tool.mew.session-tag]` overrides the command via `tool`/`args` (any tool, not just a VCS), and `enabled = false` in that block opts out entirely. See [](configuration.md).
-Note `--session-tag` labels the run's *output* — unrelated to `-t/--tag`, which selects which benchmarks run.
+Note `--session-tag` labels the run's *output*, unrelated to `-t/--tag`, which selects which benchmarks run.
 
 ## Dotted keys
 
-Dotted keys produce nested dicts — handy for SQL drill-downs against the
+Dotted keys produce nested dicts, handy for SQL drill-downs against the
 Parquet sink:
 
 ```python
@@ -59,9 +59,9 @@ FROM 'results.parquet';
 
 ## API surface
 
-- {func}`mew.set_context` — set one key (dotted keys produce a nested struct).
-- {func}`mew.update_context` — set many keys at once.
-- {func}`mew.get_context` — snapshot the current state (deep-copied).
-- {func}`mew.clear_context` — wipe all entries.
+- {func}`mew.set_context`: set one key (dotted keys produce a nested struct).
+- {func}`mew.update_context`: set many keys at once.
+- {func}`mew.get_context`: snapshot the current state (deep-copied).
+- {func}`mew.clear_context`: wipe all entries.
 
-JSON-friendly values are strongly preferred — the JSON and Parquet sinks serialize with `str()` by default, which loses information.
+JSON-friendly values are strongly preferred: the JSON and Parquet sinks serialize with `str()` by default, which loses information.

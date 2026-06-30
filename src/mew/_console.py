@@ -3,8 +3,8 @@
 Replaces the handful of rich primitives mew used (``Console``, ``Text``,
 ``Table``, ``markup.escape``). Scope is only what mew renders: the streamed
 results table (:class:`~mew.reporter.RichReporter`), the comparison table, and
-colorized ``--help``. There is no markup language — a cell carries its style
-out of band — so ``[label]`` needs no escaping. Long cells in the one flexible
+colorized ``--help``. There is no markup language; a cell carries its style
+out of band, so ``[label]`` needs no escaping. Long cells in the one flexible
 column are left-ellipsized; there is no wrapping or East-Asian width handling.
 """
 
@@ -110,7 +110,7 @@ def _format_cell(cell: Cell, width: int, justify: str, color: bool) -> str:
         text = _truncate_left(cell, width)
         pad = width - len(text)
         body = text
-    else:  # styled spans — only ever in fixed columns, so never truncated
+    else:  # styled spans: only ever in fixed columns, so never truncated
         body = "".join(sgr(t, s, enabled=color) if s else t for t, s in cell)
         pad = max(0, width - _visible_len(cell))
     return " " * pad + body if justify == "right" else body + " " * pad

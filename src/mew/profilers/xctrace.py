@@ -1,4 +1,4 @@
-"""xctrace (Instruments) backend — macOS native-frame profiling.
+"""xctrace (Instruments) backend: macOS native-frame profiling.
 
 For each benchmark case we shell out to ``xctrace record``, which ``--launch``es
 :mod:`mew._subprocess_worker` to drive that one case while xctrace samples it.
@@ -30,7 +30,7 @@ COMBINED_NAME = "mew.trace"
 #: mirroring ``--profiler auto``) and its tool-named alias ``xctrace`` both yield
 #: the native Instruments ``.trace`` bundle; ``speedscope`` folds it to a
 #: speedscope JSON document (one profile per case). ``pprof`` is the planned
-#: sibling (see ROADMAP) — the same format axis that gates perf.
+#: sibling (see ROADMAP); the same format axis that gates perf.
 FORMATS = ("auto", "xctrace", "speedscope")
 
 
@@ -147,7 +147,7 @@ class XctraceProfiler:
                 )
                 for key, tally in folded.items()
             }
-        # One document, N profiles — every key resolves to it (CLI dedups on open).
+        # One document, N profiles; every key resolves to it (CLI dedups on open).
         dest = write_speedscope_json(folded, output_dir / "mew.speedscope.json")
         return dict.fromkeys(folded, dest)
 

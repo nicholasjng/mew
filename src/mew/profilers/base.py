@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 class Capabilities:
     """What a profiler can do, used for ``auto`` selection and messaging."""
 
-    #: Captures native (C/C++) stack frames — the reason these backends exist.
+    #: Captures native (C/C++) stack frames; the reason these backends exist.
     native_frames: bool
     #: ``sys.platform`` values the backend supports.
     platforms: frozenset[str]

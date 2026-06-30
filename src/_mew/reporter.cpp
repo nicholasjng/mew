@@ -1,4 +1,4 @@
-// Reporter bindings — exposes Run/Context as Python objects, bridges a Python
+// Reporter bindings: exposes Run/Context as Python objects, bridges a Python
 // reporter into GB's BenchmarkReporter interface, and exposes `run_benchmarks`.
 
 #include <benchmark/benchmark.h>
@@ -174,7 +174,7 @@ void register_reporter(nb::module_& m) {
 
             int argc = (int)argp.size();
             // Re-parse flags every call so a different argv per call takes effect.
-            // `--help` in argv still triggers exit(0) — documented GB behavior.
+            // `--help` in argv still triggers exit(0); documented GB behavior.
             benchmark::Initialize(&argc, argp.data());
 
             std::unique_ptr<PyReporter> pr;

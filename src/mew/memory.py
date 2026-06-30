@@ -33,11 +33,11 @@ class MemoryProfile:
         Tracked heap live at the high-water mark, *not* the cumulative sum.
     total_allocations : int
         Cumulative allocation count across all ``iterations``. Not comparable
-        across runs of differing iteration count — use ``allocations_per_iteration``.
+        across runs of differing iteration count; use ``allocations_per_iteration``.
     iterations : int
         Number of measured timing-loop iterations the capture ran over.
     allocations_per_iteration : float
-        ``total_allocations / iterations`` — the per-call count, comparable
+        ``total_allocations / iterations``, the per-call count, comparable
         across engines regardless of speed.
     """
 
@@ -146,7 +146,7 @@ def _collect_stats(entries: list[Entry], iterations: int) -> dict[str, MemoryPro
                 reader = memray.FileReader(dest)
                 meta = reader.metadata
                 # From metadata, not get_allocation_records(): that scan is O(every
-                # allocation) — minutes and gigabytes on an allocation-heavy body.
+                # allocation), minutes and gigabytes on an allocation-heavy body.
                 peak = meta.peak_memory
                 total_allocs = meta.total_allocations
                 # Live bytes at the high-water mark: bounded by peak concurrent allocs.

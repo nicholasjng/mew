@@ -1,4 +1,4 @@
-"""mew — microbenchmarking for Python via Google Benchmark."""
+"""mew: microbenchmarking for Python via Google Benchmark."""
 
 import atexit
 from importlib.metadata import PackageNotFoundError, version as _pkg_version

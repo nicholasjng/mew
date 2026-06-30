@@ -5,7 +5,7 @@ Structured as three stages so future features feed the same renderer:
 1. **Load** (:func:`_load_sessions`): read a result file into per-session
    sample groups, discarding nothing.
 2. **Select** (:func:`_select_latest`): resolve the groups to one sample set
-   per file — today always "latest session per name, with a warning"; session
+   per file, today always "latest session per name, with a warning"; session
    selectors (``path@tag``) will slot in here.
 3. **Render** (:func:`_render`): compare a list of labelled columns. File
    comparisons produce one column per file; a variant pivot would produce one
@@ -484,7 +484,7 @@ def _resolve_session(path: Path, sessions: list[SessionData], selector: str) -> 
 
     Order: keywords (``latest``/``earliest``), ordinal (``~N``, N back from
     latest), exact ``session_tag``, then ``session_id`` prefix (≥4 chars).
-    Ambiguous tag/prefix matches and misses are errors — explicit selection
+    Ambiguous tag/prefix matches and misses are errors; explicit selection
     must be deterministic.
     """
     if not sessions:
@@ -526,7 +526,7 @@ def _resolve_session(path: Path, sessions: list[SessionData], selector: str) -> 
 
 
 def _parquet_session_index(path: Path) -> list[SessionData] | None:
-    """Enumerate sessions from identity columns only — a cheap pass so ``path@selector``
+    """Enumerate sessions from identity columns only, a cheap pass so ``path@selector``
     resolves the target without reading every session's metric rows.
 
     Returns None when the fast path can't apply (not Parquet, no pyarrow, or a legacy
@@ -578,7 +578,7 @@ def _load(
     """Load a result file into one sample set: load → select → re-key.
 
     Without a selector, sessions merge latest-wins per name (warning on discards).
-    A selector picks exactly one session, no merge — and for Parquet, reads only
+    A selector picks exactly one session, no merge, and for Parquet reads only
     that session's rows (cheap index pass resolves it first).
     """
     if selector is not None and (index := _parquet_session_index(path)) is not None:
@@ -640,7 +640,7 @@ def _warn_context_skew(columns: list[_Column]) -> None:
         if len({v for v in values.values() if v is not None}) > 1:
             detail = ", ".join(f"{label}: {v}" for label, v in values.items())
             print(
-                f"warning: result files differ in {fld} ({detail}) — "
+                f"warning: result files differ in {fld} ({detail}); "
                 "deltas may reflect the environment, not the code",
                 file=sys.stderr,
             )
@@ -795,7 +795,7 @@ def _render(
             row.append(_fmt_speedup(speedup))
             if show_stddev:
                 row.append(f"{s.stddev:.2f}" if s.stddev is not None else "-")
-            # Gate only against the first non-baseline column — the rightmost
+            # Gate only against the first non-baseline column; the rightmost
             # columns are informational in a multi-file comparison.
             if regressions is not None and idx == 0:
                 verdicts.append(
@@ -852,14 +852,14 @@ def compare(
     files : list[Path]
         Result files (JSON, JSONL, or Parquet); the first is treated as the
         baseline. A ``path@selector`` argument picks one session from a
-        multi-session file — ``@latest``/``@earliest``, ``@~N`` (N back from
+        multi-session file: ``@latest``/``@earliest``, ``@~N`` (N back from
         latest), an exact ``session_tag``, or a ``session_id`` prefix
         (≥4 chars). Repeat one file with two selectors to compare two of its
         sessions (``results.parquet@before results.parquet@after``).
     metric : str, default "real_time"
         Metric to compare.
-        One of ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or — for files
-        produced with ``--profile-memory`` — ``"memory.peak_bytes"``,
+        One of ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or (for files
+        produced with ``--profile-memory``) ``"memory.peak_bytes"``,
         ``"memory.total_bytes"``, ``"memory.total_allocations"``, or
         ``"memory.allocations_per_iteration"`` (the per-call allocation count,
         comparable across engines regardless of speed).

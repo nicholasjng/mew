@@ -3,7 +3,7 @@
 ``xctrace`` won't emit speedscope/pprof directly, but ``xctrace export`` dumps the
 Time Profiler samples as XML, which we fold into stacks. From the folded stacks we
 write either Brendan-Gregg collapsed text (one profile per file) or speedscope's
-own JSON (which packs many profiles into one file behind a dropdown — handy for a
+own JSON (which packs many profiles into one file behind a dropdown, handy for a
 big parametrized family where you want to cycle through cases).
 
 Status: **prototype.** The folding (:func:`fold_samples`) is validated against a
@@ -21,7 +21,7 @@ Xcode-recorded trace. Three things to pin against a live trace before promoting 
 
 Port of the algorithm in inferno's ``collapse/xctrace.rs``, trimmed to what we
 need: stdlib :mod:`xml.etree.ElementTree` streaming replaces ``quick_xml`` (and
-auto-unescapes attribute values), and we drop the Rust-symbol demangling — Xcode
+auto-unescapes attribute values), and we drop the Rust-symbol demangling; Xcode
 14.3+ already exports symbolicated names.
 """
 
@@ -60,7 +60,7 @@ def fold_samples(source: str | Path | IO[bytes]) -> Counter[tuple[str, ...]]:
     (not a ``"a;b;c"`` string) lets both writers consume it without re-splitting on a
     separator a symbol might contain.
 
-    The export deduplicates with an ``id``/``ref`` scheme — a ``<frame>`` or whole
+    The export deduplicates with an ``id``/``ref`` scheme: a ``<frame>`` or whole
     ``<backtrace>`` is defined once with an ``id`` and later referenced by ``ref``.
     We resolve both against tables built as we stream, so a ``ref`` always points at
     something already seen.
@@ -208,7 +208,7 @@ def fold_trace(trace: Path, *, exe: str | None = None) -> Counter[tuple[str, ...
 
     The XML is written next to the trace as ``<trace>.xctrace.xml``. Raises
     ``SystemExit`` if the export yielded no samples (benchmark too short, or the wrong
-    table schema — see :data:`_XPATH`).
+    table schema; see :data:`_XPATH`).
     """
     xml = export_xml(trace, trace.with_suffix(".xctrace.xml"), exe=exe)
     folded = fold_samples(xml)
@@ -216,7 +216,7 @@ def fold_trace(trace: Path, *, exe: str | None = None) -> Counter[tuple[str, ...
         raise SystemExit(
             f"mew: no samples parsed from {trace} (export at {xml}). The benchmark may "
             f"be too short to sample, or this Xcode emits a different table schema than "
-            f"{_XPATH!r} — check `xctrace export --input {trace} --toc`."
+            f"{_XPATH!r}; check `xctrace export --input {trace} --toc`."
         )
     return folded
 

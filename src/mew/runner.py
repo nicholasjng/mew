@@ -179,7 +179,7 @@ def run(
         Govern what happens when threaded benchmarks (``threads`` /
         ``thread_range``) are selected on a GIL interpreter, where they can't run
         (they would deadlock on Google Benchmark's start barrier). By default mew
-        warns and skips them — emitting a ``skipped`` row per benchmark — and runs
+        warns and skips them (emitting a ``skipped`` row per benchmark) and runs
         the rest, so a mixed suite still works on stock CPython. Set ``strict`` to
         raise a :class:`RuntimeError` instead, e.g. in CI where the threaded
         benchmarks are the point and a silent skip would mask a misconfiguration.
@@ -215,7 +215,7 @@ def run(
             )
         warnings.warn(
             f"skipping {len(threaded)} threaded benchmark(s) on a GIL interpreter "
-            f"({names}{more}) — run on a free-threaded build to execute them; {reason}.",
+            f"({names}{more}), run on a free-threaded build to execute them; {reason}.",
             RuntimeWarning,
             stacklevel=2,
         )

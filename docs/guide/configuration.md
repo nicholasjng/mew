@@ -17,8 +17,8 @@ repetitions = 5
 
 # Whether and how the auto session tag is derived. Omit the table to derive
 # automatically (jj, then git). `enabled = false` turns it off (an explicit
-# --session-tag is still honored). `tool`/`args` are the command — bring any
-# tool, not just a VCS; a known tool ("git"/"jj") supplies default args.
+# --session-tag is still honored). `tool`/`args` are the command: any tool,
+# not just a VCS; a known tool ("git"/"jj") supplies default args.
 [tool.mew.session-tag]
 enabled = true
 tool = "git"
@@ -30,11 +30,11 @@ args = ["describe", "--tags", "--always"]
 1. Defaults from {class}`mew.config.Config`.
 2. `[tool.mew.benchmark-options]` keys, formatted as `--benchmark_<key>[=value]`.
 3. CLI flags: `--min-time`, `--repetitions`, `-o`/`--output`.
-4. `--benchmark-option` raw passthrough — for anything `mew` doesn't model directly.
+4. `--benchmark-option` raw passthrough, for anything `mew` doesn't model directly.
 
 ## `benchmark-options` keys
 
-Keys are the short Google Benchmark flag names (kebab-case here, coerced before the `--benchmark_` flag is built). Only **measurement** flags apply — mew installs its own reporter, so Google Benchmark's *display/output* flags (`format`, `out`, `color`, `display-aggregates-only`) are ignored; some, like `out`, would even write a stray second file in GB's format. Use `--format` for stdout shape and `-o` for output sinks instead.
+Keys are the short Google Benchmark flag names (kebab-case here, coerced before the `--benchmark_` flag is built). Only **measurement** flags apply: mew installs its own reporter, so Google Benchmark's *display/output* flags (`format`, `out`, `color`, `display-aggregates-only`) are ignored; some, like `out`, would even write a stray second file in GB's format. Use `--format` for stdout shape and `-o` for output sinks instead.
 
 | Key                      | Effect                                                          |
 | ------------------------ | --------------------------------------------------------------- |
@@ -48,4 +48,4 @@ Keys are the short Google Benchmark flag names (kebab-case here, coerced before 
 
 - Set `min-time = 0.5` (or higher) for CI runs where you want stable timings.
 - Local iteration: leave it at Google Benchmark's default for faster feedback.
-- Set `repetitions = 5` if you compare with `mew compare` — variance metrics depend on it.
+- Set `repetitions = 5` if you compare with `mew compare`; variance metrics depend on it.

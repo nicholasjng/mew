@@ -4,7 +4,7 @@ Mutually-incompatible variants can't share an interpreter, so each runs in its
 own process. This is that process: it imports one benchmark file, runs the
 timing loop via :func:`mew.run`, and streams a :class:`~mew.JSONLReporter`
 document to stdout. The parent (:mod:`mew._variants`) is the single writer, so
-this worker is variant-unaware — it just measures and prints.
+this worker is variant-unaware; it just measures and prints.
 
 Profiling flags mirror ``mew run``: the worker runs the out-of-loop profile pass
 and hands the results to :func:`mew.run`, whose projector attaches each row's
@@ -21,6 +21,7 @@ Invoked as::
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -68,28 +69,42 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sample-html", default=None, type=Path, dest="sample_html")
     ns = ap.parse_args(argv)
 
-    REGISTRY.clear()
-    _discovery.import_file(ns.file)
+    # Isolate the data channel. The parent parses our stdout as JSONL, but the
+    # benchmarked user code (and Google Benchmark) share this process and may
+    # write to stdout; a single stray print would corrupt the stream and abort
+    # the whole --variant run. Preserve the real stdout fd for the reporter, then
+    # point fd 1 at stderr so any other write lands on the (separately captured,
+    # never parsed) stderr channel instead.
+    sys.stdout.flush()
+    data_fd = os.dup(1)
+    os.dup2(2, 1)
+    data_stream = os.fdopen(data_fd, "w")
     try:
-        entries = REGISTRY.filter(ns.pattern, tags=ns.tag or None, literal=ns.literal)
-    except ValueError as e:
-        print(f"mew: {e}", file=sys.stderr)
-        return 1
-    if not entries:
-        print(f"mew: no benchmarks in {ns.file}", file=sys.stderr)
-        return 1
+        REGISTRY.clear()
+        _discovery.import_file(ns.file)
+        try:
+            entries = REGISTRY.filter(ns.pattern, tags=ns.tag or None, literal=ns.literal)
+        except ValueError as e:
+            print(f"mew: {e}", file=sys.stderr)
+            return 1
+        if not entries:
+            print(f"mew: no benchmarks in {ns.file}", file=sys.stderr)
+            return 1
 
-    # JSONL to stdout (output=None); the parent applies its session id and the
-    # variant name when it parses these lines.
-    memory_profiles, cpu_profiles = _profiles(ns, entries)
-    _run(
-        entries,
-        argv=["mew", *ns.gb],
-        reporter=JSONLReporter(output=None),
-        memory_profiles=memory_profiles,
-        cpu_profiles=cpu_profiles,
-    )
-    return 0
+        # JSONL to the preserved stdout; the parent applies its session id and the
+        # variant name when it parses these lines.
+        memory_profiles, cpu_profiles = _profiles(ns, entries)
+        _run(
+            entries,
+            argv=["mew", *ns.gb],
+            reporter=JSONLReporter(output=data_stream),
+            memory_profiles=memory_profiles,
+            cpu_profiles=cpu_profiles,
+        )
+        return 0
+    finally:
+        data_stream.flush()
+        data_stream.close()
 
 
 if __name__ == "__main__":

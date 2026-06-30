@@ -1,7 +1,7 @@
 # Native profiling
 
 `mew profile` profiles benchmarks **out of process**, so it captures native
-(C/C++) stack frames — the ones a compiled extension spends its time in, which
+(C/C++) stack frames: the ones a compiled extension spends its time in, which
 the in-process `mew run --sample` ({doc}`profiling-cpu`) cannot see.
 
 It launches a fresh worker process per benchmark case and lets a system profiler
@@ -18,8 +18,8 @@ open in the profiler's own viewer, not a column in the results table.
 | `py-spy`   | Linux, Windows  | ✓ (not macOS) | speedscope JSON → speedscope.app   |
 | `perf`     | Linux           | ✓             | `perf script` text → speedscope.app |
 
-`auto` picks the platform's native backend. If none is available — for example
-macOS with only the Command Line Tools and no full Xcode — it tells you so and
+`auto` picks the platform's native backend. If none is available (for example
+macOS with only the Command Line Tools and no full Xcode), it tells you so and
 points you to `mew run --sample` for in-process Python sampling.
 
 The `py-spy` and `perf` backends both emit a [speedscope](https://www.speedscope.app/)-readable
@@ -29,7 +29,7 @@ match the running kernel, and recording usually needs `kernel.perf_event_paranoi
 
 ## Selecting what to profile
 
-Profiling a whole suite is expensive — each case runs under a sampler for many
+Profiling a whole suite is expensive: each case runs under a sampler for many
 iterations. `-k` / `-t` narrow the set like `mew run`; `--slowest N` keeps only
 the N slowest benchmarks, where the time is worth spending:
 
@@ -83,7 +83,7 @@ mew are:
 | `Time Profiler` | CPU call-stack sampling (the default).                    |
 | `Allocations`   | Heap allocations over time, incl. C-extension `malloc`.   |
 | `Leaks`         | Allocations plus periodic leak detection.                 |
-| `System Trace`  | Syscalls, VM faults, thread scheduling — off-CPU insight.  |
+| `System Trace`  | Syscalls, VM faults, thread scheduling; off-CPU insight.  |
 | `CPU Counters`  | Hardware performance counters (instructions, cache misses). |
 
 `--template` also accepts a **path to a `.tracetemplate`**, so a custom template
@@ -93,21 +93,19 @@ works with no change to mew:
 $ mew profile --template ~/Library/Application\ Support/Instruments/Templates/My.tracetemplate
 ```
 
-**Do you need a custom one?** Almost never — the built-ins cover the axes mew
+**Do you need a custom one?** Almost never: the built-ins cover the axes mew
 cares about, and `xctrace record` can only *use* a template, not author one. Make
 your own only for a specific *combination* of instruments (e.g. Time Profiler +
 Allocations in one recording) or non-default settings (e.g. a higher sampling
-rate), built in the Instruments GUI via **File → Save As Template**, which writes
-a `.tracetemplate` into `~/Library/Application Support/Instruments/Templates/`.
-Pass that path to `--template`; pass-through already covers this, so there's no
-CLI authoring path.
+rate), built in the Instruments GUI via **File → Save As Template**. Pass the
+resulting `.tracetemplate` path to `--template`.
 
 ### Native memory and leaks
 
 `--template Allocations` / `Leaks` turn `mew profile` into a native memory tool,
 catching C-extension `malloc` that `mew run --profile-memory` (memray, Python-level)
 misses. For a quick leak check without Instruments, the base-system `/usr/bin/leaks`
-— available with just the Command Line Tools, *unlike* xctrace — inspects a process
+(available with just the Command Line Tools, *unlike* xctrace) inspects a process
 for unreferenced blocks; run the target with `MallocStackLogging=1` for allocation
 backtraces (`atos` symbolicates them). Caveat: a single snapshot conflates one-time
 setup (lazy imports, interned strings, allocator arenas) with real leaks, so treat
@@ -132,7 +130,7 @@ artifact path to drag onto speedscope.app instead.
 In-process samplers (pyinstrument, memray) run inside the benchmark interpreter
 and return a small summary that `mew run` staples onto each timed row. A native
 profiler samples the process from the *outside*, so it can't enrich those
-rows — it produces a trace file instead. Keeping it under `mew profile` makes the
+rows; it produces a trace file instead. Keeping it under `mew profile` makes the
 trade-off explicit: `mew run --sample` for a quick Python-level summary in the
 table, `mew profile` when you need to see into the C.
 
@@ -151,7 +149,7 @@ address-only frames in the native stack.
 | `--rate N`       | `1000`          | (py-spy/perf) Sampling frequency in Hz. Ignored by xctrace. |
 | `--time-limit D` | none            | Hard cap per recording, e.g. `10s`. Bounds a runaway body. |
 
-Like the in-process passes, profiling runs **separately** from timing — don't
+Like the in-process passes, profiling runs **separately** from timing; don't
 read timings out of a profile.
 
 ## What native profiles include (and don't)
@@ -162,13 +160,13 @@ Two differences from `mew run --sample` when reading a native profile:
   suspends sampling for the duration of a `pause()` block, so setup excluded from
   timing is also excluded from the profile. A native profiler samples the whole
   process from the outside and has no hook into `pause()`, so **everything in the
-  benchmark body — setup outside the `for _ in state` loop and paused regions
-  included — shows up in the samples.** If a hot frame in the flame graph is
+  benchmark body (setup outside the `for _ in state` loop and paused regions
+  included) shows up in the samples.** If a hot frame in the flame graph is
   really one-time setup, that's why. Move setup out of the profiled body, or read
   the profile knowing it's there.
 
 - **On-CPU only.** Sampling profilers count where the program is *running*, not
-  where it's *blocked* — time spent waiting on the GIL, locks, or I/O is largely
+  where it's *blocked*: time spent waiting on the GIL, locks, or I/O is largely
   invisible. If a benchmark looks fast on-CPU but slow on the clock, the gap is
   off-CPU time. `py-spy --idle` surfaces some of it; perf can approximate it via
   scheduler tracepoints. Neither is wired up by default.

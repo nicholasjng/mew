@@ -35,7 +35,7 @@ def new_session_id() -> str:
 
 
 # Built-in describe commands (args after the program name). jj uses a fixed-length
-# change-id prefix — not ``shortest()``, which grows with the repo — and no
+# change-id prefix (not ``shortest()``, which grows with the repo) and no
 # ``-dirty`` marker, since jj's working copy is always a commit. With no tool
 # configured, derivation tries jj then git.
 _PRESETS: dict[str, list[str]] = {
