@@ -687,8 +687,8 @@ _SIGNIFICANCE_ALPHA = 0.05
 def _significance_p(base: Sample, other: Sample, *, is_time_metric: bool) -> float | None:
     """Mann-Whitney two-sided p-value between two samples' raw repetitions.
 
-    ``None`` when either side has fewer than 2 repetitions (nothing to rank), in
-    which case no marker is shown — same gating as the CV marker.
+    ``None`` when either side has fewer than 2 repetitions (nothing to rank);
+    no marker is shown then, same gating as the CV marker.
     """
     if len(base.values) < 2 or len(other.values) < 2:
         return None

@@ -6,6 +6,10 @@ change between minor releases.
 
 ## Unreleased
 
+- `mew compare` marks statistically significant deltas with `(signif.)`, via a
+  stdlib-only Mann-Whitney U test over per-repetition values (2+ repetitions
+  required on both sides).
+
 ## Version 0.1.1 (Jul 30, 2026)
 
 Fixes the readthedocs build that was silently broken, no user-facing API changes.

@@ -59,16 +59,17 @@ Legend: ✅ shipped · 🟡 partially shipped · ⬜ not started.
 - 🟡 **ThreadSanitizer pass.** Infra shipped: a `MEW_TSAN` CMake option +
   scikit-build-core override (`build/tsan/`), mirroring ASAN and mutually
   exclusive with it; documented in `docs/development/building.md`. Now also
-  *run* in CI: the `tsan · free-threaded py3.14t` job in `ci.yml` builds the
-  TSAN editable install on 3.14t and runs the full suite through
-  `scripts/tsan-pytest.sh`, which exercises the existing threaded-benchmark
-  regression test (`test_threaded_benchmark_runs_without_deadlock`, 4 real
-  threads). What's still missing is a *deliberately*-racy `.threads()` fixture
-  as a positive control — proof TSAN actually catches something here, not just
-  that the suite passes clean — particularly around `pause()` and the shared
-  `state.counters` map the original note called out. The `asan · macos` job
-  (also newly wired to `scripts/asan-pytest.sh`) landed alongside it; ASAN had
-  the same "documented but never run in CI" gap.
+  *run* in CI: the `tsan · free-threaded py3.14t` job in `ci.yml` builds on
+  3.14t and runs the full suite (`libtsan.so` + `libstdc++.so` preloaded via
+  `LD_PRELOAD`, `detect_deadlocks=0` to dodge a TSan runtime limit free-
+  threaded CPython's own locking trips on its own), exercising the existing
+  threaded-benchmark regression test
+  (`test_threaded_benchmark_runs_without_deadlock`, 4 real threads). Still
+  missing: a *deliberately*-racy `.threads()` fixture as a positive control,
+  proof TSAN catches something here rather than just passing clean, around
+  `pause()` and the shared `state.counters` map the original note called out.
+  The `asan · ubuntu` job landed alongside it, closing the same
+  "documented but never run in CI" gap ASAN had.
 
 ## Reporter / output
 
@@ -204,13 +205,13 @@ default; the items here are opt-in additions, not replacements.
     running" tripwire.
   - ✅ **Significance marker in `compare`.** Shipped: `mew/_significance.py`
     implements the Mann-Whitney U test as a stdlib-only normal approximation
-    (tie- and continuity-corrected, same formula scipy's asymptotic method
-    uses) — no numpy/scipy dependency, matching the zero-hard-dependency
+    (tie- and continuity-corrected, same formula as scipy's asymptotic
+    method), so no numpy/scipy dependency, matching the zero-hard-dependency
     constraint. `compare` computes it per row from the raw per-repetition
     values now carried on `Sample.values`, and appends a bold `(signif.)`
     marker to any delta whose two-sided p-value is < 0.05 (skipped, like the
     CV marker, when either side has fewer than 2 repetitions). Marks the
-    significant rows rather than the noisy ones deliberately — most deltas in
+    significant rows rather than the noisy ones deliberately: most deltas in
     a healthy comparison aren't significant, so flagging *those* would bury
     the minority a perf tuner actually needs to see. Pairs with the
     deterministic instruction-count item below: one attacks noise

@@ -1,12 +1,10 @@
 """Mann-Whitney U significance test for ``mew compare``, stdlib-only.
 
-A rank-sum test answers "could these two repetition samples plausibly come from
-the same distribution," which is what turns a raw delta into "real" vs. "noise."
-scipy's ``mannwhitneyu`` is the reference implementation; this is a normal-approximation
-proxy (with tie and continuity correction, same formula scipy's ``method="asymptotic"``
-uses) so the comparison story doesn't gain a hard dependency. Accurate enough to flag
-"probably noise" at typical repetition counts (5-20); not a substitute for an exact
-test at very small n, where it's simply low-power rather than wrong.
+A rank-sum test on two repetition samples: real delta or noise.
+Normal-approximation proxy for scipy's ``mannwhitneyu``
+(tie- and continuity-corrected, same formula as ``method="asymptotic"``).
+Good enough at typical repetition counts (5-20),
+underpowered rather than wrong at very small n.
 """
 
 from __future__ import annotations
@@ -15,11 +13,10 @@ import math
 
 
 def _average_ranks(values: list[float]) -> tuple[list[float], float]:
-    """Rank ``values`` ascending (1-based), averaging ranks within tie groups.
+    """Rank ``values`` ascending (1-based), averaging ties.
 
-    Returns ``(ranks, tie_term)`` where ``tie_term`` is ``sum(t**3 - t)`` over
-    each tie group of size ``t``, the correction term the normal approximation's
-    variance needs.
+    Returns ``(ranks, tie_term)``: ``tie_term`` is ``sum(t**3 - t)`` per tie
+    group of size ``t``, the variance correction term.
     """
     order = sorted(range(len(values)), key=lambda i: values[i])
     ranks = [0.0] * len(values)
@@ -47,9 +44,8 @@ def _norm_cdf(x: float) -> float:
 def mannwhitney_p(a: list[float], b: list[float]) -> float | None:
     """Two-sided p-value for the null "``a`` and ``b`` are the same distribution."
 
-    ``None`` when either group is empty. A p-value near 1.0 means the delta between
-    the two groups is indistinguishable from repetition noise at this sample size;
-    a small p-value (conventionally < 0.05) means it probably isn't.
+    ``None`` when either group is empty. Near 1.0: indistinguishable from
+    noise. Small (conventionally < 0.05): probably a real difference.
     """
     n1, n2 = len(a), len(b)
     if n1 == 0 or n2 == 0:
@@ -60,8 +56,7 @@ def mannwhitney_p(a: list[float], b: list[float]) -> float | None:
     mu = n1 * n2 / 2
     sigma2 = (n1 * n2 / 12) * ((n + 1) - tie_term / (n * (n - 1))) if n > 1 else 0.0
     if sigma2 <= 0:
-        # No spread in the combined ranks (identical values throughout): no
-        # evidence of a difference, which *is* p=1.0, not an undefined result.
+        # No spread across combined ranks: no evidence of a difference, i.e. p=1.0.
         return 1.0
     sigma = math.sqrt(sigma2)
     diff = u1 - mu

@@ -116,9 +116,8 @@ $ MEW_TSAN=1 uv sync --all-extras --all-groups --no-install-package duckdb --rei
 ```
 
 Preload the TSAN runtime when running, the same way ASAN needs preloading
-(`gcc -print-file-name=libtsan.so` on Linux — see the ASAN section above for
-why gcc, not clang); on macOS there's a wrapper script that handles the SIP
-workaround:
+(`gcc -print-file-name=libtsan.so` on Linux);
+on macOS, there's a wrapper script that handles the SIP workaround:
 
 ```bash
 MEW_TSAN=1 LD_PRELOAD="$(gcc -print-file-name=libtsan.so) $(gcc -print-file-name=libstdc++.so)" \
