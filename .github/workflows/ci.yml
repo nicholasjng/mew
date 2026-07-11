@@ -26,11 +26,11 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
+      - name: Install project and its dependencies
+        run: uv sync --all-extras --all-groups
+
       - name: Run linters, formatter and type checker
         run: uvx prek run --all-files --show-diff-on-failure
-
-      - name: Type check the codebase
-        run: uv run --all-extras --group test ty check
 
   test:
     name: ${{ matrix.os }} · py${{ matrix.python-version }}
@@ -92,6 +92,7 @@ jobs:
   asan:
     name: asan · ubuntu
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,26 +104,23 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
-      # CMake picks up gcc/g++ by default on ubuntu-latest; pin it explicitly
-      # so the LD_PRELOAD runtime below is guaranteed to match what the
-      # extension actually linked against.
       - name: Build the ASAN editable install
         env:
           CC: gcc
           CXX: g++
         run: MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
 
-      # `uv run` alone does not preload the ASAN runtime, so the test process
-      # would abort at the first import of the ASAN-built extension.
+      # libstdc++ must be preloaded alongside libasan.
       - name: Run tests under AddressSanitizer
         run: |
-          LD_PRELOAD="$(gcc -print-file-name=libasan.so)" \
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libstdc++.so)" \
           ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" \
             uv run --no-sync --all-groups pytest --capture no
 
   tsan:
     name: tsan · free-threaded py3.14t
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -134,10 +132,6 @@ jobs:
           python-version: "3.14t"
           enable-cache: true
 
-      # A TSAN pass only earns its keep against real threaded use (mew's
-      # `.threads()` / `thread_range` path), which is free-threaded-only —
-      # a GIL build serializes benchmark threads and never races.
-      # duckdb has no 3.14t wheel yet, same exclusion as the free-threaded job.
       - name: Build the TSAN editable install
         env:
           CC: gcc
@@ -153,10 +147,12 @@ jobs:
           assert not sys._is_gil_enabled(), "interpreter is not free-threaded"
           PY
 
+      # Disable deadlock detection, since CPython alone holds more locks
+      # than the maximum amount supported by TSAN.
       - name: Run tests under ThreadSanitizer
         run: |
-          LD_PRELOAD="$(gcc -print-file-name=libtsan.so)" \
-          TSAN_OPTIONS="halt_on_error=1" \
+          LD_PRELOAD="$(gcc -print-file-name=libtsan.so) $(gcc -print-file-name=libstdc++.so)" \
+          TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0" \
             uv run --no-sync --all-extras --all-groups pytest --capture no
 
   docs:
