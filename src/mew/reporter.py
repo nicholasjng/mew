@@ -6,12 +6,11 @@ import contextlib
 import json
 import re
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, TextIO, cast, runtime_checkable
 
-from mew._console import Terminal, _truncate_left, _truncate_right, sgr
-from mew._typing import RunRow
+from mew._console import _COL_SEP, Terminal, _truncate_left, _truncate_right, sgr
+from mew._typing import BenchmarkResult
 
 
 @runtime_checkable
@@ -19,23 +18,20 @@ class Reporter(Protocol):
     """Duck-typed reporter interface consumed by the C++ runner.
 
     ``report_context`` and ``report_runs`` are required; ``finalize`` is optional.
-    All callbacks run on the main thread with the GIL held.
+    All callbacks run on the main thread with the GIL held. Raise to stop the run:
+    the exception aborts the remaining benchmarks and propagates out of :func:`mew.run`.
 
     Methods
     -------
     report_context(context)
         Called once before any runs with the C++ context dict.
-        Returning ``False`` aborts the Google Benchmark run.
     report_runs(runs)
-        Called one or more times with a list of :class:`~mew._typing.RunRow`
+        Called one or more times with a list of :class:`~mew._typing.BenchmarkResult`
         dicts (runs projected from the C++ ``Run``).
     """
 
-    def report_context(self, context: dict[str, Any], /) -> bool: ...
-    def report_runs(self, runs: list[RunRow], /) -> None: ...
-
-
-_COL_SEP = " │ "
+    def report_context(self, context: dict[str, Any], /) -> None: ...
+    def report_runs(self, runs: list[BenchmarkResult], /) -> None: ...
 
 
 def _fmt_bytes(n: int) -> str:
@@ -52,7 +48,19 @@ _OPTION_SUFFIXES_RE = re.compile(
     r"(?:/(?:min_time:[^/]+|min_warmup_time:[^/]+|iterations:\d+|repeats:\d+"
     r"|manual_time|process_time|real_time|threads:\d+))+$"
 )
-_CASE_SUFFIX_RE = re.compile(r"/case:\d+$")
+# `/case:N` at the end of a name, or before Google Benchmark's aggregate suffix
+# (`_mean`, `_median`, ...), which it appends *after* the args part.
+_CASE_SUFFIX_RE = re.compile(r"/case:\d+(?=$|_)")
+
+
+def strip_reserved_suffixes(name: str) -> str:
+    """Drop the trailing Google Benchmark option/case suffixes from ``name``.
+
+    The half of :func:`canonical_name` that does not need a label, so
+    :mod:`mew.api` can reject a registered name that would be silently regrouped
+    when results are read back, without restating the grammar.
+    """
+    return _CASE_SUFFIX_RE.sub("", _OPTION_SUFFIXES_RE.sub("", name))
 
 
 def canonical_name(name: str, label: Any) -> str:
@@ -62,40 +70,17 @@ def canonical_name(name: str, label: Any) -> str:
     ``bench.py::f[n=10000]``. Shared by :class:`RichReporter` and :mod:`mew.compare`
     so both show the same name; the stored ``name`` field stays the raw GB name
     (compare canonicalizes on read).
+
+    An aggregate row's ``_mean``/``_median``/… suffix is preserved, so it stays
+    distinguishable from the per-repetition rows it summarizes:
+    ``bench.py::f/case:0_mean`` becomes ``bench.py::f[n=10000]_mean``.
     """
     name = _OPTION_SUFFIXES_RE.sub("", name)
-    if label and isinstance(label, str):
-        stripped, n = _CASE_SUFFIX_RE.subn("", name)
-        if n:
-            return f"{stripped}[{label}]"
+    if label and isinstance(label, str) and (m := _CASE_SUFFIX_RE.search(name)):
+        # Rebuild rather than substitute: the label bracket replaces the case
+        # index in place, keeping any aggregate suffix trailing it.
+        return f"{name[: m.start()]}[{label}]{name[m.end() :]}"
     return name
-
-
-def _build_context(context: dict[str, Any]) -> dict[str, Any]:
-    """Project the raw C++ context dict into the serialized ``context`` block.
-
-    Shared by :class:`JSONReporter` and :class:`JSONLReporter`. ``date`` is
-    stamped at call time.
-    """
-    ctx: dict[str, Any] = {
-        "date": datetime.now(UTC).isoformat(),
-        "host_name": context.get("host_name"),
-        "executable": context.get("executable"),
-        "num_cpus": context.get("num_cpus"),
-        "mhz_per_cpu": context.get("mhz_per_cpu"),
-        "cpu_scaling_enabled": context.get("cpu_scaling") == "enabled",
-        "library_build_type": context.get("library_build_type"),
-    }
-    # Session identity is injected by mew.run; reporters driven directly
-    # (or by GB) have none, leaving these keys absent.
-    if session_id := context.get("session_id"):
-        ctx["session_id"] = session_id
-    if session_tag := context.get("session_tag"):
-        ctx["session_tag"] = session_tag
-    custom = context.get("custom")
-    if custom:
-        ctx["custom"] = custom
-    return ctx
 
 
 # Closing `]}` of the streamed doc, written once at finalize (GB-style).
@@ -154,15 +139,14 @@ class JSONReporter:
         self._owns_fh = False
         self._first_row = True
 
-    def report_context(self, context: dict[str, Any]) -> bool:
+    def report_context(self, context: dict[str, Any]) -> None:
         self._fh, self._owns_fh = _open_sink(self._output)
         # default=str: don't crash on Path/datetime; lossy by design.
-        ctx = _indent_block(json.dumps(_build_context(context), indent=2, default=str), 2)
+        ctx = _indent_block(json.dumps(context, indent=2, default=str), 2)
         self._fh.write('{\n  "context": ' + ctx + ',\n  "benchmarks": [')
         self._fh.flush()
-        return True
 
-    def report_runs(self, runs: list[RunRow]) -> None:
+    def report_runs(self, runs: list[BenchmarkResult]) -> None:
         assert self._fh is not None  # report_context runs first, always
         for row in runs:
             prefix = "" if self._first_row else ","
@@ -180,8 +164,10 @@ class JSONReporter:
 
 # Context fields stamped onto every JSONL row so each line is self-contained.
 # Optional identity (session_id/session_tag/custom) is stamped only when present.
-_ROW_STAMP_FIELDS = ("date", "host_name", "num_cpus", "cpu_scaling_enabled")
-_ROW_STAMP_OPTIONAL = ("session_id", "session_tag", "custom")
+# Stamped onto every JSONL row so each line stands alone: `session` is what
+# compare groups and orders by, `context` is the provenance that goes with it.
+# Two keys, so a new context field never widens the row schema.
+_ROW_STAMP_FIELDS = ("session", "context")
 
 
 class JSONLReporter:
@@ -199,11 +185,6 @@ class JSONLReporter:
     append : bool, default False
         Open a Path sink in append mode, adding this run's rows as a new session.
         Ignored for stream / stdout sinks.
-    header : bool, default False
-        Channel mode: write a ``{"context": {...}}`` line and leave the rows bare.
-        Used when another process merges these rows, stamping its own shared session
-        onto the merged rows; row-stamping here would let the child's throwaway
-        identity shadow the parent's.
     """
 
     def __init__(
@@ -211,27 +192,18 @@ class JSONLReporter:
         *,
         output: Path | TextIO | None = None,
         append: bool = False,
-        header: bool = False,
     ) -> None:
         self._output = output
         self._append = append
-        self._header = header
         self._fh: TextIO | None = None
         self._owns_fh = False
         self._stamp: dict[str, Any] = {}
 
-    def report_context(self, context: dict[str, Any]) -> bool:
+    def report_context(self, context: dict[str, Any]) -> None:
         self._fh, self._owns_fh = _open_sink(self._output, "a" if self._append else "w")
-        ctx = _build_context(context)
-        if self._header:
-            self._fh.write(json.dumps({"context": ctx}, default=str) + "\n")
-            self._fh.flush()
-        else:
-            self._stamp = {k: ctx.get(k) for k in _ROW_STAMP_FIELDS}
-            self._stamp.update({k: ctx[k] for k in _ROW_STAMP_OPTIONAL if k in ctx})
-        return True
+        self._stamp = {k: context[k] for k in _ROW_STAMP_FIELDS if k in context}
 
-    def report_runs(self, runs: list[RunRow]) -> None:
+    def report_runs(self, runs: list[BenchmarkResult]) -> None:
         assert self._fh is not None  # report_context runs first, always
         for row in runs:
             # Row-carried values win: rows merged from another process bring
@@ -276,14 +248,13 @@ class RichReporter:
         self._context: dict[str, Any] = {}
         self._widths: dict[str, int] = {}
 
-    def report_context(self, context: dict[str, Any]) -> bool:
+    def report_context(self, context: dict[str, Any]) -> None:
         self._context = dict(context)
         self._print_banner()
         self._compute_widths()
         self._print_header()
-        return True
 
-    def report_runs(self, runs: list[RunRow]) -> None:
+    def report_runs(self, runs: list[BenchmarkResult]) -> None:
         for row in runs:
             self._print_row(row)
 
@@ -294,7 +265,6 @@ class RichReporter:
         c = self._context
         host = c.get("host_name") or "?"
         cpus = c.get("num_cpus", "?")
-        mhz = c.get("mhz_per_cpu", 0) or 0
         scaling = c.get("cpu_scaling", "?")
         color = self._term.color
 
@@ -303,7 +273,7 @@ class RichReporter:
 
         self._term.print(
             f"{sgr('mew', 'bold', enabled=color)} {sgr('·', 'dim', enabled=color)} "
-            f"host={cy(host)} cpus={cy(cpus)} @ {cy(f'{mhz:.0f}MHz')} scaling={cy(scaling)}"
+            f"host={cy(host)} cpus={cy(cpus)} scaling={cy(scaling)}"
         )
 
     def _compute_widths(self) -> None:
@@ -345,7 +315,7 @@ class RichReporter:
         self._term.print(sgr(line, "bold", enabled=color))
         self._term.print(sgr("─" * len(line), "dim", enabled=color))
 
-    def _print_row(self, row: RunRow) -> None:
+    def _print_row(self, row: BenchmarkResult) -> None:
         w = self._widths
         unit = row["time_unit"]
         label = row["label"]
@@ -389,8 +359,8 @@ class RichReporter:
 class Fanout:
     """Broadcast reporter callbacks to a list of underlying reporters.
 
-    Used by :func:`mew.run` to multiplex multiple reporters. ``report_context``
-    returns ``all(...)`` of the children's responses, so the strictest sub-reporter wins.
+    Used by :func:`mew.run` to multiplex multiple reporters. A child that raises
+    stops the run, so the strictest sub-reporter wins.
 
     Parameters
     ----------
@@ -401,11 +371,11 @@ class Fanout:
     def __init__(self, reporters: list[Reporter]) -> None:
         self._reporters = list(reporters)
 
-    def report_context(self, context: dict[str, Any]) -> bool:
-        results = [r.report_context(context) for r in self._reporters]
-        return all(results)
+    def report_context(self, context: dict[str, Any]) -> None:
+        for r in self._reporters:
+            r.report_context(context)
 
-    def report_runs(self, runs: list[RunRow]) -> None:
+    def report_runs(self, runs: list[BenchmarkResult]) -> None:
         for r in self._reporters:
             r.report_runs(runs)
 

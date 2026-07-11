@@ -25,6 +25,11 @@ Cell = str | list[Span]
 _COL_SEP = " │ "
 
 
+def overflow(total: int, shown: int) -> str:
+    """`` (+N more)`` when a message previewed only ``shown`` of ``total`` items."""
+    return f" (+{total - shown} more)" if total > shown else ""
+
+
 def sgr(text: str, *styles: str, enabled: bool = True) -> str:
     """Wrap ``text`` in ANSI codes for ``styles``; a no-op when disabled or empty."""
     names = [s for s in styles if s]

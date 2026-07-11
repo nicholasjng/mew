@@ -251,7 +251,7 @@ def test_run_jsonl_output_is_duckdb_queryable(mew_cli, benchdir, tmp_path):
     out = tmp_path / "results.jsonl"
     res = mew_cli("run", str(benchdir), "--min-time", "1x", "-o", str(out), cwd=tmp_path)
     assert res.returncode == 0, res.stderr
-    rows = duckdb.connect().execute(f"SELECT name, session_id FROM '{out}'").fetchall()
+    rows = duckdb.connect().execute(f"SELECT name, session.id FROM '{out}'").fetchall()
     assert len(rows) == 3
     assert all("bench_" in r[0] and r[1] for r in rows)
 

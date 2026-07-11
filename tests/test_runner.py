@@ -22,16 +22,12 @@ def test_run_single_benchmark_captures_one_run():
     assert len(cap.runs) == 1
     assert cap.finalized
     assert cap.context is not None
-    assert cap.context["num_cpus"] >= 1
+    assert cap.context["context"]["num_cpus"] >= 1
 
 
-def test_run_benchmarks_extra_context_overlays_onto_report_context():
-    """The binding merges `extra_context` into the GB context, last-wins.
-
-    Exercises the `run_benchmarks(..., extra_context=...)` parameter directly:
-    overlaid keys reach `report_context`, override GB-provided keys, and the
-    untouched GB keys still come through.
-    """
+def test_run_benchmarks_passes_extra_context_through():
+    """`extra_context` *is* the context block: Google Benchmark's own carries
+    nothing mew keeps, so the binding forwards what the caller assembled."""
     from mew import _core
 
     def bench(state):
@@ -42,18 +38,13 @@ def test_run_benchmarks_extra_context_overlays_onto_report_context():
     _core.register_benchmark("bench_overlay", bench)
     try:
         cap = Capture()
-        extra = {"session_id": "sid-123", "host_name": "overridden", "custom": {"k": "v"}}
+        extra = {"session": {"id": "sid-123", "host": "h"}, "context": {"k": "v"}}
         _core.run_benchmarks(["mew", "--benchmark_min_time=1x"], cap, extra)
     finally:
         _core.clear_registered_benchmarks()
 
     assert cap.context is not None
-    assert cap.context["session_id"] == "sid-123"
-    assert cap.context["custom"] == {"k": "v"}
-    # Overlay wins over the value GB put in the context...
-    assert cap.context["host_name"] == "overridden"
-    # ...while GB keys absent from extra_context pass through untouched.
-    assert cap.context["num_cpus"] >= 1
+    assert cap.context == {"session": {"id": "sid-123", "host": "h"}, "context": {"k": "v"}}
 
 
 def test_run_parametrize_emits_one_run_per_variant():
@@ -452,3 +443,116 @@ def test_gb_flags_do_not_leak_across_runs():
     mew.run(entries, min_time="1x", reporter=cap)  # no repetitions requested
     per_rep = [r for r in cap.runs if not r.get("aggregate_name")]
     assert len(per_rep) == 1
+
+
+def test_reporter_failure_aborts_the_run():
+    """A raising reporter stops the suite, like a KeyboardInterrupt does: body,
+    reporter and manager share one abort channel, so a broken sink does not leave
+    the rest of the suite measuring results that will be discarded."""
+    bodies: list[str] = []
+
+    class Exploding:
+        def report_context(self, context, /):
+            pass
+
+        def report_runs(self, runs, /):
+            raise RuntimeError("sink is broken")
+
+    for name in ("a", "b", "c"):
+
+        def body(state, _n=name):
+            bodies.append(_n)
+            for _ in state:
+                pass
+
+        body.__name__ = body.__qualname__ = f"bench_{name}"
+        mew.benchmark(iterations=1, name=f"bench_{name}")(body)
+
+    with pytest.raises(RuntimeError, match="sink is broken"):
+        mew.run(min_time="1x", reporter=Exploding())
+    assert bodies == ["a"], "later benchmarks must not run once the sink failed"
+
+
+def test_abort_is_consumed_between_runs():
+    """The abort slot is cleared by the rethrow, so the next run starts clean."""
+
+    class Exploding:
+        def report_context(self, context, /):
+            pass
+
+        def report_runs(self, runs, /):
+            raise RuntimeError("sink is broken")
+
+    @mew.benchmark(iterations=1)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    with pytest.raises(RuntimeError, match="sink is broken"):
+        mew.run(min_time="1x", reporter=Exploding())
+
+    cap = Capture()
+    mew.run(min_time="1x", reporter=cap)
+    assert cap.runs, "a follow-up run must not inherit the previous abort"
+
+
+def test_report_context_return_value_is_ignored():
+    """Returning False no longer vetoes: raising is the way to stop a run.
+
+    Google Benchmark's `RunSpecifiedBenchmarks` returns the matched-benchmark
+    count whether or not its context gate opened, so a veto used to report a
+    successful run that produced no rows at all.
+    """
+
+    class ReturnsFalse:
+        def report_context(self, context, /):
+            return False
+
+        def report_runs(self, runs, /):
+            seen.extend(runs)
+
+    seen: list = []
+
+    @mew.benchmark(iterations=1)
+    def bench_v(state):
+        for _ in state:
+            pass
+
+    assert mew.run(min_time="1x", reporter=ReturnsFalse()) == 1
+    assert seen, "rows must flow: the return value carries no meaning"
+
+
+def test_skipped_rows_reach_a_reporter_before_finalize(monkeypatch):
+    """mew's own skipped rows are flushed from `report_context`, the only
+    callback guaranteed to fire after a sink opens and before it writes."""
+    monkeypatch.setattr("mew.runner._gil_enabled", lambda: True)
+    order: list[str] = []
+
+    class Recording:
+        def report_context(self, context, /):
+            order.append("context")
+
+        def report_runs(self, runs, /):
+            order.extend("row:" + r["name"].rsplit(".", 1)[-1] for r in runs)
+
+        def finalize(self) -> None:
+            order.append("finalize")
+
+    @mew.benchmark(threads=4, iterations=1)
+    def bench_threaded(state):
+        for _ in state:
+            pass
+
+    @mew.benchmark(iterations=1)
+    def bench_plain(state):
+        for _ in state:
+            pass
+
+    with pytest.warns(RuntimeWarning, match="threaded"):
+        mew.run(min_time="1x", reporter=Recording())
+
+    assert order[0] == "context"
+    assert order[-1] == "finalize"
+    # The skipped row lands first, ahead of anything Google Benchmark reports.
+    assert order[1] == "row:bench_threaded"
+    assert any(o.startswith("row:bench_plain") for o in order)

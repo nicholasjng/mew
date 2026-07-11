@@ -34,8 +34,8 @@ class Capture:
     """Minimal Reporter that stashes context, rows, and the finalize call.
 
     The canonical fake for tests that only observe what a reporter receives;
-    scenario-shaped fakes (a vetoing ``report_context``, a missing ``finalize``, ...)
-    stay local to their test.
+    scenario-shaped fakes (a raising callback, a missing ``finalize``, ...) stay
+    local to their test.
     """
 
     def __init__(self) -> None:
@@ -43,9 +43,8 @@ class Capture:
         self.runs: list[Any] = []
         self.finalized = False
 
-    def report_context(self, context: dict[str, Any]) -> bool:
+    def report_context(self, context: dict[str, Any]) -> None:
         self.context = context
-        return True
 
     def report_runs(self, runs: list[Any]) -> None:
         self.runs.extend(runs)
@@ -54,17 +53,32 @@ class Capture:
         self.finalized = True
 
 
+#: Flat kwargs the tests spell, mapped into the row's `session` block.
+_SESSION_KEYS = {"session_id": "id", "session_tag": "tag", "date": "date", "host_name": "host"}
+
+
 def row(name: str, real_time: float, **extra: Any) -> dict:
-    """A minimal per-repetition result row, as mew's sinks write it."""
-    return {
+    """A minimal per-repetition result row, as mew's sinks write it.
+
+    Session identity and provenance are spelled flat here (``session_id=``,
+    ``host_name=``, ``custom=``) and folded into the stamped ``session`` /
+    ``context`` blocks, so a test reads as one row rather than nested literals.
+    """
+    session = {dst: extra.pop(src) for src, dst in _SESSION_KEYS.items() if src in extra}
+    context = extra.pop("custom", None)
+    out: dict[str, Any] = {
         "name": name,
         "real_time": real_time,
         "cpu_time": real_time,
         "iterations": 1000,
         "time_unit": "ns",
         "aggregate_name": "",
-        **extra,
     }
+    if session:
+        out["session"] = session
+    if context is not None:
+        out["context"] = context
+    return {**out, **extra}
 
 
 def write_json(path: Path, benches: list[dict], context: dict | None = None) -> None:

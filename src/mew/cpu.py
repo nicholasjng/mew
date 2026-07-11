@@ -76,8 +76,7 @@ class PyinstrumentManager:
         """Suspend sampling for a ``state.pause()`` region.
 
         pyinstrument accumulates across ``stop()``/``start()`` and drops the gap.
-        The depth counter keeps only the outermost pause toggling it, since
-        unbalanced start/stop raises.
+        Only the outermost pause toggles it: unbalanced start/stop raises.
         """
         if self._prof is not None and self._depth == 0:
             self._prof.stop()
@@ -89,10 +88,10 @@ class PyinstrumentManager:
             self._prof.start()
 
     def get_result(self) -> dict[str, float | str] | None:
-        """Summarize the last session, or ``None`` to leave the row unannotated.
+        """Summarize the last session, or ``None`` when nothing was sampled.
 
-        ``None`` when nothing was sampled: a body too fast for the interval would
-        otherwise report a ``<no samples>`` hottest frame on every row.
+        A body too fast for the interval would otherwise report a
+        ``<no samples>`` hottest frame on every row.
         """
         session = self._session
         if session is None or session.sample_count == 0:
@@ -113,16 +112,12 @@ class PyinstrumentManager:
 def _hottest_frame(root: Frame) -> tuple[str, float]:
     """Return ``("func (file.py:12)", self_seconds)`` for the hottest call site.
 
-    Self time is summed per call site first. pyinstrument records one frame per
-    *call*, so a helper invoked N times from a timing loop appears as N sibling
-    frames holding 1/N of the time each, while the calling loop's own self time
-    accumulates in a single frame. Picking the largest individual frame would
-    therefore name the benchmark wrapper rather than the hot callee, and would
-    flip between runs depending on how the sampler happened to coalesce
-    consecutive samples.
-
-    ``[self]`` frames are pyinstrument's synthetic self-time leaves; their parent's
-    ``total_self_time`` already sums them, so counting both would double up.
+    Summed per call site, not per frame: pyinstrument records one frame per
+    *call*, so a helper invoked N times holds 1/N of the time in each of N
+    siblings while the calling loop accumulates in one. Picking the largest
+    single frame would name the loop, and flip between runs with sample
+    coalescing. ``[self]`` frames are synthetic leaves already summed into their
+    parent's ``total_self_time``, so they are skipped to avoid double counting.
     """
     totals: dict[tuple[str, str, int | None], float] = {}
     stack = [root]

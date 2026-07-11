@@ -17,7 +17,7 @@ else:
 from mew._core import TimeUnit
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
-from mew.reporter import _CASE_SUFFIX_RE, _OPTION_SUFFIXES_RE
+from mew.reporter import strip_reserved_suffixes
 
 _REGISTERED_ATTR = "__mew_registered__"
 
@@ -110,7 +110,7 @@ def _check_name(name: str) -> None:
     _check_addressable(name, "benchmark name")
     # canonical_name strips these when results are read back, so the benchmark
     # would silently regroup under the stripped name in compare/display.
-    stripped = _CASE_SUFFIX_RE.sub("", _OPTION_SUFFIXES_RE.sub("", name))
+    stripped = strip_reserved_suffixes(name)
     if stripped != name:
         raise ValueError(
             f"benchmark name {name!r} ends in a Google Benchmark option/case "
