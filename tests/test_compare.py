@@ -25,6 +25,8 @@ from mew.compare import (
     _select_latest,
     _split_selector,
     compare,
+    read_results,
+    read_sessions,
 )
 
 
@@ -75,11 +77,6 @@ def test_reduce_statistic_casts_result_to_float() -> None:
     assert isinstance(out, float)
 
 
-def test_resolve_statistic_imports_callable() -> None:
-    fn = resolve_statistic("numpy:median")
-    assert fn is np.median
-
-
 @pytest.mark.parametrize(
     ("spec", "expected"),
     [
@@ -103,13 +100,11 @@ def test_resolve_statistic_percentile_picks_tail() -> None:
     assert reduce_statistic(stat, [float(i) for i in range(1, 11)]) == pytest.approx(9.1)
 
 
-def test_resolve_statistic_rejects_bare_stdlib_names() -> None:
-    # The implicit statistics-module fallback was removed: bare stdlib names
-    # are unknown; the module:attr form remains the explicit escape hatch.
-    with pytest.raises(SystemExit, match="unknown name"):
-        resolve_statistic("stdev")
-    stat = resolve_statistic("statistics:stdev")
-    assert reduce_statistic(stat, [2.0, 4.0, 6.0]) == pytest.approx(2.0)
+def test_resolve_statistic_rejects_unknown_names() -> None:
+    # Only the built-ins resolve: no stdlib fallback, no importable references.
+    for spec in ("stdev", "statistics:stdev", "numpy:median"):
+        with pytest.raises(SystemExit, match="unknown name"):
+            resolve_statistic(spec)
 
 
 def test_builtin_statistic_is_stdlib_backed() -> None:
@@ -118,23 +113,6 @@ def test_builtin_statistic_is_stdlib_backed() -> None:
     assert "numpy" not in getattr(stat, "__module__", "")
     # p95 of [1,2,3] is 2.9 (linear interpolation, matching numpy.percentile).
     assert reduce_statistic(stat, [1.0, 2.0, 3.0]) == pytest.approx(2.9)
-
-
-@pytest.mark.parametrize(
-    ("spec", "match"),
-    [
-        ("nope", "unknown name"),
-        ("p150", "between 0 and 100"),
-        (":median", "expected a 'module.path:attr'"),
-        ("numpy:", "expected a 'module.path:attr'"),
-        ("does_not_exist_pkg:fn", "cannot import module"),
-        ("numpy:not_a_real_attr", "has no attribute"),
-        ("numpy:pi", "is not callable"),
-    ],
-)
-def test_resolve_statistic_errors(spec: str, match: str) -> None:
-    with pytest.raises(SystemExit, match=match):
-        resolve_statistic(spec)
 
 
 def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
@@ -440,12 +418,9 @@ def test_resolve_session_errors(tmp_path: Path) -> None:
 
 
 def test_runs_sharing_a_tag_aggregate_into_one_session(tmp_path: Path) -> None:
-    """Repeated runs at one revision share a tag, so they reduce together.
-
-    This is what lets an interleaved A/B loop (`mew run ... --append` per
-    repetition) keep every repetition instead of `_select_latest` dropping all
-    but the newest run.
-    """
+    """Repeated runs at one revision share a tag, so they reduce together: this is
+    what lets an interleaved A/B loop keep every repetition instead of
+    `_select_latest` dropping all but the newest run."""
     p = tmp_path / "r.json"
     _write_json(
         p,
@@ -484,7 +459,7 @@ def test_load_with_selector(tmp_path: Path) -> None:
     p = _two_session_file(tmp_path)
     samples, ctx = _load(p, "real_time", selector="before")
     assert samples["b"].value == 100.0
-    assert ctx["session_tag"] == "before"
+    assert ctx["session"]["tag"] == "before"
 
 
 def test_compare_prints_context_and_warns_on_skew(
@@ -494,8 +469,14 @@ def test_compare_prints_context_and_warns_on_skew(
         tmp_path,
         other=[_row("bench_x", 80.0)],
         base=[_row("bench_x", 100.0)],
-        other_context={"host_name": "h2", "num_cpus": 4, "custom": {"engine": "duckdb 1.5.3"}},
-        base_context={"host_name": "h1", "num_cpus": 8, "custom": {"engine": "ducky 0.1"}},
+        other_context={
+            "session": {"host": "h2"},
+            "context": {"num_cpus": 4, "engine": "duckdb 1.5.3"},
+        },
+        base_context={
+            "session": {"host": "h1"},
+            "context": {"num_cpus": 8, "engine": "ducky 0.1"},
+        },
     )
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
@@ -507,7 +488,7 @@ def test_compare_prints_context_and_warns_on_skew(
     assert "engine=ducky 0.1" in out
     assert "engine=duckdb 1.5.3" in out
     err = capsys.readouterr().err
-    assert "host_name" in err
+    assert "host" in err
     assert "num_cpus" in err
 
 
@@ -583,7 +564,7 @@ def test_compare_aligns_files_run_with_different_min_time(tmp_path: Path) -> Non
 
 
 def _pivot_file(tmp_path: Path) -> Path:
-    """One result file holding two suites, tagged by `custom.engine`."""
+    """One result file holding two suites, tagged by `context.engine`."""
     p = tmp_path / "engines.json"
     _write_json(
         p,
@@ -608,7 +589,7 @@ def _pivot_file(tmp_path: Path) -> Path:
 
 
 def test_load_pivot_columns_pivots(tmp_path: Path) -> None:
-    cols = _load_pivot_columns(_pivot_file(tmp_path), "real_time", "name", "custom.engine")
+    cols = _load_pivot_columns(_pivot_file(tmp_path), "real_time", "name", "context.engine")
     assert [v for v, _, _ in cols] == ["a", "b"]  # first-encounter order
     by = {v: s for v, s, _ in cols}
     assert by["a"]["bench.py::f"].value == 100.0
@@ -617,7 +598,7 @@ def test_load_pivot_columns_pivots(tmp_path: Path) -> None:
 
 def test_compare_by_pivot(tmp_path: Path) -> None:
     console = Console(width=200)
-    code = compare([_pivot_file(tmp_path)], by="custom.engine", console=console)
+    code = compare([_pivot_file(tmp_path)], by="context.engine", console=console)
     assert code == 0
     out = console.export_text()
     assert "a (baseline)" in out
@@ -626,7 +607,7 @@ def test_compare_by_pivot(tmp_path: Path) -> None:
 
 def test_compare_by_pivot_baseline(tmp_path: Path) -> None:
     console = Console(width=200)
-    code = compare([_pivot_file(tmp_path)], by="custom.engine", baseline="b", console=console)
+    code = compare([_pivot_file(tmp_path)], by="context.engine", baseline="b", console=console)
     assert code == 0
     out = console.export_text()
     assert "b (baseline)" in out
@@ -634,27 +615,27 @@ def test_compare_by_pivot_baseline(tmp_path: Path) -> None:
 
 
 def test_compare_by_pivot_unknown_baseline(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit, match="not among custom.engine values"):
-        compare([_pivot_file(tmp_path)], by="custom.engine", baseline="zzz")
+    with pytest.raises(SystemExit, match="not among context.engine values"):
+        compare([_pivot_file(tmp_path)], by="context.engine", baseline="zzz")
 
 
 def test_compare_by_pivot_requires_single_file(tmp_path: Path) -> None:
     p = _pivot_file(tmp_path)
     with pytest.raises(SystemExit, match="exactly one"):
-        compare([p, p], by="custom.engine")
+        compare([p, p], by="context.engine")
 
 
 def test_compare_by_pivot_no_pivot_data(tmp_path: Path) -> None:
     p = tmp_path / "plain.json"
-    _write_json(p, [_row("bench.py::f", 1.0)])  # no custom.engine field
-    with pytest.raises(SystemExit, match="no 'custom.engine' data"):
-        compare([p], by="custom.engine")
+    _write_json(p, [_row("bench.py::f", 1.0)])  # no context.engine field
+    with pytest.raises(SystemExit, match="no 'context.engine' data"):
+        compare([p], by="context.engine")
 
 
 def test_compare_by_dimension_absent_from_rows(tmp_path: Path) -> None:
     """Any field is a legal pivot, so a typo surfaces as "no data", not "unknown"."""
-    with pytest.raises(SystemExit, match="no 'custom.bogus' data"):
-        compare([_pivot_file(tmp_path)], by="custom.bogus")
+    with pytest.raises(SystemExit, match="no 'context.bogus' data"):
+        compare([_pivot_file(tmp_path)], by="context.bogus")
 
 
 def _mem_row(name: str, real_time: float, peak: int, allocs: int, *, iterations: int = 1) -> dict:
@@ -955,12 +936,14 @@ def test_compare_warns_on_time_unit_skew(
 
 
 def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
-    # `stdev` needs two values; a single-repetition file must fail loudly, not
-    # silently drop every benchmark and report "no overlapping benchmarks".
+    # A reducer that raises must fail loudly, not silently drop every benchmark
+    # and report "no overlapping benchmarks".
+    import statistics as _stats
+
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
-    statistic = resolve_statistic("statistics:stdev")
+    # stdev needs two values; these files have one repetition each.
     with pytest.raises(SystemExit, match="--statistic failed on 'b'"):
-        compare([other, base], statistic=statistic, console=Console(width=200))
+        compare([other, base], statistic=_stats.stdev, console=Console(width=200))
 
 
 def _two_session_jsonl(tmp_path: Path) -> Path:
@@ -1000,3 +983,174 @@ def test_compare_jsonl_gz_roundtrip(tmp_path: Path) -> None:
     out = console.export_text()
     assert "-50.00%" in out
     assert "×2.000" in out
+
+
+def test_runs_at_one_commit_aggregate_without_a_tag(tmp_path: Path) -> None:
+    """`context.vcs.commit` is the automatic grouping key, so a suite that records
+    provenance with `mew.update_context(mew.vcs_context())` gets the interleaved
+    A/B behaviour without anyone passing `--session-tag`."""
+    p = tmp_path / "r.json"
+    vcs = {"vcs": {"backend": "git", "commit": "a" * 40, "dirty": False}}
+    _write_json(
+        p,
+        [
+            _row("b", 10.0, custom=vcs, session_id="s1", date="2026-01-01T00:00:00"),
+            _row("b", 20.0, custom=vcs, session_id="s2", date="2026-02-01T00:00:00"),
+        ],
+    )
+    sessions = _load_sessions(p, "real_time")
+    assert len(sessions) == 1
+    assert sessions[0].samples["b"].values == (10.0, 20.0)
+
+
+def test_different_commits_stay_separate(tmp_path: Path) -> None:
+    """Before/after at two revisions must not be averaged together."""
+    p = tmp_path / "r.json"
+    _write_json(
+        p,
+        [
+            _row(
+                "b",
+                10.0,
+                custom={"vcs": {"commit": "a" * 40}},
+                session_id="s1",
+                date="2026-01-01T00:00:00",
+            ),
+            _row(
+                "b",
+                20.0,
+                custom={"vcs": {"commit": "b" * 40}},
+                session_id="s2",
+                date="2026-02-01T00:00:00",
+            ),
+        ],
+    )
+    assert len(_load_sessions(p, "real_time")) == 2
+
+
+def test_explicit_tag_wins_over_the_commit(tmp_path: Path) -> None:
+    """`--session-tag` is the override: it groups runs that span revisions."""
+    p = tmp_path / "r.json"
+    _write_json(
+        p,
+        [
+            _row(
+                "b",
+                10.0,
+                session_tag="ab",
+                custom={"vcs": {"commit": "a" * 40}},
+                session_id="s1",
+                date="2026-01-01T00:00:00",
+            ),
+            _row(
+                "b",
+                20.0,
+                session_tag="ab",
+                custom={"vcs": {"commit": "b" * 40}},
+                session_id="s2",
+                date="2026-02-01T00:00:00",
+            ),
+        ],
+    )
+    assert len(_load_sessions(p, "real_time")) == 1
+
+
+def test_tag_selector_is_ambiguous_across_hosts(tmp_path: Path) -> None:
+    """The group key is (host, tag), so one tag on two hosts is two sessions."""
+    p = tmp_path / "r.json"
+    _write_json(
+        p,
+        [
+            _row("b", 10.0, session_tag="before", host_name="ci-1", session_id="aaaa1111"),
+            _row("b", 20.0, session_tag="before", host_name="ci-2", session_id="bbbb2222"),
+        ],
+    )
+    sessions = _load_sessions(p, "real_time")
+    with pytest.raises(SystemExit, match="ambiguous"):
+        _resolve_session(p, sessions, "before")
+
+
+def test_pivot_on_a_session_defining_dimension_points_at_selectors(tmp_path: Path) -> None:
+    """`--by context.vcs.commit` cannot work: the pivot runs inside one session and
+    the commit is what separates sessions. Say so instead of rendering one column."""
+    p = tmp_path / "r.json"
+    _write_json(
+        p,
+        [
+            _row(
+                "b",
+                10.0,
+                custom={"vcs": {"commit": "a" * 40}},
+                session_id="s1",
+                date="2026-01-01T00:00:00",
+            ),
+            _row(
+                "b",
+                20.0,
+                custom={"vcs": {"commit": "b" * 40}},
+                session_id="s2",
+                date="2026-02-01T00:00:00",
+            ),
+        ],
+    )
+    with pytest.raises(SystemExit, match="addressed with selectors"):
+        compare([p], by="context.vcs.commit")
+
+
+def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
+    """The raw view: nothing filtered, rows self-describing whatever the source."""
+    p = tmp_path / "r.json"
+    _write_json(
+        p,
+        [
+            _row("b", 10.0, session_id="s1", host_name="h", custom={"engine": "x"}),
+            _row("b", 0.0, aggregate_name="mean", session_id="s1", host_name="h"),
+        ],
+    )
+    rows = read_results(p)
+    assert len(rows) == 2, "aggregate rows are not filtered here"
+    assert rows[0]["session"]["host"] == "h"
+    assert rows[0]["context"]["engine"] == "x"
+
+
+def test_read_results_backfills_from_the_file_block(tmp_path: Path) -> None:
+    """Single-document JSON keeps identity in one block; rows inherit it."""
+    p = tmp_path / "r.json"
+    _write_json(
+        p,
+        [{"name": "b", "real_time": 1.0, "cpu_time": 1.0, "iterations": 1, "aggregate_name": ""}],
+        context={"session": {"id": "s1", "host": "h", "date": "2026-01-01T00:00:00"}},
+    )
+    assert read_results(p)[0]["session"]["id"] == "s1"
+
+
+def test_read_sessions_gives_comparable_samples(tmp_path: Path) -> None:
+    """The reduced view: aggregates dropped, repetitions grouped, names canonical."""
+    p = tmp_path / "r.json"
+    _write_json(
+        p,
+        [
+            _row("bench.py::f/case:0", 10.0, label="n=1", session_id="s1", host_name="h"),
+            _row("bench.py::f/case:0", 20.0, label="n=1", session_id="s1", host_name="h"),
+            _row(
+                "bench.py::f/case:0_mean",
+                15.0,
+                label="n=1",
+                aggregate_name="mean",
+                session_id="s1",
+                host_name="h",
+            ),
+        ],
+    )
+    (session,) = read_sessions(p)
+    assert list(session.samples) == ["bench.py::f[n=1]"]
+    sample = session.samples["bench.py::f[n=1]"]
+    assert sample.value == 15.0  # median of the two measurement rows
+    assert sample.values == (10.0, 20.0)  # the aggregate row is not one of them
+
+
+def test_read_sessions_rejects_an_unknown_metric(tmp_path: Path) -> None:
+    p = tmp_path / "r.json"
+    _write_json(p, [_row("b", 1.0)])
+    with pytest.raises(SystemExit, match="unknown metric"):
+        read_sessions(p, metric="nope")
