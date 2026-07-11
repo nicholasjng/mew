@@ -81,7 +81,7 @@ guide/state-and-timing
 guide/context
 guide/configuration
 guide/cli
-guide/variants
+guide/ab-comparison
 guide/reporters
 guide/trusting-results
 guide/profiling-cpu
