@@ -368,6 +368,50 @@ def test_profile_stdin_filters_before_backend(mew_cli, benchdir, tmp_path):
     assert "no benchmarks found" in res.stderr
 
 
+class _FakeProfileBackend:
+    """Stands in for a real native-frame backend so `profile --slowest` can be
+    tested end-to-end without depending on xctrace/perf/py-spy being installed."""
+
+    name = "fake"
+    viewer_hint = "nowhere"
+
+    def __init__(self) -> None:
+        self.received_entries: list | None = None
+
+    def run(self, entries, **kwargs):
+        self.received_entries = list(entries)
+        return {}
+
+
+def test_profile_slowest_zero_is_usage_error(mew_cli, benchdir, tmp_path, monkeypatch):
+    # cli.py's `--slowest` validation (`slowest < 1`) runs after backend
+    # selection but before any entries are handed to the backend.
+    import mew.profilers as profilers_mod
+
+    backend = _FakeProfileBackend()
+    monkeypatch.setattr(profilers_mod, "select", lambda name: backend)
+
+    res = mew_cli("profile", str(benchdir), "--slowest", "0", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "--slowest must be >= 1" in res.stderr
+    assert backend.received_entries is None  # rejected before the backend ever ran
+
+
+def test_profile_slowest_narrows_entries_reaching_backend(mew_cli, benchdir, tmp_path, monkeypatch):
+    # End-to-end wiring: `--slowest 1` must narrow what the backend receives,
+    # not just what `_select_slowest` returns in isolation.
+    import mew.profilers as profilers_mod
+
+    backend = _FakeProfileBackend()
+    monkeypatch.setattr(profilers_mod, "select", lambda name: backend)
+
+    res = mew_cli("profile", str(benchdir), "--slowest", "1", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert backend.received_entries is not None
+    assert len(backend.received_entries) == 1
+    assert "mew: profiling 1 slowest of 2" in res.stderr
+
+
 def test_list_names_only_drops_path(mew_cli, benchdir, tmp_path):
     res = mew_cli("list", str(benchdir), "--names-only", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
@@ -533,7 +577,29 @@ def _ends(entries, suffix):
     return any(e.name.endswith(suffix) for e in entries)
 
 
-def test_select_slowest_quick_pass():
+def test_quick_timing_pass_collects_a_row_per_entry():
+    # A real (but non-flaky, since it asserts no ordering) smoke test that the
+    # in-process timing pass `_select_slowest` stubs out below actually runs
+    # and produces a usable row per entry.
+    import mew
+    from mew.cli import _quick_timing_pass
+
+    @mew.benchmark
+    def bench_a(state):
+        for _ in state:
+            pass
+
+    @mew.benchmark
+    def bench_b(state):
+        for _ in state:
+            pass
+
+    rows = _quick_timing_pass(mew.REGISTRY.all())
+    assert len(rows) == 2
+    assert all(isinstance(r.get("real_time"), float) for r in rows)
+
+
+def test_select_slowest_quick_pass(monkeypatch):
     import mew
     from mew.cli import _select_slowest
 
@@ -545,15 +611,29 @@ def test_select_slowest_quick_pass():
     @mew.benchmark
     def bench_mid(state):
         for _ in state:
-            sum(range(1000))
+            pass
 
     @mew.benchmark
     def bench_slow(state):
         for _ in state:
-            sum(range(200_000))
+            pass
 
-    # A quick in-process timing pass ranks; the fast one drops.
-    top2 = _select_slowest(mew.REGISTRY.all(), 2)
+    entries = mew.REGISTRY.all()
+    times = {"bench_fast": 1.0, "bench_mid": 50.0, "bench_slow": 500.0}
+    # Stub the timing pass with deterministic numbers (mirrors
+    # `test_select_slowest_ranks_family_by_slowest_case` below) instead of
+    # relying on real wall-clock gaps between trivial benchmark bodies, which
+    # is flake-prone under scheduler/CI noise.
+    rows = [
+        {
+            "name": e.name,
+            "real_time": next(t for k, t in times.items() if e.name.endswith(k)),
+            "aggregate_name": "",
+        }
+        for e in entries
+    ]
+    monkeypatch.setattr("mew.cli._quick_timing_pass", lambda entries: rows)
+    top2 = _select_slowest(entries, 2)
     assert len(top2) == 2
     assert _ends(top2, "bench_slow") and _ends(top2, "bench_mid")
     assert not _ends(top2, "bench_fast")
@@ -615,9 +695,9 @@ def test_completions_generate(mew_cli, shell, marker, tmp_path):
     assert "pattern" in res.stdout
 
 
+@pytest.mark.skipif(not shutil.which("bash"), reason="bash not installed")
 def test_completions_bash_functional(mew_cli, tmp_path):
     bash = shutil.which("bash")
-    assert bash, "bash is expected on supported platforms"
     f = tmp_path / "c.bash"
     f.write_text(mew_cli("completions", "bash", cwd=tmp_path).stdout)
     assert subprocess.run([bash, "-n", str(f)]).returncode == 0  # syntax

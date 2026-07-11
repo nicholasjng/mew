@@ -67,6 +67,32 @@ def test_evaluate_tightened_rule_threshold() -> None:
     assert cfg.evaluate("bench_x", 1.0).verdict is Verdict.OK
 
 
+def test_evaluate_at_default_threshold_boundary_is_ok() -> None:
+    # `evaluate` gates on strict `>`, so sitting exactly on the threshold must
+    # still be OK; only crossing it regresses.
+    cfg = RegressionConfig(default_threshold=5.0)
+    assert cfg.evaluate("b", 5.0).verdict is Verdict.OK
+    assert cfg.evaluate("b", 5.001).verdict is Verdict.REGRESSED
+
+
+def test_evaluate_at_rule_threshold_boundary_is_allowed_over_not_regressed() -> None:
+    rule = AllowRule(pattern="b*", reason="noisy", threshold=20.0)
+    cfg = RegressionConfig(default_threshold=5.0, rules=(rule,))
+    # Exactly at the rule's raised threshold: the allowance still covers it.
+    v = cfg.evaluate("bench_x", 20.0)
+    assert v.verdict is Verdict.ALLOWED_OVER
+    # One step over: allowance exhausted.
+    assert cfg.evaluate("bench_x", 20.001).verdict is Verdict.REGRESSED
+
+
+def test_evaluate_at_default_threshold_boundary_with_rule_is_ok() -> None:
+    # The ALLOWED_OVER branch itself gates on `magnitude > default_threshold`;
+    # sitting exactly on the default with a raised rule threshold must stay OK.
+    rule = AllowRule(pattern="b*", reason="noisy", threshold=20.0)
+    cfg = RegressionConfig(default_threshold=5.0, rules=(rule,))
+    assert cfg.evaluate("bench_x", 5.0).verdict is Verdict.OK
+
+
 def test_evaluate_iterations_higher_is_better() -> None:
     cfg = RegressionConfig(default_threshold=5.0)
     assert cfg.evaluate("b", -10.0, higher_is_better=True).verdict is Verdict.REGRESSED
@@ -181,6 +207,14 @@ def test_render_panel_exit_codes() -> None:
     )
     assert "⚠️" in text
     assert code == 0
+    # Ignored: panel (visible in the allowlist) + exit 0.
+    ignore_rule = AllowRule(pattern="x", reason="flaky", ignore=True)
+    text, code = render_panel(
+        [BenchmarkVerdict("x", 50.0, Verdict.IGNORED, ignore_rule)], default_threshold=5.0
+    )
+    assert "✅" in text
+    assert "allowlisted: ignored" in text
+    assert code == 0
 
 
 def test_compare_passes_when_under_threshold(tmp_path: Path) -> None:
@@ -198,8 +232,7 @@ def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixtu
     code = compare([other, base], regressions=cfg, console=Console(width=200))
     assert code == 2
     err = capsys.readouterr().err
-    assert "❌" in err
-    assert "b " in err or "  b " in err  # benchmark name appears in panel
+    assert "❌ b   +20.00%" in err  # exact panel line: name + signed delta
 
 
 def test_compare_config_allow_lifts_threshold(tmp_path: Path) -> None:
@@ -237,7 +270,9 @@ reason = "known-flaky"
     assert code == 0
 
 
-def test_compare_iterations_metric_regression(tmp_path: Path) -> None:
+def test_compare_iterations_metric_regression(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     # -20% iters = slower:
     other, base = _write_pair(
         tmp_path,
@@ -252,3 +287,7 @@ def test_compare_iterations_metric_regression(tmp_path: Path) -> None:
         console=Console(width=200),
     )
     assert code == 2
+    err = capsys.readouterr().err
+    # The displayed delta must stay signed -20.00% (raw, not the higher-is-better
+    # magnitude) — only evaluate()'s internal magnitude flips the sign.
+    assert "-20.00%" in err

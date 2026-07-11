@@ -848,6 +848,28 @@ def test_fmt_delta_colors_by_improvement_direction() -> None:
     assert _fmt_delta(-0.2, higher_is_better=True)[1] == "red"
 
 
+def test_fmt_delta_no_change_has_no_color_style() -> None:
+    from mew.compare import _fmt_delta
+
+    # A tie must format as neutral +0.00%, styled with neither red nor green.
+    assert _fmt_delta(0.0) == ("+0.00%", "")
+    assert _fmt_delta(0.0, higher_is_better=True) == ("+0.00%", "")
+
+
+def test_compare_zero_baseline_and_zero_contender_is_no_change(tmp_path: Path) -> None:
+    # Both sides zero (e.g. an allocations-per-iteration counter that's zero in
+    # both files) must format as a plain +0.00% tie, not `+∞%` or a
+    # ZeroDivisionError — only a *nonzero* contender against a zero baseline is
+    # the "infinite improvement" case.
+    other, base = _write_pair(tmp_path, other=[_row("b", 0.0)], base=[_row("b", 0.0)])
+    console = Console(width=200)
+    code = compare([other, base], console=console)
+    assert code == 0
+    out = console.export_text()
+    assert "+0.00%" in out
+    assert "∞" not in out
+
+
 def test_compare_iterations_speedup_direction(tmp_path: Path) -> None:
     # +20% iterations is a ×1.2 speedup, not ×0.83.
     other, base = _write_pair(

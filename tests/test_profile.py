@@ -114,8 +114,8 @@ def test_profile_key_omits_empty_args():
     assert _profile_key("file.py::bench", "case:2") == "file.py::bench/case:2"
 
 
-def _entry(name, *, case_labels=None):
-    return Entry(name=name, fn=lambda state: None, case_labels=case_labels)
+def _entry(name, *, case_labels=None, cases=None):
+    return Entry(name=name, fn=lambda state: None, case_labels=case_labels, cases=cases)
 
 
 def test_iter_entry_cases_single_benchmark():
@@ -127,6 +127,16 @@ def test_iter_entry_cases_expands_family_with_range_indices():
     assert cases == [
         ("f::bench/case:0", 0),
         ("f::bench/case:1", 1),
+        ("f::bench/case:2", 2),
+    ]
+
+
+def test_iter_entry_cases_respects_case_filter_narrowing():
+    # A family narrowed by `-k` (`entry.cases` set) must only profile the
+    # narrowed subset, not silently expand back to every case.
+    entry = _entry("f::bench", case_labels=["n=1", "n=2", "n=3"], cases=[0, 2])
+    assert list(iter_entry_cases(entry)) == [
+        ("f::bench/case:0", 0),
         ("f::bench/case:2", 2),
     ]
 
