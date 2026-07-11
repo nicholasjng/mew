@@ -12,7 +12,7 @@ Every run prints one provenance line before the table:
 
 ```console
 $ mew run
-mew · host=laptop cpus=10 @ 3200MHz scaling=enabled
+mew · host=laptop cpus=10 scaling=enabled
 ```
 
 `scaling` is the one to look at. It comes from Google Benchmark's own probe:

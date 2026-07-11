@@ -36,7 +36,8 @@ importable from `mew` directly:
    JSONReporter
    JSONLReporter
    Fanout
-   RunRow
+   BenchmarkResult
+   SessionInfo
    TimeUnit
    Registry
    Entry
@@ -47,4 +48,6 @@ importable from `mew` directly:
    update_context
    get_context
    clear_context
+   vcs_context
+   machine_context
 ```

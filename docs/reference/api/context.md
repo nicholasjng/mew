@@ -7,4 +7,6 @@
 .. autofunction:: update_context
 .. autofunction:: get_context
 .. autofunction:: clear_context
+.. autofunction:: vcs_context
+.. autofunction:: machine_context
 ```
