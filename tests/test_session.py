@@ -1,4 +1,4 @@
-"""Session identity: UUIDv7 generation, git tag derivation, reporter persistence."""
+"""Session identity: UUIDv7 generation, VCS provenance, reporter persistence."""
 
 from __future__ import annotations
 
@@ -12,8 +12,9 @@ from pathlib import Path
 import pytest
 
 import mew
-from mew._session import _git_describe, derive_session_tag, new_session_id
+from mew._session import new_session_id
 from mew.reporter import JSONLReporter, JSONReporter
+from mew.vcs import vcs_context
 
 
 def test_new_session_id_is_a_version7_uuid():
@@ -30,11 +31,12 @@ def test_new_session_ids_are_unique_and_time_ordered():
     assert first < second  # lexicographic order matches creation order
 
 
-def test_derive_session_tag_outside_a_repo(tmp_path: Path):
-    assert derive_session_tag(cwd=tmp_path) is None
+def test_vcs_context_outside_a_repo(tmp_path: Path):
+    """Always safe to hand to `update_context`, work tree or not."""
+    assert vcs_context(cwd=tmp_path) == {}
 
 
-def test_derive_session_tag_in_a_repo(tmp_path: Path):
+def test_vcs_context_in_a_git_repo(tmp_path: Path):
     if not shutil.which("git"):
         pytest.skip("git not available")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
@@ -54,34 +56,40 @@ def test_derive_session_tag_in_a_repo(tmp_path: Path):
         cwd=tmp_path,
         check=True,
     )
-    tag = derive_session_tag(cwd=tmp_path)
-    assert tag  # plain git repo (no jj): the short commit hash from --always
+    info = vcs_context(cwd=tmp_path)["vcs"]
+    assert info["backend"] == "git"
+    assert len(info["commit"]) == 40, "full sha: an abbreviation can collide as history grows"
+    assert info["dirty"] is False
+
+    # Untracked files are not a change to what was benchmarked: a results file or
+    # build artifact in the tree must not mark every run dirty.
+    (tmp_path / "results.jsonl").write_text("{}")
+    assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is False
+
+    # A modified tracked file is.
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=False)
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("v1")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "add"],
+        cwd=tmp_path,
+        check=True,
+    )
+    assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is False
+    tracked.write_text("v2")
+    assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is True
 
 
-def test_derive_session_tag_prefers_jj(tmp_path: Path):
+def test_vcs_context_prefers_jj(tmp_path: Path):
     if not shutil.which("jj"):
         pytest.skip("jj not available")
-    # In a jj repo the tag comes from jj, not git. `jj git init` (not --colocate)
-    # also leaves no usable git HEAD, so git is empty here regardless.
+    # `jj git init` (not --colocate) leaves no usable git HEAD, so git yields
+    # nothing here regardless; the point is that jj is tried first.
     subprocess.run(["jj", "git", "init"], cwd=tmp_path, capture_output=True, check=True)
-    assert _git_describe(tmp_path) is None
-    assert derive_session_tag(cwd=tmp_path)  # supplied by jj
-
-
-def test_derive_session_tag_tool_forces_one_provider(tmp_path: Path):
-    if not shutil.which("jj"):
-        pytest.skip("jj not available")
-    # jj resolves here but git has no usable HEAD. tool="git" must NOT fall back to
-    # jj — the configured command is honored even when it yields nothing.
-    subprocess.run(["jj", "git", "init"], cwd=tmp_path, capture_output=True, check=True)
-    assert derive_session_tag(cwd=tmp_path, tool="jj")  # forced jj → a tag
-    assert derive_session_tag(cwd=tmp_path, tool="git") is None  # forced git, no fallback
-    assert derive_session_tag(cwd=tmp_path)  # no tool → auto (jj then git) → jj's tag
-
-
-def test_derive_session_tag_custom_tool_and_args(tmp_path: Path):
-    # Bring-your-own command: not tied to a VCS. `echo v1.2.3` stands in for a script.
-    assert derive_session_tag(cwd=tmp_path, tool="echo", args=["v1.2.3"]) == "v1.2.3"
+    info = vcs_context(cwd=tmp_path)["vcs"]
+    assert info["backend"] == "jj"
+    assert info["change_id"] and info["commit"]
 
 
 def _run_to_jsonl(tmp_path: Path, name: str, **run_kwargs) -> dict:
@@ -105,7 +113,7 @@ def test_run_stamps_session_id_into_context(tmp_path: Path):
             pass
 
     ctx = _run_to_jsonl(tmp_path, "a")
-    assert uuid.UUID(ctx["session_id"]).version == 7
+    assert uuid.UUID(ctx["session"]["id"]).version == 7
     assert "session_tag" not in ctx  # none passed, none derived at API level
 
 
@@ -115,8 +123,8 @@ def test_each_run_is_a_distinct_session(tmp_path: Path):
         for _ in state:
             pass
 
-    first = _run_to_jsonl(tmp_path, "a")["session_id"]
-    second = _run_to_jsonl(tmp_path, "b")["session_id"]
+    first = _run_to_jsonl(tmp_path, "a")["session"]["id"]
+    second = _run_to_jsonl(tmp_path, "b")["session"]["id"]
     assert first != second
 
 
@@ -127,7 +135,7 @@ def test_run_persists_session_tag(tmp_path: Path):
             pass
 
     ctx = _run_to_jsonl(tmp_path, "a", session_tag="before")
-    assert ctx["session_tag"] == "before"
+    assert ctx["session"]["tag"] == "before"
 
 
 def test_json_reporter_persists_session_identity(tmp_path: Path):
@@ -143,8 +151,8 @@ def test_json_reporter_persists_session_identity(tmp_path: Path):
         session_tag="before",
     )
     ctx = json.loads(out.read_text())["context"]
-    assert uuid.UUID(ctx["session_id"]).version == 7
-    assert ctx["session_tag"] == "before"
+    assert uuid.UUID(ctx["session"]["id"]).version == 7
+    assert ctx["session"]["tag"] == "before"
 
 
 def test_jsonl_rows_are_self_contained(tmp_path: Path):
@@ -163,18 +171,21 @@ def test_jsonl_rows_are_self_contained(tmp_path: Path):
     lines = [json.loads(ln) for ln in out.read_text().splitlines()]
     assert all("name" in row for row in lines)  # pure NDJSON, no context line
     row = lines[0]
-    assert uuid.UUID(row["session_id"]).version == 7
-    assert row["session_tag"] == "before"
-    assert row["host_name"] and row["date"]
+    assert uuid.UUID(row["session"]["id"]).version == 7
+    assert row["session"]["tag"] == "before"
+    assert row["session"]["host"] and row["session"]["date"]
 
 
-def test_bare_reporter_context_omits_session_keys():
-    """A reporter driven without mew.run (e.g. by GB directly) has no identity."""
-    from mew.reporter import _build_context
+def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
+    """A reporter driven without mew.run has no identity: the block is passed
+    through untouched, so nothing invents a session."""
+    from mew.reporter import JSONReporter
 
-    ctx = _build_context({"host_name": "h"})
-    assert "session_id" not in ctx
-    assert "session_tag" not in ctx
+    out = tmp_path / "o.json"
+    rep = JSONReporter(output=out)
+    rep.report_context({"context": {"num_cpus": 4}})
+    rep.finalize()
+    assert json.loads(out.read_text())["context"] == {"context": {"num_cpus": 4}}
 
 
 def test_jsonl_append_makes_two_sessions(tmp_path: Path):

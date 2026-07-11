@@ -4,7 +4,7 @@ Google Benchmark drives the capture itself: when a memory manager is registered
 it runs one extra, untimed pass of each benchmark body per repetition, bracketed
 by :meth:`MemrayManager.start` / :meth:`MemrayManager.stop`, and stamps the
 returned figures onto that repetition's ``Run``. They reach reporters as the
-``memory`` block of a :class:`~mew._typing.RunRow`, projected by ``Run.to_dict``.
+``memory`` block of a :class:`~mew._typing.BenchmarkResult`, projected by ``Run.to_dict``.
 """
 
 from __future__ import annotations

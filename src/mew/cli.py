@@ -257,19 +257,6 @@ def _build_reporters(
     return reps
 
 
-def _derive_session_tag(cfg: _config.Config, session_tag: str | None) -> str | None:
-    """Default the session tag from the VCS when unset.
-
-    Default is the change id from the ``[tool.mew.session-tag]`` command (auto: jj, then
-    git), unless disabled via ``[tool.mew.session-tag] enabled = false``.
-    """
-    if session_tag is None and cfg.session_tag.enabled:
-        from mew._session import derive_session_tag
-
-        session_tag = derive_session_tag(tool=cfg.session_tag.tool, args=cfg.session_tag.args)
-    return session_tag
-
-
 def run(
     paths: list[str],
     *,
@@ -306,8 +293,6 @@ def run(
         entries = _collect_or_exit(
             paths, cfg=cfg, pattern=pattern, tags=tag or None, literal=literal, stdin=stdin
         )
-
-        session_tag = _derive_session_tag(cfg, session_tag)
 
         reporters = _build_reporters(
             output,
@@ -614,9 +599,9 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--session-tag",
-        help="Label this run's output as a session (e.g. `before`). Defaults to "
-        "the jj change id or `git describe`; disable with "
-        "`[tool.mew.session-tag] enabled = false`.",
+        help="Label this run's output as a session (e.g. `before`), addressable "
+        "later as `mew compare results.jsonl@before`. Runs sharing a tag are "
+        "compared as one session.",
     )
     p.add_argument(
         "--append",

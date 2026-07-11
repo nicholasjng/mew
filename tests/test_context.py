@@ -120,10 +120,10 @@ def test_context_flows_into_reporter():
     cap = Capture()
     mew.run(min_time="1x", reporter=cap)
     assert cap.context is not None
-    assert cap.context["custom"] == {
-        "dataset": {"size": 1024},
-        "commit": "abc",
-    }
+    # The machine provider is applied by default, so user values sit beside it.
+    assert cap.context["context"]["dataset"] == {"size": 1024}
+    assert cap.context["context"]["commit"] == "abc"
+    assert "cpu_scaling_enabled" in cap.context["context"]
 
 
 def test_no_custom_key_when_context_is_empty():
@@ -152,7 +152,7 @@ def test_context_snapshot_is_captured_at_run_start():
     cap = Capture()
     mew.run(min_time="1x", reporter=cap)
     assert cap.context is not None
-    assert cap.context["custom"] == {"snapshot_phase": "before"}
+    assert cap.context["context"]["snapshot_phase"] == "before"
 
 
 def test_json_reporter_emits_custom_context(tmp_path: Path):
@@ -169,7 +169,7 @@ def test_json_reporter_emits_custom_context(tmp_path: Path):
         reporter=JSONReporter(output=out),
     )
     doc = json.loads(out.read_text())
-    assert doc["context"]["custom"] == {"dataset": {"size": 1024}}
+    assert doc["context"]["context"]["dataset"] == {"size": 1024}
 
 
 def test_json_reporter_handles_non_serializable_via_default(tmp_path: Path):
@@ -188,4 +188,4 @@ def test_json_reporter_handles_non_serializable_via_default(tmp_path: Path):
     doc = json.loads(out.read_text())
     # Path stringifies via default=str — lossy but doesn't crash.
     expected_val = "/tmp/something" if sys.platform != "win32" else "\\tmp\\something"
-    assert doc["context"]["custom"]["path"] == expected_val
+    assert doc["context"]["context"]["path"] == expected_val

@@ -254,7 +254,7 @@ def run(
 
     # Threaded mode can't run on a GIL build (it would deadlock on GB's start
     # barrier): warn and skip by default, raise under `strict`.
-    skipped_rows: list[RunRow] = []
+    skipped_rows: list[BenchmarkResult] = []
     threaded = [e for e in selected if _is_threaded(e.options)]
     if threaded and _gil_enabled():
         names = ", ".join(e.name for e in threaded[:3])
@@ -290,17 +290,23 @@ def run(
     # row would just inflate every archive.
     extra_context: dict[str, Any] = {}
     if rep is not None:
-        extra_context["session_id"] = new_session_id()
+        session: dict[str, Any] = {
+            "id": new_session_id(),
+            "date": datetime.now(UTC).isoformat(),
+            "host": socket.gethostname(),
+        }
         if session_tag:
-            extra_context["session_tag"] = session_tag
-        if custom := _context._snapshot():
-            extra_context["custom"] = custom
+            session["tag"] = session_tag
+        # The machine provider is applied first so a suite can override it.
+        extra_context["session"] = session
+        extra_context["context"] = {**machine_context(), **_context._snapshot()}
 
     if not selected:
         # All skipped: GB emits no context for an empty registry, so drive the
         # reporter lifecycle here to surface the skipped rows.
         if rep is not None:
-            if rep.report_context(extra_context) is not False and skipped_rows:
+            rep.report_context(extra_context)
+            if skipped_rows:
                 rep.report_runs(skipped_rows)
             if fn := getattr(rep, "finalize", None):
                 fn()

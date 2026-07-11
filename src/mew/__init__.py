@@ -9,9 +9,10 @@ from mew._core import (
     clear_registered_benchmarks as _clear_registered_benchmarks,
 )
 from mew._registry import REGISTRY, Entry, Registry
-from mew._typing import BenchmarkFn, RunRow, State
+from mew._typing import BenchmarkFn, BenchmarkResult, SessionInfo, State
 from mew.api import benchmark, parametrize, product
 from mew.context import clear_context, get_context, set_context, update_context
+from mew.machine import machine_context
 from mew.reporter import (
     Fanout,
     JSONLReporter,
@@ -20,6 +21,7 @@ from mew.reporter import (
     RichReporter,
 )
 from mew.runner import run
+from mew.vcs import vcs_context
 
 __version__ = "0.1.1"
 
@@ -32,6 +34,7 @@ __all__ = [
     "BENCHMARK_VERSION",
     "REGISTRY",
     "BenchmarkFn",
+    "BenchmarkResult",
     "Entry",
     "Fanout",
     "JSONLReporter",
@@ -39,16 +42,18 @@ __all__ = [
     "Registry",
     "Reporter",
     "RichReporter",
-    "RunRow",
+    "SessionInfo",
     "State",
     "TimeUnit",
     "__version__",
     "benchmark",
     "clear_context",
     "get_context",
+    "machine_context",
     "parametrize",
     "product",
     "run",
     "set_context",
     "update_context",
+    "vcs_context",
 ]
