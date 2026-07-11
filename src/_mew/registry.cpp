@@ -7,34 +7,12 @@
 
 #include <exception>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <utility>
 
-#include "interrupt.h"
+#include "abort.h"
 
 namespace nb = nanobind;
 using namespace nb::literals;
-
-namespace {
-std::mutex g_interrupt_mutex;
-std::exception_ptr g_pending_interrupt;
-}  // namespace
-
-void mew_set_pending_interrupt(std::exception_ptr p) {
-    std::lock_guard<std::mutex> lock(g_interrupt_mutex);
-    if (!g_pending_interrupt) g_pending_interrupt = std::move(p);
-}
-
-bool mew_interrupt_pending() {
-    std::lock_guard<std::mutex> lock(g_interrupt_mutex);
-    return static_cast<bool>(g_pending_interrupt);
-}
-
-std::exception_ptr mew_take_pending_interrupt() {
-    std::lock_guard<std::mutex> lock(g_interrupt_mutex);
-    return std::exchange(g_pending_interrupt, nullptr);
-}
 
 void register_registry(nb::module_& m) {
     nb::class_<benchmark::Benchmark>(
@@ -90,10 +68,10 @@ void register_registry(nb::module_& m) {
             // (Google Benchmark stores it as a std::function).
             auto holder = std::make_shared<nb::callable>(std::move(fn));
             return benchmark::RegisterBenchmark(name, [holder](benchmark::State& s) {
-                // A prior body raised KeyboardInterrupt/SystemExit: wind the
-                // run down without touching Python again.
-                if (mew_interrupt_pending()) {
-                    s.SkipWithError("interrupted");
+                // The run is already aborting (a Ctrl-C, or a reporter/manager
+                // that raised): wind down without touching Python again.
+                if (mew_abort_pending()) {
+                    s.SkipWithError("aborted");
                     return;
                 }
                 nb::gil_scoped_acquire gil;
@@ -102,10 +80,9 @@ void register_registry(nb::module_& m) {
                 } catch (nb::python_error& e) {
                     if (!e.matches(PyExc_Exception)) {
                         // BaseException-only (KeyboardInterrupt, SystemExit) must
-                        // stop the whole run, not skip one benchmark: stash it,
-                        // `run_benchmarks` rethrows after the loop returns.
+                        // stop the whole run, not skip one benchmark.
                         s.SkipWithError(e.what());
-                        mew_set_pending_interrupt(std::current_exception());
+                        mew_set_pending_abort(std::current_exception());
                         return;
                     }
                     // SkipWithError captures the traceback; discard the Python

@@ -150,6 +150,7 @@ set(_MEW_SOURCES
     src/_mew/registry.cpp
     src/_mew/reporter.cpp
     src/_mew/managers.cpp
+    src/_mew/abort.cpp
 )
 
 # nanobind keeps whichever of STABLE_ABI / FREE_THREADED fits the interpreter:
@@ -162,6 +163,10 @@ nanobind_add_module(
     NB_STATIC
     ${_MEW_SOURCES}
 )
+
+# Scoped to _core so the fetched Google Benchmark keeps its own warning settings.
+# Not -Werror: a newer compiler or nanobind release must not break the build.
+target_compile_options(_core PRIVATE -Wall -Wextra)
 
 target_include_directories(_core PRIVATE src/_mew)
 target_link_libraries(_core PRIVATE benchmark::benchmark)

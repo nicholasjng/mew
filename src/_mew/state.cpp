@@ -63,6 +63,10 @@ void register_state(nb::module_& m) {
         .def(
             "__exit__",
             [](PauseScope& self, nb::object, nb::object, nb::object) {
+                // Guard the pairing: an __exit__ without a matching __enter__
+                // would leave the profiler's depth counter below zero, after
+                // which it never suspends again.
+                if (!self.guard) return;
                 mew_profiler_resume();
                 self.guard.reset();
             },
@@ -131,7 +135,7 @@ void register_state(nb::module_& m) {
             // PyObject_Repr, and since 3.11 every IntFlag member reprs as a bare
             // int (enum.ReprEnum inherits int.__repr__), so this would read `= 0`.
             "flags"_a.sig("CounterFlags.kDefaults") = benchmark::Counter::kDefaults,
-            "Attach a user-defined counter, surfaced in `RunRow['counters']`.\n"
+            "Attach a user-defined counter, surfaced in `BenchmarkResult['counters']`.\n"
             "`flags` controls how Google Benchmark normalizes it (see `CounterFlags`).")
         .def(
             "range",

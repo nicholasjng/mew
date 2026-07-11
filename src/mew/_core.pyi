@@ -18,6 +18,12 @@ def preload_system_info() -> None:
     silencing the benchmark run itself.
     """
 
+def cpu_info() -> dict:
+    """
+    CPU count and frequency-scaling state.
+    Scaling probes sysfs on Linux and sysctl on macOS. `"unknown"` when undetectable.
+    """
+
 class TimeUnit(enum.StrEnum):
     """Time unit used for reported per-iteration durations."""
 
@@ -29,89 +35,6 @@ class TimeUnit(enum.StrEnum):
 
     s = "s"
 
-class RunType(enum.StrEnum):
-    """
-    Distinguishes per-repetition runs from aggregate (mean / median / stddev) rows.
-    """
-
-    iteration = "iteration"
-
-    aggregate = "aggregate"
-
-class BenchmarkName:
-    """
-    A registered name split into its parts.
-    Google Benchmark assembles these into the reported `function/args/min_time:...` string; `str()` renders it.
-    """
-
-    @property
-    def function_name(self) -> str: ...
-    @property
-    def args(self) -> str: ...
-    @property
-    def min_time(self) -> str: ...
-    @property
-    def min_warmup_time(self) -> str: ...
-    @property
-    def iterations(self) -> str: ...
-    @property
-    def repetitions(self) -> str: ...
-    @property
-    def time_type(self) -> str: ...
-    @property
-    def threads(self) -> str: ...
-
-class Run:
-    """
-    A single benchmark run report.
-    Times are in seconds (accumulated across iterations); use `adjusted_real_time()` for per-iteration averages.
-    `to_dict()` projects it to a `RunRow`; that is what reporters receive.
-    """
-
-    @property
-    def run_name(self) -> BenchmarkName: ...
-    def benchmark_name(self) -> str: ...
-    @property
-    def family_index(self) -> int: ...
-    @property
-    def per_family_instance_index(self) -> int: ...
-    @property
-    def run_type(self) -> RunType: ...
-    @property
-    def aggregate_name(self) -> str: ...
-    @property
-    def report_label(self) -> str: ...
-    @property
-    def skip_message(self) -> str: ...
-    @property
-    def iterations(self) -> int: ...
-    @property
-    def threads(self) -> int: ...
-    @property
-    def repetition_index(self) -> int: ...
-    @property
-    def repetitions(self) -> int: ...
-    @property
-    def time_unit(self) -> TimeUnit: ...
-    @property
-    def real_accumulated_time(self) -> float: ...
-    @property
-    def cpu_accumulated_time(self) -> float: ...
-    def adjusted_real_time(self) -> float: ...
-    def adjusted_cpu_time(self) -> float: ...
-    @property
-    def complexity_n(self) -> int: ...
-    @property
-    def counters(self) -> dict: ...
-    @property
-    def skipped(self) -> bool: ...
-    def to_dict(self, **kwargs) -> dict:
-        """
-        Project to a `RunRow` dict.
-        Keyword arguments are merged last, so an overlay wins over a base key.
-        A `memory` block is present when a memory manager ran, a `cpu_profile` block when a profiler manager reported a result.
-        """
-
 def run_benchmarks(
     argv: Sequence[str],
     reporter: object | None = None,
@@ -122,7 +45,7 @@ def run_benchmarks(
     Initialize Google Benchmark with `argv` and run all registered benchmarks.
     Returns the number of benchmarks run.
     `extra_context` keys are overlaid onto the context dict passed to the reporter's `report_context` (session id/tag, user context).
-    `extra_rows` are pre-built RunRows reported right after the context, for benchmarks mew declined to run.
+    `extra_rows` are pre-built BenchmarkResults reported right after the context, for benchmarks mew declined to run.
     Pass a `Fanout` reporter to multiplex into multiple sinks.
     """
 
@@ -222,7 +145,7 @@ class State:
         self, name: str, value: float, flags: CounterFlags = CounterFlags.kDefaults
     ) -> None:
         """
-        Attach a user-defined counter, surfaced in `RunRow['counters']`.
+        Attach a user-defined counter, surfaced in `BenchmarkResult['counters']`.
         `flags` controls how Google Benchmark normalizes it (see `CounterFlags`).
         """
 
@@ -342,39 +265,22 @@ def register_benchmark(name: str, fn: Callable) -> BenchmarkHandle:
 def clear_registered_benchmarks() -> None:
     """Drop all previously registered benchmarks from the global registry."""
 
-class MemoryManagerScope:
+def register_memory_manager(manager: object) -> None:
     """
-    Context manager registering a Python memory manager with Google Benchmark.
-    The object needs `start()` and `stop()`; `stop` returns a dict of the
-    `memory` block's keys (peak_bytes, total_bytes, total_allocations), or None.
-    """
-
-    def __enter__(self) -> Self: ...
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: types.TracebackType | None,
-    ) -> None: ...
-
-class ProfilerManagerScope:
-    """
-    Context manager registering a Python profiler manager with Google Benchmark.
-    The object needs `after_setup_start()` and `before_teardown_stop()`, and may
-    provide `get_result()` (a flat dict stamped onto the Run as `cpu_profile`)
-    and `pause()`/`resume()` (called around `state.pause()` regions).
+    Register `manager` as Google Benchmark's memory manager.
+    Needs `start()` and `stop()`; `stop` returns the `memory` block's keys
+    (peak_bytes, total_bytes, total_allocations) as a dict, or None.
+    Pair with `unregister_memory_manager`.
     """
 
-    def __enter__(self) -> Self: ...
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: types.TracebackType | None,
-    ) -> None: ...
+def unregister_memory_manager() -> None: ...
+def register_profiler_manager(manager: object) -> None:
+    """
+    Register `manager` as Google Benchmark's profiler manager.
+    Needs `after_setup_start()` and `before_teardown_stop()`; may add
+    `get_result()` (a flat dict stamped onto the Run as `cpu_profile`) and
+    `pause()`/`resume()`, called around `state.pause()` regions.
+    Pair with `unregister_profiler_manager`.
+    """
 
-def memory_manager(manager: object) -> MemoryManagerScope:
-    """Scope registering `manager` as Google Benchmark's memory manager."""
-
-def profiler_manager(manager: object) -> ProfilerManagerScope:
-    """Scope registering `manager` as Google Benchmark's profiler manager."""
+def unregister_profiler_manager() -> None: ...
