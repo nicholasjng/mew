@@ -441,7 +441,8 @@ def product(
     Raises
     ------
     TypeError
-        If no iterables are supplied.
+        If no iterables are supplied, or an option value is illegal
+        (e.g. ``threads`` and ``thread_range`` both set).
     ValueError
         If a name/label collides with mew's addressing grammar
         (``::``, ``[``/``]``, newlines).
@@ -480,6 +481,7 @@ def product(
         options["threads"] = threads
     if thread_range is not None:
         options["thread_range"] = thread_range
+    _check_options(options)
 
     norm_tags = _normalize_tags(tags)
     keys = list(iterables.keys())
