@@ -1,211 +1,229 @@
-"""Optional memory profiling via memray."""
+"""Optional memory profiling via memray, wired in as a Google Benchmark memory manager.
+
+Google Benchmark drives the capture itself: when a memory manager is registered
+it runs one extra, untimed pass of each benchmark body per repetition, bracketed
+by :meth:`MemrayManager.start` / :meth:`MemrayManager.stop`, and stamps the
+returned figures onto that repetition's ``Run``. They reach reporters as the
+``memory`` block of a :class:`~mew._typing.RunRow`, projected by ``Run.to_dict``.
+"""
 
 from __future__ import annotations
 
 import sys
 import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-from mew._profile import _ProfileState, iter_entry_cases
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from mew._registry import Entry
-    from mew._typing import BenchmarkFn
+    from memray import Tracker
+
+#: A memray stack frame: ``(function, filename, lineno)``.
+Frame = tuple[str, str, int]
+
+_MEW_DIR = str(Path(__file__).parent)
+
+
+def _caller_frame() -> Frame:
+    """The benchmark frame memray is about to drop, as ``(function, file, lineno)``.
+
+    memray seeds its shadow stack with only the frame active when the tracker
+    starts, and pops it when that frame returns. :meth:`MemrayManager.start` is
+    called from C++ at the top of the timing loop and returns immediately, so
+    every frame above it is lost -- including the benchmark body's own. Grabbing
+    it here, before the tracker is entered, is the only chance to keep it.
+
+    Walks past mew's own frames so a parametrized family reports the user's body
+    rather than the generated trampoline.
+    """
+    frame = sys._getframe(1)
+    while frame is not None and frame.f_code.co_filename.startswith(_MEW_DIR):
+        frame = frame.f_back
+    if frame is None:  # called from somewhere unexpected; keep the graph renderable
+        return ("<benchmark>", "?", 0)
+    return (frame.f_code.co_name, frame.f_code.co_filename, frame.f_lineno)
 
 
 @dataclass(frozen=True, slots=True)
-class MemoryProfile:
-    """Per-case memory summary captured by memray.
+class _RootedRecord:
+    """A memray ``AllocationRecord`` with a synthetic root frame appended.
 
-    The capture is scoped to the timing loop (``for _ in state``), so
-    fixture/setup allocations are excluded; ``iterations`` measured passes run
-    after a warmup, making ``allocations_per_iteration`` a steady-state figure.
+    Duck-typed rather than subclassed: ``AllocationRecord`` is a C extension type
+    that cannot be constructed or subclassed from Python. The attribute surface
+    is what ``FlameGraphReporter._from_any_snapshot`` and
+    ``memray.reporters.common.format_thread_name`` read; ``test_memory`` renders
+    one of these so a memray upgrade that reads more fails in CI, not at runtime.
 
-    Attributes
-    ----------
-    peak_bytes : int
-        Peak memory during the loop (``metadata.peak_memory``); a high-water
-        mark, independent of iteration count.
-    total_bytes : int
-        Tracked heap live at the high-water mark, *not* the cumulative sum.
-    total_allocations : int
-        Cumulative allocation count across all ``iterations``. Not comparable
-        across runs of differing iteration count; use ``allocations_per_iteration``.
-    iterations : int
-        Number of measured timing-loop iterations the capture ran over.
-    allocations_per_iteration : float
-        ``total_allocations / iterations``, the per-call count, comparable
-        across engines regardless of speed.
+    memray stacks are leaf-first, so the benchmark frame goes last.
     """
 
-    profiler: str
-    peak_bytes: int
-    total_bytes: int
-    total_allocations: int
-    iterations: int
-    allocations_per_iteration: float
+    size: int
+    n_allocations: int
+    tid: int
+    thread_name: str
+    stack: tuple[Frame, ...]
+
+    def stack_trace(self, max_stacks: int | None = None) -> tuple[Frame, ...]:
+        return self.stack if max_stacks is None else self.stack[:max_stacks]
+
+    def hybrid_stack_trace(self, max_stacks: int | None = None) -> tuple[Frame, ...]:
+        # Only consulted under native_traces=True, which mew does not enable.
+        return self.stack_trace(max_stacks)
 
 
-def profile(
-    entries: list[Entry],
-    *,
-    flamegraph: Path | None = None,
-    iterations: int = 100,
-) -> dict[str, MemoryProfile]:
-    """Profile each entry with memray over ``iterations`` measured loop passes.
-
-    Parameters
-    ----------
-    entries : list[Entry]
-        Benchmarks to profile.
-    flamegraph : Path, optional
-        If given, additionally writes a combined HTML flame graph to this path.
-        Note this re-executes every case under a second tracker (memray capture
-        files cannot be merged after the fact), roughly doubling profiling time.
-    iterations : int, default 100
-        Measured timing-loop passes per case (a warmup runs first, untracked).
-        Many passes amortize one-time allocations, keeping
-        ``allocations_per_iteration`` comparable across engines.
-
-    Returns
-    -------
-    dict[str, MemoryProfile]
-        Per-case profiles keyed by ``entry.name`` (or ``entry.name/case:<i>`` for
-        each variant of a parametrized family).
-    """
+def require_memray() -> None:
+    """Raise a SystemExit with install instructions if memray is missing."""
     if find_spec("memray") is None:
         raise SystemExit(
             "memray is required for memory profiling. "
             "Install it with: uv add --optional memory memray"
         )
-    profiles = _collect_stats(entries, max(1, iterations))
-    if flamegraph is not None:
-        _write_flamegraph(entries, flamegraph)
-    return profiles
 
 
-def _capture_case(fn: BenchmarkFn, rng: int, dest: Path, iterations: int, warmup: int) -> bool:
-    """Capture one case with memray over ``iterations`` loop passes (after ``warmup``).
+class MemrayManager:
+    """Google Benchmark memory manager backed by memray.
 
-    The warmup runs untracked so one-time allocations don't dominate; the tracker
-    spans only the measured loop. Returns False when the body never iterated its state.
+    One capture per (benchmark, repetition): Google Benchmark calls
+    :meth:`start`, runs the body for a small fixed iteration count outside the
+    timing loop, then calls :meth:`stop`.
+
+    Parameters
+    ----------
+    tmpdir : Path
+        Directory for the intermediate capture files. One file per capture; the
+        caller owns the directory's lifetime (see :func:`manager`).
+
+    Notes
+    -----
+    Google Benchmark caps the memory pass at ``min(16, iterations)`` passes, so
+    ``allocations_per_iteration`` amortizes one-time allocations over at most 16
+    calls. Compare it across engines, not against a figure from a run with a
+    different iteration count.
     """
-    import memray
 
-    # Warmup outside the tracker to trigger one-time allocations.
-    if warmup > 0:
-        fn(_ProfileState(n_iterations=warmup, range_value=rng))
+    def __init__(self, tmpdir: Path) -> None:
+        self._dir = tmpdir
+        self._i = 0
+        self._dest: Path | None = None
+        self._tracker: Tracker | None = None
+        self._root: Frame = ("<benchmark>", "?", 0)
+        #: Completed captures as ``(path, root_frame)``, one per (benchmark,
+        #: repetition), in run order. :func:`write_flamegraph` renders them.
+        self.captures: list[tuple[Path, Frame]] = []
 
-    tracker = memray.Tracker(dest)
-    entered = exited = False
+    def start(self) -> None:
+        import memray
 
-    def start() -> None:
-        nonlocal entered
-        entered = True
-        tracker.__enter__()
+        self._dest = self._dir / f"capture-{self._i}.bin"
+        self._i += 1
+        # Before entering the tracker: see _caller_frame.
+        self._root = _caller_frame()
+        self._tracker = memray.Tracker(self._dest)
+        self._tracker.__enter__()
 
-    def stop() -> None:
-        nonlocal exited
-        exited = True
+    def stop(self) -> dict[str, int] | None:
+        import memray
+
+        tracker, dest = self._tracker, self._dest
+        if tracker is None or dest is None:
+            return None
         tracker.__exit__(None, None, None)
-
-    try:
-        fn(
-            _ProfileState(
-                n_iterations=iterations, range_value=rng, on_loop_start=start, on_loop_end=stop
-            )
-        )
-    finally:
-        # A body that raises mid-loop leaves the tracker open; close it so the
-        # capture file is readable and the next case can start fresh.
-        if entered and not exited:
-            tracker.__exit__(None, None, None)
-    return entered
-
-
-def _collect_stats(entries: list[Entry], iterations: int) -> dict[str, MemoryProfile]:
-    import memray
-
-    # A tenth of the measured count (>=1) is enough to clear lazy init.
-    warmup = max(1, iterations // 10)
-    profiles: dict[str, MemoryProfile] = {}
-    with tempfile.TemporaryDirectory() as tmpdir:
-        root = Path(tmpdir)
-        i = 0
-        for entry in entries:
-            for key, rng in iter_entry_cases(entry):
-                dest = root / f"capture-{i}.bin"
-                i += 1
-                # Warn and move on when a body raises: the timed run turns the
-                # same error into a skipped row and continues, so one broken
-                # benchmark must not abort the whole profiling pass either.
-                try:
-                    entered = _capture_case(entry.fn, rng, dest, iterations, warmup)
-                except Exception as e:
-                    print(
-                        f"warning: {key}: body raised during memory capture; skipping ({e!r})",
-                        file=sys.stderr,
-                    )
-                    continue
-                if not entered:
-                    print(
-                        f"warning: {key}: body never iterated its state; skipping memory capture",
-                        file=sys.stderr,
-                    )
-                    continue
-                reader = memray.FileReader(dest)
-                meta = reader.metadata
-                # From metadata, not get_allocation_records(): that scan is O(every
-                # allocation), minutes and gigabytes on an allocation-heavy body.
-                peak = meta.peak_memory
-                total_allocs = meta.total_allocations
-                # Live bytes at the high-water mark: bounded by peak concurrent allocs.
-                hwm = reader.get_high_watermark_allocation_records(merge_threads=True)
-                total_bytes = sum(r.size for r in hwm)
-                profiles[key] = MemoryProfile(
-                    profiler="memray",
-                    peak_bytes=peak,
-                    total_bytes=total_bytes,
-                    total_allocations=total_allocs,
-                    iterations=iterations,
-                    allocations_per_iteration=total_allocs / iterations,
-                )
-    return profiles
+        self._tracker = None
+        # Only after a clean close, so a half-written capture never reaches the
+        # flame graph.
+        self.captures.append((dest, self._root))
+        reader = memray.FileReader(dest)
+        meta = reader.metadata
+        # From metadata, not get_allocation_records(): that scan is O(every
+        # allocation), minutes and gigabytes on an allocation-heavy body.
+        # High-watermark records are bounded by peak concurrent allocations.
+        hwm = reader.get_high_watermark_allocation_records(merge_threads=True)
+        return {
+            "peak_bytes": meta.peak_memory,
+            "total_allocations": meta.total_allocations,
+            "total_bytes": sum(r.size for r in hwm),
+        }
 
 
-def _write_flamegraph(entries: list[Entry], path: Path) -> None:
+def manager(stack: ExitStack) -> MemrayManager:
+    """Build a :class:`MemrayManager` whose capture directory is tied to ``stack``.
+
+    The directory lives exactly as long as the stack does, which must outlast the
+    benchmark run: the captures are read during it, one per repetition.
+    """
+    require_memray()
+    tmpdir = stack.enter_context(tempfile.TemporaryDirectory())
+    return MemrayManager(Path(tmpdir))
+
+
+def write_flamegraph(manager: MemrayManager, path: Path) -> None:
+    """Render ``manager``'s captures into one HTML allocation flame graph.
+
+    Renders the captures the timing run already took, so the suite is not
+    executed a second time and the graph describes exactly the region the
+    ``memory`` block reports: the timing loop, over the iterations Google
+    Benchmark measured.
+
+    Two memray facts shape this:
+
+    - Capture *files* cannot be merged -- there is no merge command and no API --
+      but ``FlameGraphReporter.from_snapshot`` takes any iterable of allocation
+      records, so several readers' records chain into one graph. The records are
+      fully resolved, so no reader has to stay open.
+    - A loop-scoped capture loses every frame that was live when the tracker
+      started, which is why each record is re-rooted at the benchmark frame
+      :func:`_caller_frame` grabbed. Without that the graph is unlabelled, and
+      allocations made directly in the body have no stack at all.
+
+    The memory-over-time chart is dropped (``memory_records=()``): each capture's
+    timeline restarts at zero, so concatenating them would draw a sawtooth of
+    unrelated runs.
+    """
+    require_memray()
     import memray
     from memray.reporters.flamegraph import FlameGraphReporter
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        combined = Path(tmpdir) / "combined.bin"
-        with memray.Tracker(combined):
-            for entry in entries:
-                for key, rng in iter_entry_cases(entry):
-                    # A raising body drops out of the combined graph but must
-                    # not lose the other cases' (already tracked) allocations.
-                    try:
-                        entry.fn(_ProfileState(range_value=rng))
-                    except Exception as e:
-                        print(
-                            f"warning: {key}: body raised during flame-graph capture; "
-                            f"skipping ({e!r})",
-                            file=sys.stderr,
-                        )
-        reader = memray.FileReader(combined)
-        reporter = FlameGraphReporter.from_snapshot(
-            reader.get_high_watermark_allocation_records(merge_threads=True),
-            memory_records=tuple(reader.get_memory_snapshots()),
-            native_traces=False,
+    if not manager.captures:
+        print(
+            "warning: no memory captures recorded; skipping flame graph "
+            "(did any benchmark body enter its timing loop?)",
+            file=sys.stderr,
         )
-        with path.open("w") as f:
-            reporter.render(
-                f,
-                metadata=reader.metadata,
-                show_memory_leaks=False,
-                merge_threads=True,
-                inverted=False,
+        return
+
+    # Header metadata for the report. Every capture comes from this process, so
+    # the first one speaks for all of them.
+    with memray.FileReader(manager.captures[0][0]) as first:
+        metadata = first.metadata
+
+    records: list[_RootedRecord] = []
+    for capture, root in manager.captures:
+        reader = memray.FileReader(capture)
+        for rec in reader.get_high_watermark_allocation_records(merge_threads=True):
+            records.append(
+                _RootedRecord(
+                    size=rec.size,
+                    n_allocations=rec.n_allocations,
+                    tid=rec.tid,
+                    thread_name=rec.thread_name,
+                    stack=(*rec.stack_trace(), root),
+                )
             )
+        reader.close()
+
+    reporter = FlameGraphReporter.from_snapshot(
+        # Duck-typed stand-ins for AllocationRecord; see _RootedRecord.
+        cast("Any", records),
+        memory_records=(),
+        native_traces=False,
+    )
+    with path.open("w") as f:
+        reporter.render(
+            f,
+            metadata=metadata,
+            show_memory_leaks=False,
+            merge_threads=True,
+            inverted=False,
+        )

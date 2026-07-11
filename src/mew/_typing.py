@@ -26,11 +26,14 @@ class RunRow(TypedDict):
     custom : dict, optional
         Per-suite :func:`mew.set_context` values.
     memory : dict, optional
-        :func:`dataclasses.asdict` of a :class:`~mew.memory.MemoryProfile`
-        (present under ``--profile-memory``).
+        Google Benchmark's memory-manager figures for this run
+        (``peak_bytes``, ``total_bytes``, ``total_allocations``, ``iterations``,
+        ``allocations_per_iteration``); present under ``--profile-memory``.
     cpu_profile : dict, optional
-        :func:`dataclasses.asdict` of a :class:`~mew.cpu.CPUProfile`
-        (present under ``--sample``).
+        The profiler manager's summary for this run (``profiler``, ``wall_time``,
+        ``sample_count``, ``top_function``, ``top_function_total_self_time``);
+        present under ``--sample``. Numeric entries are floats, including
+        counts: the manager result carries them as doubles.
     """
 
     name: str
@@ -90,8 +93,8 @@ class BenchmarkOptions(TypedDict, total=False):
 class State(Protocol):
     """Structural state passed into benchmark targets.
 
-    Matched by the C++ ``_core.State`` and the ``_ProfileState`` used for out-of-loop
-    profile passes. Covers iteration, timing, counters, labels, and range/thread accessors.
+    Matched by the C++ ``_core.State``. Covers iteration, timing, counters, labels,
+    and range/thread accessors.
     """
 
     range_size: int

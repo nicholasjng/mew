@@ -6,7 +6,7 @@ import os
 import sys
 import warnings
 from collections.abc import Iterable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, Any
 
 import mew.context as _context
@@ -17,8 +17,6 @@ from mew.reporter import Reporter
 
 if TYPE_CHECKING:
     from mew._typing import BenchmarkOptions, RunRow
-    from mew.cpu import CPUProfile
-    from mew.memory import MemoryProfile
 
 
 def _gil_enabled() -> bool:
@@ -196,8 +194,8 @@ def run(
     random_interleaving: bool = False,
     session_tag: str | None = None,
     strict: bool = False,
-    memory_profiles: dict[str, MemoryProfile] | None = None,
-    cpu_profiles: dict[str, CPUProfile] | None = None,
+    memory_manager: Any | None = None,
+    profiler_manager: Any | None = None,
 ) -> int:
     """Run benchmarks via the C++ Google Benchmark backend.
 
@@ -234,9 +232,16 @@ def run(
         the rest, so a mixed suite still works on stock CPython. Set ``strict`` to
         raise a :class:`RuntimeError` instead, e.g. in CI where the threaded
         benchmarks are the point and a silent skip would mask a misconfiguration.
-    memory_profiles, cpu_profiles : dict[str, MemoryProfile | CPUProfile], optional
-        Out-of-loop profile results keyed by ``_profile_key``, attached onto each
-        :class:`~mew._typing.RunRow`.
+    memory_manager : object, optional
+        A Google Benchmark memory manager (``start()`` / ``stop()``), e.g.
+        :class:`mew.memory.MemrayManager`. Registered for the duration of the run;
+        its figures land in each row's ``memory`` block.
+    profiler_manager : object, optional
+        A Google Benchmark profiler manager (``after_setup_start()`` /
+        ``before_teardown_stop()``, optionally ``get_result()`` and
+        ``pause()``/``resume()``), e.g. :class:`mew.cpu.PyinstrumentManager`.
+        Registered for the duration of the run; its summary lands in each row's
+        ``cpu_profile`` block.
 
     Returns
     -------
@@ -279,7 +284,10 @@ def run(
 
     rep = _to_single_reporter(reporter)
     # The binding merges extra_context into the GB context before calling
-    # report_context, so every reporter sees session identity without a wrapper.
+    # report_context, and reports extra_rows right after it: two channels, no
+    # wrapper. `custom` belongs to the session, so it stays in the context block
+    # only -- compare back-fills it onto rows that lack it, and stamping it per
+    # row would just inflate every archive.
     extra_context: dict[str, Any] = {}
     if rep is not None:
         extra_context["session_id"] = new_session_id()
@@ -287,23 +295,15 @@ def run(
             extra_context["session_tag"] = session_tag
         if custom := _context._snapshot():
             extra_context["custom"] = custom
-        # Projector turns the C++ live Runs into RunRow dicts and flushes the
-        # skipped rows for `rep`.
-        from mew._profile import _RunProjector
-
-        rep = _RunProjector(
-            rep,
-            memory_profiles=memory_profiles,
-            cpu_profiles=cpu_profiles,
-            skipped_rows=skipped_rows,
-        )
 
     if not selected:
         # All skipped: GB emits no context for an empty registry, so drive the
         # reporter lifecycle here to surface the skipped rows.
         if rep is not None:
-            rep.report_context(extra_context)
-            rep.finalize()
+            if rep.report_context(extra_context) is not False and skipped_rows:
+                rep.report_runs(skipped_rows)
+            if fn := getattr(rep, "finalize", None):
+                fn()
         return 0
 
     cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving)
@@ -333,7 +333,15 @@ def run(
     # stderr live so user output and GB run-time diagnostics get through.
     with _silence_native_stderr():
         _core.preload_system_info()
-    return _core.run_benchmarks(cli, rep, extra_context)
+
+    # Both managers are process-global in GB; the scopes unregister on exit so a
+    # later run() in the same process can't inherit them.
+    with ExitStack() as stack:
+        if memory_manager is not None:
+            stack.enter_context(_core.memory_manager(memory_manager))
+        if profiler_manager is not None:
+            stack.enter_context(_core.profiler_manager(profiler_manager))
+        return _core.run_benchmarks(cli, rep, extra_context, skipped_rows)
 
 
 def _to_single_reporter(
