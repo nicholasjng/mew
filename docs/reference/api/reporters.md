@@ -3,7 +3,10 @@
 ```{eval-rst}
 .. currentmodule:: mew
 
-.. autoclass:: RunRow
+.. autoclass:: BenchmarkResult
+   :no-members:
+
+.. autoclass:: SessionInfo
    :no-members:
 
 .. autoclass:: Reporter

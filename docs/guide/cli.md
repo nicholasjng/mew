@@ -127,8 +127,7 @@ See [](regressions.md) for matching, metrics, the regression gate, and allowlist
 Print a shell-completion script for `bash`, `zsh`, or `fish` to
 stdout. The scripts are generated from the CLI itself, so they stay in sync with
 the commands and flags. They complete subcommands, per-command options, file
-paths for path arguments, and fixed choices (`--format`, `--profiler`, the shell
-list).
+paths for path arguments, and fixed choices (`--format`, the shell list).
 
 The scripts are **static**: they never call `mew` at completion time. Install
 them as a **file**, generated once, so shell startup doesn't depend on `mew`

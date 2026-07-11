@@ -3,7 +3,7 @@
 A reporter is a Python class with `report_context(context)` and `report_runs(runs)` methods, plus an optional `finalize()`.
 Calls arrive on the main thread, so a reporter needs no locking of its own.
 
-`report_runs` receives a list of {class}`~mew.RunRow` dicts, one per completed
+`report_runs` receives a list of {class}`~mew.BenchmarkResult` dicts, one per completed
 run, with any `memory` / `cpu_profile` blocks already attached. Rows are plain
 dicts (`row["real_time"]`, `row.get("memory")`), so one reporter serves ordinary
 runs and externally merged rows alike.
@@ -25,8 +25,34 @@ runs and externally merged rows alike.
 
 {class}`~mew.Fanout`
 : Broadcasts each callback to a list of reporters; what `mew run` uses when
-  several `-o` sinks are given. A run halts if any sub-reporter returns
-  `False` from `report_context()`, so the strictest one wins.
+  several `-o` sinks are given. A sub-reporter that raises halts the run, so the
+  strictest one wins.
+
+## Reading results back
+
+`mew` writes result files; {func}`mew.compare.read_results` and
+{func}`mew.compare.read_sessions` read them. Both accept `.json`, `.jsonl` and
+either gzipped. They live in `mew.compare` rather than the top-level namespace:
+the top level is for *writing* benchmarks, and this is analysis machinery you
+reach for in a separate script.
+
+```python
+from mew.compare import read_sessions
+
+for session in read_sessions("results.jsonl"):
+    print(session.tag or session.session_id[:8], session.provenance.get("engine"))
+    for name, sample in session.samples.items():
+        print(f"  {name}  {sample.value:.1f} {sample.time_unit}  cv={sample.cv:.3f}")
+```
+
+`read_sessions` does what a script would otherwise reimplement: it drops Google
+Benchmark's aggregate rows and skipped rows, canonicalizes `bench.py::f/case:0`
+to `bench.py::f[n=10]`, groups repetitions, and reduces each group to one
+{class}`~mew.compare.Sample` carrying the center, the stddev and the raw
+`values`. Pass `metric=` for a measurement other than `real_time`.
+
+`read_results` is the raw view — every row as stored, nothing filtered — for
+feeding a dataframe or doing your own reduction.
 
 ## Choosing a sink
 
@@ -37,7 +63,7 @@ runs and externally merged rows alike.
 | Growing archive, SQL analytics            | `JSONLReporter` (`-o b.jsonl[.gz]`) |
 | Console output + persisted artifact       | `-o -` plus `-o file.{json,jsonl}` |
 
-JSONL rows are self-contained — each carries its session identity and `custom`
+JSONL rows are self-contained — each carries its `session` identity and `context`
 context — so an archive is plain NDJSON that analytical tools read directly.
 `.jsonl.gz` compresses it; `--append` adds each run as a new gzip member, so
 appends stay cheap.
@@ -46,7 +72,7 @@ appends stay cheap.
 
 ```python
 from typing import Any
-from mew import RunRow
+from mew import BenchmarkResult
 
 
 class MetricsExporter:
@@ -54,11 +80,10 @@ class MetricsExporter:
         self._sink = sink
         self._context: dict[str, Any] = {}
 
-    def report_context(self, context: dict[str, Any]) -> bool:
+    def report_context(self, context: dict[str, Any]) -> None:
         self._context = context
-        return True
 
-    def report_runs(self, runs: list[RunRow]) -> None:
+    def report_runs(self, runs: list[BenchmarkResult]) -> None:
         for row in runs:
             self._sink.push(name=row["name"], value=row["real_time"])
 
@@ -66,9 +91,9 @@ class MetricsExporter:
         self._sink.flush()
 ```
 
-Each `row` is a {class}`~mew.RunRow`: the base keys (`name`, `real_time`,
+Each `row` is a {class}`~mew.BenchmarkResult`: the base keys (`name`, `real_time`,
 `cpu_time`, `iterations`, `time_unit`, `label`, `counters`, …) are always
-present; `custom`, `memory`, and `cpu_profile` appear only when relevant
+present; `session`, `context`, `memory`, and `cpu_profile` appear only when relevant
 (under {func}`mew.set_context` / `--profile-memory` / `--sample`).
 
 Pass it directly to {func}`mew.run`:
@@ -93,7 +118,7 @@ GROUP BY name
 ORDER BY p95 DESC;
 
 -- Custom context drill-down: nested blocks are structs, not JSON strings
-SELECT name, custom.dataset.size AS size, avg(real_time) AS mean_time
+SELECT name, context.dataset.size AS size, avg(real_time) AS mean_time
 FROM 'results.jsonl'
 GROUP BY name, size;
 ```

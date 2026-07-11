@@ -38,7 +38,7 @@ $ mew compare --key func ducky.jsonl duckdb.jsonl
 
 If stripping the prefix makes two benchmarks in one file collide, `compare` exits with an error rather than guessing.
 
-When pivoting within a single result file (`mew compare results.jsonl --by custom.engine`), `--key` defaults to `func` automatically; every column carries the same file prefix, so matching on the function name is what lines them up.
+When pivoting within a single result file (`mew compare results.jsonl --by context.engine`), `--key` defaults to `func` automatically; every column carries the same file prefix, so matching on the function name is what lines them up.
 
 Parametrize cases are rendered and matched by their human id (`bench_udf_scalar[n=10000]` rather than Google Benchmark's raw `bench_udf_scalar/case:0`), and per-benchmark option suffixes like `/min_time:0.200` are ignored for matching, so files run with different options still align.
 
@@ -63,17 +63,31 @@ $ mew compare results.jsonl@after results.jsonl@before
 
 ### What counts as one session
 
-Runs that share a `session_tag` on one host are **one session**. The tag defaults
-to the jj change id / `git describe`, so repeated runs at one revision belong
-together: an interleaved A/B loop appending to one file reduces over every
-repetition rather than keeping only the last run.
+Runs on one host that share a `session_tag` — or, absent one, the same
+`context.vcs.commit` — are **one session**, so repeated runs at one revision
+belong together: an interleaved A/B loop appending to one file reduces over
+every repetition rather than keeping only the last run.
+
+Record the commit from the suite:
+
+```python
+import mew
+
+mew.update_context(mew.vcs_context())
+```
+
+{func}`mew.vcs_context` shells out to jj or git and returns `{"vcs": {...}}`
+(backend, full commit, dirty flag, plus the jj change id or git branch), or `{}`
+outside a work tree. It is opt-in: not every run wants to pay for a subprocess.
+`--session-tag` overrides it, and is what you want when a comparison spans
+revisions.
 
 ```console
 $ for i in 1 2 3 4 5; do
->   mew run bench_a.py --session-tag ab --append -o results.jsonl
->   mew run bench_b.py --session-tag ab --append -o results.jsonl
+>   mew run bench_a.py --append -o results.jsonl
+>   mew run bench_b.py --append -o results.jsonl
 > done
-$ mew compare results.jsonl --by custom.engine
+$ mew compare results.jsonl --by context.engine
 ```
 
 Interleaving decorrelates thermal and load drift from the axis you are comparing,
