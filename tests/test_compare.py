@@ -732,6 +732,39 @@ def test_compare_no_cv_marker_on_steady_rows(tmp_path: Path) -> None:
     assert "(!)" not in console.export_text()
 
 
+def test_compare_no_significance_marker_on_insignificant_delta(tmp_path: Path) -> None:
+    # Both sides scatter over the same range; the ~2% delta shouldn't read as real.
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", 99.0), _row("b", 100.0), _row("b", 101.0), _row("b", 100.0)],
+        base=[_row("b", 101.0), _row("b", 99.0), _row("b", 103.0), _row("b", 98.0)],
+    )
+    console = Console(width=200)
+    assert compare([other, base], console=console) == 0
+    assert "(signif.)" not in console.export_text()
+
+
+def test_compare_marks_significant_delta_on_clear_shift(tmp_path: Path) -> None:
+    # n=3 per side tops out at p~0.08 (exact Mann-Whitney floor is 0.1) even at
+    # total separation, so this needs enough reps for total separation to clear
+    # the 0.05 bar.
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", v) for v in (9.0, 10.0, 11.0, 9.5, 10.5)],
+        base=[_row("b", v) for v in (99.0, 100.0, 101.0, 99.5, 100.5)],
+    )
+    console = Console(width=200)
+    assert compare([other, base], console=console) == 0
+    assert "(signif.)" in console.export_text()
+
+
+def test_compare_no_significance_marker_without_repetitions(tmp_path: Path) -> None:
+    other, base = _write_pair(tmp_path, other=[_row("b", 10.0)], base=[_row("b", 100.0)])
+    console = Console(width=200)
+    assert compare([other, base], console=console) == 0
+    assert "(signif.)" not in console.export_text()
+
+
 def test_load_sessions_keeps_all_sessions(tmp_path: Path) -> None:
     # The load stage discards nothing; collapsing is the select stage's job.
     p = tmp_path / "agg.json"
