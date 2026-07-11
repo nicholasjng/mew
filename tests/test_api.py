@@ -343,6 +343,15 @@ def test_threads_and_thread_range_mutually_exclusive():
                 pass
 
 
+def test_product_threads_and_thread_range_mutually_exclusive():
+    with pytest.raises(TypeError, match="mutually exclusive"):
+
+        @mew.product(threads=2, thread_range=(1, 4), n=[1, 2])
+        def _bench(state, n):
+            for _ in state:
+                pass
+
+
 def test_thread_range_shape_validated_at_decoration():
     with pytest.raises(TypeError, match="min, max"):
 
