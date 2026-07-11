@@ -1,53 +1,66 @@
 // Manager bindings: let a plain Python object act as a Google Benchmark
 // MemoryManager or ProfilerManager.
 //
-// Both managers are process-global in GB (`RegisterMemoryManager` stores a raw
-// pointer and `nullptr` is the only way off), so they are exposed as scope
-// objects rather than loose register/unregister functions: the `with` block owns
-// the trampoline and the strong reference to the Python manager, and a manager
-// can never leak into the next `mew.run()` in the same process.
+// GB registration is a process-global raw pointer with `nullptr` as the only way
+// off, so the trampoline lives in a static here and `mew.runner` pairs
+// register/unregister on an ExitStack.
+
+#include "managers.h"
 
 #include <benchmark/benchmark.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 
+#include <atomic>
 #include <exception>
 #include <memory>
-#include <mutex>
 #include <string>
 
-#include "managers.h"
+#include "abort.h"
 
 namespace nb = nanobind;
 using namespace nb::literals;
 
 namespace {
 
-std::mutex g_exc_mutex;
-std::exception_ptr g_pending_exception;
+// Holds the Python manager and calls it under the GIL, never letting an
+// exception escape into Google Benchmark.
+class PyManager {
+   public:
+    explicit PyManager(nb::object obj) : py_(std::move(obj)) {}
+    virtual ~PyManager() {
+        nb::gil_scoped_acquire gil;
+        py_.reset();
+    }
 
-// GB's manager interfaces are noexcept. Stash the first failure and let the run
-// wind down; `run_benchmarks` rethrows after the loop returns.
-void stash_exception() {
-    std::lock_guard<std::mutex> lock(g_exc_mutex);
-    if (!g_pending_exception) g_pending_exception = std::current_exception();
-}
+   protected:
+    // The GIL must be held by the caller: the returned object outlives this
+    // frame, so a scope acquired here would release before the caller's
+    // temporary is destroyed, decref'ing without the GIL. Returns None if the
+    // call failed (already stashed).
+    nb::object call(const char* name) {
+        try {
+            return py_.attr(name)();
+        } catch (...) {
+            mew_set_pending_abort(std::current_exception());
+            return nb::none();
+        }
+    }
 
-// {"peak_bytes": 4096, ...} -> MemoryManager::Result. Keys the manager omits
-// keep their tombstone / zero and are dropped by `Run.to_dict`.
+    nb::object py_;
+};
+
+// Keys the manager omits keep their tombstone and are dropped by `Run.to_dict`.
 void fill_memory_result(const nb::dict& d, benchmark::MemoryManager::Result& out) {
-    if (d.contains("total_allocations"))
-        out.num_allocs = nb::cast<int64_t>(d["total_allocations"]);
+    if (d.contains("total_allocations")) out.num_allocs = nb::cast<int64_t>(d["total_allocations"]);
     if (d.contains("peak_bytes")) out.max_bytes_used = nb::cast<int64_t>(d["peak_bytes"]);
-    if (d.contains("total_bytes"))
-        out.total_allocated_bytes = nb::cast<int64_t>(d["total_bytes"]);
+    if (d.contains("total_bytes")) out.total_allocated_bytes = nb::cast<int64_t>(d["total_bytes"]);
     if (d.contains("net_heap_growth"))
         out.net_heap_growth = nb::cast<int64_t>(d["net_heap_growth"]);
 }
 
-// One flat Python dict -> the two maps of ProfilerManager::Result, split by
-// value type. The manager author writes {"profiler": "pyinstrument",
-// "wall_time": 0.31} and never sees that C++ keeps strings and numbers apart.
+// One flat Python dict -> the Result's two maps, split by value type, so the
+// manager author never sees that C++ keeps strings and numbers apart.
 void fill_profile_result(const nb::dict& d, benchmark::ProfilerManager::Result& out) {
     for (auto [k, v] : d) {
         std::string key = nb::cast<std::string>(nb::str(k));
@@ -59,173 +72,132 @@ void fill_profile_result(const nb::dict& d, benchmark::ProfilerManager::Result& 
     }
 }
 
-class PyMemoryManager : public benchmark::MemoryManager {
+class PyMemoryManager final : public benchmark::MemoryManager, public PyManager {
    public:
-    nb::object py;
-
-    explicit PyMemoryManager(nb::object obj) : py(std::move(obj)) {}
-    ~PyMemoryManager() override {
-        nb::gil_scoped_acquire gil;
-        py.reset();
-    }
+    using PyManager::PyManager;
 
     void Start() override {
         nb::gil_scoped_acquire gil;
-        try {
-            py.attr("start")();
-        } catch (...) {
-            stash_exception();
-        }
+        call("start");
     }
 
     void Stop(Result& out) override {
         nb::gil_scoped_acquire gil;
-        try {
-            nb::object r = py.attr("stop")();
-            if (!r.is_none()) fill_memory_result(nb::cast<nb::dict>(r), out);
-        } catch (...) {
-            stash_exception();
-        }
+        nb::object r = call("stop");
+        if (!r.is_none()) fill_memory_result(nb::cast<nb::dict>(r), out);
     }
 };
 
-class PyProfilerManager : public benchmark::ProfilerManager {
+class PyProfilerManager final : public benchmark::ProfilerManager, public PyManager {
    public:
-    nb::object py;
-
-    explicit PyProfilerManager(nb::object obj) : py(std::move(obj)) {}
-    ~PyProfilerManager() override {
+    explicit PyProfilerManager(nb::object obj) : PyManager(std::move(obj)) {
+        // Resolved once: `state.pause()` can run per iteration, so a hasattr
+        // probe per call would be a permanent tax. Absent hooks mean the
+        // profiler samples through the pause.
         nb::gil_scoped_acquire gil;
-        py.reset();
+        if (nb::hasattr(py_, "pause")) pause_ = py_.attr("pause");
+        if (nb::hasattr(py_, "resume")) resume_ = py_.attr("resume");
     }
 
-    void AfterSetupStart() override { call("after_setup_start"); }
-    void BeforeTeardownStop() override { call("before_teardown_stop"); }
+    ~PyProfilerManager() override {
+        nb::gil_scoped_acquire gil;
+        pause_.reset();
+        resume_.reset();
+    }
 
-    // Called by `state.pause()` via mew_profiler_pause/resume. Optional on the
-    // Python side: a manager that cannot suspend simply samples through, which
-    // is what every out-of-process profiler does anyway.
-    void Suspend() { call_optional("pause"); }
-    void Resume() { call_optional("resume"); }
+    void AfterSetupStart() override {
+        nb::gil_scoped_acquire gil;
+        active_ = true;
+        call("after_setup_start");
+    }
+    void BeforeTeardownStop() override {
+        nb::gil_scoped_acquire gil;
+        active_ = false;
+        call("before_teardown_stop");
+    }
+
+    // Called around a `state.pause()` region -- from *any* run, including the
+    // timed one, which GB drives with no profiler manager at all. Forwarding
+    // then would be a Python call per pause that suspends nothing, and in a
+    // threaded run several worker threads would race on the manager's own
+    // depth counter, leaving the real sampling pass unable to suspend.
+    void Pause() {
+        if (active_) invoke(pause_);
+    }
+    void Resume() {
+        if (active_) invoke(resume_);
+    }
 
     void GetResult(Result& out) override {
         nb::gil_scoped_acquire gil;
-        try {
-            nb::object r = py.attr("get_result")();
-            if (!r.is_none()) fill_profile_result(nb::cast<nb::dict>(r), out);
-        } catch (...) {
-            stash_exception();
-        }
+        nb::object r = call("get_result");
+        if (!r.is_none()) fill_profile_result(nb::cast<nb::dict>(r), out);
     }
 
    private:
-    void call(const char* name) {
+    void invoke(const nb::object& fn) {
+        if (!fn.is_valid()) return;
         nb::gil_scoped_acquire gil;
         try {
-            py.attr(name)();
+            fn();
         } catch (...) {
-            stash_exception();
+            mew_set_pending_abort(std::current_exception());
         }
     }
 
-    void call_optional(const char* name) {
-        nb::gil_scoped_acquire gil;
-        try {
-            if (nb::hasattr(py, name)) py.attr(name)();
-        } catch (...) {
-            stash_exception();
-        }
-    }
+    // True only between AfterSetupStart and BeforeTeardownStop, i.e. inside the
+    // profiler's own pass. Written on that pass's single thread (GB drives it
+    // through a ThreadManager(1)), read from the timed run's worker threads.
+    std::atomic<bool> active_{false};
+    nb::object pause_;
+    nb::object resume_;
 };
 
-// The registered profiler manager, so `state.pause()` can reach it. Only ever
-// written under the GIL by the scope's __enter__/__exit__.
-PyProfilerManager* g_profiler = nullptr;
-
-// A registration scope. `impl` is created on __enter__ and destroyed on
-// __exit__, which is also when GB is pointed back at nullptr.
-template <typename Impl>
-struct Scope {
-    nb::object py;
-    std::unique_ptr<Impl> impl;
-
-    explicit Scope(nb::object obj) : py(std::move(obj)) {}
-};
-
-using MemoryScope = Scope<PyMemoryManager>;
-using ProfilerScope = Scope<PyProfilerManager>;
+// GB holds raw pointers to these for the length of the run.
+std::unique_ptr<PyMemoryManager> g_memory;
+std::unique_ptr<PyProfilerManager> g_profiler;
 
 }  // namespace
 
-std::exception_ptr mew_take_pending_manager_exception() {
-    std::lock_guard<std::mutex> lock(g_exc_mutex);
-    std::exception_ptr p = g_pending_exception;
-    g_pending_exception = nullptr;
-    return p;
-}
-
 void mew_profiler_pause() {
-    if (g_profiler != nullptr) g_profiler->Suspend();
+    if (g_profiler) g_profiler->Pause();
 }
 
 void mew_profiler_resume() {
-    if (g_profiler != nullptr) g_profiler->Resume();
+    if (g_profiler) g_profiler->Resume();
 }
 
 void register_managers(nb::module_& m) {
-    nb::class_<MemoryScope>(
-        m, "MemoryManagerScope",
-        "Context manager registering a Python memory manager with Google Benchmark.\n"
-        "The object needs `start()` and `stop()`; `stop` returns a dict of the\n"
-        "`memory` block's keys (peak_bytes, total_bytes, total_allocations), or None.")
-        .def(
-            "__enter__",
-            [](MemoryScope& s) -> MemoryScope& {
-                s.impl = std::make_unique<PyMemoryManager>(s.py);
-                benchmark::RegisterMemoryManager(s.impl.get());
-                return s;
-            },
-            nb::rv_policy::reference_internal, nb::sig("def __enter__(self) -> typing.Self"))
-        .def(
-            "__exit__",
-            [](MemoryScope& s, nb::object, nb::object, nb::object) {
-                benchmark::RegisterMemoryManager(nullptr);
-                s.impl.reset();
-            },
-            "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none(),
-            nb::sig("def __exit__(self, exc_type: type[BaseException] | None, exc_value: "
-                    "BaseException | None, traceback: types.TracebackType | None) -> None"));
-
-    nb::class_<ProfilerScope>(
-        m, "ProfilerManagerScope",
-        "Context manager registering a Python profiler manager with Google Benchmark.\n"
-        "The object needs `after_setup_start()` and `before_teardown_stop()`, and may\n"
-        "provide `get_result()` (a flat dict stamped onto the Run as `cpu_profile`)\n"
-        "and `pause()`/`resume()` (called around `state.pause()` regions).")
-        .def(
-            "__enter__",
-            [](ProfilerScope& s) -> ProfilerScope& {
-                s.impl = std::make_unique<PyProfilerManager>(s.py);
-                g_profiler = s.impl.get();
-                benchmark::RegisterProfilerManager(s.impl.get());
-                return s;
-            },
-            nb::rv_policy::reference_internal, nb::sig("def __enter__(self) -> typing.Self"))
-        .def(
-            "__exit__",
-            [](ProfilerScope& s, nb::object, nb::object, nb::object) {
-                benchmark::RegisterProfilerManager(nullptr);
-                g_profiler = nullptr;
-                s.impl.reset();
-            },
-            "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none(),
-            nb::sig("def __exit__(self, exc_type: type[BaseException] | None, exc_value: "
-                    "BaseException | None, traceback: types.TracebackType | None) -> None"));
+    m.def(
+        "register_memory_manager",
+        [](nb::object obj) {
+            g_memory = std::make_unique<PyMemoryManager>(std::move(obj));
+            benchmark::RegisterMemoryManager(g_memory.get());
+        },
+        "manager"_a,
+        "Register `manager` as Google Benchmark's memory manager.\n"
+        "Needs `start()` and `stop()`; `stop` returns the `memory` block's keys\n"
+        "(peak_bytes, total_bytes, total_allocations) as a dict, or None.\n"
+        "Pair with `unregister_memory_manager`.");
+    m.def("unregister_memory_manager", [] {
+        benchmark::RegisterMemoryManager(nullptr);
+        g_memory.reset();
+    });
 
     m.def(
-        "memory_manager", [](nb::object obj) { return MemoryScope(std::move(obj)); }, "manager"_a,
-        "Scope registering `manager` as Google Benchmark's memory manager.");
-    m.def(
-        "profiler_manager", [](nb::object obj) { return ProfilerScope(std::move(obj)); },
-        "manager"_a, "Scope registering `manager` as Google Benchmark's profiler manager.");
+        "register_profiler_manager",
+        [](nb::object obj) {
+            g_profiler = std::make_unique<PyProfilerManager>(std::move(obj));
+            benchmark::RegisterProfilerManager(g_profiler.get());
+        },
+        "manager"_a,
+        "Register `manager` as Google Benchmark's profiler manager.\n"
+        "Needs `after_setup_start()` and `before_teardown_stop()`; may add\n"
+        "`get_result()` (a flat dict stamped onto the Run as `cpu_profile`) and\n"
+        "`pause()`/`resume()`, called around `state.pause()` regions.\n"
+        "Pair with `unregister_profiler_manager`.");
+    m.def("unregister_profiler_manager", [] {
+        benchmark::RegisterProfilerManager(nullptr);
+        g_profiler.reset();
+    });
 }
