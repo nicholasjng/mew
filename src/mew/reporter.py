@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, TextIO, cast, runtime_checkable
 
-from mew._console import Terminal, sgr
+from mew._console import Terminal, _truncate_left, _truncate_right, sgr
 from mew._core import Run
 from mew._typing import RunRow
 
@@ -401,8 +401,7 @@ class RichReporter:
         # the live table reads the same as `mew compare`.
         name = canonical_name(row["name"], label)
         # Left-ellipsize: keep the disambiguating function suffix / case:N tail.
-        if len(name) > w["name"]:
-            name = "…" + name[-(w["name"] - 1) :]
+        name = _truncate_left(name, w["name"])
 
         # Skipped rows carry no timing; render the reason in place of the
         # numeric columns and dim the whole line so it reads as "didn't run".
@@ -415,12 +414,10 @@ class RichReporter:
         cells = [name.ljust(w["name"])]
         if self._show_variant:
             variant = row.get("variant") or "-"
-            if len(variant) > w["variant"]:
-                variant = variant[: w["variant"] - 1] + "…"
+            variant = _truncate_right(variant, w["variant"])
             cells.append(variant.ljust(w["variant"]))
         if self._show_label:
-            if len(label) > w["label"]:
-                label = label[: w["label"] - 1] + "…"
+            label = _truncate_right(label, w["label"])
             cells.append(label.ljust(w["label"]))
         cells += [
             f"{row['iterations']:,}".rjust(w["iters"]),
@@ -434,8 +431,7 @@ class RichReporter:
             cpu = row.get("cpu_profile")
             cells.append((f"{cpu['sample_count']:,}" if cpu else "-").rjust(w["samples"]))
             top = cpu["top_function"] if cpu else "-"
-            if len(top) > w["hottest_frame"]:
-                top = top[: w["hottest_frame"] - 1] + "…"
+            top = _truncate_right(top, w["hottest_frame"])
             cells.append(top.ljust(w["hottest_frame"]))
         self._term.print(_COL_SEP.join(cells))
 

@@ -106,6 +106,17 @@ def _truncate_left(text: str, width: int) -> str:
     return "…" + text[-(width - 1) :]
 
 
+def _truncate_right(text: str, width: int) -> str:
+    """Keep the left side, appending an ellipsis. Shared with `RichReporter`'s
+    non-flex columns (variant/label/hottest-frame) so both renderers guard
+    narrow widths the same way."""
+    if len(text) <= width:
+        return text
+    if width <= 1:
+        return text[:width]
+    return text[: width - 1] + "…"
+
+
 def _format_cell(cell: Cell, width: int, justify: str, color: bool) -> str:
     if isinstance(cell, str):
         text = _truncate_left(cell, width)
