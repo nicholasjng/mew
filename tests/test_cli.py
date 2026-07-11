@@ -655,3 +655,40 @@ def test_e2e_malformed_config_is_clean_error(tmp_path):
     assert res.returncode == 2
     assert "invalid [tool.mew] config" in res.stderr
     assert "Traceback" not in res.stderr
+
+
+def _setup_project(tmp_path: Path, setup_body: str) -> Path:
+    """A project whose `[tool.mew] setup` file runs before discovery."""
+    (tmp_path / "benchmarks").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n\n[tool.mew]\nsetup = "benchmarks/conf.py"\n'
+    )
+    (tmp_path / "benchmarks" / "conf.py").write_text(setup_body)
+    for name in ("a", "b"):
+        (tmp_path / "benchmarks" / f"bench_{name}.py").write_text(
+            f'import mew\n\n\n@mew.benchmark(name="{name}")\n'
+            f"def bench_{name}(state):\n    for _ in state:\n        pass\n"
+        )
+    return tmp_path
+
+
+def test_setup_file_context_applies_to_a_single_file_run(mew_cli, tmp_path: Path):
+    """The point of the setup file: context must not depend on which benchmark
+    files an invocation happens to select."""
+    _setup_project(tmp_path, 'import mew\n\nmew.set_context("team", "perf")\n')
+    out = tmp_path / "one.json"
+    res = mew_cli("run", "benchmarks/bench_b.py", "--min-time=1x", "-o", str(out), cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    doc = json.loads(out.read_text())
+    assert doc["context"]["context"]["team"] == "perf"
+    assert [b["name"].rsplit("::", 1)[-1] for b in doc["benchmarks"]] == ["b"]
+
+
+def test_setup_file_missing_is_a_clear_error(mew_cli, tmp_path: Path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n\n[tool.mew]\nsetup = "nope.py"\n'
+    )
+    (tmp_path / "benchmarks").mkdir()
+    res = mew_cli("run", "--min-time=1x", cwd=tmp_path)
+    assert res.returncode != 0
+    assert "setup file not found" in res.stderr

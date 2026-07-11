@@ -8,21 +8,6 @@ from pathlib import Path
 from typing import Any
 
 
-@dataclass(slots=True, frozen=True)
-class SessionTagSpec:
-    """Whether and how to derive the auto session tag.
-
-    ``enabled`` gates auto-derivation (an explicit ``--session-tag`` is always honored).
-    ``tool``/``args`` are the command: both ``None`` → derive automatically (jj, then
-    git); a ``tool`` with no ``args`` uses the built-in preset for ``git``/``jj`` (none
-    for any other command).
-    """
-
-    enabled: bool = True
-    tool: str | None = None
-    args: list[str] | None = None
-
-
 @dataclass(slots=True)
 class Config:
     """Resolved ``[tool.mew]`` settings.
@@ -34,8 +19,11 @@ class Config:
         ``project_root``.
     python_files : list[str]
         Glob patterns identifying benchmark files during discovery.
-    session_tag : SessionTagSpec
-        Whether and how to derive the automatic session tag.
+    setup : str or None
+        Python file imported once before any benchmark file, relative to
+        ``project_root``. Runs whatever the project needs set up run-wide --
+        typically context providers, so provenance does not depend on which
+        benchmark files a given invocation happens to select.
     statistic : str or None
         Default ``mew compare`` reducer; ``None`` keeps the median.
     project_root : Path or None
@@ -45,9 +33,7 @@ class Config:
 
     benchpaths: list[str] = field(default_factory=lambda: ["benchmarks"])
     python_files: list[str] = field(default_factory=lambda: ["bench_*.py", "*_bench.py"])
-    session_tag: SessionTagSpec = field(default_factory=SessionTagSpec)
-    # Default `mew compare` reducer: a built-in name or "module.path:attr" ref
-    # (see _statistics.resolve_statistic); None keeps the median. --statistic wins.
+    setup: str | None = None
     statistic: str | None = None
     project_root: Path | None = None
 
@@ -76,24 +62,6 @@ def _parse_str_list(raw: Any, key: str, default: list[str]) -> list[str]:
     if isinstance(raw, list) and all(isinstance(x, str) for x in raw):
         return raw
     raise ValueError(f"[tool.mew] {key} must be a string or a list of strings")
-
-
-def _parse_session_tag(raw: Any) -> SessionTagSpec:
-    if not isinstance(raw, dict):
-        raise TypeError("[tool.mew.session-tag] must be a table")
-    keys: set[str] = {str(k) for k in raw}
-    if unknown := keys - {"enabled", "tool", "args"}:
-        raise ValueError(f"unknown keys in [tool.mew.session-tag]: {sorted(unknown)}")
-    enabled, tool, args = raw.get("enabled", True), raw.get("tool"), raw.get("args")
-    if not isinstance(enabled, bool):
-        raise TypeError("[tool.mew.session-tag] enabled must be a boolean")
-    if tool is not None and not isinstance(tool, str):
-        raise TypeError("[tool.mew.session-tag] tool must be a string")
-    if args is None:
-        return SessionTagSpec(enabled=enabled, tool=tool, args=None)
-    if not (isinstance(args, list) and all(isinstance(a, str) for a in args)):
-        raise ValueError("[tool.mew.session-tag] args must be a list of strings")
-    return SessionTagSpec(enabled=enabled, tool=tool, args=[str(a) for a in args])
 
 
 def load(start: Path | None = None) -> Config:
@@ -129,13 +97,16 @@ def load(start: Path | None = None) -> Config:
         tool = _snake_keys(data.get("tool", {}).get("mew", {}))
         statistic = tool.get("statistic")
         if statistic is not None and not isinstance(statistic, str):
-            raise ValueError("[tool.mew] statistic must be a 'module.path:attr' string")
+            raise ValueError("[tool.mew] statistic must be a string")
+        setup = tool.get("setup")
+        if setup is not None and not isinstance(setup, str):
+            raise ValueError("[tool.mew] setup must be a string")
         return Config(
             benchpaths=_parse_str_list(tool.get("benchpaths"), "benchpaths", ["benchmarks"]),
             python_files=_parse_str_list(
                 tool.get("python_files"), "python-files", ["bench_*.py", "*_bench.py"]
             ),
-            session_tag=_parse_session_tag(tool.get("session_tag", {})),
+            setup=setup,
             statistic=statistic,
             project_root=parent,
         )

@@ -17,7 +17,6 @@ def _write(root: Path, body: str) -> None:
 def test_load_defaults_when_no_pyproject(tmp_path: Path):
     cfg = load(tmp_path)
     assert cfg.benchpaths == ["benchmarks"]
-    assert cfg.session_tag.tool is None  # unset → auto (jj then git)
     assert cfg.statistic is None
 
 
@@ -67,7 +66,7 @@ def test_load_rejects_non_string_statistic(tmp_path: Path):
         statistic = 95
         """,
     )
-    with pytest.raises(ValueError, match="statistic must be a 'module.path:attr' string"):
+    with pytest.raises(ValueError, match="statistic must be a string"):
         load(tmp_path)
 
 
@@ -83,27 +82,17 @@ def test_load_kebab_case_keys_coerce_to_snake(tmp_path: Path):
     assert cfg.python_files == ["b_*.py"]
 
 
-def test_load_session_tag_disabled(tmp_path: Path):
-    _write(tmp_path, "[tool.mew.session-tag]\nenabled = false\n")
-    assert load(tmp_path).session_tag.enabled is False
-    assert load(tmp_path).session_tag.tool is None
+def test_load_setup_path(tmp_path: Path):
+    _write(tmp_path, '[tool.mew]\nsetup = "benchmarks/conf.py"\n')
+    assert load(tmp_path).setup == "benchmarks/conf.py"
 
 
-def test_load_session_tag_tool_and_args(tmp_path: Path):
-    _write(
-        tmp_path,
-        """
-        [tool.mew.session-tag]
-        tool = "hg"
-        args = ["id", "-i"]
-        """,
-    )
-    spec = load(tmp_path).session_tag
-    assert spec.tool == "hg"
-    assert spec.args == ["id", "-i"]
+def test_load_setup_defaults_to_none(tmp_path: Path):
+    _write(tmp_path, "[tool.mew]\n")
+    assert load(tmp_path).setup is None
 
 
-def test_load_rejects_unknown_session_tag_key(tmp_path: Path):
-    _write(tmp_path, "[tool.mew.session-tag]\ntoll = 'git'\n")  # typo
-    with pytest.raises(ValueError, match="unknown keys in \\[tool.mew.session-tag\\]"):
+def test_load_rejects_non_string_setup(tmp_path: Path):
+    _write(tmp_path, "[tool.mew]\nsetup = 3\n")
+    with pytest.raises(ValueError, match="setup must be a string"):
         load(tmp_path)

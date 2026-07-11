@@ -66,6 +66,24 @@ def _benchpath_selectors(cfg: _config.Config) -> list[_discovery.Selector]:
     return selectors
 
 
+def _import_setup(cfg: _config.Config) -> None:
+    """Import ``[tool.mew] setup`` before discovery, if configured.
+
+    Imported first and unconditionally, so what it establishes -- context
+    providers, shared fixtures, environment -- applies to every invocation,
+    not only the ones that happen to select the file it was written next to.
+    """
+    if not cfg.setup:
+        return
+    root = cfg.project_root or Path.cwd()
+    path = Path(cfg.setup)
+    if not path.is_absolute():
+        path = root / path
+    if not path.is_file():
+        raise SystemExit(f"mew: [tool.mew] setup file not found: {path}")
+    _discovery.import_file(path)
+
+
 def _collect(
     paths: list[str],
     *,
@@ -109,6 +127,8 @@ def _collect(
         raise SystemExit(2) from e
 
     REGISTRY.clear()
+    # Before the benchmark files: a provider it registers must apply to them all.
+    _import_setup(cfg)
     for f in files:
         _discovery.import_file(f)
 
@@ -364,6 +384,9 @@ def compare(
     from mew._statistics import resolve_statistic
     from mew.compare import compare as _compare
 
+    # One config walk for the whole command: the statistic default and the
+    # regression gate both come out of the same [tool.mew] resolution.
+    cfg_file = _load_config_or_exit()
     # --statistic wins; else fall back to [tool.mew] statistic; else stdlib median.
     spec = statistic if statistic is not None else _load_config_or_exit().statistic
     reduce = resolve_statistic(spec) if spec is not None else None
@@ -381,6 +404,7 @@ def compare(
         cfg = load_config(
             default_threshold=regression_threshold if regression_threshold is not None else 5.0,
             path=regressions_config,
+            root=cfg_file.project_root,
         )
 
     code = _compare(
@@ -671,11 +695,9 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--baseline", help="With --by, the baseline column (default: first written).")
     p.add_argument(
         "--statistic",
-        help="Reducer over per-repetition values, for display and the regression gate. "
-        "A built-in name (min, max, mean, median, gmean, or a pNN percentile like "
-        "p95) or an importable `module.path:attr` reference "
-        "(e.g. scipy.stats:gmean; needs numpy). Default: median. Overrides "
-        "[tool.mew] statistic.",
+        help="Reducer over per-repetition values, for display and the regression gate: "
+        "min, max, mean, median, gmean, or a pNN percentile like p95. "
+        "Default: median. Overrides [tool.mew] statistic.",
     )
     p.add_argument(
         "--regression-threshold",
