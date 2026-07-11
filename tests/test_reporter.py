@@ -8,7 +8,7 @@ import json
 import pytest
 
 import mew
-from mew import RunRow
+from mew import BenchmarkResult
 from mew.reporter import JSONLReporter, JSONReporter, RichReporter
 
 
@@ -50,8 +50,8 @@ def test_json_reporter_writes_to_stream():
     assert doc["benchmarks"][0]["iterations"] >= 1
 
 
-def _fake_row(name: str, label: str = "") -> RunRow:
-    """A minimal RunRow dict, the shape reporters now consume directly."""
+def _fake_row(name: str, label: str = "") -> BenchmarkResult:
+    """A minimal BenchmarkResult dict, the shape reporters now consume directly."""
     return {
         "name": name,
         "run_name": name,
@@ -82,7 +82,7 @@ def test_json_reporter_streams_forward_only(tmp_path):
     """
     out = tmp_path / "results.json"
     rep = JSONReporter(output=out)
-    rep.report_context({"host_name": "h", "num_cpus": 4})
+    rep.report_context({"session": {"host": "h"}, "context": {"num_cpus": 4}})
 
     rep.report_runs([_fake_row("a::one"), _fake_row("a::two")])
     partial = out.read_text()
@@ -93,7 +93,7 @@ def test_json_reporter_streams_forward_only(tmp_path):
     rep.report_runs([_fake_row("a::three")])
     rep.finalize()
     doc = json.loads(out.read_text())
-    assert doc["context"]["host_name"] == "h"
+    assert doc["context"]["session"]["host"] == "h"
     assert [b["name"] for b in doc["benchmarks"]] == ["a::one", "a::two", "a::three"]
 
 
@@ -111,7 +111,7 @@ def test_jsonl_reporter_duckdb_query_round_trip(tmp_path):
 
     con = duckdb.connect()
     rows = con.execute(
-        f"SELECT name, real_time, custom.dataset.size, session_id FROM '{out}'"
+        f"SELECT name, real_time, context.dataset.size, session.id FROM '{out}'"
     ).fetchall()
     assert len(rows) == 1
     name, real_time, sz, session_id = rows[0]
@@ -152,7 +152,7 @@ def test_rich_reporter_streams_header_before_first_run():
 
     buf = io.StringIO()
     rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
-    rep.report_context({"host_name": "h", "num_cpus": 4, "mhz_per_cpu": 1000, "cpu_scaling": "off"})
+    rep.report_context({"host_name": "h", "num_cpus": 4, "cpu_scaling": "off"})
     # Header is already on screen — we haven't reported any runs yet.
     out = buf.getvalue()
     assert "host=" in out
@@ -172,7 +172,7 @@ def test_rich_reporter_profile_flags_add_columns():
         show_memory=True,
         show_cpu=True,
     )
-    rep.report_context({"host_name": "h", "num_cpus": 1, "mhz_per_cpu": 1000, "cpu_scaling": "?"})
+    rep.report_context({"host_name": "h", "num_cpus": 1, "cpu_scaling": "?"})
     out = buf.getvalue()
     assert "Peak Mem" in out
     assert "Samples" in out
@@ -247,7 +247,7 @@ def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
         show_label=True,
         show_cpu=True,
     )
-    rep.report_context({"host_name": "h", "num_cpus": 1, "mhz_per_cpu": 1000, "cpu_scaling": "?"})
+    rep.report_context({"host_name": "h", "num_cpus": 1, "cpu_scaling": "?"})
 
     row = _fake_row("bench.py::bench_x", label="a-very-long-case-label-well-past-twenty-chars")
     row["cpu_profile"] = {
@@ -270,7 +270,7 @@ def test_rich_reporter_renders_canonical_name():
 
     buf = io.StringIO()
     rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
-    rep.report_context({"host_name": "h", "num_cpus": 4, "mhz_per_cpu": 1000, "cpu_scaling": "off"})
+    rep.report_context({"host_name": "h", "num_cpus": 4, "cpu_scaling": "off"})
     rep.report_runs([_fake_row("bench.py::bench_x/case:0/min_time:0.200", label="small")])
     out = buf.getvalue()
     assert "bench.py::bench_x[small]" in out
@@ -294,7 +294,7 @@ def test_jsonl_reporter_streams_one_object_per_line(tmp_path):
     # Pure NDJSON: no context header, every line is a self-contained row.
     assert len(rows) == 2
     assert all("/case:" in r["name"] for r in rows)
-    assert all(r["host_name"] and r["date"] for r in rows)
+    assert all(r["session"]["host"] and r["session"]["date"] for r in rows)
 
 
 def test_jsonl_reporter_flushes_incrementally(tmp_path):
@@ -323,8 +323,8 @@ def test_fanout_finalize_runs_every_sink_despite_failure():
         def __init__(self, tag: str) -> None:
             self.tag = tag
 
-        def report_context(self, context) -> bool:
-            return True
+        def report_context(self, context) -> None:
+            pass
 
         def report_runs(self, runs) -> None:
             pass
@@ -342,3 +342,19 @@ def test_fanout_finalize_runs_every_sink_despite_failure():
         fanout.finalize()
     # The failing sink ran first (call order preserved), the healthy one still ran.
     assert calls == ["boom", "ok"]
+
+
+def test_canonical_name_keeps_the_aggregate_suffix():
+    """GB appends `_mean`/`_median`/... *after* the args part, so `/case:N` is not
+    at the end of an aggregate row's name. The label still swaps in, and the
+    suffix stays so aggregates remain distinct from the rows they summarize."""
+    from mew.reporter import canonical_name
+
+    assert canonical_name("b.py::f/case:0", "n=10") == "b.py::f[n=10]"
+    assert canonical_name("b.py::f/case:0_mean", "n=10") == "b.py::f[n=10]_mean"
+    assert canonical_name("b.py::f/case:12_stddev", "n=10") == "b.py::f[n=10]_stddev"
+    # Option suffixes still go entirely.
+    assert canonical_name("b.py::f/case:0/min_time:0.200", "n=10") == "b.py::f[n=10]"
+    # Unlabelled and non-family names are untouched.
+    assert canonical_name("b.py::f/case:0_mean", "") == "b.py::f/case:0_mean"
+    assert canonical_name("b.py::plain", "n=10") == "b.py::plain"

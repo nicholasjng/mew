@@ -29,13 +29,10 @@ _MEW_DIR = str(Path(__file__).parent)
 def _caller_frame() -> Frame:
     """The benchmark frame memray is about to drop, as ``(function, file, lineno)``.
 
-    memray seeds its shadow stack with only the frame active when the tracker
-    starts, and pops it when that frame returns. :meth:`MemrayManager.start` is
-    called from C++ at the top of the timing loop and returns immediately, so
-    every frame above it is lost -- including the benchmark body's own. Grabbing
-    it here, before the tracker is entered, is the only chance to keep it.
-
-    Walks past mew's own frames so a parametrized family reports the user's body
+    memray seeds its shadow stack with the frame active at tracker start and pops
+    it on return. :meth:`MemrayManager.start` is called from C++ and returns
+    before the body allocates, so grabbing the frame here is the only chance to
+    keep it. Walks past mew's own frames, so a family reports the user's body
     rather than the generated trampoline.
     """
     frame = sys._getframe(1)
@@ -50,13 +47,7 @@ def _caller_frame() -> Frame:
 class _RootedRecord:
     """A memray ``AllocationRecord`` with a synthetic root frame appended.
 
-    Duck-typed rather than subclassed: ``AllocationRecord`` is a C extension type
-    that cannot be constructed or subclassed from Python. The attribute surface
-    is what ``FlameGraphReporter._from_any_snapshot`` and
-    ``memray.reporters.common.format_thread_name`` read; ``test_memory`` renders
-    one of these so a memray upgrade that reads more fails in CI, not at runtime.
-
-    memray stacks are leaf-first, so the benchmark frame goes last.
+    Stacks are leaf-first, so the benchmark frame goes last.
     """
 
     size: int
@@ -97,10 +88,9 @@ class MemrayManager:
 
     Notes
     -----
-    Google Benchmark caps the memory pass at ``min(16, iterations)`` passes, so
+    Google Benchmark caps the memory pass at ``min(16, iterations)``, so
     ``allocations_per_iteration`` amortizes one-time allocations over at most 16
-    calls. Compare it across engines, not against a figure from a run with a
-    different iteration count.
+    calls. Compare it across engines, not across differing iteration counts.
     """
 
     def __init__(self, tmpdir: Path) -> None:
@@ -161,25 +151,16 @@ def manager(stack: ExitStack) -> MemrayManager:
 def write_flamegraph(manager: MemrayManager, path: Path) -> None:
     """Render ``manager``'s captures into one HTML allocation flame graph.
 
-    Renders the captures the timing run already took, so the suite is not
-    executed a second time and the graph describes exactly the region the
-    ``memory`` block reports: the timing loop, over the iterations Google
-    Benchmark measured.
+    Uses the captures the timing run already took, so the suite runs once and the
+    graph covers the same region the ``memory`` block reports.
 
-    Two memray facts shape this:
+    Capture *files* cannot be merged, but ``FlameGraphReporter.from_snapshot``
+    takes any iterable of records, and they stay valid after their reader closes.
+    Each is re-rooted at the frame :func:`_caller_frame` grabbed, without which
+    the graph is unlabelled and body-level allocations carry no stack at all.
 
-    - Capture *files* cannot be merged -- there is no merge command and no API --
-      but ``FlameGraphReporter.from_snapshot`` takes any iterable of allocation
-      records, so several readers' records chain into one graph. The records are
-      fully resolved, so no reader has to stay open.
-    - A loop-scoped capture loses every frame that was live when the tracker
-      started, which is why each record is re-rooted at the benchmark frame
-      :func:`_caller_frame` grabbed. Without that the graph is unlabelled, and
-      allocations made directly in the body have no stack at all.
-
-    The memory-over-time chart is dropped (``memory_records=()``): each capture's
-    timeline restarts at zero, so concatenating them would draw a sawtooth of
-    unrelated runs.
+    ``memory_records=()``: each capture's timeline restarts at zero, so the
+    over-time chart would be a sawtooth of unrelated runs.
     """
     require_memray()
     import memray

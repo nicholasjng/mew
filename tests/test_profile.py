@@ -277,8 +277,8 @@ def test_pyinstrument_manager_summarizes_the_hot_frame(tmp_path):
 
 
 def test_to_dict_serializes_enums_as_plain_strings(tmp_path):
-    """RunRow carries strings, not bound enums: a `Run.time_unit` leaking into the
-    row would be archived as "TimeUnit.ns"."""
+    """BenchmarkResult carries strings, not bound enums: a leaked `Run.time_unit` would be
+    archived as "TimeUnit.ns"."""
 
     @mew.benchmark(unit="us")
     def bench_units(state):
@@ -292,16 +292,10 @@ def test_to_dict_serializes_enums_as_plain_strings(tmp_path):
         assert bench["run_type"] in ("iteration", "aggregate")
 
 
-def test_custom_context_stays_in_the_context_block(tmp_path):
-    """`mew.set_context` values belong to the session, not to every row.
-
-    `compare._read_rows` back-fills `custom` onto rows that lack it, so stamping
-    it per row is pure archive bloat (~16% on a family under repetitions). Only
-    the `--variant` merge sets it per row, because one merged file holds several
-    variants under a single top-level context.
-    """
+def test_context_is_written_once_per_document(tmp_path):
+    """Single-doc JSON has one context block, so rows stay bare. Only JSONL
+    stamps `session`/`context` per row, where each line must stand alone."""
     mew.set_context("build", "asan")
-    mew.set_context("commit", "abc123")
 
     @mew.benchmark
     def bench_ctx(state):
@@ -311,23 +305,19 @@ def test_custom_context_stays_in_the_context_block(tmp_path):
     out = tmp_path / "out.json"
     mew.run(min_time="1x", repetitions=2, reporter=JSONReporter(output=out))
     doc = json.loads(out.read_text())
-    assert doc["context"]["custom"] == {"build": "asan", "commit": "abc123"}
+    assert doc["context"]["context"]["build"] == "asan"
+    assert doc["context"]["session"]["id"]
     assert doc["benchmarks"]
     for bench in doc["benchmarks"]:
-        assert "custom" not in bench
+        assert "context" not in bench
+        assert "session" not in bench
 
 
 def test_loop_scoped_captures_carry_no_stacks(tmp_path):
-    """Why `write_flamegraph` still runs its own pass.
-
-    memray drops the enclosing Python stack when the tracker is started inside a
-    frame that then returns -- which is exactly how a GB memory manager works, as
-    `start()` is called from C++ at the top of the timing loop and returns before
-    the body allocates. The byte/allocation counts stay correct (they come from
-    aggregate metadata), but the records have no frames, so a flame graph built
-    from them would be empty. Pinned here so the second pass is not "optimized"
-    away again.
-    """
+    """memray drops the enclosing stack when the tracker starts in a frame that
+    then returns -- exactly how a GB memory manager works. Counts stay correct
+    (aggregate metadata), but records lose their frames, which is why
+    `write_flamegraph` re-roots them."""
     memray = pytest.importorskip("memray")
 
     def read_stacks(path):
@@ -365,12 +355,8 @@ def test_loop_scoped_captures_carry_no_stacks(tmp_path):
 
 
 def test_rooted_record_renders_with_the_real_reporter(tmp_path):
-    """Pins memray's record surface.
-
-    `_RootedRecord` duck-types `AllocationRecord`, so a memray release that reads
-    an attribute it does not provide would break `--flamegraph` at runtime. Render
-    one through the real reporter so that breakage lands here instead.
-    """
+    """Pins memray's record surface: `_RootedRecord` duck-types `AllocationRecord`,
+    so a release that reads a further attribute must break here, not at runtime."""
     pytest.importorskip("memray")
     from memray.reporters.flamegraph import FlameGraphReporter
 
@@ -418,10 +404,8 @@ def _metadata_for(tmp_path):
 def test_flamegraph_is_rooted_at_the_benchmark_and_loop_scoped(tmp_path):
     """The graph names each benchmark and covers the same region as the table.
 
-    The benchmark's own frame is the one memray drops from a loop-scoped capture;
-    re-rooting puts it back, including for allocations made directly in the body
-    (which otherwise carry no stack at all).
-    """
+    Re-rooting puts back the frame memray drops from a loop-scoped capture,
+    including for body-level allocations, which otherwise carry no stack."""
     pytest.importorskip("memray")
     from contextlib import ExitStack
 
@@ -459,3 +443,41 @@ def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
         _memory.write_flamegraph(_memory.manager(stack), out)
     assert not out.exists()
     assert "no memory captures recorded" in capsys.readouterr().err
+
+
+def test_pause_only_reaches_the_profiler_during_its_own_pass(tmp_path):
+    """GB drives the timed run with no profiler manager, so `state.pause()` there
+    must not call one: it would suspend nothing, and in a threaded run several
+    worker threads would race on the manager's depth counter."""
+    calls: list[str] = []
+
+    class Probe:
+        def __init__(self) -> None:
+            self.sampling = False
+
+        def after_setup_start(self) -> None:
+            self.sampling = True
+
+        def before_teardown_stop(self) -> None:
+            self.sampling = False
+
+        def get_result(self) -> None:
+            return None
+
+        def pause(self) -> None:
+            calls.append("sampling" if self.sampling else "idle")
+
+        def resume(self) -> None:
+            pass
+
+    @mew.benchmark(name="paused")
+    def bench_paused(state):
+        for _ in state:
+            with state.pause():
+                pass
+
+    mew.run(
+        min_time="20x", reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=Probe()
+    )
+    assert calls, "the profiler pass must still see its pauses"
+    assert set(calls) == {"sampling"}

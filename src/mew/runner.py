@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
-import os
+import socket
 import sys
 import warnings
-from collections.abc import Iterable, Iterator, Sequence
-from contextlib import ExitStack, contextmanager
+from collections.abc import Iterable, Sequence
+from contextlib import ExitStack
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import mew.context as _context
 from mew import _core
+from mew._console import overflow
 from mew._registry import REGISTRY, Entry
 from mew._session import new_session_id
+from mew.machine import _silence_native_stderr, machine_context
 from mew.reporter import Reporter
 
 if TYPE_CHECKING:
-    from mew._typing import BenchmarkOptions, RunRow
+    from mew._typing import BenchmarkOptions, BenchmarkResult
 
 
 def _gil_enabled() -> bool:
@@ -42,8 +45,8 @@ def _requested_threads(opts: BenchmarkOptions) -> int:
     return 1
 
 
-def _skipped_row(name: str, threads: int, message: str) -> RunRow:
-    """A minimal ``skipped=True`` :class:`~mew._typing.RunRow` for a benchmark mew
+def _skipped_row(name: str, threads: int, message: str) -> BenchmarkResult:
+    """A minimal ``skipped=True`` :class:`~mew._typing.BenchmarkResult` for a benchmark mew
     declined to run (never handed to Google Benchmark)."""
     return {
         "name": name,
@@ -90,29 +93,6 @@ def _warmup_free_threading() -> None:
     t = threading.Thread(target=lambda: None)
     t.start()
     t.join()
-
-
-@contextmanager
-def _silence_native_stderr() -> Iterator[None]:
-    """Redirect OS-level fd 2 to /dev/null within the scope.
-
-    Google Benchmark's lazy system-info probes write platform diagnostics straight
-    to fd 2, bypassing Python's ``sys.stderr``. Scope this narrowly (around
-    ``_core.preload_system_info()``), never around the benchmark run itself:
-    user benchmark bodies and GB's own run-time diagnostics (e.g. "Failed to
-    match any benchmarks against regex") must stay visible.
-    """
-    sys.stderr.flush()
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    saved = os.dup(2)
-    try:
-        os.dup2(devnull, 2)
-        yield
-    finally:
-        sys.stderr.flush()
-        os.dup2(saved, 2)
-        os.close(saved)
-        os.close(devnull)
 
 
 def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> None:
@@ -258,7 +238,7 @@ def run(
     threaded = [e for e in selected if _is_threaded(e.options)]
     if threaded and _gil_enabled():
         names = ", ".join(e.name for e in threaded[:3])
-        more = f" (+{len(threaded) - 3} more)" if len(threaded) > 3 else ""
+        more = overflow(len(threaded), 3)
         reason = (
             "threaded benchmarks require a free-threaded interpreter; "
             "this interpreter has the GIL enabled, where threaded mode "
@@ -283,11 +263,7 @@ def run(
         threaded = []  # filtered out of `selected`; none run this call
 
     rep = _to_single_reporter(reporter)
-    # The binding merges extra_context into the GB context before calling
-    # report_context, and reports extra_rows right after it: two channels, no
-    # wrapper. `custom` belongs to the session, so it stays in the context block
-    # only -- compare back-fills it onto rows that lack it, and stamping it per
-    # row would just inflate every archive.
+
     extra_context: dict[str, Any] = {}
     if rep is not None:
         session: dict[str, Any] = {
@@ -340,13 +316,15 @@ def run(
     with _silence_native_stderr():
         _core.preload_system_info()
 
-    # Both managers are process-global in GB; the scopes unregister on exit so a
-    # later run() in the same process can't inherit them.
+    # GB keeps a raw pointer per manager, so each registration needs its pairing:
+    # one left registered would silently profile the next run() in this process.
     with ExitStack() as stack:
         if memory_manager is not None:
-            stack.enter_context(_core.memory_manager(memory_manager))
+            _core.register_memory_manager(memory_manager)
+            stack.callback(_core.unregister_memory_manager)
         if profiler_manager is not None:
-            stack.enter_context(_core.profiler_manager(profiler_manager))
+            _core.register_profiler_manager(profiler_manager)
+            stack.callback(_core.unregister_profiler_manager)
         return _core.run_benchmarks(cli, rep, extra_context, skipped_rows)
 
 
