@@ -1,187 +1,133 @@
-# Native profiling
+# Native profiling (recipe)
 
-`mew profile` profiles benchmarks **out of process**, so it captures native
-(C/C++) stack frames: the ones a compiled extension spends its time in, which
-the in-process `mew run --sample` ({doc}`profiling-cpu`) cannot see.
+mew's in-process profilers ({doc}`profiling-cpu`, {doc}`profiling-memory`) see
+Python frames. To see **native** (C/C++) frames — where a compiled extension
+actually spends its time — sample the whole process from the outside with a
+system profiler.
 
-It launches a fresh worker process per benchmark case and lets a system profiler
-sample the whole process while that case runs. The result is an artifact you
-open in the profiler's own viewer, not a column in the results table.
+mew has no command for this on purpose: `py-spy`, `perf`, and `xctrace` are
+better at it than a wrapper would be, and they already know how to write
+artifacts their own viewers understand. What mew provides is the piece they
+need: a way to run one benchmark body, on its own, in a fresh process.
 
-## Backends
+## The runner script
 
-`mew profile` selects a native-frame profiler with `--profiler` (default `auto`):
+Save this as `profile_one.py`. It imports a benchmark file, finds one entry, and
+runs its body directly — no timing loop, no Google Benchmark.
 
-| Backend    | Platform        | Native frames | Artifact / viewer                  |
-| ---------- | --------------- | ------------- | ---------------------------------- |
-| `xctrace`  | macOS           | ✓             | `.trace` bundle → Instruments.app  |
-| `py-spy`   | Linux, Windows  | ✓ (not macOS) | speedscope JSON → speedscope.app   |
-| `perf`     | Linux           | ✓             | `perf script` text → speedscope.app |
+```python
+"""Run one benchmark body so an external profiler can sample it.
 
-`auto` picks the platform's native backend. If none is available (for example
-macOS with only the Command Line Tools and no full Xcode), it tells you so and
-points you to `mew run --sample` for in-process Python sampling.
+Usage: python profile_one.py <file.py> <benchmark-name> [iterations]
+"""
 
-The `py-spy` and `perf` backends both emit a [speedscope](https://www.speedscope.app/)-readable
-artifact, so one viewer covers both. `py-spy` needs `uv pip install py-spy` and,
-in containers, `CAP_SYS_PTRACE`. `perf` is a system package whose version must
-match the running kernel, and recording usually needs `kernel.perf_event_paranoid` lowered.
+import sys
+from pathlib import Path
 
-## Selecting what to profile
+from mew import _discovery
+from mew._registry import REGISTRY
 
-Profiling a whole suite is expensive: each case runs under a sampler for many
-iterations. `-k` / `-t` narrow the set like `mew run`; `--slowest N` keeps only
-the N slowest benchmarks, where the time is worth spending:
 
-```console
-$ mew profile --slowest 5     # quick timing pass ranks, then profiles
+class State:
+    """Minimal stand-in for mew's State: iterate N times, no timing."""
+
+    range_size = 0
+    threads = 1
+    thread_index = 0
+    name = ""
+    skipped = False
+    error_occurred = False
+
+    def __init__(self, n: int = 100_000, case: int = 0) -> None:
+        self._n, self._i, self._case = n, 0, case
+
+    @property
+    def iterations(self) -> int:
+        return self._n
+
+    max_iterations = iterations
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> None:
+        if self._i >= self._n:
+            raise StopIteration
+        self._i += 1
+
+    def range(self, pos: int = 0) -> int:
+        return self._case
+
+    def pause(self):
+        import contextlib
+
+        return contextlib.nullcontext()
+
+    def __getattr__(self, _name):  # set_counter, set_label, ... are all no-ops
+        return lambda *a, **kw: None
+
+
+def main() -> int:
+    file, name, *rest = sys.argv[1:]
+    iterations = int(rest[0]) if rest else 100_000
+    REGISTRY.clear()
+    _discovery.import_file(Path(file))
+    entry = next((e for e in REGISTRY.all() if e.name.endswith(name)), None)
+    if entry is None:
+        print(f"no benchmark matching {name!r}", file=sys.stderr)
+        return 1
+    entry.fn(State(iterations))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 ```
 
-`--slowest` runs a short in-process timing pass to rank (approximate, but no
-setup); a parametrized family is ranked by its slowest case. To select by any
-other criterion — recorded timings from a result file, a hand-written list —
-pipe names to `--stdin`:
+Find the name to pass with `mew list -n`.
+
+For a `@parametrize` family, pass the case index to `State(iterations, case=i)` —
+that is what `state.range(0)` returns, which is how the family trampoline picks
+its variant.
+
+## Recording
+
+**py-spy** (Linux, Windows; not macOS native frames) — needs
+`uv pip install py-spy`, and `CAP_SYS_PTRACE` in containers:
 
 ```console
-$ mew list -n | head -5 | mew profile --stdin   # or any external ranking
+$ py-spy record --native --format speedscope -o profile.json -- \
+      python profile_one.py benchmarks/bench_sort.py bench_sort
 ```
 
-## Basics (xctrace / macOS)
+Open `profile.json` at [speedscope.app](https://www.speedscope.app/).
 
-`xctrace` ships with the full Xcode (not the Command Line Tools alone). If you see
-an "xctrace needs the full Xcode" error, select it:
+**perf** (Linux) — a system package whose version must match the kernel;
+recording usually needs `kernel.perf_event_paranoid` lowered:
 
 ```console
-$ sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+$ perf record -F 1000 -g -- python profile_one.py benchmarks/bench_sort.py bench_sort
+$ perf script > perf.txt
 ```
 
-Then record and open in Instruments:
+`perf.txt` also opens in speedscope.
+
+**xctrace** (macOS) — needs full Xcode, not just the Command Line Tools:
 
 ```console
-$ mew profile
-$ mew profile -k bench_sort      # filter benchmarks like `mew run`
+$ xctrace record --template "Time Profiler" --output bench.trace \
+      --launch -- python profile_one.py benchmarks/bench_sort.py bench_sort
+$ open bench.trace
 ```
 
-`mew profile` prints each artifact path; open a `.trace` bundle with
-`open -a Instruments <path>`.
+Instruments reads the `.trace` bundle directly. `xctrace` will not emit
+speedscope or pprof; if you need those formats, `xctrace export --xpath
+'//trace-toc/run/data/table[@schema="time-profile"]'` dumps samples as XML that
+you can fold into stacks yourself — but Instruments' own viewer is usually the
+faster path.
 
-By default all cases land in one `mew.trace` bundle with one run per case
-(navigate with Instruments' run picker). Pass `--separate` for one
-`<case>.trace` file each.
+## Choosing an iteration count
 
-To read an xctrace recording without Instruments, `--format speedscope` folds it
-into speedscope JSON: one `mew.speedscope.json` holding a profile per case
-(switch cases with speedscope's profile dropdown), or one
-`<case>.speedscope.json` each when combined with `--separate`.
-
-```console
-$ mew profile --format speedscope              # one document, a profile per case
-$ mew profile --format speedscope --separate   # one file per case
-```
-
-### Templates
-
-`--template` chooses which Instruments instruments record and how they're
-configured; `mew profile` defaults to `Time Profiler` (CPU sampling). Pass any
-other template name to record something else:
-
-```console
-$ xctrace list templates              # authoritative list for your Xcode version
-$ mew profile --template Allocations
-$ mew profile --template "System Trace"   # quote names with spaces
-```
-
-The exact set is Xcode-version-dependent, but the standard templates relevant to
-mew are:
-
-| Template        | Records                                                    |
-| --------------- | --------------------------------------------------------- |
-| `Time Profiler` | CPU call-stack sampling (the default).                    |
-| `Allocations`   | Heap allocations over time, incl. C-extension `malloc`.   |
-| `Leaks`         | Allocations plus periodic leak detection.                 |
-| `System Trace`  | Syscalls, VM faults, thread scheduling; off-CPU insight.  |
-| `CPU Counters`  | Hardware performance counters (instructions, cache misses). |
-
-`--template` also accepts a **path to a `.tracetemplate`**, so a custom template
-works with no change to mew:
-
-```console
-$ mew profile --template ~/Library/Application\ Support/Instruments/Templates/My.tracetemplate
-```
-
-**Do you need a custom one?** Almost never: the built-ins cover the axes mew
-cares about, and `xctrace record` can only *use* a template, not author one. Make
-your own only for a specific *combination* of instruments (e.g. Time Profiler +
-Allocations in one recording) or non-default settings (e.g. a higher sampling
-rate), built in the Instruments GUI via **File → Save As Template**. Pass the
-resulting `.tracetemplate` path to `--template`.
-
-### Native memory and leaks
-
-`--template Allocations` / `Leaks` turn `mew profile` into a native memory tool,
-catching C-extension `malloc` that `mew run --profile-memory` (memray, Python-level)
-misses. For a quick leak check without Instruments, the base-system `/usr/bin/leaks`
-(available with just the Command Line Tools, *unlike* xctrace) inspects a process
-for unreferenced blocks; run the target with `MallocStackLogging=1` for allocation
-backtraces (`atos` symbolicates them). Caveat: a single snapshot conflates one-time
-setup (lazy imports, interned strings, allocator arenas) with real leaks, so treat
-the count as a starting point.
-
-## Basics (py-spy / perf, Linux)
-
-Both write one artifact per case into `--output-dir` (default `./.mew-traces`)
-and load into [speedscope.app](https://www.speedscope.app/):
-
-```console
-$ mew profile -p py-spy            # *.speedscope.json per case
-$ mew profile -p perf              # *.perf.txt per case
-```
-
-Drag an artifact onto speedscope.app (or open it with the `speedscope` CLI, if
-installed).
-
-## Why a separate command
-
-In-process samplers (pyinstrument, memray) run inside the benchmark interpreter
-and return a small summary that `mew run` staples onto each timed row. A native
-profiler samples the process from the *outside*, so it can't enrich those
-rows; it produces a trace file instead. Keeping it under `mew profile` makes the
-trade-off explicit: `mew run --sample` for a quick Python-level summary in the
-table, `mew profile` when you need to see into the C.
-
-## Symbol resolution
-
-Native frames are readable only if the extension carries debug symbols. Build it
-`RelWithDebInfo` (or at least with `-g`) and keep the `.dSYM` (macOS) /
-unstripped `.so` next to the module. A stripped release build shows
-address-only frames in the native stack.
-
-## Tuning
-
-| Flag             | Default         | Notes                                                     |
-| ---------------- | --------------- | --------------------------------------------------------- |
-| `--iterations N` | `100000`        | Body reps under the sampler. Out-of-process samplers run at ~1 kHz, so fast benchmarks need many reps to accumulate stacks. |
-| `--rate N`       | `1000`          | (py-spy/perf) Sampling frequency in Hz. Ignored by xctrace. |
-| `--time-limit D` | none            | Hard cap per recording, e.g. `10s`. Bounds a runaway body. |
-
-Like the in-process passes, profiling runs **separately** from timing; don't
-read timings out of a profile.
-
-## What native profiles include (and don't)
-
-Two differences from `mew run --sample` when reading a native profile:
-
-- **`state.pause()` regions are *not* excluded.** The in-process sampler
-  suspends sampling for the duration of a `pause()` block, so setup excluded from
-  timing is also excluded from the profile. A native profiler samples the whole
-  process from the outside and has no hook into `pause()`, so **everything in the
-  benchmark body (setup outside the `for _ in state` loop and paused regions
-  included) shows up in the samples.** If a hot frame in the flame graph is
-  really one-time setup, that's why. Move setup out of the profiled body, or read
-  the profile knowing it's there.
-
-- **On-CPU only.** Sampling profilers count where the program is *running*, not
-  where it's *blocked*: time spent waiting on the GIL, locks, or I/O is largely
-  invisible. If a benchmark looks fast on-CPU but slow on the clock, the gap is
-  off-CPU time. `py-spy --idle` surfaces some of it; perf can approximate it via
-  scheduler tracepoints. Neither is wired up by default.
+The script's default is 100,000. Aim for a few seconds of wall time: too few
+iterations and the sampler collects nothing, too many and the recording is
+unwieldy. Time one run first (`mew run -k bench_sort`) and divide.

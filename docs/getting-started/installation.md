@@ -44,7 +44,7 @@ your benchmark suite's dependencies. So the commands split in two:
   Tab completion. The completion callbacks read a cached benchmark index and
   never import your `bench_*.py`, so they resolve from outside the project (see
   [](../guide/cli.md#mew-completions)).
-- **Need your project's deps**: `mew run`, `mew list`, and `mew profile` import
+- **Need your project's deps**: `mew run` and `mew list` import
   your benchmark files. If those import anything beyond the standard library and
   `mew`, a bare tool environment can't resolve them.
 
