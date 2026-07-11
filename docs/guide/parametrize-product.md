@@ -7,10 +7,14 @@ Two decorators register benchmark _families_: one body, many variants.
 Takes an iterable of keyword argument dicts, registering one variant per dict:
 
 ```python
-@mew.parametrize([
-    {"n": 10, "algo": "merge"},
-    {"n": 100, "algo": "quick"},
-], min_time=0.05, tags="sort")
+@mew.parametrize(
+    [
+        {"n": 10, "algo": "merge"},
+        {"n": 100, "algo": "quick"},
+    ],
+    min_time=0.05,
+    tags="sort",
+)
 def bench_sort(state: mew.State, n: int, algo: str) -> None:
     data = list(range(n, 0, -1))
     for _ in state:

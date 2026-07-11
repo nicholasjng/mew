@@ -9,6 +9,7 @@ Bare or called forms are both valid:
 @mew.benchmark
 def bench_a(state): ...
 
+
 @mew.benchmark(min_time=0.5, tags="sort")
 def bench_b(state): ...
 ```

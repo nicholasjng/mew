@@ -105,9 +105,11 @@ GROUP BY name, size;
 
 ```python
 import pandas as pd
-df = pd.read_json("results.jsonl.gz", lines=True)   # compression inferred
+
+df = pd.read_json("results.jsonl.gz", lines=True)  # compression inferred
 
 import polars as pl
+
 df = pl.read_ndjson("results.jsonl")
 ```
 

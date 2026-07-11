@@ -47,6 +47,7 @@ You can also drive a run programmatically:
 
 ```python
 from mew import REGISTRY, run, JSONReporter
+
 run(REGISTRY.all(), reporter=JSONReporter(output=Path("out.json")))
 ```
 

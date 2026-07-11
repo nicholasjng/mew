@@ -41,6 +41,7 @@ Use it to rebuild state every iteration without leaking the cost into the timing
 ```python
 import random
 
+
 @mew.benchmark
 def bench_shuffle_then_sort(state):
     for _ in state:
