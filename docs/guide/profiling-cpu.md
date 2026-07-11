@@ -43,12 +43,10 @@ $ mew run --sample-html cpu.html
 The profiling pass is **separate** from the timing pass, so profiler overhead doesn't pollute timing numbers.
 But the profiled iteration count is independent of `min_time`, so don't read timings out of the profiling report.
 
-## What you'll see
+## Reading the report
 
-`cpu.html` is a self-contained pyinstrument page with a tree view per benchmark.
-For the example workloads under `benchmarks/bench_cpu.py`:
-
-- `bench_sort_builtin` collapses into a single wide `sorted` C frame.
-- `bench_sort_quicksort` shows deep recursion into `_quicksort`.
-- `bench_sort_bubble` shows the flat double-loop hot path.
-- `bench_fib_naive` shows the exponential branching of naive recursion.
+`cpu.html` is a self-contained pyinstrument page with a call tree per benchmark.
+Because sampling sees Python frames only, a body that bottoms out in C — `sorted`,
+a NumPy call, a compiled extension — collapses into one wide frame with no
+detail beneath it. That flat frame is the signal to switch to
+{doc}`mew profile <profiling-native>`, which can see inside it.

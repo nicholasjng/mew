@@ -47,9 +47,7 @@ $ mew run --format jsonl | jq 'select(.name) | {name, real_time}'
 $ mew run --format json | jq '.benchmarks | length'
 ```
 
-`--format` only configures stdout; file `-o` sinks keep their by-extension
-format. (It mirrors Google Benchmark's `--benchmark_format`, which sets the
-console format while `--benchmark_out` handles files.)
+`--format` only configures stdout; file `-o` sinks keep their by-extension format.
 
 `--append` adds the run as a new session to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-sessions-in-one-file).
 
@@ -68,7 +66,7 @@ $ mew list --show-cases -k 'n=1000' | mew run --stdin   # one case; no -F needed
 - A line **with `::`** (`file.py::name`, the default `mew list` output) is a
   selector: `mew run` imports that path and filters by the name. The path is
   relative, so run from the directory you listed from.
-- A **path-free** line (`mew list --names-only` output, like `docker ps -q`) is
+- A **path-free** line (`mew list --names-only` output) is
   a name *filter*: `mew run` discovers benchmarks its usual way (positional paths
   or `[tool.mew] benchpaths`) and keeps the ones whose name matches. Because the
   name carries no path, this round-trips from **any** directory:
@@ -156,10 +154,9 @@ the commands and flags. They complete subcommands, per-command options, file
 paths for path arguments, and fixed choices (`--format`, `--profiler`, the shell
 list).
 
-The generated scripts are **static**: they never call `mew` at completion time.
-So prefer installing them as a **file**, generated once: shell startup then has
-no dependency on `mew` being importable, which matters when `mew` lives only in a
-virtualenv (e.g. Homebrew Python, where you can't install into the interpreter).
+The scripts are **static**: they never call `mew` at completion time. Install
+them as a **file**, generated once, so shell startup doesn't depend on `mew`
+being importable — which matters when `mew` lives only in a virtualenv.
 
 ```console
 # bash
@@ -180,5 +177,5 @@ it re-runs `mew` at every shell startup, so **guard it**, or you'll get a
 $ command -v mew >/dev/null 2>&1 && eval "$(mew completions zsh)"
 ```
 
-Completion is static: it does not run the suite, so it won't complete benchmark
-*names*. Pipe `mew list --names-only` if you want those.
+Because completion never runs the suite, it won't complete benchmark *names*.
+Pipe `mew list --names-only` if you want those.

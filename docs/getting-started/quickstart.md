@@ -35,7 +35,7 @@ Direct output to a file with `-o`:
 
 ```console
 $ mew run -o results.json          # JSON document
-$ mew run -o results.jsonl         # one self-contained row per Run
+$ mew run -o results.jsonl         # one self-contained row per run
 $ mew run -o - -o results.json     # fan out to stdout AND a file
 ```
 

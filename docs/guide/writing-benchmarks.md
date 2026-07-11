@@ -55,8 +55,12 @@ Variants from `@parametrize` / `@product` always get a `[label]` suffix.
 Pass a single string or any iterable:
 
 ```python
-@mew.benchmark(tags="hot-path")
-@mew.benchmark(tags=("hot-path", "sort"))
+@mew.benchmark(tags="hot-path")  # a single tag
+def bench_lookup(state): ...
+
+
+@mew.benchmark(tags=("hot-path", "sort"))  # several
+def bench_sort(state): ...
 ```
 
 Tag filters use OR semantics: `mew run --tag a --tag b` runs anything tagged as `a` or `b`.
@@ -67,9 +71,16 @@ Combine with `-k` for AND across tag and name.
 - **Setup inside the loop.** The body of `for _ in state:` is the measured
   region. Move data construction, file reads, and randomization outside
   the loop, or wrap them in {meth}`State.pause`.
-- **Optimised-away work.** Python isn't as aggressive as C++ here, but
-  expressions whose results are never bound can still be elided. Assign
-  to a variable or pass to `state.consume(...)` when available.
+- **Measuring nothing.** There is no `DoNotOptimize` to reach for, because
+  CPython won't elide a call: `sorted(data)` as a bare statement still compiles
+  to `CALL` + `POP_TOP`. What *does* vanish is constant work — `2 + 3` is folded
+  at compile time and the statement disappears entirely, leaving a loop that
+  measures the loop. The subtler versions are timing an `lru_cache` hit instead
+  of the computation behind it, and timing an attribute lookup instead of the
+  call. If the body really is a few nanoseconds, per-iteration dispatch
+  dominates the measurement; use
+  [](state-and-timing.md#batched-iteration-for-very-fast-bodies) rather than
+  trying to defeat an optimiser that isn't there.
 - **One decorator per function.** Applying both `@benchmark` and
   `@parametrize` to the same function raises a `RuntimeError` at import
   time. Split into two functions if you need both shapes.

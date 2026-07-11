@@ -83,6 +83,7 @@ guide/configuration
 guide/cli
 guide/variants
 guide/reporters
+guide/trusting-results
 guide/profiling-cpu
 guide/profiling-memory
 guide/profiling-native

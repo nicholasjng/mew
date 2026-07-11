@@ -14,7 +14,7 @@ $ mew compare --stddev head.json baseline.json    # show stddev cols if present
 ```
 
 Supported metrics: `real_time` (default), `cpu_time`, `iterations`.
-For `iterations`, higher is better, so the regression direction is inverted under the hood.
+For `iterations`, higher is better, so the regression direction is inverted.
 Files produced with `--profile-memory` additionally support `memory.peak_bytes` and `memory.allocations_per_iteration`:
 
 ```console
@@ -70,7 +70,7 @@ A selector picks one session from a multi-session file:
 
 Ambiguous tag/prefix matches and misses are errors, so a selector always resolves to exactly one session. Without a selector, `compare` uses the latest session per benchmark and warns about discarded older ones (so a plain two-file comparison is unchanged). A file whose name genuinely contains `@` is taken literally as long as it exists on disk.
 
-This is deliberately not a query engine over a growing archive: for "the most recent master run in a rolling history file", do the selection upstream in SQL (DuckDB/polars) and hand `compare` a file with just the two sessions you want.
+Selectors address sessions, they don't query them. For something like "the most recent master run in a rolling history file", select upstream in SQL (DuckDB/polars) and hand `compare` a file holding just the two sessions you want.
 
 ## Gating CI
 

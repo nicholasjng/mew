@@ -1,19 +1,17 @@
 # Reporters
 
 A reporter is a Python class with `report_context(context)` and `report_runs(runs)` methods, plus an optional `finalize()`.
-The C++ runner calls them in the main thread with the GIL held.
+Calls arrive on the main thread, so a reporter needs no locking of its own.
 
-`report_runs` receives a list of {class}`~mew.RunRow` dicts, each one a
-completed run projected from the C++ `Run` at the binding boundary, with any
-`memory` / `cpu_profile` blocks already attached. Reporters read dict keys
-(`row["real_time"]`, `row.get("memory")`), so the same reporter serves both
-in-process runs and the `mew run --variant` merge (which only ever has dicts,
-never a live `Run`).
+`report_runs` receives a list of {class}`~mew.RunRow` dicts, one per completed
+run, with any `memory` / `cpu_profile` blocks already attached. Rows are plain
+dicts (`row["real_time"]`, `row.get("memory")`), so one reporter serves ordinary
+runs and `mew run --variant` merges alike.
 
 ## Built-ins
 
 {class}`~mew.RichReporter`
-: Streams one row per Run as a formatted, colorized table. The default for
+: Streams one row per run as a formatted, colorized table. The default for
   `mew run` when no `-o` is given. Optional columns: `Peak Mem`
   (via `show_memory=True`) and `Samples` / `Hottest Frame`
   (via `show_cpu=True`). The CLI exposes those options via
@@ -26,10 +24,9 @@ never a live `Run`).
   stdout.
 
 {class}`~mew.Fanout`
-: Broadcasts each callback to a list of reporters. Used internally by
-  `mew run` when multiple `-o` sinks are supplied. `report_context()`
-  returns `all(...)`: Google Benchmark halts when any reporter returns
-  `False`, so the strictest sub-reporter wins.
+: Broadcasts each callback to a list of reporters; what `mew run` uses when
+  several `-o` sinks are given. A run halts if any sub-reporter returns
+  `False` from `report_context()`, so the strictest one wins.
 
 ## Choosing a sink
 
@@ -40,14 +37,12 @@ never a live `Run`).
 | Growing archive, SQL analytics            | `JSONLReporter` (`-o b.jsonl[.gz]`) |
 | Console output + persisted artifact       | `-o -` plus `-o file.{json,jsonl}` |
 
-JSONL rows are self-contained (each carries its session identity and `custom`
-context), so an archive is plain NDJSON that analytical tools read directly —
-no export step, no extra dependency. `.jsonl.gz` compresses the archive;
-`--append` adds each run as a new gzip member, so appends stay cheap.
+JSONL rows are self-contained — each carries its session identity and `custom`
+context — so an archive is plain NDJSON that analytical tools read directly.
+`.jsonl.gz` compresses it; `--append` adds each run as a new gzip member, so
+appends stay cheap.
 
 ## Custom reporters
-
-The protocol is mechanical to implement:
 
 ```python
 from typing import Any
@@ -86,9 +81,9 @@ run(REGISTRY.all(), reporter=MetricsExporter(sink))
 
 ## SQL and dataframe recipes
 
-The JSONL archive is directly intelligible to DuckDB, pandas, and polars —
-nested blocks (`custom`, `memory`) arrive as structs, and gzip is handled
-transparently (polars: decompress first).
+DuckDB, pandas, and polars read the JSONL archive directly: nested blocks
+(`custom`, `memory`) arrive as structs, and gzip is handled transparently
+(polars: decompress first).
 
 ```sql
 -- 95th percentile real_time per benchmark (also works on 'results.jsonl.gz')
@@ -113,8 +108,7 @@ import polars as pl
 df = pl.read_ndjson("results.jsonl")
 ```
 
-Need Parquet for a data-lake handoff? Convert after the fact — one line,
-including many files at once:
+Convert to Parquet after the fact, one file or many:
 
 ```sql
 COPY (FROM 'results.jsonl') TO 'results.parquet';
