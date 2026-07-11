@@ -15,10 +15,10 @@ covering 3.12+, and `cp314t` — plus an sdist. Everything else installs from so
 __version__ = "X.Y.Z"
 ```
 
-## 2. Write the changelog entry
+## 2. Close the changelog section
 
-Add a `## X.Y.Z (YYYY-MM-DD)` section to `docs/changelog.md`. It becomes the release
-notes in step 5, so write it for users, not for the commit log.
+Entries accumulate under `## Unreleased` in `docs/changelog.md` during the cycle; write them for users, not for the commit log.
+Rename that heading to `## Version X.Y.Z (Mon D, YYYY)` to close it.
 
 ## 3. Check
 
@@ -40,12 +40,16 @@ jj git push --bookmark master
 
 ## 5. Publish
 
-Creates the tag and triggers the workflow, with the changelog section as notes:
+Creates the tag and triggers the workflow:
 
 ```bash
-awk '/^## X.Y.Z/{f=1;next} /^## /{f=0} f' docs/changelog.md \
-  | gh release create vX.Y.Z --target master --title "mew-bench X.Y.Z" --notes-file -
+gh release create vX.Y.Z --target master --title "mew-bench X.Y.Z" --notes "..."
 ```
+
+The notes are the `## Version X.Y.Z` section of `docs/changelog.md` — paste it into
+`--notes`, or have changelog tooling emit it. Leaving the notes flags off makes `gh`
+prompt instead, which you can skip and fill in on the release page afterwards: the
+workflow reacts to the release being *published*, not to its body.
 
 ## 6. Verify
 
@@ -53,6 +57,10 @@ awk '/^## X.Y.Z/{f=1;next} /^## /{f=0} f' docs/changelog.md \
 gh run list --workflow=release.yml --limit 1
 uv run --with mew-bench==X.Y.Z --no-project -- mew --version
 ```
+
+## 7. Open the next cycle
+
+Add a fresh `## Unreleased` heading above the release you just cut.
 
 ## Notes
 
