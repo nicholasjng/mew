@@ -6,7 +6,7 @@ Calls arrive on the main thread, so a reporter needs no locking of its own.
 `report_runs` receives a list of {class}`~mew.RunRow` dicts, one per completed
 run, with any `memory` / `cpu_profile` blocks already attached. Rows are plain
 dicts (`row["real_time"]`, `row.get("memory")`), so one reporter serves ordinary
-runs and `mew run --variant` merges alike.
+runs and externally merged rows alike.
 
 ## Built-ins
 
@@ -68,8 +68,8 @@ class MetricsExporter:
 
 Each `row` is a {class}`~mew.RunRow`: the base keys (`name`, `real_time`,
 `cpu_time`, `iterations`, `time_unit`, `label`, `counters`, …) are always
-present; `variant`, `custom`, `memory`, and `cpu_profile` appear only when
-relevant (under `--variant` / `--profile-memory` / `--sample`).
+present; `custom`, `memory`, and `cpu_profile` appear only when relevant
+(under {func}`mew.set_context` / `--profile-memory` / `--sample`).
 
 Pass it directly to {func}`mew.run`:
 

@@ -38,7 +38,7 @@ $ mew compare --key func ducky.jsonl duckdb.jsonl
 
 If stripping the prefix makes two benchmarks in one file collide, `compare` exits with an error rather than guessing.
 
-When comparing variants within a single `mew run --variant` result file (`mew compare --by variant results.jsonl`), `--key` defaults to `func` automatically; every variant carries the same file prefix, so matching on the function name is what lines the columns up.
+When pivoting within a single result file (`mew compare results.jsonl --by custom.engine`), `--key` defaults to `func` automatically; every column carries the same file prefix, so matching on the function name is what lines them up.
 
 Parametrize cases are rendered and matched by their human id (`bench_udf_scalar[n=10000]` rather than Google Benchmark's raw `bench_udf_scalar/case:0`), and per-benchmark option suffixes like `/min_time:0.200` are ignored for matching, so files run with different options still align.
 
@@ -61,14 +61,33 @@ $ mew run --session-tag after --append -o results.jsonl
 $ mew compare results.jsonl@after results.jsonl@before
 ```
 
+### What counts as one session
+
+Runs that share a `session_tag` on one host are **one session**. The tag defaults
+to the jj change id / `git describe`, so repeated runs at one revision belong
+together: an interleaved A/B loop appending to one file reduces over every
+repetition rather than keeping only the last run.
+
+```console
+$ for i in 1 2 3 4 5; do
+>   mew run bench_a.py --session-tag ab --append -o results.jsonl
+>   mew run bench_b.py --session-tag ab --append -o results.jsonl
+> done
+$ mew compare results.jsonl --by custom.engine
+```
+
+Interleaving decorrelates thermal and load drift from the axis you are comparing,
+and because both suites carry one tag, all five repetitions of each feed the
+statistic. Runs with *different* tags (or none) stay separate, one per run.
+
 A selector picks one session from a multi-session file:
 
 - `@latest` / `@earliest`: by recency.
 - `@~N`: N sessions back from the latest (`@~0` is latest, `@~1` the one before).
-- `@<tag>`: exact `session_tag` match.
+- `@<tag>`: exact `session_tag` match (one per host, since a tag groups its runs).
 - `@<id-prefix>`: a `session_id` prefix, at least 4 characters.
 
-Ambiguous tag/prefix matches and misses are errors, so a selector always resolves to exactly one session. Without a selector, `compare` uses the latest session per benchmark and warns about discarded older ones (so a plain two-file comparison is unchanged). A file whose name genuinely contains `@` is taken literally as long as it exists on disk.
+Ambiguous id-prefix matches and misses are errors, so a selector always resolves to exactly one session. Without a selector, `compare` uses the latest session per benchmark and warns about discarded older ones (so a plain two-file comparison is unchanged). A file whose name genuinely contains `@` is taken literally as long as it exists on disk.
 
 Selectors address sessions, they don't query them. For something like "the most recent master run in a rolling history file", select upstream in SQL (DuckDB/polars) and hand `compare` a file holding just the two sessions you want.
 

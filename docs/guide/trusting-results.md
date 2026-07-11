@@ -115,10 +115,10 @@ $ mew run --repetitions 10 --random-interleaving
 This shuffles repetitions across benchmarks instead of running each benchmark's
 repetitions back to back (it needs `--repetitions > 1` to do anything).
 
-For an A/B between two implementations, {doc}`variants` goes further: each
-variant runs in its own subprocess and the parent drives them in
-repetition-major order (rep 0: A B, rep 1: A B, …), so drift hits both sides
-equally instead of accumulating against the second one.
+For an A/B between two implementations, {doc}`ab-comparison` applies the same
+idea across processes: alternate the two suites (rep 0: A B, rep 1: A B, …)
+rather than running one to completion first, so drift hits both sides equally
+instead of accumulating against the second one.
 
 ## Don't compare across machines
 

@@ -83,7 +83,7 @@ column isn't a selector.)
 ### Profiling flags
 
 These attach **in-process** measurements to the timing table. For native (C/C++)
-frames, use {doc}`mew profile <profiling-native>`.
+frames, sample the process from outside: see {doc}`profiling-native`.
 
 | Flag                    | Effect                                              |
 | ----------------------- | --------------------------------------------------- |
@@ -92,34 +92,10 @@ frames, use {doc}`mew profile <profiling-native>`.
 | `--sample-interval F`   | Sampling interval seconds (default `1e-4`).         |
 | `--sample-iterations N` | Body iterations under the sampler (default `1000`). |
 | `--profile-memory`      | Run each benchmark under `memray`.                  |
-| `--memory-iterations N` | Measured loop passes per case under `--profile-memory` (default `100`, plus warmup); drives `memory.allocations_per_iteration`. |
 | `--flamegraph FILE`     | Write an HTML flame graph with allocation data.     |
 
 `--sample-html`/`--flamegraph` imply `--sample` / `--profile-memory` respectively.
-All of these compose with `--variant`: each variant child runs its own profile pass, so cross-engine memory/CPU comparison works from one `mew run`.
-
-## `mew profile`
-
-Profile out-of-process to capture native C frames (which `--sample` can't see).
-Picks a backend (`xctrace` (macOS), `py-spy` (Linux/Windows), or `perf` (Linux)), and records an artifact you open in its viewer.
-
-```console
-$ mew profile                       # auto-select the platform's native profiler
-$ mew profile -p xctrace            # record a .trace for Instruments.app
-$ mew profile -k bench_sort         # filter like `mew run`
-```
-
-| Flag                 | Effect                                                       |
-| -------------------- | ------------------------------------------------------------ |
-| `-p, --profiler`     | `auto` (default), `xctrace`, `py-spy`, or `perf`.            |
-| `-d, --output-dir`   | Where artifacts land (default `./.mew-traces`).             |
-| `--iterations N`     | Body iterations under the sampler (default `100000`).        |
-| `--time-limit DUR`   | Hard cap per recording, e.g. `10s`.                          |
-| `--template NAME`    | (xctrace) Instruments template; default `Time Profiler`.    |
-| `--separate`         | (xctrace) One bundle per case instead of one combined.       |
-
-When `auto` finds no native profiler (e.g. macOS without Xcode), it points you
-to `mew run --sample` for in-process Python sampling. See {doc}`profiling-native`.
+For a cross-engine memory/CPU comparison, run each suite separately with its own artifact paths and pivot the merged file; see {doc}`ab-comparison`.
 
 ## `mew list` (alias `ls`)
 
