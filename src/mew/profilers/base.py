@@ -102,7 +102,7 @@ def parse_seconds(dur: str, *, flag: str = "--time-limit") -> float:
             return float(dur[:-2]) / 1000
         if dur.endswith("m"):
             return float(dur[:-1]) * 60
-        return float(dur[:-1] if dur.endswith("s") else dur)
+        return float(dur.removesuffix("s"))
     except ValueError:
         raise SystemExit(
             f"mew: invalid {flag} {dur!r}; use seconds ('10s', '0.5'), "

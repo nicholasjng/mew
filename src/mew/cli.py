@@ -730,7 +730,7 @@ def _complete(kind: str) -> None:
         root = cfg.project_root or Path.cwd()
         files = _discovery.collect_files(_benchpath_selectors(cfg), file_patterns=cfg.python_files)
         data = cache.read_fresh(root, files)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return
     if data is None:
         return

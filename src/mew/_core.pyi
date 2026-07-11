@@ -3,6 +3,7 @@
 import enum
 import types
 from collections.abc import Callable, Sequence
+from typing import Self
 
 BENCHMARK_COMMIT: str = "a8460680f0df91fd26205e0931708a26c3b4094d"
 
@@ -54,7 +55,6 @@ class BenchmarkName:
     def time_type(self) -> str: ...
     @property
     def threads(self) -> str: ...
-    def __str__(self) -> str: ...
 
 class Run:
     """
@@ -147,7 +147,7 @@ class BatchIter:
 class PauseScope:
     """Context manager that pauses State timing within a scope."""
 
-    def __enter__(self) -> PauseScope: ...
+    def __enter__(self) -> Self: ...
     def __exit__(
         self,
         exc_type: type[BaseException] | None,

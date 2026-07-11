@@ -54,7 +54,7 @@ void register_state(nb::module_& m) {
                 self.guard = std::make_unique<benchmark::ScopedPauseTiming>(*self.state);
                 return self;
             },
-            nb::rv_policy::reference_internal)
+            nb::rv_policy::reference_internal, nb::sig("def __enter__(self) -> typing.Self"))
         .def(
             "__exit__",
             [](PauseScope& self, nb::object, nb::object, nb::object) { self.guard.reset(); },

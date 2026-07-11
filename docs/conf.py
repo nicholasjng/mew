@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 # -- Project information -----------------------------------------------------
 
 project = "mew"
 author = "Nicholas Junge"
-copyright = f"{datetime.now():%Y}, {author}"
+copyright = f"{datetime.now(tz=UTC):%Y}, {author}"
 
 # -- General configuration ---------------------------------------------------
 
@@ -98,7 +98,7 @@ def _render_cli_help() -> None:
     os.makedirs(out_dir, exist_ok=True)
     try:
         from mew.cli import main
-    except Exception as exc:
+    except ImportError as exc:
         with open(os.path.join(out_dir, "cli-help.txt"), "w") as fh:
             fh.write(f"<<failed to render CLI help: {exc!r}>>\n")
         return
@@ -121,8 +121,7 @@ def _render_cli_help() -> None:
         "completions": (["completions", "--help"], "mew completions --help"),
     }
     with open(os.path.join(out_dir, "cli-help.txt"), "w") as fh:
-        for argv, title in blocks.values():
-            fh.write(f"$ {title}\n{_capture(argv)}\n")
+        fh.writelines(f"$ {title}\n{_capture(argv)}\n" for argv, title in blocks.values())
 
     for slug, (argv, title) in blocks.items():
         with open(os.path.join(out_dir, f"cli-help-{slug}.txt"), "w") as fh:

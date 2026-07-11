@@ -57,7 +57,7 @@ def test_aggregate_group_custom_statistic_replaces_center() -> None:
 def test_aggregate_group_custom_statistic_gets_list() -> None:
     seen: list[object] = []
 
-    def reduce(a):  # noqa: ANN001
+    def reduce(a):
         seen.append(a)
         return sum(a) / len(a)
 

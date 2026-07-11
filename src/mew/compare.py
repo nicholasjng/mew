@@ -119,7 +119,7 @@ def _rows_from_json(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         raise ValueError(f"{path}: invalid JSON: {e}") from e
     benchmarks = doc.get("benchmarks") if isinstance(doc, dict) else None
     if not isinstance(benchmarks, list):
-        raise ValueError(f"{path}: missing 'benchmarks' array")
+        raise ValueError(f"{path}: missing 'benchmarks' array")  # noqa: TRY004
     ctx = doc.get("context") or {}
     return benchmarks, ctx
 
@@ -165,7 +165,7 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             except json.JSONDecodeError as e:
                 raise ValueError(f"{path}:{lineno}: invalid JSON: {e}") from e
             if not isinstance(obj, dict):
-                raise ValueError(f"{path}:{lineno}: expected a JSON object per line")
+                raise TypeError(f"{path}:{lineno}: expected a JSON object per line")
             if "name" in obj:
                 for fld in _SEGMENT_FIELDS:
                     obj.setdefault(fld, current.get(fld))
