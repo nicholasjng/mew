@@ -13,6 +13,7 @@ namespace nb = nanobind;
 void register_state(nb::module_& m);
 void register_registry(nb::module_& m);
 void register_reporter(nb::module_& m);
+void register_managers(nb::module_& m);
 
 NB_MODULE(_core, m) {
     m.doc() = "The mew C++ core (Google Benchmark bindings).";
@@ -24,4 +25,5 @@ NB_MODULE(_core, m) {
     register_reporter(m);
     register_state(m);
     register_registry(m);
+    register_managers(m);
 }

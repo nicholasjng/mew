@@ -1,0 +1,190 @@
+diff --git a/include/benchmark/managers.h b/include/benchmark/managers.h
+index e8b6cd4..29cb579 100644
+--- a/include/benchmark/managers.h
++++ b/include/benchmark/managers.h
+@@ -18,6 +18,8 @@
+ #include <stdint.h>
+ 
+ #include <limits>
++#include <map>
++#include <string>
+ 
+ #include "benchmark/macros.h"
+ #include "benchmark/types.h"
+@@ -53,9 +55,21 @@ void RegisterMemoryManager(MemoryManager* memory_manager);
+ 
+ class ProfilerManager {
+  public:
++  // Summary a profiler reports back for the profiled run, stamped onto the
++  // `Run` by the runner. Free-form so a manager can carry whatever its backend
++  // measures: `values` for numeric figures, `labels` for textual ones (e.g. the
++  // hottest frame). Both empty means "this manager reports no summary".
++  struct Result {
++    std::map<std::string, double> values;
++    std::map<std::string, std::string> labels;
++  };
++
+   virtual ~ProfilerManager() {}
+   virtual void AfterSetupStart() = 0;
+   virtual void BeforeTeardownStop() = 0;
++  // Not pure: a manager that only brackets an external profiler and reports
++  // nothing back keeps compiling unchanged.
++  virtual void GetResult(Result& result) { (void)result; }
+ };
+ 
+ BENCHMARK_EXPORT
+diff --git a/include/benchmark/reporter.h b/include/benchmark/reporter.h
+index be242be..1fe4619 100644
+--- a/include/benchmark/reporter.h
++++ b/include/benchmark/reporter.h
+@@ -115,6 +115,7 @@ class BENCHMARK_EXPORT BenchmarkReporter {
+     UserCounters counters;
+     MemoryManager::Result memory_result;
+     double allocs_per_iter;
++    ProfilerManager::Result profile_result;
+   };
+ 
+   struct PerFamilyRunReports {
+diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
+index f6d37e0..282e53d 100644
+--- a/src/benchmark_runner.cc
++++ b/src/benchmark_runner.cc
+@@ -83,12 +83,51 @@ constexpr IterationCount kMaxIterations = 1000000000000;
+ const double kDefaultMinTime =
+     std::strtod(::benchmark::kDefaultMinTimeStr, /*p_end*/ nullptr);
+ 
++// Scopes a MemoryManager to the timing loop instead of the whole body. GB's
++// StartKeepRunning / FinishKeepRunning hooks fire after fixture construction and
++// at loop exit, so allocations made building a fixture stay out of the
++// measurement -- the same region a ProfilerManager sees, and the only one whose
++// figures are comparable across benchmarks with different setup costs.
++class MemoryLoopScope : public ProfilerManager {
++ public:
++  explicit MemoryLoopScope(MemoryManager* mm) : mm_(mm) {}
++
++  void AfterSetupStart() override {
++    started = true;
++    mm_->Start();
++  }
++  void BeforeTeardownStop() override {
++    if (!started || stopped) return;
++    stopped = true;
++    mm_->Stop(result);
++  }
++
++  // Close a manager left open by a body that raised mid-loop, so the next
++  // benchmark can start a fresh capture. The figures are discarded.
++  void CloseIfDangling() {
++    if (started && !stopped) {
++      stopped = true;
++      MemoryManager::Result discard;
++      mm_->Stop(discard);
++      started = false;
++    }
++  }
++
++  MemoryManager::Result result;
++  bool started = false;
++  bool stopped = false;
++
++ private:
++  MemoryManager* mm_;
++};
++
+ BenchmarkReporter::Run CreateRunReport(
+     const benchmark::internal::BenchmarkInstance& b,
+     const internal::ThreadManager::Result& results,
+     IterationCount memory_iterations,
+     const MemoryManager::Result& memory_result, double seconds,
+-    int64_t repetition_index, int64_t repeats) {
++    int64_t repetition_index, int64_t repeats,
++    const ProfilerManager::Result& profile_result) {
+   // Create report about this benchmark run.
+   BenchmarkReporter::Run report;
+ 
+@@ -118,6 +157,7 @@ BenchmarkReporter::Run CreateRunReport(
+     report.complexity_lambda = b.complexity_lambda();
+     report.statistics = &b.statistics();
+     report.counters = results.counters;
++    report.profile_result = profile_result;
+ 
+     if (memory_iterations > 0) {
+       report.memory_result = memory_result;
+@@ -462,22 +502,26 @@ void BenchmarkRunner::RunWarmUp() {
+ 
+ MemoryManager::Result BenchmarkRunner::RunMemoryManager(
+     IterationCount memory_iterations) {
+-  memory_manager->Start();
++  MemoryLoopScope scope(memory_manager);
+   std::unique_ptr<internal::ThreadManager> manager;
+   manager.reset(new internal::ThreadManager(1));
+   b.Setup();
+   RunInThread(&b, memory_iterations, 0, manager.get(),
+               perf_counters_measurement_ptr,
+-              /*profiler_manager=*/nullptr);
++              /*profiler_manager=*/&scope);
+   manager.reset();
+   b.Teardown();
+-  MemoryManager::Result memory_result;
+-  memory_manager->Stop(memory_result);
+-  memory_result.memory_iterations = memory_iterations;
+-  return memory_result;
++  scope.CloseIfDangling();
++  // A body that never entered its timing loop never started the manager. Leave
++  // memory_iterations at 0 so reporters can tell "not measured" from "measured
++  // zero"; RunMemoryManager is not the place to warn about it.
++  if (!scope.started) return MemoryManager::Result();
++  scope.result.memory_iterations = memory_iterations;
++  return scope.result;
+ }
+ 
+-void BenchmarkRunner::RunProfilerManager(IterationCount profile_iterations) {
++ProfilerManager::Result BenchmarkRunner::RunProfilerManager(
++    IterationCount profile_iterations) {
+   std::unique_ptr<internal::ThreadManager> manager;
+   manager.reset(new internal::ThreadManager(1));
+   b.Setup();
+@@ -486,6 +530,9 @@ void BenchmarkRunner::RunProfilerManager(IterationCount profile_iterations) {
+               /*profiler_manager=*/profiler_manager);
+   manager.reset();
+   b.Teardown();
++  ProfilerManager::Result profile_result;
++  profiler_manager->GetResult(profile_result);
++  return profile_result;
+ }
+ 
+ void BenchmarkRunner::DoOneRepetition() {
+@@ -546,17 +593,18 @@ void BenchmarkRunner::DoOneRepetition() {
+     memory_result = RunMemoryManager(memory_iterations);
+   }
+ 
++  ProfilerManager::Result profile_result;
+   if (profiler_manager != nullptr) {
+     // We want to externally profile the benchmark for the same number of
+     // iterations because, for example, if we're tracing the benchmark then we
+     // want trace data to reasonably match PMU data.
+-    RunProfilerManager(iters);
++    profile_result = RunProfilerManager(iters);
+   }
+ 
+   // Ok, now actually report.
+   BenchmarkReporter::Run report =
+       CreateRunReport(b, i.results, memory_iterations, memory_result, i.seconds,
+-                      num_repetitions_done, repeats);
++                      num_repetitions_done, repeats, profile_result);
+ 
+   if (reports_for_family != nullptr) {
+     ++reports_for_family->num_runs_done;
+diff --git a/src/benchmark_runner.h b/src/benchmark_runner.h
+index 9a2231a..d8dbc83 100644
+--- a/src/benchmark_runner.h
++++ b/src/benchmark_runner.h
+@@ -107,7 +107,7 @@ class BenchmarkRunner {
+ 
+   MemoryManager::Result RunMemoryManager(IterationCount memory_iterations);
+ 
+-  void RunProfilerManager(IterationCount profile_iterations);
++  ProfilerManager::Result RunProfilerManager(IterationCount profile_iterations);
+ 
+   IterationCount PredictNumItersNeeded(const IterationResults& i) const;
+ 

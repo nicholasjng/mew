@@ -3,7 +3,7 @@
 `--sample` runs each selected benchmark under [pyinstrument](https://pyinstrument.readthedocs.io/) once, separately from the timing pass, and attaches a summary, including sample count and hottest frame, to each run.
 
 This is **in-process** sampling: it sees Python frames only. To capture native
-(C/C++) frames from a compiled extension, use {doc}`mew profile <profiling-native>`.
+(C/C++) frames from a compiled extension, see {doc}`profiling-native`.
 
 ## Prerequisites
 
@@ -49,4 +49,4 @@ But the profiled iteration count is independent of `min_time`, so don't read tim
 Because sampling sees Python frames only, a body that bottoms out in C — `sorted`,
 a NumPy call, a compiled extension — collapses into one wide frame with no
 detail beneath it. That flat frame is the signal to switch to
-{doc}`mew profile <profiling-native>`, which can see inside it.
+{doc}`profiling-native`, which can see inside it.

@@ -7,7 +7,7 @@ from typing import Self
 
 BENCHMARK_COMMIT: str = "a8460680f0df91fd26205e0931708a26c3b4094d"
 
-BENCHMARK_VERSION: str = "v1.9.5-74-ga8460680"
+BENCHMARK_VERSION: str = "v1.9.5-74-ga8460680-dirty"
 
 def preload_system_info() -> None:
     """
@@ -65,7 +65,7 @@ class Run:
     """
     A single benchmark run report.
     Times are in seconds (accumulated across iterations); use `adjusted_real_time()` for per-iteration averages.
-    Projected to a `RunRow` dict at the reporter boundary (`mew.reporter._run_to_dict`).
+    `to_dict()` projects it to a `RunRow`; that is what reporters receive.
     """
 
     @property
@@ -105,14 +105,24 @@ class Run:
     def counters(self) -> dict: ...
     @property
     def skipped(self) -> bool: ...
+    def to_dict(self, **kwargs) -> dict:
+        """
+        Project to a `RunRow` dict.
+        Keyword arguments are merged last, so an overlay wins over a base key.
+        A `memory` block is present when a memory manager ran, a `cpu_profile` block when a profiler manager reported a result.
+        """
 
 def run_benchmarks(
-    argv: Sequence[str], reporter: object | None = None, extra_context: dict = {}
+    argv: Sequence[str],
+    reporter: object | None = None,
+    extra_context: dict = {},
+    extra_rows: list = [],
 ) -> int:
     """
     Initialize Google Benchmark with `argv` and run all registered benchmarks.
     Returns the number of benchmarks run.
     `extra_context` keys are overlaid onto the context dict passed to the reporter's `report_context` (session id/tag, user context).
+    `extra_rows` are pre-built RunRows reported right after the context, for benchmarks mew declined to run.
     Pass a `Fanout` reporter to multiplex into multiple sinks.
     """
 
@@ -331,3 +341,40 @@ def register_benchmark(name: str, fn: Callable) -> BenchmarkHandle:
 
 def clear_registered_benchmarks() -> None:
     """Drop all previously registered benchmarks from the global registry."""
+
+class MemoryManagerScope:
+    """
+    Context manager registering a Python memory manager with Google Benchmark.
+    The object needs `start()` and `stop()`; `stop` returns a dict of the
+    `memory` block's keys (peak_bytes, total_bytes, total_allocations), or None.
+    """
+
+    def __enter__(self) -> Self: ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: types.TracebackType | None,
+    ) -> None: ...
+
+class ProfilerManagerScope:
+    """
+    Context manager registering a Python profiler manager with Google Benchmark.
+    The object needs `after_setup_start()` and `before_teardown_stop()`, and may
+    provide `get_result()` (a flat dict stamped onto the Run as `cpu_profile`)
+    and `pause()`/`resume()` (called around `state.pause()` regions).
+    """
+
+    def __enter__(self) -> Self: ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: types.TracebackType | None,
+    ) -> None: ...
+
+def memory_manager(manager: object) -> MemoryManagerScope:
+    """Scope registering `manager` as Google Benchmark's memory manager."""
+
+def profiler_manager(manager: object) -> ProfilerManagerScope:
+    """Scope registering `manager` as Google Benchmark's profiler manager."""

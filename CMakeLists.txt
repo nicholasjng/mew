@@ -88,10 +88,36 @@ set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 
+# Patches carried against the pinned tree, applied in listed order at populate
+# time. Keep this list in sync with `patches/`; each entry must apply cleanly to
+# MEW_BENCHMARK_COMMIT or the configure fails loudly rather than silently
+# building an unpatched Google Benchmark.
+set(MEW_BENCHMARK_PATCHES
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profilermanager-result.patch")
+
+# Needed by PATCH_COMMAND below, so it must resolve *before* the Declare (the
+# built-commit probe further down reuses it).
+find_package(Git QUIET)
+if(NOT Git_FOUND)
+    message(FATAL_ERROR
+        "git is required to apply mew's Google Benchmark patches "
+        "(see MEW_BENCHMARK_PATCHES).")
+endif()
+
 FetchContent_Declare(
     googlebenchmark
     GIT_REPOSITORY https://github.com/google/benchmark.git
     GIT_TAG ${MEW_BENCHMARK_COMMIT}
+    # PATCH_COMMAND runs without a shell; the -P script carries the
+    # already-applied guard and the failure message.
+    PATCH_COMMAND ${CMAKE_COMMAND}
+        "-DGIT=${GIT_EXECUTABLE}"
+        "-DSRC=<SOURCE_DIR>"
+        "-DPATCHES=${MEW_BENCHMARK_PATCHES}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_patches.cmake"
+    # Without this, a reconfigure re-runs the git update step, which resets the
+    # tree and drops the patch before PATCH_COMMAND gets a chance to re-run.
+    UPDATE_DISCONNECTED TRUE
 )
 FetchContent_MakeAvailable(googlebenchmark)
 
@@ -99,7 +125,8 @@ FetchContent_MakeAvailable(googlebenchmark)
 # tag. A stale or diverged `_deps` checkout (e.g. a CMake cache that kept an old
 # pin) would otherwise make BENCHMARK_COMMIT lie about what was really built.
 # Falls back to the requested pin when there is no `.git` (vendored sdist).
-find_package(Git QUIET)
+# NOTE: this reports the *upstream* SHA even though MEW_BENCHMARK_PATCHES has
+# been applied on top, so it under-describes the tree that was really built.
 set(MEW_BENCHMARK_BUILT_COMMIT "${MEW_BENCHMARK_COMMIT}")
 if(Git_FOUND AND IS_DIRECTORY "${googlebenchmark_SOURCE_DIR}/.git")
     execute_process(
@@ -122,6 +149,7 @@ set(_MEW_SOURCES
     src/_mew/state.cpp
     src/_mew/registry.cpp
     src/_mew/reporter.cpp
+    src/_mew/managers.cpp
 )
 
 # nanobind keeps whichever of STABLE_ABI / FREE_THREADED fits the interpreter:

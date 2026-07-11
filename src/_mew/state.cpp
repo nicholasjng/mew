@@ -6,6 +6,8 @@
 
 #include <memory>
 
+#include "managers.h"
+
 namespace nb = nanobind;
 using namespace nb::literals;
 
@@ -52,12 +54,18 @@ void register_state(nb::module_& m) {
             "__enter__",
             [](PauseScope& self) -> PauseScope& {
                 self.guard = std::make_unique<benchmark::ScopedPauseTiming>(*self.state);
+                // Suspend the in-process sampler too, so `pause()` excludes setup
+                // from the CPU profile exactly as it excludes it from the timing.
+                mew_profiler_pause();
                 return self;
             },
             nb::rv_policy::reference_internal, nb::sig("def __enter__(self) -> typing.Self"))
         .def(
             "__exit__",
-            [](PauseScope& self, nb::object, nb::object, nb::object) { self.guard.reset(); },
+            [](PauseScope& self, nb::object, nb::object, nb::object) {
+                mew_profiler_resume();
+                self.guard.reset();
+            },
             "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none(),
             nb::sig("def __exit__(self, exc_type: type[BaseException] | None, exc_value: "
                     "BaseException | None, traceback: types.TracebackType | None) -> None"));
