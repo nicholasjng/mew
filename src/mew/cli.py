@@ -112,13 +112,6 @@ def _collect(
     for f in files:
         _discovery.import_file(f)
 
-    # Refresh the completion cache only on default discovery, so a targeted run
-    # (positional paths / stdin) doesn't overwrite the full-suite cache.
-    if not paths and not stdin:
-        from mew import _completion_cache as _cc
-
-        _cc.refresh(cfg.project_root or Path.cwd(), files, REGISTRY.all())
-
     # Per-selector filters and path-less stdin names OR together, then AND with
     # the global -k. Compiled up front so a bad pattern fails before any run.
     try:
@@ -484,31 +477,6 @@ def completions(shell: str) -> None:
     sys.stdout.write(_completions.generate(shell, _build_parser()))
 
 
-def _complete(kind: str) -> None:
-    """Hidden helper the shell calls on Tab: print cached candidates, one per line.
-
-    Reads the completion cache (refreshed by run/list). Never imports bench
-    files, so it's instant and works from a `uv tool`-installed `mew` outside the
-    project venv. Prints nothing on a cache miss; completion silently falls back.
-    """
-    from mew import _completion_cache as cache
-
-    # A Tab press must never print a traceback: any failure (malformed config,
-    # missing benchpaths, unreadable cache) silently completes nothing.
-    try:
-        cfg = _config.load()
-        root = cfg.project_root or Path.cwd()
-        files = _discovery.collect_files(_benchpath_selectors(cfg), file_patterns=cfg.python_files)
-        data = cache.read_fresh(root, files)
-    except Exception:  # noqa: BLE001
-        return
-    if data is None:
-        return
-    pool = {"names": data.names, "cases": data.names + data.cases, "tags": data.tags}.get(kind, [])
-    # Emit the whole pool; the shell filters by the typed prefix.
-    sys.stdout.write("".join(f"{c}\n" for c in pool))
-
-
 def _warmup_seconds(value: str) -> float:
     """argparse type for --min-warmup-time: '0.2', '200ms', '1m' → seconds."""
     dur = value.strip()
@@ -763,12 +731,6 @@ def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
         help=f"Target shell: {', '.join(SHELLS)}.",
     )
     p.set_defaults(_func=completions)
-
-    # mew __complete <kind>: internal; drives dynamic shell completion. No help=
-    # keeps it out of `mew --help`; the leading `_` makes _completions skip it.
-    p = sub.add_parser("__complete")
-    p.add_argument("kind", choices=["names", "cases", "tags"])
-    p.set_defaults(_func=_complete)
 
 
 def _build_parser() -> argparse.ArgumentParser:
