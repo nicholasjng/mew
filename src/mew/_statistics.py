@@ -1,8 +1,10 @@
 """Custom-statistic reducers for ``mew compare``.
 
 A :data:`Statistic` reduces a benchmark's per-repetition values to one scalar.
-:func:`resolve_statistic` accepts a built-in name (numpy-free) or a
-``module.path:attr`` reference; every reducer is handed a ``list[float]``.
+:func:`resolve_statistic` accepts a built-in name; every reducer is handed a
+``list[float]``. The built-ins are numpy-free and cover the cases a comparison
+needs -- a plugin hook for arbitrary importable reducers would add a class of
+runtime failures (bad import, non-callable, wrong signature) to a CLI flag.
 """
 
 from __future__ import annotations
@@ -10,7 +12,6 @@ from __future__ import annotations
 import re
 import statistics
 from collections.abc import Callable
-from importlib import import_module
 
 Statistic = Callable[[list[float]], float]
 
@@ -68,32 +69,10 @@ def reduce_statistic(statistic: Statistic, values: list[float]) -> float:
 
 
 def resolve_statistic(spec: str) -> Statistic:
-    """Resolve a statistic spec to a reducer callable.
+    """Resolve a statistic name to a reducer callable.
 
-    A bare name resolves to a built-in (``min``/``max``/``mean``/``median``/``gmean``
-    or a ``pNN`` percentile); a ``module.path:attr`` reference imports a user
-    reducer (which also reaches stdlib functions, e.g. ``statistics:harmonic_mean``).
+    ``min``/``max``/``mean``/``median``/``gmean``, or a ``pNN`` percentile.
     """
-    module_path, sep, attr = spec.partition(":")
-    if sep:
-        if not module_path or not attr:
-            raise SystemExit(f"statistic {spec!r}: expected a 'module.path:attr' reference")
-        try:
-            module = import_module(module_path)
-        except ImportError as e:
-            raise SystemExit(
-                f"statistic {spec!r}: cannot import module {module_path!r}: {e}"
-            ) from e
-        try:
-            fn = getattr(module, attr)
-        except AttributeError as e:
-            raise SystemExit(
-                f"statistic {spec!r}: {module_path!r} has no attribute {attr!r}"
-            ) from e
-        if not callable(fn):
-            raise SystemExit(f"statistic {spec!r}: {spec} is not callable")
-        return fn
-
     if spec in _BUILTIN_STATISTICS:
         return _BUILTIN_STATISTICS[spec]
     if m := _PERCENTILE_RE.fullmatch(spec):
@@ -102,8 +81,6 @@ def resolve_statistic(spec: str) -> Statistic:
             raise SystemExit(f"statistic {spec!r}: percentile must be between 0 and 100")
         return _percentile(q)
     raise SystemExit(
-        f"statistic {spec!r}: unknown name. Use a built-in "
-        f"({', '.join(sorted(_BUILTIN_STATISTICS))}, or a pNN percentile like p95) "
-        f"or a 'module.path:attr' reference (e.g. scipy.stats:gmean, "
-        f"statistics:harmonic_mean)."
+        f"statistic {spec!r}: unknown name; choose from "
+        f"{', '.join(sorted(_BUILTIN_STATISTICS))}, or a pNN percentile like p95."
     )

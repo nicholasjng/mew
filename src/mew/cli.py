@@ -388,7 +388,7 @@ def compare(
     # regression gate both come out of the same [tool.mew] resolution.
     cfg_file = _load_config_or_exit()
     # --statistic wins; else fall back to [tool.mew] statistic; else stdlib median.
-    spec = statistic if statistic is not None else _load_config_or_exit().statistic
+    spec = statistic if statistic is not None else cfg_file.statistic
     reduce = resolve_statistic(spec) if spec is not None else None
 
     # Any regression flag opts into gating, so the gate flag alone is not a
