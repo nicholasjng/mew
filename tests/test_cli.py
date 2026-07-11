@@ -698,6 +698,7 @@ def test_completions_generate(mew_cli, shell, marker, tmp_path):
 @pytest.mark.skipif(not shutil.which("bash"), reason="bash not installed")
 def test_completions_bash_functional(mew_cli, tmp_path):
     bash = shutil.which("bash")
+    assert bash is not None
     f = tmp_path / "c.bash"
     f.write_text(mew_cli("completions", "bash", cwd=tmp_path).stdout)
     assert subprocess.run([bash, "-n", str(f)]).returncode == 0  # syntax

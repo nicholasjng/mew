@@ -63,7 +63,8 @@ def _parse_str_list(raw: Any, key: str, default: list[str]) -> list[str]:
 def _parse_session_tag(raw: Any) -> SessionTagSpec:
     if not isinstance(raw, dict):
         raise ValueError("[tool.mew.session-tag] must be a table")
-    if unknown := set(raw) - {"enabled", "tool", "args"}:
+    keys: set[str] = {str(k) for k in raw}
+    if unknown := keys - {"enabled", "tool", "args"}:
         raise ValueError(f"unknown keys in [tool.mew.session-tag]: {sorted(unknown)}")
     enabled, tool, args = raw.get("enabled", True), raw.get("tool"), raw.get("args")
     if not isinstance(enabled, bool):
