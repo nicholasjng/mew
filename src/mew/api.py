@@ -471,7 +471,9 @@ def product(
         "threads": threads,
         "thread_range": thread_range,
     }
-    options = cast(BenchmarkOptions, {k: v for k, v in local_options.items() if v not in (None, False)})
+    options = cast(
+        BenchmarkOptions, {k: v for k, v in local_options.items() if v not in (None, False)}
+    )
     _check_options(options)
 
     norm_tags = _normalize_tags(tags)
