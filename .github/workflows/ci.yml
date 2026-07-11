@@ -21,7 +21,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true
@@ -47,7 +47,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -67,7 +67,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.14t"
           enable-cache: true
@@ -89,6 +89,76 @@ jobs:
       - name: Run tests
         run: uv run --no-sync pytest -n auto
 
+  asan:
+    name: asan · ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      # CMake picks up gcc/g++ by default on ubuntu-latest; pin it explicitly
+      # so the LD_PRELOAD runtime below is guaranteed to match what the
+      # extension actually linked against.
+      - name: Build the ASAN editable install
+        env:
+          CC: gcc
+          CXX: g++
+        run: MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
+
+      # `uv run` alone does not preload the ASAN runtime, so the test process
+      # would abort at the first import of the ASAN-built extension.
+      - name: Run tests under AddressSanitizer
+        run: |
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so)" \
+          ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" \
+            uv run --no-sync --all-groups pytest --capture no
+
+  tsan:
+    name: tsan · free-threaded py3.14t
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.14t"
+          enable-cache: true
+
+      # A TSAN pass only earns its keep against real threaded use (mew's
+      # `.threads()` / `thread_range` path), which is free-threaded-only —
+      # a GIL build serializes benchmark threads and never races.
+      # duckdb has no 3.14t wheel yet, same exclusion as the free-threaded job.
+      - name: Build the TSAN editable install
+        env:
+          CC: gcc
+          CXX: g++
+        run: >
+          MEW_TSAN=1 uv sync --python 3.14t --all-extras --all-groups
+          --no-install-package duckdb --reinstall-package=mew
+
+      - name: Assert the GIL stays disabled after import
+        run: |
+          uv run --no-sync python - <<'PY'
+          import sys
+          assert not sys._is_gil_enabled(), "interpreter is not free-threaded"
+          PY
+
+      - name: Run tests under ThreadSanitizer
+        run: |
+          LD_PRELOAD="$(gcc -print-file-name=libtsan.so)" \
+          TSAN_OPTIONS="halt_on_error=1" \
+            uv run --no-sync --all-extras --all-groups pytest --capture no
+
   docs:
     name: docs · sphinx
     runs-on: ubuntu-latest
@@ -98,7 +168,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true
