@@ -55,8 +55,7 @@ Or use a cartesian product over parameter axes:
 
 ```python
 @mew.product(n=[10, 100, 1000], algo=["timsort", "quick"])
-def bench_sort(state: mew.State, n: int, algo: str) -> None:
-    ...
+def bench_sort(state: mew.State, n: int, algo: str) -> None: ...
 ```
 
 See [](../guide/parametrize-product.md) for full semantics.
