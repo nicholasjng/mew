@@ -958,7 +958,7 @@ def _add_profile_cmd(sub: argparse._SubParsersAction) -> None:
         help="Backend: `auto`, `xctrace` (macOS), `py-spy` (Linux/Windows), or `perf` (Linux).",
     )
     p.add_argument(
-        "-o",
+        "-d",
         "--output-dir",
         type=Path,
         default=Path(".mew-traces"),

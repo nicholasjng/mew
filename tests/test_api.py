@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 import mew
 from mew._registry import REGISTRY
+from mew.api import _OptionKeys
 
 
 def test_bare_decorator_registers_one_entry():
@@ -341,6 +344,15 @@ def test_threads_and_thread_range_mutually_exclusive():
         def _bench(state):
             for _ in state:
                 pass
+
+
+def test_product_signature_covers_all_benchmark_options():
+    # product() can't use **options: Unpack[BenchmarkOptions] like benchmark()/
+    # parametrize() (its **kwargs slot is taken by **iterables), so each
+    # BenchmarkOptions field must be listed by hand as a keyword-only param.
+    # This guards against a field being added there but forgotten here.
+    params = set(inspect.signature(mew.product).parameters)
+    assert _OptionKeys <= params
 
 
 def test_product_threads_and_thread_range_mutually_exclusive():

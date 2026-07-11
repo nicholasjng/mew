@@ -7,7 +7,7 @@ import itertools
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Unpack, overload
+from typing import Any, Unpack, cast, overload
 
 if sys.version_info >= (3, 14):
     from annotationlib import get_annotations
@@ -458,29 +458,20 @@ def product(
     if not iterables:
         raise TypeError("@product needs at least one iterable kwarg")
 
-    options: BenchmarkOptions = {}
-    if min_time is not None:
-        options["min_time"] = min_time
-    if min_warmup_time is not None:
-        options["min_warmup_time"] = min_warmup_time
-    if iterations is not None:
-        options["iterations"] = iterations
-    if repetitions is not None:
-        options["repetitions"] = repetitions
-    if unit is not None:
-        options["unit"] = unit
-    if use_real_time:
-        options["use_real_time"] = True
-    if use_manual_time:
-        options["use_manual_time"] = True
-    if measure_process_cpu_time:
-        options["measure_process_cpu_time"] = True
-    if report_aggregates_only:
-        options["report_aggregates_only"] = True
-    if threads is not None:
-        options["threads"] = threads
-    if thread_range is not None:
-        options["thread_range"] = thread_range
+    local_options = {
+        "min_time": min_time,
+        "min_warmup_time": min_warmup_time,
+        "iterations": iterations,
+        "repetitions": repetitions,
+        "unit": unit,
+        "use_real_time": use_real_time,
+        "use_manual_time": use_manual_time,
+        "measure_process_cpu_time": measure_process_cpu_time,
+        "report_aggregates_only": report_aggregates_only,
+        "threads": threads,
+        "thread_range": thread_range,
+    }
+    options = cast(BenchmarkOptions, {k: v for k, v in local_options.items() if v not in (None, False)})
     _check_options(options)
 
     norm_tags = _normalize_tags(tags)
