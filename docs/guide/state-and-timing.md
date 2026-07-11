@@ -65,6 +65,13 @@ Combine `repetitions=10` with `report_aggregates_only=True` if you only
 care about the aggregates and want the per-rep rows hidden from output
 sinks.
 
+:::{warning}
+Only do that for output you read by eye. `mew compare` recomputes statistics
+from the per-repetition rows and discards Google Benchmark's aggregate rows, so
+an aggregates-only benchmark disappears from a comparison **silently** — no
+warning, exit code 0. See [](trusting-results.md).
+:::
+
 ## Real vs. CPU time
 
 Reporters print both `Real` and `CPU` columns; the difference is informative:
@@ -95,14 +102,14 @@ benchmark once per thread count `1, 2, 4, 8` so you can chart scaling.
 
 :::{warning}
 **Threaded mode requires a free-threaded interpreter (CPython 3.14t+).**
-On a stock (GIL) interpreter the benchmark trampoline holds the GIL across Google
-Benchmark's per-thread start barrier, so the worker threads deadlock rather than
-run. mew detects this up front: by default it **warns and skips** the threaded
-benchmarks (emitting a `skipped` row for each) and runs the rest, so a mixed
-suite still works on stock CPython. Run it again on a free-threaded build to
-execute them. Pass `mew run --strict` (or `mew.run(strict=True)`) to turn the
-skip into a hard `RuntimeError`, useful in CI where the threaded benchmarks are
-the point and a silent skip would hide a misconfiguration.
+On a stock (GIL) interpreter the worker threads would deadlock on Google
+Benchmark's start barrier rather than run. mew detects this up front: by default
+it **warns and skips** the threaded benchmarks (emitting a `skipped` row for
+each) and runs the rest, so a mixed suite still works on stock CPython. Run it
+again on a free-threaded build to execute them. Pass `mew run --strict` (or
+`mew.run(strict=True)`) to turn the skip into a `RuntimeError` — useful in CI
+where the threaded benchmarks are the point and a silent skip would hide a
+misconfiguration.
 :::
 
 Counters and labels follow Google Benchmark's convention: `set_counter` /

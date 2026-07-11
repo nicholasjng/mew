@@ -20,15 +20,14 @@ $ mew run --variant duckdb=benchmarks/bench_duckdb.py \
 
 ## How it runs
 
-Each variant runs in its **own subprocess** (`mew._variant_worker`), so
-incompatible libraries never share an address space. The parent is the single
-writer: it generates one `session_id` for the whole run, drives the children in
-**repetition-major** order (rep 0: A B, rep 1: A B, …) so thermal and load drift
-decorrelate from the variant axis, then re-stamps every row with the shared
-session, the `variant` name, and the repetition index before fanning out to your
-real sinks.
+Each variant runs in its **own subprocess**, so incompatible libraries never
+share an address space. Repetitions run in **repetition-major** order (rep 0: A
+B, rep 1: A B, …), which decorrelates thermal and load drift from the variant
+axis — the second variant isn't systematically penalised for running later.
+Every row lands in one file, sharing a `session_id` and carrying its `variant`
+name and repetition index.
 
-Every reporter works unchanged: the live table gains a `Variant` column, and
+Reporters work unchanged: the live table gains a `Variant` column, and
 `-o results.{jsonl,jsonl.gz,json}` captures the merged file.
 
 ```console
@@ -41,10 +40,9 @@ bench_scan.py::bench_scan  │ ducky   │  240,000 │  4.1 µs │  4.0 µs
 …
 ```
 
-`--min-time`, `--min-warmup-time`, and `--random-interleaving` are forwarded to each child;
-`--repetitions N` is realized as N separate child invocations (not a Google
-Benchmark flag), which is what gives the repetition-major interleaving. If a
-child fails, the parent warns on stderr, keeps the rows that did land, and exits
+`--min-time`, `--min-warmup-time`, and `--random-interleaving` apply to each
+variant; `--repetitions N` runs each variant N times, interleaved as above. If a
+variant fails, mew warns on stderr, keeps the rows that did land, and exits
 nonzero.
 
 ## Comparing variants
@@ -90,9 +88,9 @@ ducky (engine=ducky 0.2.0):   session=v0.4.1 host=laptop cpus=10 …
 
 ## Profiling across variants
 
-All [profiling](profiling-memory.md) flags compose with `--variant`:
-each child runs its own out-of-loop profile pass, so cross-engine **memory** and
-**CPU** comparison happen in one run instead of a hand-rolled two-file driver.
+All [profiling](profiling-memory.md) flags compose with `--variant`: each variant
+gets its own profile pass, so cross-engine **memory** and **CPU** comparisons
+come out of a single run.
 
 ```console
 $ mew run --variant duckdb=bench_duckdb.py --variant ducky=bench_ducky.py \
@@ -100,9 +98,9 @@ $ mew run --variant duckdb=bench_duckdb.py --variant ducky=bench_ducky.py \
 $ mew compare results.jsonl --by variant --metric memory.allocations_per_iteration
 ```
 
-Use `memory.allocations_per_iteration` for cross-engine allocation comparisons;
-a faster engine inflates the raw allocation count, which is why the cumulative
-`total_allocations` is recorded in result files but not offered as a compare
-metric (see [](profiling-memory.md)). HTML artifacts (`--flamegraph`, `--sample-html`) are
+Use `memory.allocations_per_iteration` for cross-engine allocation comparisons:
+a faster engine runs more iterations, inflating the cumulative
+`total_allocations` for the same per-call work (see [](profiling-memory.md)).
+HTML artifacts (`--flamegraph`, `--sample-html`) are
 written one per variant, with the variant name spliced into the filename
 (`alloc.html` → `alloc.duckdb.html`), so the variants don't overwrite each other.

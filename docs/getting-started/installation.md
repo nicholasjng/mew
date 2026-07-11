@@ -9,15 +9,6 @@ installed; otherwise the C++ extension is compiled from source; see
 
 ## Using `uv`
 
-Add a `[tool.uv.sources]` entry to your `pyproject.toml`:
-
-```toml
-[tool.uv.sources]
-mew-bench = { git = "https://github.com/nicholasjng/mew" }
-```
-
-then run:
-
 ```console
 $ uv add mew-bench
 ```
@@ -25,21 +16,26 @@ $ uv add mew-bench
 ## Using `pip`
 
 ```console
-$ pip install git+https://github.com/nicholasjng/mew.git
+$ pip install mew-bench
 ```
 
-A PyPI release is planned for the future.
+To track the development version instead, point at the repository:
+
+```console
+$ uv add mew-bench --git https://github.com/nicholasjng/mew
+$ pip install git+https://github.com/nicholasjng/mew.git
+```
 
 ## Global install with `uv tool`
 
 To make `mew` available system-wide, install it as a [uv tool](https://docs.astral.sh/uv/concepts/tools/):
 
 ```console
-$ uv tool install "git+https://github.com/nicholasjng/mew"
+$ uv tool install mew-bench
 ```
 
-This builds the C++ extension once and drops `mew` into an isolated tool
-environment that uv keeps on your `PATH`. Verify with `mew --version`.
+This drops `mew` into an isolated tool environment that uv keeps on your `PATH`.
+Verify with `mew --version`.
 
 That isolation is the catch: the tool environment contains **only** `mew`, not
 your benchmark suite's dependencies. So the commands split in two:
@@ -55,7 +51,7 @@ your benchmark suite's dependencies. So the commands split in two:
 For the second group, either pull the extra packages into the tool environment:
 
 ```console
-$ uv tool install "git+https://github.com/nicholasjng/mew" --with numpy --with pandas
+$ uv tool install mew-bench --with numpy --with pandas
 ```
 
 or, usually simpler, run `mew` from the project environment that already has
@@ -82,7 +78,9 @@ Extras enabling additional CLI features:
 | ---------- | ------------------------- | -------------------------------------------------------- |
 | `cpu`      | `pyinstrument`            | `mew run --sample`, `--sample-html report.html`          |
 | `memory`   | `memray` (non-Windows)    | `mew run --profile-memory`, `--flamegraph alloc.html`    |
-| `dev`      | `pytest`, `ruff`, `duckdb`, build deps | Local development |
+
+Local development uses dependency groups (`build`, `docs`, `test`, `typing`)
+rather than extras; see [](../development/contributing.md).
 
 ```console
 $ uv add 'mew-bench[cpu,memory]'
@@ -92,7 +90,8 @@ $ uv add 'mew-bench[cpu,memory]'
 
 ```console
 $ mew --version
-mew 0.1.0 (Google Benchmark v1.9.0@abcdef12)
+mew 0.1.0 (Google Benchmark v1.9.5-74-ga8460680)
 ```
 
-The trailing identifier shows which Google Benchmark commit the C++ extension was built against.
+The trailing identifier is `git describe` output for the Google Benchmark commit
+the C++ extension was built against.

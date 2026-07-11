@@ -8,6 +8,10 @@
 benchpaths = ["benchmarks"]
 # Glob patterns for benchmark file discovery.
 python-files = ["bench_*.py", "*_bench.py"]
+# Default reducer `mew compare` applies over per-repetition values. A built-in
+# name (min, max, mean, median, gmean, or a pNN percentile like p95) or a
+# `module.path:attr` reference. Omit to keep the median; --statistic wins.
+statistic = "median"
 
 # Whether and how the auto session tag is derived. Omit the table to derive
 # automatically (jj, then git). `enabled = false` turns it off (an explicit

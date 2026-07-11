@@ -31,13 +31,6 @@ benchmarks/bench_sort.py::bench_sorted │ 1,000,000 │   32.10 ns │   32.05 
 
 ## Installation
 
-With a `[tool.uv.sources]` entry in your `pyproject.toml`:
-
-```toml
-[tool.uv.sources]
-mew = { git = "https://github.com/nicholasjng/mew" }
-```
-
 ```console
 $ uv add mew-bench                 # or: pip install mew-bench
 $ uv add 'mew-bench[cpu,memory]'   # opt-in profilers
@@ -45,8 +38,6 @@ $ uv add 'mew-bench[cpu,memory]'   # opt-in profilers
 
 Requires Python 3.11+. A pre-built wheel is installed where available;
 otherwise the C++ extension is compiled via CMake + nanobind.
-
-A PyPI release is planned for the future.
 
 ## Docs
 

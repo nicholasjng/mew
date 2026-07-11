@@ -69,6 +69,16 @@ By default all cases land in one `mew.trace` bundle with one run per case
 (navigate with Instruments' run picker). Pass `--separate` for one
 `<case>.trace` file each.
 
+To read an xctrace recording without Instruments, `--format speedscope` folds it
+into speedscope JSON: one `mew.speedscope.json` holding a profile per case
+(switch cases with speedscope's profile dropdown), or one
+`<case>.speedscope.json` each when combined with `--separate`.
+
+```console
+$ mew profile --format speedscope              # one document, a profile per case
+$ mew profile --format speedscope --separate   # one file per case
+```
+
 ### Templates
 
 `--template` chooses which Instruments instruments record and how they're
