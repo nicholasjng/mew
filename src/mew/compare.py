@@ -22,14 +22,15 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
-from mew._console import Span, Table, Terminal, sgr
+from mew._console import Span, Table, Terminal, overflow, sgr
 from mew._registry import compile_name_filter
 from mew._significance import mannwhitney_p
 from mew._statistics import Statistic, reduce_statistic
+from mew._typing import BenchmarkResult
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
-from mew.reporter import _fmt_bytes, canonical_name
+from mew.reporter import _ROW_STAMP_FIELDS, _fmt_bytes, canonical_name
 
 # `memory.total_bytes` and `memory.total_allocations` stay in stored files but
 # are not compare metrics: total_bytes duplicates peak_bytes, and
@@ -115,10 +116,15 @@ class SessionData:
     def session_id(self) -> str | None:
         return self.key[2] or None
 
+    @property
+    def tag(self) -> str | None:
+        """The session's label, if one was set with ``--session-tag``."""
+        return self.session_tag
 
-def _overflow(total: int, shown: int) -> str:
-    """`` (+N more)`` when a warning previewed only ``shown`` of ``total`` items."""
-    return f" (+{total - shown} more)" if total > shown else ""
+    @property
+    def provenance(self) -> dict[str, Any]:
+        """The session's ``context`` block: providers' values and the suite's own."""
+        return self.context.get("context") or {}
 
 
 def _is_aggregate_row(row: dict[str, Any]) -> bool:
@@ -151,14 +157,6 @@ def _rows_from_json(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
 # Identity fields a row inherits from its active JSONL context segment, so an
 # appended (multi-session) file keys each row to the right session.
-_SEGMENT_FIELDS = (
-    "date",
-    "host_name",
-    "num_cpus",
-    "cpu_scaling_enabled",
-    "session_id",
-    "session_tag",
-)
 
 
 def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -192,10 +190,11 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             if not isinstance(obj, dict):
                 raise TypeError(f"{path}:{lineno}: expected a JSON object per line")
             if "name" in obj:
-                for fld in _SEGMENT_FIELDS:
-                    obj.setdefault(fld, current.get(fld))
-                if "custom" not in obj and current.get("custom") is not None:
-                    obj["custom"] = current["custom"]
+                # Back-fill from the file block for rows carrying no stamp of
+                # their own (single-doc JSON, and older archives).
+                for fld in _ROW_STAMP_FIELDS:
+                    if fld not in obj and current.get(fld) is not None:
+                        obj[fld] = current[fld]
                 rows.append(obj)
             else:
                 # mew's own sink writes `{"context": {...}}` on line 1; also accept
@@ -208,49 +207,66 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[str, Any]:
     """Build one session's context from a representative row over the file block.
 
-    Per-row identity (self-contained/enriched JSONL rows) wins; single-doc
-    JSON has identity only in ``file_ctx``, so the block stands. ``custom`` arrives
-    already decoded (see :func:`_read_rows`).
+    Per-row identity (self-contained JSONL rows) wins; single-doc JSON has it
+    only in ``file_ctx``, so the block stands.
     """
     ctx = dict(file_ctx)
-    for fld in _SEGMENT_FIELDS:
+    for fld in _ROW_STAMP_FIELDS:
         v = rep_row.get(fld)
         if v is not None:
             ctx[fld] = v
-    if custom := rep_row.get("custom"):
-        ctx["custom"] = custom
     return ctx
+
+
+def _pivot_value(row: dict[str, Any], dimension: str) -> Any:
+    """Read a dotted ``dimension`` off a row, e.g. ``custom.vcs.commit``.
+
+    Any depth: a pivot dimension and the grouping key are both user-chosen paths
+    into ``custom``, which nests arbitrarily.
+    """
+    node: Any = row
+    for part in dimension.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
 
 
 def _session_key(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, str, str]:
     """Identify which session a row belongs to.
 
-    JSONL rows carry session fields per-row; JSON rows inherit the file's single
-    top-level context block via ``file_ctx``. ``session_id`` keeps two runs distinct
-    even when they share a wall-clock second on one host; files predating it fall back
-    to (date, host). Date leads so chronological sort still holds.
+    JSONL rows carry the `session` block per-row; JSON rows inherit the file's
+    single one via ``file_ctx``. The id keeps two runs distinct even when they
+    share a wall-clock second on one host. Date leads so chronological sort holds.
     """
-    date = row.get("date") or file_ctx.get("date") or ""
-    host = row.get("host_name") or file_ctx.get("host_name") or ""
-    sid = row.get("session_id") or file_ctx.get("session_id") or ""
-    return (str(date), str(host), str(sid))
+    sess = _session_block(row, file_ctx)
+    return (str(sess.get("date") or ""), str(sess.get("host") or ""), str(sess.get("id") or ""))
+
+
+def _session_block(row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[str, Any]:
+    """The row's `session` block, falling back to the file's."""
+    block = row.get("session") or file_ctx.get("session") or {}
+    return block if isinstance(block, dict) else {}
 
 
 def _session_group(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, str]:
     """The bucket a row aggregates into, which is *not* its identity.
 
-    Runs sharing a ``session_tag`` on one host are one bucket: the tag defaults to
-    the jj change id / ``git describe``, so repeated runs at one revision belong
-    together, and an ``--append`` archive of interleaved A/B runs reduces over every
-    repetition instead of keeping only the last. Untagged runs fall back to their
-    own ``session_id`` (or date), preserving one-bucket-per-run.
+    Runs on one host sharing a ``session.tag``, or (absent one) the same
+    ``context.vcs.commit``, are one bucket: repeated runs at one revision belong
+    together, so an ``--append`` archive of interleaved A/B runs reduces over
+    every repetition instead of keeping only the last. Record the commit with
+    ``mew.update_context(mew.vcs_context())``. Runs with neither fall back to
+    their own session id (or date), one bucket per run.
     """
-    host = str(row.get("host_name") or file_ctx.get("host_name") or "")
-    if tag := (row.get("session_tag") or file_ctx.get("session_tag") or ""):
+    sess = _session_block(row, file_ctx)
+    host = str(sess.get("host") or "")
+    if tag := sess.get("tag"):
         return (host, f"tag:{tag}")
-    date = row.get("date") or file_ctx.get("date") or ""
-    sid = row.get("session_id") or file_ctx.get("session_id") or ""
-    return (host, f"id:{sid or date}")
+    commit = _pivot_value(row, "context.vcs.commit") or _pivot_value(file_ctx, "context.vcs.commit")
+    if commit:
+        return (host, f"commit:{commit}")
+    return (host, f"id:{sess.get('id') or sess.get('date') or ''}")
 
 
 def _metric_value(row: dict[str, Any], metric: str) -> Any:
@@ -426,18 +442,14 @@ def _load_sessions(
         first_group = next(iter(groups.values()), [])
         ctx = _session_context(first_group[0] if first_group else {}, file_ctx)
         sessions.append(
-            SessionData(key=skey, context=ctx, samples=samples, session_tag=ctx.get("session_tag"))
+            SessionData(
+                key=skey,
+                context=ctx,
+                samples=samples,
+                session_tag=(ctx.get("session") or {}).get("tag"),
+            )
         )
     return sessions
-
-
-def _pivot_value(row: dict[str, Any], dimension: str) -> Any:
-    """Read ``dimension`` off a row: a top-level field, or ``custom.<key>``."""
-    head, sep, tail = dimension.partition(".")
-    if not sep:
-        return row.get(head)
-    block = row.get(head)
-    return block.get(tail) if isinstance(block, dict) else None
 
 
 def _load_pivot_columns(
@@ -494,7 +506,7 @@ def _select_latest(
     stale = {name: owners for name, owners in history.items() if len(owners) > 1}
     if stale:
         preview = ", ".join(f"{n!r} ({len(o)} sessions)" for n, o in list(stale.items())[:3])
-        extra = _overflow(len(stale), 3)
+        extra = overflow(len(stale), 3)
         chosen = next(iter(stale.values()))[-1]
         print(
             f"warning: {path}: {len(stale)} benchmark(s) appear in multiple sessions; "
@@ -529,8 +541,8 @@ def _resolve_session(path: Path, sessions: list[SessionData], selector: str) -> 
 
     Order: keywords (``latest``/``earliest``), ordinal (``~N``, N back from
     latest), exact ``session_tag``, then ``session_id`` prefix (≥4 chars).
-    Ambiguous tag/prefix matches and misses are errors; explicit selection
-    must be deterministic.
+    Ambiguous matches and misses are errors; explicit selection must be
+    deterministic.
     """
     if not sessions:
         raise SystemExit(f"{path}: no sessions in file")
@@ -546,11 +558,17 @@ def _resolve_session(path: Path, sessions: list[SessionData], selector: str) -> 
             raise SystemExit(f"{path}: @~{n} out of range ({len(sessions)} session(s) in file)")
         return sessions[-1 - n]  # ~0 == latest
 
-    # At most one match: a tag is the grouping key, so every run carrying it is
-    # already one session (see _session_group).
+    # One match per host: the group key is (host, tag), so a tag spanning two
+    # hosts is two sessions and the selector cannot pick between them.
     tagged = [s for s in sessions if s.session_tag == selector]
     if len(tagged) == 1:
         return tagged[0]
+    if len(tagged) > 1:
+        hosts = sorted({s.host or "?" for s in tagged})
+        raise SystemExit(
+            f"{path}: session tag {selector!r} is ambiguous ({len(tagged)} sessions "
+            f"on hosts {hosts}); select by session id instead"
+        )
 
     if len(selector) >= _MIN_ID_PREFIX:
         pref = [s for s in sessions if s.session_id and s.session_id.startswith(selector)]
@@ -614,20 +632,18 @@ def _ctx_summary(ctx: dict[str, Any], *, exclude: Iterable[str] = ()) -> str:
     label, so e.g. ``engine=...`` isn't printed twice on the same line.
     """
     exclude = set(exclude)
+    sess = ctx.get("session") or {}
+    provenance = ctx.get("context") or {}
     parts: list[str] = []
-    if ctx.get("session_tag"):
-        parts.append(f"session={ctx['session_tag']}")
-    elif ctx.get("session_id"):
-        parts.append(f"session={str(ctx['session_id'])[:12]}")
-    if ctx.get("host_name"):
-        parts.append(f"host={ctx['host_name']}")
-    if ctx.get("num_cpus") is not None:
-        parts.append(f"cpus={ctx['num_cpus']}")
-    if ctx.get("cpu_scaling_enabled") is not None:
-        parts.append(f"cpu_scaling={'on' if ctx['cpu_scaling_enabled'] else 'off'}")
-    if ctx.get("date"):
-        parts.append(f"date={str(ctx['date'])[:19]}")
-    for k, v in _flatten(ctx.get("custom") or {}).items():
+    if sess.get("tag"):
+        parts.append(f"session={sess['tag']}")
+    elif sess.get("id"):
+        parts.append(f"session={str(sess['id'])[:12]}")
+    if sess.get("host"):
+        parts.append(f"host={sess['host']}")
+    if sess.get("date"):
+        parts.append(f"date={str(sess['date'])[:19]}")
+    for k, v in _flatten(provenance).items():
         if k in exclude:
             continue
         parts.append(f"{k}={v}")
@@ -637,8 +653,11 @@ def _ctx_summary(ctx: dict[str, Any], *, exclude: Iterable[str] = ()) -> str:
 def _warn_context_skew(columns: list[_Column]) -> None:
     """Warn when machine-level context differs across columns (deltas then compare
     environments, not just code)."""
-    for fld in _CTX_SKEW_FIELDS:
-        values = {c.label: c.context.get(fld) for c in columns if c.context}
+    # `host` lives in the session block (grouping and ordering key on it), the
+    # rest in provenance -- but a mismatch in any of them makes the comparison
+    # suspect, so they warn the same way.
+    for block, fld in (("session", "host"), *(("context", f) for f in _CTX_SKEW_FIELDS)):
+        values = {c.label: (c.context.get(block) or {}).get(fld) for c in columns if c.context}
         if len({v for v in values.values() if v is not None}) > 1:
             detail = ", ".join(f"{label}: {v}" for label, v in values.items())
             print(
@@ -649,8 +668,8 @@ def _warn_context_skew(columns: list[_Column]) -> None:
 
 
 def _custom_diffs(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per-column dict of the custom-context keys whose values differ across columns."""
-    flats = [_flatten(ctx.get("custom") or {}) for ctx in contexts]
+    """Per-column dict of the context keys whose values differ across columns."""
+    flats = [_flatten(ctx.get("context") or {}) for ctx in contexts]
     all_keys: set[str] = set().union(*flats)
     differing = sorted(
         k
@@ -806,7 +825,7 @@ def _render(
         missing = all_names - c.samples.keys()
         if missing:
             preview = ", ".join(sorted(missing)[:5])
-            extra = _overflow(len(missing), 5)
+            extra = overflow(len(missing), 5)
             print(
                 f"warning: {c.source} missing {len(missing)} benchmark(s): {preview}{extra}",
                 file=sys.stderr,
@@ -892,7 +911,7 @@ def _render(
 
     if unit_skew:
         name, (a, b) = next(iter(unit_skew.items()))
-        extra = _overflow(len(unit_skew), 1)
+        extra = overflow(len(unit_skew), 1)
         print(
             f"note: {len(unit_skew)} benchmark(s) declare different time units "
             f"across files (e.g. {name!r}: {a!r} vs {b!r}){extra}; values are "
@@ -922,6 +941,14 @@ def _pivot_columns(
         raise SystemExit(
             f"{path}: no {dimension!r} data to pivot; set it per suite with "
             f"mew.set_context() and write both suites to this file"
+        )
+    if len(names) == 1:
+        # The pivot runs inside one session, so a dimension that *defines* the
+        # session (a commit, say) has one value here however many the file holds.
+        raise SystemExit(
+            f"{path}: --by {dimension} found only {names[0]!r} in the latest session; "
+            f"a dimension that differs per session is addressed with selectors "
+            f"instead, e.g. `mew compare {path}@latest {path}@~1`"
         )
     if baseline is not None and baseline not in names:
         raise SystemExit(f"{path}: --baseline {baseline!r} not among {dimension} values {names}")
@@ -1050,3 +1077,55 @@ def compare(
         console=console,
         key=key,
     )
+
+
+def read_results(path: str | Path) -> list[BenchmarkResult]:
+    """Read a result file into its rows, newest session last.
+
+    Accepts every shape mew writes -- single-document ``.json``, newline-delimited
+    ``.jsonl``, and either gzipped -- and returns the rows as stored. Rows written
+    without their own ``session``/``context`` (single-document JSON, where the
+    file carries one block) inherit the file's, so every row is self-describing
+    whatever the source.
+
+    Nothing is filtered: Google Benchmark's aggregate rows (``aggregate_name`` of
+    ``"mean"``, ``"median"``, …) and skipped rows come through too. Use
+    :func:`read_sessions` for comparable numbers with those handled.
+    """
+    rows, file_ctx = _read_rows(Path(path))
+    # Single-document JSON keeps identity in one block rather than per row;
+    # fold it in so a caller never has to know which shape it read.
+    for row in rows:
+        for fld in _ROW_STAMP_FIELDS:
+            if fld not in row and file_ctx.get(fld) is not None:
+                row[fld] = file_ctx[fld]
+    return cast("list[BenchmarkResult]", rows)
+
+
+def read_sessions(
+    path: str | Path,
+    *,
+    metric: str = "real_time",
+    statistic: Statistic | None = None,
+) -> list[SessionData]:
+    """Read a result file into comparable per-session samples, oldest first.
+
+    Does what a script would otherwise reimplement: drops aggregate and skipped
+    rows, canonicalizes ``bench.py::f/case:0`` to ``bench.py::f[n=10]``, groups
+    repetitions, and reduces each group to one :class:`Sample` carrying the
+    center, the stddev, and the raw per-repetition ``values``.
+
+    Runs that belong together are one session -- see
+    :func:`mew.compare._session_group` for what "together" means.
+
+    Parameters
+    ----------
+    metric : str, default "real_time"
+        Which measurement ``Sample.value`` reduces. ``Sample`` is metric-specific,
+        so comparing two metrics means two calls.
+    statistic : callable, optional
+        Reducer over each benchmark's per-repetition values; defaults to the median.
+    """
+    if metric not in _METRICS:
+        raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
+    return _load_sessions(Path(path), metric, statistic)

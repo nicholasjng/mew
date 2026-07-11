@@ -11,18 +11,42 @@ from mew._core import TimeUnit
 TimeUnitStr = Literal["ns", "us", "ms", "s"]
 
 
-class RunRow(TypedDict):
-    """One benchmark run, serialized: the contract every reporter consumes.
+class SessionInfo(TypedDict):
+    """Which run a result came from: what :mod:`mew.compare` orders and groups by.
 
-    Reporters read these dicts, never the live C++ :class:`~mew._core.Run`;
-    ``Run.to_dict`` is the only thing that produces one. The base keys (``name``,
+    Runs sharing a ``tag`` on one ``host`` -- or, absent one, the same
+    ``context.vcs.commit`` -- are compared as a single session.
+    """
+
+    id: str
+    date: str
+    host: str
+    tag: NotRequired[str]
+
+
+class BenchmarkResult(TypedDict):
+    """One benchmark run, serialized: the contract every reporter consumes and
+    every result file stores.
+
+    The binding projects each Google Benchmark run to one of these before any
+    Python code sees it, so a reporter only ever handles dicts -- the one shape
+    every row source can produce, including rows Google Benchmark never made
+    (benchmarks mew declined to run). The measurement keys (``name``,
     ``real_time``, ``cpu_time``, ``iterations``, ``time_unit``, ``label``,
     ``counters``, …) are always present; the keys below are optional.
 
+    ``session`` and ``context`` are absent when a reporter receives the result
+    and present when it is read back from a JSONL archive, where each line
+    stands alone. Because both are single keys, a new context field never
+    widens this schema.
+
     Attributes
     ----------
-    custom : dict, optional
-        Per-suite :func:`mew.set_context` values.
+    session : SessionInfo, optional
+        Identity of the run that produced this result.
+    context : dict, optional
+        Provenance: :func:`mew.set_context` values alongside whatever providers
+        contributed (:func:`mew.machine_context`, :func:`mew.vcs_context`).
     memory : dict, optional
         Google Benchmark's memory-manager figures for this run
         (``peak_bytes``, ``total_bytes``, ``total_allocations``, ``iterations``,
@@ -53,7 +77,8 @@ class RunRow(TypedDict):
     skipped: bool
     skip_message: str
     counters: dict[str, float]
-    custom: NotRequired[dict[str, Any]]
+    session: NotRequired[SessionInfo]
+    context: NotRequired[dict[str, Any]]
     memory: NotRequired[dict[str, Any]]
     cpu_profile: NotRequired[dict[str, Any]]
 
