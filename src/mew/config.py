@@ -62,15 +62,15 @@ def _parse_str_list(raw: Any, key: str, default: list[str]) -> list[str]:
 
 def _parse_session_tag(raw: Any) -> SessionTagSpec:
     if not isinstance(raw, dict):
-        raise ValueError("[tool.mew.session-tag] must be a table")
+        raise TypeError("[tool.mew.session-tag] must be a table")
     keys: set[str] = {str(k) for k in raw}
     if unknown := keys - {"enabled", "tool", "args"}:
         raise ValueError(f"unknown keys in [tool.mew.session-tag]: {sorted(unknown)}")
     enabled, tool, args = raw.get("enabled", True), raw.get("tool"), raw.get("args")
     if not isinstance(enabled, bool):
-        raise ValueError("[tool.mew.session-tag] enabled must be a boolean")
+        raise TypeError("[tool.mew.session-tag] enabled must be a boolean")
     if tool is not None and not isinstance(tool, str):
-        raise ValueError("[tool.mew.session-tag] tool must be a string")
+        raise TypeError("[tool.mew.session-tag] tool must be a string")
     if args is None:
         return SessionTagSpec(enabled=enabled, tool=tool, args=None)
     if not (isinstance(args, list) and all(isinstance(a, str) for a in args)):

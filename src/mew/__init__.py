@@ -28,20 +28,20 @@ atexit.register(_clear_registered_benchmarks)
 del _clear_registered_benchmarks
 
 __all__ = [
+    "BENCHMARK_COMMIT",
+    "BENCHMARK_VERSION",
+    "REGISTRY",
     "BenchmarkFn",
     "Entry",
     "Fanout",
     "JSONLReporter",
     "JSONReporter",
-    "REGISTRY",
     "Registry",
     "Reporter",
     "RichReporter",
     "RunRow",
     "State",
     "TimeUnit",
-    "BENCHMARK_COMMIT",
-    "BENCHMARK_VERSION",
     "__version__",
     "benchmark",
     "clear_context",

@@ -701,7 +701,7 @@ def test_completions_bash_functional(mew_cli, tmp_path):
     assert bash is not None
     f = tmp_path / "c.bash"
     f.write_text(mew_cli("completions", "bash", cwd=tmp_path).stdout)
-    assert subprocess.run([bash, "-n", str(f)]).returncode == 0  # syntax
+    assert subprocess.run([bash, "-n", str(f)]).returncode == 0
 
     def complete(words: str, cword: int) -> list[str]:
         # Forward-slash, quoted path: a Windows path has backslashes, which bash

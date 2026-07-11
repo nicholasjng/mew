@@ -9,8 +9,8 @@ from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-import mew._core as _core
 import mew.context as _context
+from mew import _core
 from mew._registry import REGISTRY, Entry
 from mew._session import new_session_id
 from mew.reporter import Reporter

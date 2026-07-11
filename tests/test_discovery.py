@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import mew.discovery as discovery
+from mew import discovery
 from mew._registry import REGISTRY
 
 

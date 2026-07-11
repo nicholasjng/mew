@@ -51,7 +51,7 @@ def _proj_run(function_name: str, args: str = "", *, label: str = "", suffix: st
         report_label = label
         skipped = False
         skip_message = ""
-        counters: dict = {}
+        counters: dict = {}  # noqa: RUF012
         run_type = FakeEnum("iteration")
         time_unit = FakeEnum("ns")
 
