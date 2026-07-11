@@ -114,7 +114,7 @@ $ mew profile -k bench_sort         # filter like `mew run`
 | Flag                 | Effect                                                       |
 | -------------------- | ------------------------------------------------------------ |
 | `-p, --profiler`     | `auto` (default), `xctrace`, `py-spy`, or `perf`.            |
-| `-o, --output-dir`   | Where artifacts land (default `./.mew-traces`).             |
+| `-d, --output-dir`   | Where artifacts land (default `./.mew-traces`).             |
 | `--iterations N`     | Body iterations under the sampler (default `100000`).        |
 | `--time-limit DUR`   | Hard cap per recording, e.g. `10s`.                          |
 | `--template NAME`    | (xctrace) Instruments template; default `Time Profiler`.    |
