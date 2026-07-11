@@ -48,7 +48,7 @@ streams results to the terminal, JSON, or a JSONL archive.
 :link: guide/profiling-cpu
 :link-type: doc
 `--sample` for `pyinstrument` CPU sampling, `--profile-memory` for `memray`
-allocations, or `mew profile` for native C frames via Instruments / py-spy / perf.
+allocations. For native C frames, sample the process from outside (see the native-profiling recipe).
 :::
 
 :::{grid-item-card} Compare
