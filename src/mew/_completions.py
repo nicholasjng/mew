@@ -3,10 +3,14 @@
 Rolled by hand (no dependency): introspect the parser (subcommands, their
 options, and each value's completion kind: file / fixed choices / none) and
 emit a completion script per shell. ``mew completions <shell>`` prints it for
-``eval`` or install. Static: command and option names, file completion for path
-args, and fixed choices (``--format``, the shell list). The zsh
-script additionally completes live benchmark names, ``name[label]`` cases, and
-tags by shelling out to ``mew __complete`` (which reads the completion cache).
+``eval`` or install.
+
+Deliberately **static**: command and option names, file completion for path
+arguments, and fixed choices (``--format``, the shell list). Completing live
+benchmark names would mean either importing the suite on every Tab press (slow,
+and it runs user code) or maintaining an on-disk cache of them (a cache-invalidation
+problem, and a disk write as a side effect of every ``mew run``). Neither is worth
+saving a few keystrokes: use ``mew list -n`` to see the names.
 """
 
 from __future__ import annotations
@@ -42,10 +46,6 @@ def _value_kind(action: argparse.Action, command: str) -> str | list[str] | None
     if action.choices:
         return [str(c) for c in action.choices]
     dest = action.dest
-    if dest == "pattern":
-        return "benchmarks"  # -k/--pattern: complete name[label] forms
-    if dest == "tag":
-        return "tags"
     if dest == "format":
         from mew.cli import _STDOUT_FORMATS  # source of truth, avoids drift
 
@@ -161,33 +161,11 @@ def _zdesc(help_text: str) -> str:
     return s.translate(str.maketrans({"'": "", "[": "", "]": "", "`": "", ":": ";"}))
 
 
-# Dynamic callbacks: shell out to `mew __complete <kind>`, which reads the
-# completion cache (never imports bench files). `_mew_selectors` only offers
-# benchmark names once the user has typed `file.py::`, else falls back to files.
-_ZSH_DYNAMIC = r"""
-_mew_patterns() { local -a x; x=( ${(f)"$(mew __complete cases 2>/dev/null)"} ); (( $#x )) && compadd -- $x }
-_mew_tags()     { local -a x; x=( ${(f)"$(mew __complete tags  2>/dev/null)"} ); (( $#x )) && compadd -- $x }
-_mew_selectors() {
-  if [[ $words[CURRENT] == *::* ]]; then
-    local pfx=${words[CURRENT]%%::*}::
-    local -a x; x=( ${(f)"$(mew __complete names 2>/dev/null)"} )
-    (( $#x )) && compadd -P "$pfx" -- $x
-  else
-    _files
-  fi
-}
-"""
-
-
 def _zsh_spec(o: _Opt) -> str:
     body = f"[{_zdesc(o.help)}]"
     if o.takes_value:
         if o.value == "file":
             body += ":path:_files"
-        elif o.value == "benchmarks":
-            body += ":pattern:_mew_patterns"
-        elif o.value == "tags":
-            body += ":tag:_mew_tags"
         elif isinstance(o.value, list):
             body += f":value:({' '.join(o.value)})"
         else:
@@ -208,7 +186,6 @@ def _zsh_spec(o: _Opt) -> str:
 def _zsh(parser: argparse.ArgumentParser) -> str:
     cmds = _commands(parser)
     out = [
-        _ZSH_DYNAMIC,
         "_mew() {",
         '  local curcontext="$curcontext" state line',
         "  _arguments -C \\",
@@ -229,7 +206,9 @@ def _zsh(parser: argparse.ArgumentParser) -> str:
         if c.positional == "file":
             specs.append("'*:path:_files'")
         elif c.positional == "selector":
-            specs.append("'*:selector:_mew_selectors'")
+            # `file.py::name` selectors: complete the path half, which is the
+            # part a shell can know without importing the suite.
+            specs.append("'*:selector:_files'")
         elif isinstance(c.positional, list):
             specs.append(f"'*:value:({' '.join(c.positional)})'")
         out.append("          _arguments \\")
