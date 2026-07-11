@@ -235,24 +235,21 @@ def test_rich_reporter_left_ellipsizes_long_names():
     assert "bench_the_actual_function" in out
 
 
-def test_rich_reporter_right_ellipsizes_overlong_variant_label_and_hottest_frame():
+def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
     """Mirrors the name column's left-ellipsis test, but for the fixed-width
-    columns added by `--variant`, `show_label`, and `--profile-cpu`, which use
-    `_truncate_right` instead. Regressed by df346b6 if this drifts back to
-    inline slicing."""
+    columns added by `show_label` and `--sample`, which use `_truncate_right`
+    instead. Regressed by df346b6 if this drifts back to inline slicing."""
     from mew._console import Terminal
 
     buf = io.StringIO()
     rep = RichReporter(
         terminal=Terminal(file=buf, width=200, color=False),
-        show_variant=True,
         show_label=True,
         show_cpu=True,
     )
     rep.report_context({"host_name": "h", "num_cpus": 1, "mhz_per_cpu": 1000, "cpu_scaling": "?"})
 
     row = _fake_row("bench.py::bench_x", label="a-very-long-case-label-well-past-twenty-chars")
-    row["variant"] = "a-variant-name-well-past-sixteen-chars"
     row["cpu_profile"] = {
         "sample_count": 1,
         "top_function": "a_very_long_function_name_that_exceeds_thirty_characters (mod.py:1)",
@@ -260,9 +257,8 @@ def test_rich_reporter_right_ellipsizes_overlong_variant_label_and_hottest_frame
     rep.report_runs([row])
     out = buf.getvalue()
 
-    # Fixed widths from `_compute_widths`: variant=16, label=20, hottest_frame=30.
+    # Fixed widths from `_compute_widths`: label=20, hottest_frame=30.
     assert "…" in out
-    assert "a-variant-name-" in out  # left prefix of variant survives, truncated
     assert "a-very-long-case-la…" in out  # left prefix of label survives, truncated
     assert "a_very_long_function_name_tha" in out  # left prefix of hottest frame
 

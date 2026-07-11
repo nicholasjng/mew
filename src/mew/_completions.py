@@ -4,7 +4,7 @@ Rolled by hand (no dependency): introspect the parser (subcommands, their
 options, and each value's completion kind: file / fixed choices / none) and
 emit a completion script per shell. ``mew completions <shell>`` prints it for
 ``eval`` or install. Static: command and option names, file completion for path
-args, and fixed choices (``--format``, ``--profiler``, the shell list). The zsh
+args, and fixed choices (``--format``, the shell list). The zsh
 script additionally completes live benchmark names, ``name[label]`` cases, and
 tags by shelling out to ``mew __complete`` (which reads the completion cache).
 """
@@ -47,21 +47,9 @@ def _value_kind(action: argparse.Action, command: str) -> str | list[str] | None
     if dest == "tag":
         return "tags"
     if dest == "format":
-        # Two commands share this dest with disjoint value sets.
-        if command == "profile":
-            from mew import profilers
-
-            formats = {"auto"}
-            for backend in profilers._BACKENDS.values():
-                formats.update(getattr(backend, "FORMATS", ()))
-            return sorted(formats)
         from mew.cli import _STDOUT_FORMATS  # source of truth, avoids drift
 
         return sorted(_STDOUT_FORMATS)
-    if dest == "profiler":
-        from mew import profilers
-
-        return ["auto", *sorted(profilers._BACKENDS)]
     if getattr(action, "type", None) is Path:
         return "file"
     if not action.option_strings:  # positional

@@ -1,6 +1,6 @@
 """Pytest-style benchmark discovery: walk paths, glob for files, import them.
 
-Internal: consumed by the CLI and the variant worker; not part of the public
+Internal: consumed by the CLI; not part of the public
 API and carries no stability guarantee.
 """
 
