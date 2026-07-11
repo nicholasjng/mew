@@ -73,4 +73,14 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
+      - name: Assert every artifact matches the release tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          for f in dist/*; do
+            case "${f##*/}" in
+              mew_bench-"${TAG#v}"-*.whl | mew_bench-"${TAG#v}".tar.gz) ;;
+              *) echo "::error::${f##*/} is not version ${TAG#v}"; exit 1 ;;
+            esac
+          done
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
