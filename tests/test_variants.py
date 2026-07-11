@@ -234,7 +234,9 @@ def test_run_variant_reports_failed_child(tmp_path: Path, variant_files: tuple[P
     # The good variant still ran (rows on stdout); the bad one warned; exit nonzero.
     assert res.returncode != 0
     assert "bench_work" in res.stdout
-    assert "failed" in res.stderr or "No such file" in res.stderr or "no benchmarks" in res.stderr
+    # Exact `_run_child` failure message, naming the actual bad file — not just
+    # some indication that *something* went wrong.
+    assert f"warning: variant child failed ({missing}):" in res.stderr
 
 
 def test_run_variant_jsonl_has_variant_field(

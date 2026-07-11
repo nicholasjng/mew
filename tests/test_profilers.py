@@ -367,8 +367,13 @@ def test_pyspy_run_rejects_empty_profile(tmp_path, monkeypatch):
 def test_pyspy_run_accepts_real_profile(tmp_path, monkeypatch):
     doc = {"shared": {"frames": [{"name": "f"}]}, "profiles": [{"samples": [[0]]}]}
     monkeypatch.setattr(pyspy.subprocess, "run", _pyspy_runner(doc))
-    artifacts = PySpyProfiler().run([_entry()], output_dir=tmp_path, iterations=1)
-    assert len(artifacts) == 1
+    entry = _entry()
+    artifacts = PySpyProfiler().run([entry], output_dir=tmp_path, iterations=1)
+    # Keyed by the entry's profile key, pointing at the actual written artifact
+    # — not just "some dict with one entry".
+    expected_dest = tmp_path / f"{base.slug(entry.name)}.speedscope.json"
+    assert artifacts == {entry.name: expected_dest}
+    assert json.loads(expected_dest.read_text()) == doc
 
 
 def _perf_runner(script: str) -> object:
@@ -393,5 +398,12 @@ def test_perf_run_rejects_empty_script(tmp_path, monkeypatch):
 def test_perf_run_accepts_nonempty_script(tmp_path, monkeypatch):
     script = "python 1234 [000] 0.1: cycles:\n\t  ffff _start\n"
     monkeypatch.setattr(perf.subprocess, "run", _perf_runner(script))
-    artifacts = PerfProfiler().run([_entry()], output_dir=tmp_path, iterations=1)
-    assert len(artifacts) == 1
+    entry = _entry()
+    artifacts = PerfProfiler().run([entry], output_dir=tmp_path, iterations=1)
+    # Keyed by the entry's profile key, pointing at the actual written artifact
+    # — not just "some dict with one entry".
+    expected_dest = tmp_path / f"{base.slug(entry.name)}.perf.txt"
+    assert artifacts == {entry.name: expected_dest}
+    assert expected_dest.read_text() == script
+    # The intermediate .data file is cleaned up, only the text script remains.
+    assert not expected_dest.with_suffix(".data").exists()
