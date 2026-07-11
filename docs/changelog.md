@@ -4,6 +4,10 @@ All notable changes to `mew` are documented here. Versions follow
 [semantic versioning](https://semver.org/); until 1.0 the public API may still
 change between minor releases.
 
+## 0.1.1 (2026-07-30)
+
+Fixes the readthedocs build that was silently broken, no user-facing API changes.
+
 ## 0.1.0 (2026-07-30)
 
 First public release. `mew` is a microbenchmarking library and CLI for Python,

@@ -21,7 +21,7 @@ from mew.reporter import (
 )
 from mew.runner import run
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Clear Google Benchmark registrations at interpreter shutdown.
 atexit.register(_clear_registered_benchmarks)
