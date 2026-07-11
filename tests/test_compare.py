@@ -19,8 +19,8 @@ from mew._statistics import reduce_statistic, resolve_statistic
 from mew.compare import (
     _aggregate_group,
     _load,
+    _load_pivot_columns,
     _load_sessions,
-    _load_variant_columns,
     _resolve_session,
     _select_latest,
     _split_selector,
@@ -439,7 +439,13 @@ def test_resolve_session_errors(tmp_path: Path) -> None:
         _resolve_session(tmp_path, sessions, "~9")
 
 
-def test_resolve_session_ambiguous_tag(tmp_path: Path) -> None:
+def test_runs_sharing_a_tag_aggregate_into_one_session(tmp_path: Path) -> None:
+    """Repeated runs at one revision share a tag, so they reduce together.
+
+    This is what lets an interleaved A/B loop (`mew run ... --append` per
+    repetition) keep every repetition instead of `_select_latest` dropping all
+    but the newest run.
+    """
     p = tmp_path / "r.json"
     _write_json(
         p,
@@ -449,8 +455,15 @@ def test_resolve_session_ambiguous_tag(tmp_path: Path) -> None:
         ],
     )
     sessions = _load_sessions(p, "real_time")
-    with pytest.raises(SystemExit, match="ambiguous"):
-        _resolve_session(p, sessions, "dup")
+    assert len(sessions) == 1
+    session = sessions[0]
+    # The group takes its newest run's identity, so `@<id-prefix>` still resolves.
+    assert session.session_id == "bbbb"
+    assert session.session_tag == "dup"
+    # Median over both runs, not just the newest.
+    assert session.samples["b"].value == 15.0
+    assert session.samples["b"].values == (10.0, 20.0)
+    assert _resolve_session(p, sessions, "dup") is session
 
 
 def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
@@ -569,66 +582,79 @@ def test_compare_aligns_files_run_with_different_min_time(tmp_path: Path) -> Non
     assert "-20.00%" in out
 
 
-def _variant_file(tmp_path: Path) -> Path:
-    """A single result file with two variants 'a' and 'b' of one benchmark."""
-    p = tmp_path / "variants.json"
+def _pivot_file(tmp_path: Path) -> Path:
+    """One result file holding two suites, tagged by `custom.engine`."""
+    p = tmp_path / "engines.json"
     _write_json(
         p,
         [
-            _row("bench.py::f", 100.0, variant="a", session_id="s1", date="2026-01-01T00:00:00"),
-            _row("bench.py::f", 80.0, variant="b", session_id="s1", date="2026-01-01T00:00:00"),
+            _row(
+                "bench.py::f",
+                100.0,
+                custom={"engine": "a"},
+                session_id="s1",
+                date="2026-01-01T00:00:00",
+            ),
+            _row(
+                "bench.py::f",
+                80.0,
+                custom={"engine": "b"},
+                session_id="s1",
+                date="2026-01-01T00:00:00",
+            ),
         ],
     )
     return p
 
 
-def test_load_variant_columns_pivots(tmp_path: Path) -> None:
-    cols = _load_variant_columns(_variant_file(tmp_path), "real_time", "name")
+def test_load_pivot_columns_pivots(tmp_path: Path) -> None:
+    cols = _load_pivot_columns(_pivot_file(tmp_path), "real_time", "name", "custom.engine")
     assert [v for v, _, _ in cols] == ["a", "b"]  # first-encounter order
     by = {v: s for v, s, _ in cols}
     assert by["a"]["bench.py::f"].value == 100.0
     assert by["b"]["bench.py::f"].value == 80.0
 
 
-def test_compare_by_variant(tmp_path: Path) -> None:
+def test_compare_by_pivot(tmp_path: Path) -> None:
     console = Console(width=200)
-    code = compare([_variant_file(tmp_path)], by="variant", console=console)
+    code = compare([_pivot_file(tmp_path)], by="custom.engine", console=console)
     assert code == 0
     out = console.export_text()
     assert "a (baseline)" in out
     assert "-20.00%" in out  # b is 20% faster than a
 
 
-def test_compare_by_variant_baseline(tmp_path: Path) -> None:
+def test_compare_by_pivot_baseline(tmp_path: Path) -> None:
     console = Console(width=200)
-    code = compare([_variant_file(tmp_path)], by="variant", baseline="b", console=console)
+    code = compare([_pivot_file(tmp_path)], by="custom.engine", baseline="b", console=console)
     assert code == 0
     out = console.export_text()
     assert "b (baseline)" in out
     assert "+25.00%" in out  # a is 25% slower than b
 
 
-def test_compare_by_variant_unknown_baseline(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit, match="not among variants"):
-        compare([_variant_file(tmp_path)], by="variant", baseline="zzz")
+def test_compare_by_pivot_unknown_baseline(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="not among custom.engine values"):
+        compare([_pivot_file(tmp_path)], by="custom.engine", baseline="zzz")
 
 
-def test_compare_by_variant_requires_single_file(tmp_path: Path) -> None:
-    p = _variant_file(tmp_path)
+def test_compare_by_pivot_requires_single_file(tmp_path: Path) -> None:
+    p = _pivot_file(tmp_path)
     with pytest.raises(SystemExit, match="exactly one"):
-        compare([p, p], by="variant")
+        compare([p, p], by="custom.engine")
 
 
-def test_compare_by_variant_no_variant_data(tmp_path: Path) -> None:
+def test_compare_by_pivot_no_pivot_data(tmp_path: Path) -> None:
     p = tmp_path / "plain.json"
-    _write_json(p, [_row("bench.py::f", 1.0)])  # no 'variant' field
-    with pytest.raises(SystemExit, match="no 'variant' data"):
-        compare([p], by="variant")
+    _write_json(p, [_row("bench.py::f", 1.0)])  # no custom.engine field
+    with pytest.raises(SystemExit, match="no 'custom.engine' data"):
+        compare([p], by="custom.engine")
 
 
-def test_compare_unknown_by(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit, match="unknown --by"):
-        compare([tmp_path / "a.json"], by="bogus")
+def test_compare_by_dimension_absent_from_rows(tmp_path: Path) -> None:
+    """Any field is a legal pivot, so a typo surfaces as "no data", not "unknown"."""
+    with pytest.raises(SystemExit, match="no 'custom.bogus' data"):
+        compare([_pivot_file(tmp_path)], by="custom.bogus")
 
 
 def _mem_row(name: str, real_time: float, peak: int, allocs: int, *, iterations: int = 1) -> dict:

@@ -8,7 +8,7 @@ Structured as three stages so new comparison dimensions feed the same renderer:
    groups to one sample set per file, either by ``path@selector`` or by
    defaulting to the latest session per name.
 3. **Render** (:func:`_render`): compare a list of labelled columns, one per
-   file or (under ``--by variant``) one per variant of a single file.
+   file or (under ``--by``) one per value of a pivot dimension in a single file.
 """
 
 from __future__ import annotations
@@ -165,7 +165,7 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Read the JSONL sink (plain or gzip): one self-contained row per line.
 
     Current files are pure NDJSON; every row carries its session identity.
-    Files from older versions (and the --variant worker channel) interleave
+    Files from older versions (and worker channels that merge rows) interleave
     ``{"context": ...}`` header lines with rows; rows inherit their segment's
     identity for those, and ``file_ctx`` is the last segment's context.
     """
@@ -234,6 +234,23 @@ def _session_key(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, st
     host = row.get("host_name") or file_ctx.get("host_name") or ""
     sid = row.get("session_id") or file_ctx.get("session_id") or ""
     return (str(date), str(host), str(sid))
+
+
+def _session_group(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, str]:
+    """The bucket a row aggregates into, which is *not* its identity.
+
+    Runs sharing a ``session_tag`` on one host are one bucket: the tag defaults to
+    the jj change id / ``git describe``, so repeated runs at one revision belong
+    together, and an ``--append`` archive of interleaved A/B runs reduces over every
+    repetition instead of keeping only the last. Untagged runs fall back to their
+    own ``session_id`` (or date), preserving one-bucket-per-run.
+    """
+    host = str(row.get("host_name") or file_ctx.get("host_name") or "")
+    if tag := (row.get("session_tag") or file_ctx.get("session_tag") or ""):
+        return (host, f"tag:{tag}")
+    date = row.get("date") or file_ctx.get("date") or ""
+    sid = row.get("session_id") or file_ctx.get("session_id") or ""
+    return (host, f"id:{sid or date}")
 
 
 def _metric_value(row: dict[str, Any], metric: str) -> Any:
@@ -366,16 +383,21 @@ def _group_by_session(
     (see :func:`_is_measurement_row`).
 
     Shared front half of both load paths: :func:`_load_sessions` sub-groups each
-    bucket by name, :func:`_load_variant_columns` keeps the latest bucket whole and
-    pivots it by variant. Aggregate rows are dropped because we recompute statistics
+    bucket by name, :func:`_load_pivot_columns` keeps the latest bucket whole and
+    pivots it on a dimension. Aggregate rows are dropped because we recompute statistics
     ourselves, so results are consistent whether a file used ``--repetitions=1`` or N.
     """
-    by_session: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for r in rows:
         if not _is_measurement_row(r):
             continue
-        by_session.setdefault(_session_key(r, file_ctx), []).append(r)
-    return by_session
+        buckets.setdefault(_session_group(r, file_ctx), []).append(r)
+    # A bucket may span several runs (same tag); it takes the identity of its
+    # newest one, so `path@<id-prefix>` and chronological order still work.
+    return {
+        max(_session_key(r, file_ctx) for r in bucket_rows): bucket_rows
+        for bucket_rows in buckets.values()
+    }
 
 
 def _group_by_name(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -409,14 +431,24 @@ def _load_sessions(
     return sessions
 
 
-def _load_variant_columns(
-    path: Path, metric: str, key: str, statistic: Statistic | None = None
-) -> list[tuple[str, dict[str, Sample], dict[str, Any]]]:
-    """Pivot one file's latest session into ``(variant, samples, context)`` columns.
+def _pivot_value(row: dict[str, Any], dimension: str) -> Any:
+    """Read ``dimension`` off a row: a top-level field, or ``custom.<key>``."""
+    head, sep, tail = dimension.partition(".")
+    if not sep:
+        return row.get(head)
+    block = row.get(head)
+    return block.get(tail) if isinstance(block, dict) else None
 
-    Variants and sessions are orthogonal: pick the latest session (commonly a single
-    ``--variant`` run), then group its rows by ``variant``. Variant order follows first
-    encounter, which is the declared/baseline-first order the orchestrator writes.
+
+def _load_pivot_columns(
+    path: Path, metric: str, key: str, dimension: str, statistic: Statistic | None = None
+) -> list[tuple[str, dict[str, Sample], dict[str, Any]]]:
+    """Pivot one file's latest session into ``(value, samples, context)`` columns.
+
+    The pivot dimension and sessions are orthogonal: pick the latest session, then
+    group its rows by ``dimension`` (typically ``custom.<key>``, set per suite with
+    :func:`mew.set_context`). Column order follows first encounter, which is the
+    order the rows were written in.
     """
     rows, file_ctx = _read_rows(path)
     by_session = _group_by_session(rows, file_ctx)
@@ -424,20 +456,20 @@ def _load_variant_columns(
         return []
 
     latest = max(by_session)  # date-leading key → most recent session
-    by_variant: dict[Any, list[dict[str, Any]]] = {}
+    by_value: dict[Any, list[dict[str, Any]]] = {}
     for r in by_session[latest]:
-        by_variant.setdefault(r.get("variant"), []).append(r)
+        by_value.setdefault(_pivot_value(r, dimension), []).append(r)
 
     columns: list[tuple[str, dict[str, Sample], dict[str, Any]]] = []
-    for variant, variant_rows in by_variant.items():
-        if variant is None:
-            continue  # rows from a non-variant run; nothing to pivot
-        groups = _group_by_name(variant_rows)
+    for value, value_rows in by_value.items():
+        if value is None:
+            continue  # rows without the dimension; nothing to pivot
+        groups = _group_by_name(value_rows)
         samples = _samples_from_groups(groups, metric, latest[0] or None, statistic)
         rep_row = next(iter(groups.values()))[0]
         ctx = _session_context(rep_row, file_ctx)
-        samples = _normalize_samples(samples, key, f"{path}[variant={variant}]")
-        columns.append((str(variant), samples, ctx))
+        samples = _normalize_samples(samples, key, f"{path}[{dimension}={value}]")
+        columns.append((str(value), samples, ctx))
     return columns
 
 
@@ -514,14 +546,11 @@ def _resolve_session(path: Path, sessions: list[SessionData], selector: str) -> 
             raise SystemExit(f"{path}: @~{n} out of range ({len(sessions)} session(s) in file)")
         return sessions[-1 - n]  # ~0 == latest
 
+    # At most one match: a tag is the grouping key, so every run carrying it is
+    # already one session (see _session_group).
     tagged = [s for s in sessions if s.session_tag == selector]
     if len(tagged) == 1:
         return tagged[0]
-    if len(tagged) > 1:
-        raise SystemExit(
-            f"{path}: session tag {selector!r} is ambiguous ({len(tagged)} sessions); "
-            "select by session id instead"
-        )
 
     if len(selector) >= _MIN_ID_PREFIX:
         pref = [s for s in sessions if s.session_id and s.session_id.startswith(selector)]
@@ -730,9 +759,9 @@ def _value_cell(sample: Sample, metric: str) -> str | list[Span]:
 
 @dataclass(slots=True)
 class _Column:
-    """One comparison column: a result file today, a variant group later.
+    """One comparison column: a result file, or one value of a pivot dimension.
 
-    ``source`` identifies the column in warnings (file path / variant name);
+    ``source`` identifies the column in warnings (file path / pivot value);
     ``label`` heads its table column.
     """
 
@@ -755,7 +784,7 @@ def _render(
     """Compare the first column against the rest and render the table.
 
     Column-shaped on purpose: anything producing labelled sample sets with contexts
-    (files, sessions, variant groups) compares the same way.
+    (files, sessions, pivot groups) compares the same way.
     """
     all_names: set[str] = set().union(*(c.samples.keys() for c in columns))
     if pattern is not None:
@@ -878,16 +907,24 @@ def _render(
     return 0
 
 
-def _variant_columns(
-    path: Path, metric: str, key: str, baseline: str | None, statistic: Statistic | None = None
+def _pivot_columns(
+    path: Path,
+    metric: str,
+    key: str,
+    dimension: str,
+    baseline: str | None,
+    statistic: Statistic | None = None,
 ) -> list[_Column]:
-    """Build comparison columns by pivoting one file's variants, baseline first."""
-    loaded = _load_variant_columns(path, metric, key, statistic)
+    """Build comparison columns by pivoting one file on ``dimension``, baseline first."""
+    loaded = _load_pivot_columns(path, metric, key, dimension, statistic)
     names = [v for v, _, _ in loaded]
     if not names:
-        raise SystemExit(f"{path}: no 'variant' data to pivot; produce it with `mew run --variant`")
+        raise SystemExit(
+            f"{path}: no {dimension!r} data to pivot; set it per suite with "
+            f"mew.set_context() and write both suites to this file"
+        )
     if baseline is not None and baseline not in names:
-        raise SystemExit(f"{path}: --baseline {baseline!r} not among variants {names}")
+        raise SystemExit(f"{path}: --baseline {baseline!r} not among {dimension} values {names}")
     base = baseline or names[0]
     ordered = [base, *(n for n in names if n != base)]
     by_name = {v: (s, c) for v, s, c in loaded}
@@ -934,7 +971,7 @@ def compare(
         How benchmarks are matched across files: ``"name"`` uses the full
         registered name; ``"func"`` strips the ``file.py::`` prefix so suites
         in different files with matching function names line up (A/B suites).
-        Defaults to ``"func"`` with ``by="variant"`` (each variant's rows keep
+        Defaults to ``"func"`` when ``by`` is set (each column's rows keep
         their own ``file.py::`` prefix, so the columns only line up on the
         function name) and ``"name"`` otherwise.
     pattern : str, optional
@@ -945,11 +982,12 @@ def compare(
     show_stddev : bool, default False
         Add per-file stddev columns when stddev data is present.
     by : str, optional
-        Pivot dimension. ``"variant"`` compares the variants within a single
-        ``--variant`` result file (one column each) instead of comparing files.
+        Pivot dimension: compare values of one field *within* a single file, one
+        column each, instead of comparing files. Typically ``"custom.<key>"``, read
+        from the per-suite values :func:`mew.set_context` records on every row.
     baseline : str, optional
-        With ``by="variant"``, which variant is the baseline (default: the
-        first one written).
+        With ``by``, which value is the baseline column (default: the first one
+        written).
     statistic : Callable[[list[float]], float], optional
         Reducer over each benchmark's per-repetition values, used as the displayed
         center and the regression-gate value (stddev is unaffected). Receives a
@@ -968,9 +1006,9 @@ def compare(
     """
     if metric not in _METRICS:
         raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
-    # Variant columns share the file prefix, so they only align on the func name.
+    # Pivot columns share the file prefix, so they only align on the func name.
     if key is None:
-        key = "func" if by == "variant" else "name"
+        key = "func" if by else "name"
     if key not in _KEYS:
         raise SystemExit(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
     try:
@@ -978,12 +1016,10 @@ def compare(
     except ValueError as e:
         raise SystemExit(str(e)) from e
 
-    if by == "variant":
+    if by is not None:
         if len(files) != 1:
-            raise SystemExit("mew compare --by variant takes exactly one result file")
-        columns = _variant_columns(files[0], metric, key, baseline, statistic)
-    elif by is not None:
-        raise SystemExit(f"unknown --by dimension {by!r}; only 'variant' is supported")
+            raise SystemExit(f"mew compare --by {by} takes exactly one result file")
+        columns = _pivot_columns(files[0], metric, key, by, baseline, statistic)
     else:
         if len(files) < 2:
             raise SystemExit("mew compare needs at least two result files")

@@ -1,4 +1,4 @@
-"""argparse CLI: `mew run`, `mew list`, `mew profile`, `mew compare`.
+"""argparse CLI: `mew run`, `mew list`, `mew compare`.
 
 Built on stdlib argparse, with help colorized by a small ANSI helper
 (:mod:`mew._console`). Each command is a plain function with keyword args;
@@ -17,8 +17,9 @@ import argparse
 import os
 import re
 import sys
+from contextlib import ExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import mew.config as _config
 from mew import (
@@ -34,9 +35,6 @@ from mew import (
     run as _run,
 )
 from mew._registry import compile_name_filter, narrow_entry
-
-if TYPE_CHECKING:
-    from mew._variants import ProfileConfig
 
 # BENCHMARK_VERSION is a git describe (`v1.9.5-74-ga8460680`), so it already
 # carries the commit; the full SHA stays available as `mew.BENCHMARK_COMMIT`.
@@ -196,7 +194,6 @@ def _build_reporters(
     show_memory: bool = False,
     show_cpu: bool = False,
     show_label: bool = False,
-    show_variant: bool = False,
     append: bool = False,
 ) -> list[Reporter]:
     """Resolve ``-o`` sinks into a list of reporters.
@@ -218,7 +215,6 @@ def _build_reporters(
             show_memory=show_memory,
             show_cpu=show_cpu,
             show_label=show_label,
-            show_variant=show_variant,
         )
 
     if not outputs:
@@ -268,91 +264,17 @@ def _build_reporters(
     return reps
 
 
-def _parse_variants(specs: list[str]) -> dict[str, Path]:
-    """Parse repeated ``name=path`` ``--variant`` specs, erroring on malformed/dup names."""
-    parsed: dict[str, Path] = {}
-    for spec in specs:
-        name, sep, path = spec.partition("=")
-        if not sep or not name or not path:
-            print(f"invalid --variant {spec!r}; expected name=path", file=sys.stderr)
-            raise SystemExit(2)
-        if name in parsed:
-            print(f"duplicate variant name: {name!r}", file=sys.stderr)
-            raise SystemExit(2)
-        parsed[name] = Path(path)
-    return parsed
-
-
 def _derive_session_tag(cfg: _config.Config, session_tag: str | None) -> str | None:
     """Default the session tag from the VCS when unset.
 
     Default is the change id from the ``[tool.mew.session-tag]`` command (auto: jj, then
     git), unless disabled via ``[tool.mew.session-tag] enabled = false``.
-    Shared by the plain and ``--variant`` run paths.
     """
     if session_tag is None and cfg.session_tag.enabled:
         from mew._session import derive_session_tag
 
         session_tag = derive_session_tag(tool=cfg.session_tag.tool, args=cfg.session_tag.args)
     return session_tag
-
-
-def _run_variants_cmd(
-    specs: list[str],
-    *,
-    cfg: _config.Config,
-    output: list[str],
-    stdout_format: str = "rich",
-    pattern: str | None,
-    literal: bool = False,
-    tags: list[str] | None,
-    min_time: str | None,
-    min_warmup_time: float | None,
-    random_interleaving: bool,
-    repetitions: int | None,
-    paths: list[str],
-    session_tag: str | None,
-    append: bool,
-    profiling: ProfileConfig | None = None,
-) -> None:
-    """Run the ``--variant`` path: validate, then hand off to the orchestrator."""
-    from mew._variants import ProfileConfig, run_variants
-
-    if paths:
-        print("--variant and positional paths are mutually exclusive", file=sys.stderr)
-        raise SystemExit(2)
-
-    profiling = profiling or ProfileConfig()
-    variants = _parse_variants(specs)
-    session_tag = _derive_session_tag(cfg, session_tag)
-
-    # Repetitions become separate child invocations, so they are NOT forwarded
-    # to the children; the other global knobs are.
-
-    reporters = _build_reporters(
-        output,
-        stdout_format=stdout_format,
-        show_variant=True,
-        show_memory=profiling.profile_memory or profiling.flamegraph is not None,
-        show_cpu=profiling.sample or profiling.sample_html is not None,
-        append=append,
-    )
-
-    failures = run_variants(
-        variants,
-        reporters=reporters,
-        min_time=min_time,
-        min_warmup_time=min_warmup_time,
-        random_interleaving=random_interleaving,
-        pattern=pattern,
-        literal=literal,
-        tags=tags,
-        repetitions=repetitions or 1,
-        session_tag=session_tag,
-        profiling=profiling,
-    )
-    if failures:
-        raise SystemExit(1)
 
 
 def run(
@@ -371,63 +293,21 @@ def run(
     session_tag: str | None = None,
     append: bool = False,
     strict: bool = False,
-    variant: list[str] | None = None,
     profile_memory: bool = False,
     flamegraph: Path | None = None,
-    memory_iterations: int = 100,
     sample: bool = False,
     sample_interval: float = 1e-4,
-    sample_iterations: int = 1000,
     sample_html: Path | None = None,
 ) -> None:
     """Discover and run benchmarks."""
     tag = tag or []
     output = output or []
-    variant = variant or []
     if format not in _STDOUT_FORMATS:
         print(
             f"unknown --format {format!r}; choose from {sorted(_STDOUT_FORMATS)}", file=sys.stderr
         )
         raise SystemExit(2)
-    if stdin and variant:
-        print("--stdin and --variant are mutually exclusive", file=sys.stderr)
-        raise SystemExit(2)
-    if strict and variant:
-        # --strict is not forwarded to the variant children; erroring beats
-        # silently running with the skip-and-warn default.
-        print("--strict and --variant are mutually exclusive", file=sys.stderr)
-        raise SystemExit(2)
     cfg = _load_config_or_exit()
-    if variant:
-        from mew._variants import ProfileConfig
-
-        _run_variants_cmd(
-            variant,
-            cfg=cfg,
-            output=output,
-            stdout_format=format,
-            pattern=pattern,
-            literal=literal,
-            tags=tag or None,
-            min_time=min_time,
-            min_warmup_time=min_warmup_time,
-            random_interleaving=random_interleaving,
-            repetitions=repetitions,
-            paths=paths,
-            session_tag=session_tag,
-            append=append,
-            profiling=ProfileConfig(
-                profile_memory=profile_memory,
-                flamegraph=flamegraph,
-                memory_iterations=memory_iterations,
-                sample=sample,
-                sample_interval=sample_interval,
-                sample_iterations=sample_iterations,
-                sample_html=sample_html,
-            ),
-        )
-        return
-
     # discovered(): bench modules stay live for the run, cleaned up at exit.
     with _discovery.discovered():
         entries = _collect_or_exit(
@@ -446,161 +326,45 @@ def run(
             append=append,
         )
 
-        memory_profiles = None
-        cpu_profiles = None
-        if profile_memory or flamegraph is not None:
-            from mew.memory import profile as _profile_mem
+        # Both profilers are Google Benchmark managers: GB drives them during the
+        # run and stamps the results onto each Run, so there is no pre-pass and
+        # no second execution of the suite.
+        with ExitStack() as stack:
+            memory_manager = None
+            profiler_manager = None
+            if profile_memory or flamegraph is not None:
+                from mew import memory as _memory
 
-            memory_profiles = _profile_mem(
-                entries, flamegraph=flamegraph, iterations=memory_iterations
-            )
-        if sample or sample_html is not None:
-            from mew.cpu import profile as _profile_cpu
+                memory_manager = _memory.manager(stack)
+            if sample or sample_html is not None:
+                from mew import cpu as _cpu
 
-            cpu_profiles = _profile_cpu(
+                _cpu.require_pyinstrument()
+                profiler_manager = _cpu.PyinstrumentManager(interval=sample_interval)
+
+            _run(
                 entries,
-                output=sample_html,
-                interval=sample_interval,
-                inner_iterations=sample_iterations,
+                reporter=reporters,
+                min_time=min_time,
+                min_warmup_time=min_warmup_time,
+                repetitions=repetitions,
+                random_interleaving=random_interleaving,
+                session_tag=session_tag,
+                strict=strict,
+                memory_manager=memory_manager,
+                profiler_manager=profiler_manager,
             )
 
-        # `run`'s projector attaches the profiles onto each RunRow before fan-out.
-        _run(
-            entries,
-            reporter=reporters,
-            min_time=min_time,
-            min_warmup_time=min_warmup_time,
-            repetitions=repetitions,
-            random_interleaving=random_interleaving,
-            session_tag=session_tag,
-            strict=strict,
-            memory_profiles=memory_profiles,
-            cpu_profiles=cpu_profiles,
-        )
+            # Both artifacts render from what the run already captured, so
+            # neither re-executes the suite.
+            if profiler_manager is not None and sample_html is not None:
+                from mew import cpu as _cpu
 
+                _cpu.write_html(profiler_manager.sessions, sample_html)
+            if memory_manager is not None and flamegraph is not None:
+                from mew import memory as _memory
 
-def _quick_timing_pass(entries: list[Entry]) -> list[Any]:
-    """Run a fast in-process timing pass over ``entries``; return the collected RunRows."""
-    collected: list[Any] = []
-
-    class _Collector:
-        def report_context(self, context: dict[str, Any], /) -> bool:
-            return True
-
-        def report_runs(self, runs: list[Any], /) -> None:
-            collected.extend(runs)
-
-        def finalize(self) -> None:
-            pass
-
-    # Short min_time: we only need relative order, not publishable timings.
-    _run(entries, min_time=0.05, reporter=_Collector())
-    return collected
-
-
-def _select_slowest(entries: list[Entry], n: int) -> list[Entry]:
-    """Keep the ``n`` slowest entries by real_time from a quick in-process pass.
-
-    A family's time is the max over its cases (the slowest case represents its
-    profiling cost). Entries with no timing rank last. For file-based selection,
-    compose instead: extract names externally and pipe them to ``--stdin``.
-    """
-    from mew.compare import _is_measurement_row
-    from mew.reporter import _CASE_SUFFIX_RE, _OPTION_SUFFIXES_RE
-
-    rows = _quick_timing_pass(entries)
-
-    # Strip GB's `/case:i` and option suffixes to recover the registered entry name.
-    times: dict[str, float] = {}
-    for row in rows:
-        name: str | None = row.get("name")
-        if name is None:
-            raise KeyError("_select_slowest: no 'name' column in result row") from None
-        rt = row.get("real_time")
-        if not _is_measurement_row(row) or rt is None:
-            continue
-        base = _CASE_SUFFIX_RE.sub("", _OPTION_SUFFIXES_RE.sub("", name))
-        times[base] = max(times.get(base, 0.0), float(rt))
-
-    ranked = sorted(entries, key=lambda e: times.get(e.name, 0.0), reverse=True)
-    return ranked[:n]
-
-
-def profile(
-    paths: list[str],
-    *,
-    pattern: str | None = None,
-    literal: bool = False,
-    tag: list[str] | None = None,
-    stdin: bool = False,
-    slowest: int | None = None,
-    profiler: str = "auto",
-    output_dir: Path = Path(".mew-traces"),
-    template: str = "Time Profiler",
-    iterations: int = 100_000,
-    time_limit: str | None = None,
-    rate: int = 1000,
-    separate: bool = False,
-    format: str = "xctrace",
-) -> None:
-    """Profile benchmarks out-of-process, capturing native C frames.
-
-    Picks a native-frame profiler (xctrace on macOS, py-spy/perf on Linux) and
-    records an artifact you open in its viewer. For in-process Python-level
-    sampling instead, use `mew run --sample`.
-    """
-    from mew import profilers
-
-    backend = profilers.select(profiler)
-
-    # Formats are backend-specific (e.g. `--format xctrace` is meaningless under
-    # perf/py-spy). `auto` is always valid; validate the rest against the backend.
-    supported = getattr(backend, "FORMATS", ("auto",))
-    if format not in supported:
-        print(
-            f"mew: --format {format!r} is not supported by the {backend.name} backend; "
-            f"choose from {', '.join(supported)}",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-
-    with _discovery.discovered():
-        entries = _collect_or_exit(
-            paths,
-            cfg=_load_config_or_exit(),
-            pattern=pattern,
-            tags=tag or None,
-            literal=literal,
-            stdin=stdin,
-        )
-        if slowest is not None:
-            if slowest < 1:
-                print("--slowest must be >= 1", file=sys.stderr)
-                raise SystemExit(2)
-            total = len(entries)
-            entries = _select_slowest(entries, slowest)
-            print(f"mew: profiling {len(entries)} slowest of {total}", file=sys.stderr)
-        artifacts = backend.run(
-            entries,
-            output_dir=output_dir,
-            iterations=iterations,
-            time_limit=time_limit,
-            rate=rate,
-            template=template,
-            separate=separate,
-            format=format,
-        )
-
-    for key, path in artifacts.items():
-        print(f"{key}\t{path}")
-    if artifacts:
-        # --format speedscope swaps the xctrace bundle for speedscope-loadable text.
-        hint = (
-            "speedscope.app (import the collapsed stacks)"
-            if format == "speedscope"
-            else backend.viewer_hint
-        )
-        print(f"Open in {hint}.", file=sys.stderr)
+                _memory.write_flamegraph(memory_manager, flamegraph)
 
 
 def compare(
@@ -654,7 +418,7 @@ def compare(
         regressions=cfg,
     )
     # The regression panel is informational unless the caller opted into gating;
-    # a `no overlap` (1) or `--by variant` usage error still propagates as-is.
+    # a `no overlap` (1) or `--by` usage error still propagates as-is.
     if code == 2 and not exit_non_zero_on_regression:
         code = 0
     if code:
@@ -723,7 +487,7 @@ def completions(shell: str) -> None:
 def _complete(kind: str) -> None:
     """Hidden helper the shell calls on Tab: print cached candidates, one per line.
 
-    Reads the completion cache (refreshed by run/list/profile). Never imports bench
+    Reads the completion cache (refreshed by run/list). Never imports bench
     files, so it's instant and works from a `uv tool`-installed `mew` outside the
     project venv. Prints nothing on a cache miss; completion silently falls back.
     """
@@ -747,14 +511,20 @@ def _complete(kind: str) -> None:
 
 def _warmup_seconds(value: str) -> float:
     """argparse type for --min-warmup-time: '0.2', '200ms', '1m' → seconds."""
-    from mew.profilers.base import parse_seconds
-
+    dur = value.strip()
     try:
-        return parse_seconds(value, flag="--min-warmup-time")
-    except SystemExit as e:
+        if dur.endswith("ms"):  # before "m": "500ms" is not minutes
+            return float(dur[:-2]) / 1000
+        if dur.endswith("m"):
+            return float(dur[:-1]) * 60
+        return float(dur.removesuffix("s"))
+    except ValueError:
         # ArgumentTypeError gets argparse's usage-error exit (2); SystemExit
         # would exit 1, colliding with the "nothing matched" code.
-        raise argparse.ArgumentTypeError(str(e).removeprefix("mew: ")) from e
+        raise argparse.ArgumentTypeError(
+            f"invalid --min-warmup-time {dur!r}; use seconds ('10s', '0.5'), "
+            "milliseconds ('500ms'), or minutes ('1m')"
+        ) from None
 
 
 def _percent(value: str) -> float:
@@ -784,7 +554,7 @@ def _add_filter_args(
 
 
 def _add_tag_arg(p: argparse.ArgumentParser) -> None:
-    """Add the shared ``-t/--tag`` filter (identical across list/run/profile)."""
+    """Add the shared ``-t/--tag`` filter (identical across list and run)."""
     p.add_argument(
         "-t",
         "--tag",
@@ -892,16 +662,10 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         "thread_range) are selected on a GIL interpreter, where they can't run.",
     )
     p.add_argument(
-        "--variant",
-        action="append",
-        default=[],
-        help="Run a `name=path` variant in its own subprocess, repeatable. Compare with "
-        "`mew compare <file> --by variant`. Mutually exclusive with positional paths.",
-    )
-    p.add_argument(
         "--profile-memory",
         action="store_true",
-        help="Profile memory allocations with `memray` before the timing run.",
+        help="Profile memory allocations with `memray`, via Google Benchmark's memory "
+        "manager (an extra untimed pass per repetition).",
     )
     p.add_argument(
         "--flamegraph",
@@ -909,16 +673,9 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         help="Write an HTML allocation flame graph to this path. Implies --profile-memory.",
     )
     p.add_argument(
-        "--memory-iterations",
-        type=int,
-        default=100,
-        help="Measured loop iterations per case under --profile-memory (default 100, + warmup).",
-    )
-    p.add_argument(
         "--sample",
         action="store_true",
-        help="Sample CPU in-process with `pyinstrument` (Python frames; "
-        "use `mew profile` for native).",
+        help="Sample CPU in-process with `pyinstrument` (Python frames).",
     )
     p.add_argument(
         "--sample-interval",
@@ -927,89 +684,11 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         help="pyinstrument sampling interval in seconds (default 1e-4).",
     )
     p.add_argument(
-        "--sample-iterations",
-        type=int,
-        metavar="<N>",
-        default=1000,
-        help="Iterations of the body per benchmark under the sampler (default 1000).",
-    )
-    p.add_argument(
         "--sample-html",
         type=Path,
         help="Write a pyinstrument HTML report to this path. Implies --sample.",
     )
     p.set_defaults(_func=run)
-
-
-def _add_profile_cmd(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser(
-        "profile",
-        help="Profile benchmarks out-of-process (native frames).",
-        formatter_class=_CommandHelpFormatter,
-    )
-    p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
-    _add_filter_args(
-        p, pattern_help="Only profile benchmarks whose name matches this regex (re.search)."
-    )
-    _add_tag_arg(p)
-    p.add_argument(
-        "--stdin",
-        action="store_true",
-        help="Read newline-delimited selectors from stdin (`mew list -n | mew profile --stdin`).",
-    )
-    p.add_argument(
-        "--slowest",
-        type=int,
-        metavar="<N>",
-        help="Profile only the N slowest benchmarks, ranked by a quick in-process "
-        "timing pass. To rank from a result file instead, pipe names to --stdin.",
-    )
-    p.add_argument(
-        "-p",
-        "--profiler",
-        default="auto",
-        help="Backend: `auto`, `xctrace` (macOS), `py-spy` (Linux/Windows), or `perf` (Linux).",
-    )
-    p.add_argument(
-        "-d",
-        "--output-dir",
-        type=Path,
-        default=Path(".mew-traces"),
-        help="Directory for the recorded artifact(s). Default: `./.mew-traces`.",
-    )
-    p.add_argument(
-        "--template",
-        default="Time Profiler",
-        help="(xctrace) Instruments template name or `.tracetemplate` path. "
-        "Default: `Time Profiler`.",
-    )
-    p.add_argument(
-        "--iterations",
-        type=int,
-        metavar="<N>",
-        default=100_000,
-        help="Times the body runs per case under the sampler (default 100000).",
-    )
-    p.add_argument("--time-limit", help="Hard cap on each recording, e.g. `10s`.")
-    p.add_argument(
-        "--rate",
-        type=int,
-        default=1000,
-        help="(py-spy/perf) Sampling frequency in Hz (default 1000). Ignored by xctrace.",
-    )
-    p.add_argument(
-        "--separate",
-        action="store_true",
-        help="(xctrace) Write one artifact per case instead of a single combined one.",
-    )
-    p.add_argument(
-        "--format",
-        default="auto",
-        metavar="(auto|xctrace|speedscope)",
-        help="Output format, validated against the chosen `-p`. `auto` (default) is the "
-        "backend's native output; `speedscope` writes speedscope-loadable JSON.",
-    )
-    p.set_defaults(_func=profile)
 
 
 def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
@@ -1027,15 +706,16 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--key",
         help="How benchmarks are matched: `name` (full) or `func` (strip the `file.py::` "
-        "prefix). Defaults to `func` with --by variant, `name` otherwise.",
+        "prefix). Defaults to `func` with --by, `name` otherwise.",
     )
     _add_filter_args(p, pattern_help="Regex filter (re.search).")
     p.add_argument("--stddev", action="store_true", help="Show stddev columns if present.")
     p.add_argument(
         "--by",
-        help="Pivot dimension: `variant` compares variants within one --variant file.",
+        help="Pivot one file on a field instead of comparing files, e.g. "
+        "`custom.engine` (set per suite with mew.set_context).",
     )
-    p.add_argument("--baseline", help="With --by variant, the baseline variant (default: first).")
+    p.add_argument("--baseline", help="With --by, the baseline column (default: first written).")
     p.add_argument(
         "--statistic",
         help="Reducer over per-repetition values, for display and the regression gate. "
@@ -1109,7 +789,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     _add_list_cmd(sub)
     _add_run_cmd(sub)
-    _add_profile_cmd(sub)
     _add_compare_cmd(sub)
     _add_completions_cmd(sub)
 

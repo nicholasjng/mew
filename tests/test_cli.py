@@ -334,84 +334,6 @@ def test_run_stdin_empty_runs_nothing(mew_cli, benchdir):
     assert "no benchmarks found" in res.stderr
 
 
-def test_run_stdin_rejects_variant(mew_cli, tmp_path):
-    res = mew_cli("run", "--stdin", "--variant", "a=x.py", stdin="", cwd=tmp_path)
-    assert res.returncode == 2
-    assert "mutually exclusive" in res.stderr
-
-
-def test_run_strict_rejects_variant(mew_cli, tmp_path):
-    # --strict is not forwarded to variant children; erroring beats a silent
-    # fall-back to the skip-and-warn default.
-    res = mew_cli("run", "--strict", "--variant", "a=x.py", cwd=tmp_path)
-    assert res.returncode == 2
-    assert "mutually exclusive" in res.stderr
-
-
-def _native_profiler_available() -> bool:
-    from mew import profilers
-
-    try:
-        profilers.select("auto")
-        return True
-    except SystemExit:
-        return False
-
-
-@pytest.mark.skipif(not _native_profiler_available(), reason="no native profiler backend")
-def test_profile_stdin_filters_before_backend(mew_cli, benchdir, tmp_path):
-    # A path-free stdin name filters discovery; a non-matching name selects
-    # nothing, so profile exits ("no benchmarks found") before any backend runs —
-    # which also proves --stdin is wired into profile's discovery.
-    res = mew_cli("profile", str(benchdir), "--stdin", stdin="does_not_exist_xyz\n", cwd=tmp_path)
-    assert res.returncode == 1
-    assert "no benchmarks found" in res.stderr
-
-
-class _FakeProfileBackend:
-    """Stands in for a real native-frame backend so `profile --slowest` can be
-    tested end-to-end without depending on xctrace/perf/py-spy being installed."""
-
-    name = "fake"
-    viewer_hint = "nowhere"
-
-    def __init__(self) -> None:
-        self.received_entries: list | None = None
-
-    def run(self, entries, **kwargs):
-        self.received_entries = list(entries)
-        return {}
-
-
-def test_profile_slowest_zero_is_usage_error(mew_cli, benchdir, tmp_path, monkeypatch):
-    # cli.py's `--slowest` validation (`slowest < 1`) runs after backend
-    # selection but before any entries are handed to the backend.
-    import mew.profilers as profilers_mod
-
-    backend = _FakeProfileBackend()
-    monkeypatch.setattr(profilers_mod, "select", lambda name: backend)
-
-    res = mew_cli("profile", str(benchdir), "--slowest", "0", cwd=tmp_path)
-    assert res.returncode == 2
-    assert "--slowest must be >= 1" in res.stderr
-    assert backend.received_entries is None  # rejected before the backend ever ran
-
-
-def test_profile_slowest_narrows_entries_reaching_backend(mew_cli, benchdir, tmp_path, monkeypatch):
-    # End-to-end wiring: `--slowest 1` must narrow what the backend receives,
-    # not just what `_select_slowest` returns in isolation.
-    import mew.profilers as profilers_mod
-
-    backend = _FakeProfileBackend()
-    monkeypatch.setattr(profilers_mod, "select", lambda name: backend)
-
-    res = mew_cli("profile", str(benchdir), "--slowest", "1", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    assert backend.received_entries is not None
-    assert len(backend.received_entries) == 1
-    assert "mew: profiling 1 slowest of 2" in res.stderr
-
-
 def test_list_names_only_drops_path(mew_cli, benchdir, tmp_path):
     res = mew_cli("list", str(benchdir), "--names-only", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
@@ -577,101 +499,6 @@ def _ends(entries, suffix):
     return any(e.name.endswith(suffix) for e in entries)
 
 
-def test_quick_timing_pass_collects_a_row_per_entry():
-    # A real (but non-flaky, since it asserts no ordering) smoke test that the
-    # in-process timing pass `_select_slowest` stubs out below actually runs
-    # and produces a usable row per entry.
-    import mew
-    from mew.cli import _quick_timing_pass
-
-    @mew.benchmark
-    def bench_a(state):
-        for _ in state:
-            pass
-
-    @mew.benchmark
-    def bench_b(state):
-        for _ in state:
-            pass
-
-    rows = _quick_timing_pass(mew.REGISTRY.all())
-    assert len(rows) == 2
-    assert all(isinstance(r.get("real_time"), float) for r in rows)
-
-
-def test_select_slowest_quick_pass(monkeypatch):
-    import mew
-    from mew.cli import _select_slowest
-
-    @mew.benchmark
-    def bench_fast(state):
-        for _ in state:
-            pass
-
-    @mew.benchmark
-    def bench_mid(state):
-        for _ in state:
-            pass
-
-    @mew.benchmark
-    def bench_slow(state):
-        for _ in state:
-            pass
-
-    entries = mew.REGISTRY.all()
-    times = {"bench_fast": 1.0, "bench_mid": 50.0, "bench_slow": 500.0}
-    # Stub the timing pass with deterministic numbers (mirrors
-    # `test_select_slowest_ranks_family_by_slowest_case` below) instead of
-    # relying on real wall-clock gaps between trivial benchmark bodies, which
-    # is flake-prone under scheduler/CI noise.
-    rows = [
-        {
-            "name": e.name,
-            "real_time": next(t for k, t in times.items() if e.name.endswith(k)),
-            "aggregate_name": "",
-        }
-        for e in entries
-    ]
-    monkeypatch.setattr("mew.cli._quick_timing_pass", lambda entries: rows)
-    top2 = _select_slowest(entries, 2)
-    assert len(top2) == 2
-    assert _ends(top2, "bench_slow") and _ends(top2, "bench_mid")
-    assert not _ends(top2, "bench_fast")
-
-
-def test_select_slowest_ranks_family_by_slowest_case(monkeypatch):
-    import mew
-    from mew.cli import _select_slowest
-
-    @mew.parametrize([{"n": 1}, {"n": 2}])
-    def bench_fam(state, n):
-        for _ in state:
-            pass
-
-    @mew.benchmark
-    def bench_plain(state):
-        for _ in state:
-            pass
-
-    entries = mew.REGISTRY.all()
-    fam = next(e.name for e in entries if e.case_labels is not None)
-    plain = next(e.name for e in entries if e.case_labels is None)
-    # Family's slow case (with a GB option suffix) beats the plain benchmark;
-    # the family's time is the max over its cases. Stub the timing pass so the
-    # suffix-stripping logic is exercised with deterministic numbers.
-    rows = [
-        {"name": f"{fam}/case:0", "real_time": 1.0, "aggregate_name": ""},
-        {"name": f"{fam}/case:1/min_time:0.200", "real_time": 99.0, "aggregate_name": ""},
-        {"name": plain, "real_time": 50.0, "aggregate_name": ""},
-    ]
-    monkeypatch.setattr("mew.cli._quick_timing_pass", lambda entries: rows)
-    (top1,) = _select_slowest(entries, 1)
-    assert top1.name == fam
-
-
-# --- shell completions ---
-
-
 def test_completions_unknown_shell_errors(mew_cli, tmp_path):
     res = mew_cli("completions", "tcsh", cwd=tmp_path)
     assert res.returncode == 2
@@ -720,20 +547,10 @@ def test_completions_bash_functional(mew_cli, tmp_path):
     assert set(complete("mew completions ''", 2)) == {"bash", "zsh", "fish"}
 
 
-def test_completions_profile_format_has_backend_values(mew_cli, tmp_path):
-    # run and profile share the `format` dest but have disjoint value sets;
-    # profile must not offer run's rich/json/jsonl.
-    bash = mew_cli("completions", "bash", cwd=tmp_path).stdout
-    profile_block = bash[bash.index("    profile)") :]
-    line = next(ln for ln in profile_block.splitlines() if "--format" in ln and "compgen" in ln)
-    assert "speedscope" in line and "xctrace" in line
-    assert "jsonl" not in line
-
-
 def test_completions_bash_positional_falls_back_to_files(mew_cli, tmp_path):
-    # run/list/profile take `path[::filter]` selectors; bash completes the path part.
+    # run/list take `path[::filter]` selectors; bash completes the path part.
     bash = mew_cli("completions", "bash", cwd=tmp_path).stdout
-    run_block = bash[bash.index("    run)") : bash.index("    profile)")]
+    run_block = bash[bash.index("    run)") : bash.index("    compare)")]
     assert 'COMPREPLY=( $(compgen -f -- "$cur") )\n        ;;' in run_block
 
 

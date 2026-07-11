@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Protocol, TextIO, cast, runtime_checkable
 
 from mew._console import Terminal, _truncate_left, _truncate_right, sgr
-from mew._core import Run
 from mew._typing import RunRow
 
 
@@ -97,36 +96,6 @@ def _build_context(context: dict[str, Any]) -> dict[str, Any]:
     if custom:
         ctx["custom"] = custom
     return ctx
-
-
-def _run_to_dict(r: Run) -> RunRow:
-    """Project a C++ ``Run`` to a base :class:`~mew._typing.RunRow`.
-
-    Overlay keys (``variant`` / ``custom`` / ``memory`` / ``cpu_profile``) are
-    added downstream, not read off the ``Run``.
-    """
-    counters = r.counters  # hot path on C++ Run: each access rebuilds the dict
-    return {
-        "name": r.benchmark_name(),
-        "run_name": str(r.run_name),
-        "family_index": r.family_index,
-        "per_family_instance_index": r.per_family_instance_index,
-        "run_type": r.run_type.name,
-        "aggregate_name": r.aggregate_name,
-        "repetitions": r.repetitions,
-        "repetition_index": r.repetition_index,
-        "threads": r.threads,
-        "iterations": r.iterations,
-        "real_time": r.adjusted_real_time(),
-        "cpu_time": r.adjusted_cpu_time(),
-        "real_accumulated_time": r.real_accumulated_time,
-        "cpu_accumulated_time": r.cpu_accumulated_time,
-        "time_unit": r.time_unit.name,
-        "label": r.report_label,
-        "skipped": r.skipped,
-        "skip_message": r.skip_message,
-        "counters": counters if counters else {},
-    }
 
 
 # Closing `]}` of the streamed doc, written once at finalize (GB-style).
@@ -232,7 +201,7 @@ class JSONLReporter:
         Ignored for stream / stdout sinks.
     header : bool, default False
         Channel mode: write a ``{"context": {...}}`` line and leave the rows bare.
-        Used by the ``--variant`` worker, whose parent stamps its own shared session
+        Used when another process merges these rows, stamping its own shared session
         onto the merged rows; row-stamping here would let the child's throwaway
         identity shadow the parent's.
     """
@@ -265,8 +234,8 @@ class JSONLReporter:
     def report_runs(self, runs: list[RunRow]) -> None:
         assert self._fh is not None  # report_context runs first, always
         for row in runs:
-            # Row-carried values win: merged --variant rows bring their own
-            # per-variant `custom` (and `variant`), which must not be clobbered.
+            # Row-carried values win: rows merged from another process bring
+            # their own `custom`, which must not be clobbered.
             self._fh.write(json.dumps({**self._stamp, **row}, default=str) + "\n")
         self._fh.flush()
 
@@ -290,9 +259,6 @@ class RichReporter:
     show_label : bool, default False
         Add a ``Label`` column (the parametrize case id). Pass for families, where
         the case is otherwise indistinguishable from the truncated name.
-    show_variant : bool, default False
-        Add a ``Variant`` column (the ``--variant`` name). Pass when rows from
-        several variants stream into one table.
     """
 
     def __init__(
@@ -302,13 +268,11 @@ class RichReporter:
         show_memory: bool = False,
         show_cpu: bool = False,
         show_label: bool = False,
-        show_variant: bool = False,
     ) -> None:
         self._term = terminal or Terminal()
         self._show_memory = show_memory
         self._show_cpu = show_cpu
         self._show_label = show_label
-        self._show_variant = show_variant
         self._context: dict[str, Any] = {}
         self._widths: dict[str, int] = {}
 
@@ -348,8 +312,6 @@ class RichReporter:
             "real": 14,
             "cpu": 14,
         }
-        if self._show_variant:
-            fixed["variant"] = 16
         if self._show_label:
             fixed["label"] = 20
         if self._show_memory:
@@ -366,8 +328,6 @@ class RichReporter:
     def _print_header(self) -> None:
         w = self._widths
         cells = ["Benchmark".ljust(w["name"])]
-        if self._show_variant:
-            cells.append("Variant".ljust(w["variant"]))
         if self._show_label:
             cells.append("Label".ljust(w["label"]))
         cells += [
@@ -404,10 +364,6 @@ class RichReporter:
             return
 
         cells = [name.ljust(w["name"])]
-        if self._show_variant:
-            variant = row.get("variant") or "-"
-            variant = _truncate_right(variant, w["variant"])
-            cells.append(variant.ljust(w["variant"]))
         if self._show_label:
             label = _truncate_right(label, w["label"])
             cells.append(label.ljust(w["label"]))
@@ -421,7 +377,9 @@ class RichReporter:
             cells.append((_fmt_bytes(mem["peak_bytes"]) if mem else "-").rjust(w["peak"]))
         if self._show_cpu:
             cpu = row.get("cpu_profile")
-            cells.append((f"{cpu['sample_count']:,}" if cpu else "-").rjust(w["samples"]))
+            # Numeric profile values cross the binding as doubles; a sample
+            # count is conceptually an integer, so render it as one.
+            cells.append((f"{int(cpu['sample_count']):,}" if cpu else "-").rjust(w["samples"]))
             top = cpu["top_function"] if cpu else "-"
             top = _truncate_right(top, w["hottest_frame"])
             cells.append(top.ljust(w["hottest_frame"]))

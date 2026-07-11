@@ -14,15 +14,13 @@ TimeUnitStr = Literal["ns", "us", "ms", "s"]
 class RunRow(TypedDict):
     """One benchmark run, serialized: the contract every reporter consumes.
 
-    Reporters read these dicts, never the live C++ :class:`~mew._core.Run`. The
-    base keys (``name``, ``real_time``, ``cpu_time``, ``iterations``,
-    ``time_unit``, ``label``, ``counters``, …) are always present; the keys below
-    are optional overlays.
+    Reporters read these dicts, never the live C++ :class:`~mew._core.Run`;
+    ``Run.to_dict`` is the only thing that produces one. The base keys (``name``,
+    ``real_time``, ``cpu_time``, ``iterations``, ``time_unit``, ``label``,
+    ``counters``, …) are always present; the keys below are optional.
 
     Attributes
     ----------
-    variant : str, optional
-        Variant name, set by the ``--variant`` orchestrator.
     custom : dict, optional
         Per-suite :func:`mew.set_context` values.
     memory : dict, optional
@@ -55,7 +53,6 @@ class RunRow(TypedDict):
     skipped: bool
     skip_message: str
     counters: dict[str, float]
-    variant: NotRequired[str]
     custom: NotRequired[dict[str, Any]]
     memory: NotRequired[dict[str, Any]]
     cpu_profile: NotRequired[dict[str, Any]]
