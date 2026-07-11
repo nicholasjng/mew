@@ -13,7 +13,7 @@
 ## One-time setup
 
 ```console
-$ uv sync --all-extras
+$ uv sync --all-groups --all-extras
 $ uvx prek install
 ```
 
@@ -52,7 +52,6 @@ $ uv sync --reinstall-package=nanobind --reinstall-package=mew
 ```console
 $ uv run pytest tests/ -q
 $ uvx prek run --all-files
-$ uv run --all-extras --group test ty check
 ```
 
 These steps run in CI (`.github/workflows/ci.yml`) across Linux, macOS, and Windows on Python 3.11–3.14.
@@ -67,10 +66,10 @@ $ MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
 ```
 
 `uv run pytest` alone does *not* preload the ASAN runtime, so the test process
-aborts at the first import of an ASAN-built extension. Preload it explicitly:
+aborts at the first import of an ASAN-built extension. Preload it and `libstdc++` explicitly:
 
 ```bash
-MEW_ASAN=1 LD_PRELOAD="$(gcc -print-file-name=libasan.so)" \
+MEW_ASAN=1 LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libstdc++.so)" \
     ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" uv run --all-groups pytest --capture no
 
 # for macOS, there's a wrapper script to work around SIP.
@@ -122,9 +121,8 @@ why gcc, not clang); on macOS there's a wrapper script that handles the SIP
 workaround:
 
 ```bash
-# Linux
-MEW_TSAN=1 LD_PRELOAD="$(gcc -print-file-name=libtsan.so)" \
-    TSAN_OPTIONS="halt_on_error=1" uv run --all-extras --all-groups pytest --capture no
+MEW_TSAN=1 LD_PRELOAD="$(gcc -print-file-name=libtsan.so) $(gcc -print-file-name=libstdc++.so)" \
+    TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0" uv run --all-extras --all-groups pytest --capture no
 
 # macOS
 scripts/tsan-pytest.sh
