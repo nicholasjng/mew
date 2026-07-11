@@ -83,6 +83,26 @@ and exit code 0. Use aggregates-only for terminal output you read by eye, never
 for files you intend to diff.
 :::
 
+## Tell a real delta from noise
+
+The CV marker flags a row you *can't* trust; it says nothing about the rows
+that pass. With the same `--repetitions` data, `compare` also runs a
+Mann-Whitney U test between the two sides' per-repetition values and marks
+deltas that clear the conventional p < 0.05 bar as `(signif.)`:
+
+```text
+Benchmark    │ baseline │      head │              Δ% │ speedup
+─────────────────────────────────────────────────────────────────
+bench_parse  │ 1.20 µs  │   1.44 µs │ +20.0% (signif.) │ ×0.83
+```
+
+Only the deltas worth a second look get marked — most rows in a healthy
+comparison are noise around zero, and calling that out on every row would bury
+the one that matters. An unmarked delta isn't proven noise (the test is
+underpowered at low repetition counts), but a marked one is unlikely to be.
+Needs at least 2 repetitions on both sides to compute; below that, no marker
+either way, same as the CV marker.
+
 ## Decorrelate what you can't control
 
 Thermal throttling and background load drift over minutes, so whichever

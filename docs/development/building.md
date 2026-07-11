@@ -70,10 +70,7 @@ $ MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
 aborts at the first import of an ASAN-built extension. Preload it explicitly:
 
 ```bash
-# Linux: preload the ASAN runtime *and* libc++. libc++ must be preloaded too,
-# otherwise its container-overflow annotations don't line up with the
-# instrumented build and ASAN reports false positives.
-MEW_ASAN=1 LD_PRELOAD="$(clang -print-file-name=libclang_rt.asan.so) $(clang -print-file-name=libc++.so)" \
+MEW_ASAN=1 LD_PRELOAD="$(gcc -print-file-name=libasan.so)" \
     ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" uv run --all-groups pytest --capture no
 
 # for macOS, there's a wrapper script to work around SIP.
@@ -120,16 +117,18 @@ $ MEW_TSAN=1 uv sync --all-extras --all-groups --no-install-package duckdb --rei
 ```
 
 Preload the TSAN runtime when running, the same way ASAN needs preloading
-(`clang -print-file-name=libclang_rt.tsan.so` on Linux); on macOS there's a
-wrapper script that handles the SIP workaround:
+(`gcc -print-file-name=libtsan.so` on Linux — see the ASAN section above for
+why gcc, not clang); on macOS there's a wrapper script that handles the SIP
+workaround:
 
-```console
-$ scripts/tsan-pytest.sh
+```bash
+# Linux
+MEW_TSAN=1 LD_PRELOAD="$(gcc -print-file-name=libtsan.so)" \
+    TSAN_OPTIONS="halt_on_error=1" uv run --all-extras --all-groups pytest --capture no
+
+# macOS
+scripts/tsan-pytest.sh
 ```
-
-Race reports on the free-threaded path are most useful run against a benchmark
-that uses `threads` with a deliberately-racy body, so point `VIRTUAL_ENV` at a
-free-threaded, TSAN-built `.venv-ft` (see the script header).
 
 ## Building the documentation locally
 

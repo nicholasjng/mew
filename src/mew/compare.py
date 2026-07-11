@@ -26,6 +26,7 @@ from typing import Any, TextIO
 
 from mew._console import Span, Table, Terminal, sgr
 from mew._registry import compile_name_filter
+from mew._significance import mannwhitney_p
 from mew._statistics import Statistic, reduce_statistic
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
 from mew.reporter import _fmt_bytes, canonical_name
@@ -68,6 +69,9 @@ class Sample:
         Unit ``value`` is expressed in; ``None`` for unitless metrics.
     session_date : str or None
         Date of the session this sample came from, for provenance display.
+    values : tuple[float, ...]
+        Raw per-repetition values (same unit as ``value``), feeding the
+        Mann-Whitney significance marker. Empty for a single repetition.
     """
 
     name: str
@@ -75,6 +79,7 @@ class Sample:
     stddev: float | None
     time_unit: str | None
     session_date: str | None
+    values: tuple[float, ...] = ()
 
     @property
     def cv(self) -> float | None:
@@ -253,6 +258,11 @@ class _NoMetricValues(ValueError):
     """
 
 
+def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
+    """Raw per-repetition ``metric`` values across a row group, dropping absent ones."""
+    return [float(v) for r in rows if (v := _metric_value(r, metric)) is not None]
+
+
 def _aggregate_group(
     rows: list[dict[str, Any]], metric: str, statistic: Statistic | None = None
 ) -> tuple[float, float | None]:
@@ -262,7 +272,7 @@ def _aggregate_group(
     a custom reducer (p95, geometric mean, …) via :func:`reduce_statistic`. stddev
     stays the spread measure either way, feeding the noise (CV) flag.
     """
-    values = [float(v) for r in rows if (v := _metric_value(r, metric)) is not None]
+    values = _metric_values(rows, metric)
     if not values:
         raise _NoMetricValues(f"no {metric!r} values in group")
     center = (
@@ -344,6 +354,7 @@ def _samples_from_groups(
             stddev=stddev,
             time_unit=group[0].get("time_unit"),
             session_date=date,
+            values=tuple(_metric_values(group, metric)),
         )
     return samples
 
@@ -669,6 +680,26 @@ def _fmt_stddev(sample: Sample, metric: str) -> str:
     return f"{scaled:.2f} {unit}"
 
 
+# p-value threshold for the Mann-Whitney-U test.
+_SIGNIFICANCE_ALPHA = 0.05
+
+
+def _significance_p(base: Sample, other: Sample, *, is_time_metric: bool) -> float | None:
+    """Mann-Whitney two-sided p-value between two samples' raw repetitions.
+
+    ``None`` when either side has fewer than 2 repetitions (nothing to rank), in
+    which case no marker is shown — same gating as the CV marker.
+    """
+    if len(base.values) < 2 or len(other.values) < 2:
+        return None
+    if is_time_metric:
+        a = [_to_ns(v, base.time_unit) for v in base.values]
+        b = [_to_ns(v, other.time_unit) for v in other.values]
+    else:
+        a, b = list(base.values), list(other.values)
+    return mannwhitney_p(a, b)
+
+
 def _fmt_delta(delta: float, *, higher_is_better: bool = False) -> tuple[str, str]:
     pct = delta * 100.0
     text = f"{pct:+.2f}%" if math.isfinite(pct) else "+∞%"
@@ -810,8 +841,15 @@ def _render(
             num, den = (s_value, base_value) if higher_is_better else (base_value, s_value)
             speedup = num / den if den else float("inf")
             delta_text, delta_style = _fmt_delta(delta, higher_is_better=higher_is_better)
+            delta_cell: str | list[Span] = (
+                [(delta_text, delta_style)] if delta_style else delta_text
+            )
+            p = _significance_p(base, s, is_time_metric=is_time_metric)
+            if p is not None and p < _SIGNIFICANCE_ALPHA:
+                spans = delta_cell if isinstance(delta_cell, list) else [(delta_cell, None)]
+                delta_cell = [*spans, (" (signif.)", "bold")]
             row.append(_value_cell(s, metric))
-            row.append([(delta_text, delta_style)] if delta_style else delta_text)
+            row.append(delta_cell)
             row.append(_fmt_speedup(speedup))
             if show_stddev:
                 row.append(_fmt_stddev(s, metric))
