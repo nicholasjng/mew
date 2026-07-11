@@ -472,7 +472,8 @@ def product(
         "thread_range": thread_range,
     }
     options = cast(
-        BenchmarkOptions, {k: v for k, v in local_options.items() if v not in (None, False)}
+        BenchmarkOptions,
+        {k: v for k, v in local_options.items() if v is not None and v is not False},
     )
     _check_options(options)
 

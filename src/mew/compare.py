@@ -111,6 +111,11 @@ class SessionData:
         return self.key[2] or None
 
 
+def _overflow(total: int, shown: int) -> str:
+    """`` (+N more)`` when a warning previewed only ``shown`` of ``total`` items."""
+    return f" (+{total - shown} more)" if total > shown else ""
+
+
 def _is_aggregate_row(row: dict[str, Any]) -> bool:
     return bool(row.get("aggregate_name"))
 
@@ -446,7 +451,7 @@ def _select_latest(
     stale = {name: owners for name, owners in history.items() if len(owners) > 1}
     if stale:
         preview = ", ".join(f"{n!r} ({len(o)} sessions)" for n, o in list(stale.items())[:3])
-        extra = f" (+{len(stale) - 3} more)" if len(stale) > 3 else ""
+        extra = _overflow(len(stale), 3)
         chosen = next(iter(stale.values()))[-1]
         print(
             f"warning: {path}: {len(stale)} benchmark(s) appear in multiple sessions; "
@@ -725,7 +730,7 @@ def _render(
     if pattern is not None:
         all_names = {n for n in all_names if pattern.search(n)}
 
-    shared = set.intersection(*(set(c.samples.keys()) for c in columns)) & all_names
+    shared = all_names.intersection(*(c.samples.keys() for c in columns))
     if not shared:
         msg = "no overlapping benchmarks across input files"
         if metric in _MEMORY_METRICS:
@@ -738,10 +743,10 @@ def _render(
         return 1
 
     for c in columns:
-        missing = all_names - set(c.samples.keys())
+        missing = all_names - c.samples.keys()
         if missing:
             preview = ", ".join(sorted(missing)[:5])
-            extra = "" if len(missing) <= 5 else f" (+{len(missing) - 5} more)"
+            extra = _overflow(len(missing), 5)
             print(
                 f"warning: {c.source} missing {len(missing)} benchmark(s): {preview}{extra}",
                 file=sys.stderr,
@@ -820,7 +825,7 @@ def _render(
 
     if unit_skew:
         name, (a, b) = next(iter(unit_skew.items()))
-        extra = f" (+{len(unit_skew) - 1} more)" if len(unit_skew) > 1 else ""
+        extra = _overflow(len(unit_skew), 1)
         print(
             f"note: {len(unit_skew)} benchmark(s) declare different time units "
             f"across files (e.g. {name!r}: {a!r} vs {b!r}){extra}; values are "

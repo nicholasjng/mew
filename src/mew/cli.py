@@ -768,6 +768,21 @@ def _percent(value: str) -> float:
         raise argparse.ArgumentTypeError(f"expected a percent like '5%', got {value!r}") from None
 
 
+def _add_filter_args(
+    p: argparse.ArgumentParser,
+    *,
+    pattern_help: str,
+    literal_help: str = "Match -k as a literal string.",
+) -> None:
+    """Add the coupled ``-k/--pattern`` + ``-F/--literal`` pair.
+
+    ``-F`` only means anything alongside ``-k``, so the two are always registered
+    together; only the help text differs per command.
+    """
+    p.add_argument("-k", "--pattern", help=pattern_help)
+    p.add_argument("-F", "--literal", action="store_true", help=literal_help)
+
+
 def _add_tag_arg(p: argparse.ArgumentParser) -> None:
     """Add the shared ``-t/--tag`` filter (identical across list/run/profile)."""
     p.add_argument(
@@ -787,18 +802,12 @@ def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
         formatter_class=_CommandHelpFormatter,
     )
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
-    p.add_argument(
-        "-k",
-        "--pattern",
-        help="List benchmarks whose name matches this regex (re.search, unanchored). "
-        "A plain word works as a substring; a family case also matches by its "
-        "`name[label]` form. Pass --literal to match `[...]` without escaping.",
-    )
-    p.add_argument(
-        "-F",
-        "--literal",
-        action="store_true",
-        help="Match -k as a literal string, not a regex (e.g. paste `bench_sort[n=1000]`).",
+    _add_filter_args(
+        p,
+        pattern_help="List benchmarks whose name matches this regex (re.search, so a plain "
+        "word works as a substring). A family case also matches by its `name[label]` "
+        "form; pass --literal to match `[...]` without escaping.",
+        literal_help="Match -k as a literal string, not a regex (e.g. paste `bench_sort[n=1000]`).",
     )
     _add_tag_arg(p)
     p.add_argument("--show-tags", action="store_true", help="Show tags alongside each name.")
@@ -811,8 +820,8 @@ def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
         "-n",
         "--names-only",
         action="store_true",
-        help="Print the bare name without the `file.py::` prefix (like `docker ps -q`); "
-        "path-free, so `mew list -n | mew run --stdin` round-trips from any directory.",
+        help="Print the bare name without the `file.py::` prefix. Path-free, so "
+        "`mew list -n | mew run --stdin` round-trips from any directory.",
     )
     p.set_defaults(_func=list_)
 
@@ -822,13 +831,11 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         "run", help="Discover and run benchmarks.", formatter_class=_CommandHelpFormatter
     )
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
-    p.add_argument(
-        "-k",
-        "--pattern",
-        help="Only run benchmarks whose name matches this regex (re.search). A family "
+    _add_filter_args(
+        p,
+        pattern_help="Only run benchmarks whose name matches this regex (re.search). A family "
         "case also matches by its `name[label]` form; pass --literal to match `[...]`.",
     )
-    p.add_argument("-F", "--literal", action="store_true", help="Match -k as a literal string.")
     p.add_argument(
         "--stdin",
         action="store_true",
@@ -941,10 +948,9 @@ def _add_profile_cmd(sub: argparse._SubParsersAction) -> None:
         formatter_class=_CommandHelpFormatter,
     )
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
-    p.add_argument(
-        "-k", "--pattern", help="Only profile benchmarks whose name matches this regex (re.search)."
+    _add_filter_args(
+        p, pattern_help="Only profile benchmarks whose name matches this regex (re.search)."
     )
-    p.add_argument("-F", "--literal", action="store_true", help="Match -k as a literal string.")
     _add_tag_arg(p)
     p.add_argument(
         "--stdin",
@@ -994,19 +1000,14 @@ def _add_profile_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--separate",
         action="store_true",
-        help="(xctrace) Write one artifact per case instead of one combined: "
-        "`<case>.trace` bundles (native), or `<case>.speedscope.json` files "
-        "(--format speedscope) instead of a single dropdown-over-cases document.",
+        help="(xctrace) Write one artifact per case instead of a single combined one.",
     )
     p.add_argument(
         "--format",
         default="auto",
         metavar="(auto|xctrace|speedscope)",
-        help="Output format (backend-specific; validated against the chosen `-p`). "
-        "`auto` (default) is each backend's native output. For xctrace: `xctrace` "
-        "is the native `.trace` bundle; `speedscope` folds each trace to a "
-        "speedscope JSON document, one `mew.speedscope.json` with a profile per "
-        "case (cycle via the dropdown), or per-case files under --separate.",
+        help="Output format, validated against the chosen `-p`. `auto` (default) is the "
+        "backend's native output; `speedscope` writes speedscope-loadable JSON.",
     )
     p.set_defaults(_func=profile)
 
@@ -1020,30 +1021,24 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         "-m",
         "--metric",
         default="real_time",
-        help="metric: real_time, cpu_time, iterations, or (for --profile-memory results) "
+        help="Metric: real_time, cpu_time, iterations, or (for --profile-memory results) "
         "memory.peak_bytes / memory.allocations_per_iteration.",
     )
     p.add_argument(
         "--key",
-        help="how benchmarks are matched: `name` (full) or `func` (strip the `file.py::` "
+        help="How benchmarks are matched: `name` (full) or `func` (strip the `file.py::` "
         "prefix). Defaults to `func` with --by variant, `name` otherwise.",
     )
-    p.add_argument("-k", "--pattern", help="regex filter (re.search).")
-    p.add_argument(
-        "-F",
-        "--literal",
-        action="store_true",
-        help="match -k as a literal string, not a regex.",
-    )
-    p.add_argument("--stddev", action="store_true", help="show stddev columns if present.")
+    _add_filter_args(p, pattern_help="Regex filter (re.search).")
+    p.add_argument("--stddev", action="store_true", help="Show stddev columns if present.")
     p.add_argument(
         "--by",
-        help="pivot dimension: `variant` compares variants within one --variant file.",
+        help="Pivot dimension: `variant` compares variants within one --variant file.",
     )
-    p.add_argument("--baseline", help="with --by variant, the baseline variant (default: first).")
+    p.add_argument("--baseline", help="With --by variant, the baseline variant (default: first).")
     p.add_argument(
         "--statistic",
-        help="reducer over per-repetition values for display and the regression gate. "
+        help="Reducer over per-repetition values, for display and the regression gate. "
         "A built-in name (min, max, mean, median, gmean, or a pNN percentile like "
         "p95) or an importable `module.path:attr` reference "
         "(e.g. scipy.stats:gmean; needs numpy). Default: median. Overrides "
@@ -1053,14 +1048,14 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         "--regression-threshold",
         type=_percent,
         metavar="<N%>",
-        help="regression magnitude that triggers a REGRESSED verdict, e.g. `5%%`. "
+        help="Regression magnitude that triggers a REGRESSED verdict, e.g. `5%%`. "
         "Always prints the regression panel; pair with --exit-non-zero-on-regression "
         "to also fail the command. Defaults to [tool.mew.regressions] default_threshold.",
     )
     p.add_argument(
         "--exit-non-zero-on-regression",
         action="store_true",
-        help="exit 2 if any benchmark regressed past the threshold (the "
+        help="Exit 2 if any benchmark regressed past the threshold (the "
         "[tool.mew.regressions] default when no --regression-threshold is given). "
         "Without this, the regression panel is informational only and the exit "
         "code is unaffected.",
