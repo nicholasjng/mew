@@ -66,11 +66,12 @@ $ MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
 ```
 
 `uv run pytest` alone does *not* preload the ASAN runtime, so the test process
-aborts at the first import of an ASAN-built extension. Preload it and `libstdc++` explicitly:
+aborts at the first import of an ASAN-built extension. Preload it and `libstdc++`
+explicitly, invoking the venv's python directly rather than through `uv run`:
 
 ```bash
-MEW_ASAN=1 LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libstdc++.so)" \
-    ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" uv run --all-groups pytest --capture no
+LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libstdc++.so)" \
+    ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" .venv/bin/python -m pytest --capture no
 
 # for macOS, there's a wrapper script to work around SIP.
 scripts/asan-pytest.sh
@@ -120,8 +121,8 @@ Preload the TSAN runtime when running, the same way ASAN needs preloading
 on macOS, there's a wrapper script that handles the SIP workaround:
 
 ```bash
-MEW_TSAN=1 LD_PRELOAD="$(gcc -print-file-name=libtsan.so) $(gcc -print-file-name=libstdc++.so)" \
-    TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0" uv run --all-extras --all-groups pytest --capture no
+LD_PRELOAD="$(gcc -print-file-name=libtsan.so) $(gcc -print-file-name=libstdc++.so)" \
+    TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0" .venv/bin/python -m pytest --capture no
 
 # macOS
 scripts/tsan-pytest.sh

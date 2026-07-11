@@ -115,7 +115,7 @@ jobs:
         run: |
           LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libstdc++.so)" \
           ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" \
-            uv run --no-sync --all-groups pytest --capture no
+            .venv/bin/python -m pytest --capture no
 
   tsan:
     name: tsan · free-threaded py3.14t
@@ -153,7 +153,7 @@ jobs:
         run: |
           LD_PRELOAD="$(gcc -print-file-name=libtsan.so) $(gcc -print-file-name=libstdc++.so)" \
           TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0" \
-            uv run --no-sync --all-extras --all-groups pytest --capture no
+            .venv/bin/python -m pytest --capture no
 
   docs:
     name: docs · sphinx
