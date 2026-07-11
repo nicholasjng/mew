@@ -104,6 +104,7 @@ reference/cli
 
 development/building
 development/contributing
+development/releasing
 ```
 
 ```{toctree}
