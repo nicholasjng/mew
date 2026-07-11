@@ -27,6 +27,9 @@ compile_commands.json
 .idea/
 .zed/
 
+# macOS
+.DS_Store
+
 # Test/coverage
 .pytest_cache/
 .ruff_cache/
