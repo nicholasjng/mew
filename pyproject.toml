@@ -69,8 +69,6 @@ test = [
     "pytest >=8",
     "pytest-xdist>=3.8.0",
 ]
-# Single source of truth for the ty version: CI, the CLI, and Zed's language
-# server all resolve ty from the project .venv.
 typing = [
     "ty>=0.0.42",
 ]
@@ -78,13 +76,9 @@ typing = [
 [tool.uv]
 default-groups = ["build", "typing"]
 # Build against the project .venv so includes from Python packages
-# (nanobind etc.) in compile_commands.json survive across rebuilds.
+# (nanobind) in compile_commands.json survive across rebuilds.
 no-build-isolation-package = ["mew-bench"]
-# exclude dependency versions newer than one week
 exclude-newer = "1 week"
-# ...except the toolchain, which we want at the latest release: ruff and ty are
-# dev tools whose diagnostics we track upstream, and nanobind is pinned in
-# lockstep with the C++ bindings it generates.
 exclude-newer-package = { ruff = false, ty = false, nanobind = false }
 
 [project.scripts]
