@@ -197,16 +197,21 @@ endif()
 
 install(TARGETS _core LIBRARY DESTINATION mew)
 
-# Emit the .pyi stub next to the Python sources so IDEs and type checkers
-# pick it up via the src/-layout (which shadows site-packages for `mew._core`).
+# Generate into the build tree to avoid regenerating the stub on out-of-tree builds.
+set(_MEW_CORE_STUB "${CMAKE_CURRENT_BINARY_DIR}/_core.pyi")
 nanobind_add_stub(
-    _core_stub
+    mew_core_stub
     MODULE _core
-    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
+    OUTPUT ${_MEW_CORE_STUB}
     PATTERN_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/_mew/stubgen.pat
     PYTHON_PATH $<TARGET_FILE_DIR:_core>
     DEPENDS _core
 )
+
+# The checked-in, formatted stub is the distribution artifact. Stub generation
+# above is for verification and explicit maintainer updates; consumer builds
+# need neither ruff nor permission to modify mew's source checkout.
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi DESTINATION mew)
 
 # Run `ruff format` on the freshly-generated stub. Skipped if ruff isn't
 # available (e.g. building from an sdist without dev extras).
@@ -217,12 +222,23 @@ execute_process(
 )
 if(_ruff_available EQUAL 0)
     add_custom_command(
-        TARGET _core_stub POST_BUILD
+        TARGET mew_core_stub POST_BUILD
         COMMAND ${Python_EXECUTABLE} -m ruff check --fix --exit-zero --quiet
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
+            ${_MEW_CORE_STUB}
         COMMAND ${Python_EXECUTABLE} -m ruff format --quiet
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
+            ${_MEW_CORE_STUB}
         COMMENT "ruff fix + format _core.pyi"
         VERBATIM
     )
 endif()
+
+# Updating the repository copy is an explicit maintainer action. Normal builds
+# only read the source tree.
+add_custom_target(
+    update_mew_core_stub
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${_MEW_CORE_STUB}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
+    DEPENDS mew_core_stub
+    COMMENT "Updating checked-in src/mew/_core.pyi"
+    VERBATIM)
