@@ -281,9 +281,6 @@ def _register_family(
     if name is not None:
         _check_name(name)
 
-    # Guard before adding: a failed double-registration must not leave a
-    # second entry in the registry.
-    _mark_registered(target)
     file = _source_file(target)
     base_name = name or _qualified_name(target, file)
     cases = [dict(kw) for kw in variants]
@@ -304,6 +301,9 @@ def _register_family(
             "(non-scalar parameter values collapse to their type name)"
         )
 
+    # Mark only after validation: a rejected decorator must leave the function
+    # available for a corrected registration attempt.
+    _mark_registered(target)
     trampoline = _make_family_trampoline(
         target,
         cases,
