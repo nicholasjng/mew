@@ -11,6 +11,7 @@ returns is stamped onto that repetition's ``Run`` and reaches reporters as the
 from __future__ import annotations
 
 from importlib.util import find_spec
+from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -49,9 +50,16 @@ class PyinstrumentManager:
     sessions : list[Session]
         Every session captured, kept only so :func:`write_html` can render one
         combined report; the per-row summaries ride on the ``Run``.
+
+    Raises
+    ------
+    ValueError
+        If ``interval`` is not positive and finite.
     """
 
     def __init__(self, interval: float = 1e-4) -> None:
+        if not isfinite(interval) or interval <= 0:
+            raise ValueError(f"interval must be a positive finite number, got {interval!r}")
         self._interval = interval
         self._prof: Profiler | None = None
         self._session: Session | None = None
