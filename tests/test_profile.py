@@ -295,7 +295,8 @@ def test_memray_manager_reports_loop_allocations(tmp_path):
             memory_manager=_memory.manager(stack),
         )
     mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
-    assert mem["total_bytes"] < setup_bytes / 10
+    assert mem["peak_bytes"] < setup_bytes / 10
+    assert "total_bytes" not in mem
     assert mem["allocations_per_iteration"] == pytest.approx(
         mem["total_allocations"] / mem["iterations"]
     )
@@ -329,6 +330,14 @@ def test_pyinstrument_manager_summarizes_the_hot_frame(tmp_path):
     assert "spin" in cpu["top_function"]
     # Sessions are retained only so --sample-html can render one combined report.
     assert mgr.sessions
+
+
+@pytest.mark.parametrize("interval", [0, -1, float("nan"), float("inf")])
+def test_pyinstrument_manager_rejects_invalid_interval(interval):
+    from mew.cpu import PyinstrumentManager
+
+    with pytest.raises(ValueError, match="interval"):
+        PyinstrumentManager(interval=interval)
 
 
 def test_to_dict_serializes_enums_as_plain_strings(tmp_path):

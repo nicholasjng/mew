@@ -155,8 +155,33 @@ pattern = "b*"
 reason = "??"
 """
     )
-    with pytest.raises(ValueError, match="ignore=true or threshold"):
+    with pytest.raises(ValueError, match="exactly one of ignore=true or threshold"):
         load_config(default_threshold=5.0, path=py)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'ignore = "false"',
+        "ignore = true\nthreshold = 10.0",
+        "threshold = true",
+        "threshold = -1.0",
+        "threshold = nan",
+    ],
+)
+def test_load_config_rejects_invalid_rule_modes(tmp_path: Path, body: str) -> None:
+    py = tmp_path / "pyproject.toml"
+    py.write_text(
+        f"""\n[[tool.mew.regressions.allow]]\npattern = "b*"\nreason = "invalid"\n{body}\n"""
+    )
+    with pytest.raises(ValueError):
+        load_config(default_threshold=5.0, path=py)
+
+
+@pytest.mark.parametrize("threshold", [-1, float("nan"), float("inf"), True])
+def test_regression_config_rejects_invalid_default_threshold(threshold) -> None:
+    with pytest.raises(ValueError, match="default_threshold"):
+        RegressionConfig(default_threshold=threshold)
 
 
 def test_load_config_explicit_missing_path_errors(tmp_path: Path) -> None:

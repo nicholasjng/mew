@@ -32,6 +32,24 @@ def test_run_exposes_manager_protocol_annotations():
     assert hints["profiler_manager"] == mew.ProfilerManager | None
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"repetitions": 0}, "repetitions"),
+        ({"repetitions": True}, "repetitions"),
+        ({"min_warmup_time": -1}, "min_warmup_time"),
+        ({"min_warmup_time": float("nan")}, "min_warmup_time"),
+        ({"min_time": 0}, "min_time"),
+        ({"min_time": "0x"}, "min_time"),
+        ({"min_time": "1.5x"}, "min_time"),
+        ({"min_time": "forever"}, "min_time"),
+    ],
+)
+def test_run_rejects_invalid_global_options(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        mew.run(**kwargs)
+
+
 def test_counter_binary_scaling_option_is_accepted():
     @mew.benchmark(iterations=1)
     def bench_counter(state):
@@ -258,6 +276,21 @@ def test_threaded_benchmark_runs_without_deadlock():
     mew.run(min_time="1x", reporter=cap)
     assert len(cap.runs) == 1
     assert cap.runs[0]["threads"] == 4
+
+
+@pytest.mark.skipif(
+    getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="threaded mode requires a free-threaded interpreter",
+)
+def test_dense_thread_range_runs_requested_counts():
+    @mew.benchmark(dense_thread_range=(1, 5, 2), iterations=10)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(min_time="1x", reporter=cap)
+    assert [row["threads"] for row in cap.runs] == [1, 3, 5]
 
 
 def test_run_multiple_reporters_fan_out():

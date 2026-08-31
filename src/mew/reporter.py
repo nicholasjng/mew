@@ -265,10 +265,18 @@ class RichReporter:
         pass
 
     def _print_banner(self) -> None:
-        c = self._context
-        host = c.get("host_name") or "?"
-        cpus = c.get("num_cpus", "?")
-        scaling = c.get("cpu_scaling", "?")
+        session = self._context.get("session", {})
+        context = self._context.get("context", {})
+        host = session.get("host") or "?"
+        cpus = context.get("num_cpus", "?")
+        scaling_enabled = context.get("cpu_scaling_enabled")
+        scaling = (
+            "enabled"
+            if scaling_enabled is True
+            else "disabled"
+            if scaling_enabled is False
+            else "?"
+        )
         color = self._term.color
 
         def cy(v: object) -> str:

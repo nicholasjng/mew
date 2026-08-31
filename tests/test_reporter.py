@@ -158,6 +158,8 @@ def test_rich_reporter_runs_without_error():
     _run_one(rep)
     out = buf.getvalue()
     assert "host=" in out
+    assert "host=?" not in out
+    assert "cpus=?" not in out
     assert "Benchmark" in out  # the table header
 
 
@@ -170,10 +172,13 @@ def test_rich_reporter_streams_header_before_first_run():
 
     buf = io.StringIO()
     rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
-    rep.report_context({"host_name": "h", "num_cpus": 4, "cpu_scaling": "off"})
+    rep.report_context(
+        {"session": {"host": "h"}, "context": {"num_cpus": 4, "cpu_scaling_enabled": False}}
+    )
     # Header is already on screen — we haven't reported any runs yet.
     out = buf.getvalue()
     assert "host=" in out
+    assert "host=h cpus=4 scaling=disabled" in out
     assert "Benchmark" in out
     assert "Iters" in out
 
@@ -190,7 +195,9 @@ def test_rich_reporter_profile_flags_add_columns():
         show_memory=True,
         show_cpu=True,
     )
-    rep.report_context({"host_name": "h", "num_cpus": 1, "cpu_scaling": "?"})
+    rep.report_context(
+        {"session": {"host": "h"}, "context": {"num_cpus": 1, "cpu_scaling_enabled": False}}
+    )
     out = buf.getvalue()
     assert "Peak Mem" in out
     assert "Samples" in out
@@ -265,7 +272,9 @@ def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
         show_label=True,
         show_cpu=True,
     )
-    rep.report_context({"host_name": "h", "num_cpus": 1, "cpu_scaling": "?"})
+    rep.report_context(
+        {"session": {"host": "h"}, "context": {"num_cpus": 1, "cpu_scaling_enabled": False}}
+    )
 
     row = _fake_row("bench.py::bench_x", label="a-very-long-case-label-well-past-twenty-chars")
     row["cpu_profile"] = {
@@ -288,7 +297,9 @@ def test_rich_reporter_renders_canonical_name():
 
     buf = io.StringIO()
     rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
-    rep.report_context({"host_name": "h", "num_cpus": 4, "cpu_scaling": "off"})
+    rep.report_context(
+        {"session": {"host": "h"}, "context": {"num_cpus": 4, "cpu_scaling_enabled": False}}
+    )
     rep.report_runs([_fake_row("bench.py::bench_x/case:0/min_time:0.200", label="small")])
     out = buf.getvalue()
     assert "bench.py::bench_x[small]" in out

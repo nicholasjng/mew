@@ -24,7 +24,7 @@ assert "site-packages" in here.parts, f"mew imported from {here}, not an install
 # Loading _core at all proves the repaired extension still resolves its
 # libraries; a botched RPATH rewrite fails right here.
 assert _core.BENCHMARK_VERSION, "Google Benchmark version missing from _core"
-assert mew.__version__, "mew.__version__ is empty"
+assert mew.__version__, "mew.__version__ is empty"  # ty: ignore[redundant-condition]
 
 # Declared package data, absent from the wheel if wheel.packages ever drifts.
 for data in ("py.typed", "_core.pyi"):
