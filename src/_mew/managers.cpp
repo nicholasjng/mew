@@ -23,6 +23,14 @@ using namespace nb::literals;
 
 namespace {
 
+void set_manager_result_type_error(const char* message) {
+    try {
+        throw nb::type_error(message);
+    } catch (...) {
+        mew_set_pending_abort(std::current_exception());
+    }
+}
+
 // Holds the Python manager and calls it under the GIL, never letting an
 // exception escape into Google Benchmark.
 class PyManager {
@@ -51,25 +59,36 @@ class PyManager {
 };
 
 // Keys the manager omits keep their tombstone and are dropped by `Run.to_dict`.
-void fill_memory_result(const nb::dict& d, benchmark::MemoryManager::Result& out) {
-    if (d.contains("total_allocations")) out.num_allocs = nb::cast<int64_t>(d["total_allocations"]);
-    if (d.contains("peak_bytes")) out.max_bytes_used = nb::cast<int64_t>(d["peak_bytes"]);
-    if (d.contains("total_bytes")) out.total_allocated_bytes = nb::cast<int64_t>(d["total_bytes"]);
-    if (d.contains("net_heap_growth"))
-        out.net_heap_growth = nb::cast<int64_t>(d["net_heap_growth"]);
+bool fill_memory_result(const nb::dict& d, benchmark::MemoryManager::Result& out) {
+    auto set = [&](const char* key, int64_t& target) {
+        if (!d.contains(key)) return true;
+        int64_t value;
+        if (!nb::try_cast(d[key], value)) return false;
+        target = value;
+        return true;
+    };
+    return set("total_allocations", out.num_allocs) && set("peak_bytes", out.max_bytes_used) &&
+           set("total_bytes", out.total_allocated_bytes) &&
+           set("net_heap_growth", out.net_heap_growth);
 }
 
 // One flat Python dict -> the Result's two maps, split by value type, so the
 // manager author never sees that C++ keeps strings and numbers apart.
-void fill_profile_result(const nb::dict& d, benchmark::ProfilerManager::Result& out) {
+bool fill_profile_result(const nb::dict& d, benchmark::ProfilerManager::Result& out) {
     for (auto [k, v] : d) {
-        std::string key = nb::cast<std::string>(nb::str(k));
+        std::string key;
+        if (!nb::try_cast(k, key, false)) return false;
         if (nb::isinstance<nb::str>(v)) {
-            out.labels[key] = nb::cast<std::string>(v);
+            std::string value;
+            if (!nb::try_cast(v, value, false)) return false;
+            out.labels[key] = std::move(value);
         } else {
-            out.values[key] = nb::cast<double>(v);
+            double value;
+            if (!nb::try_cast(v, value)) return false;
+            out.values[key] = value;
         }
     }
+    return true;
 }
 
 class PyMemoryManager final : public benchmark::MemoryManager, public PyManager {
@@ -84,7 +103,11 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
     void Stop(Result& out) override {
         nb::gil_scoped_acquire gil;
         nb::object r = call("stop");
-        if (!r.is_none()) fill_memory_result(nb::cast<nb::dict>(r), out);
+        if (r.is_none()) return;
+        if (!nb::isinstance<nb::dict>(r) || !fill_memory_result(nb::borrow<nb::dict>(r), out)) {
+            set_manager_result_type_error(
+                "memory manager stop() must return a dict with integer values, or None");
+        }
     }
 };
 
@@ -97,12 +120,14 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
         nb::gil_scoped_acquire gil;
         if (nb::hasattr(py_, "pause")) pause_ = py_.attr("pause");
         if (nb::hasattr(py_, "resume")) resume_ = py_.attr("resume");
+        if (nb::hasattr(py_, "get_result")) get_result_ = py_.attr("get_result");
     }
 
     ~PyProfilerManager() override {
         nb::gil_scoped_acquire gil;
         pause_.reset();
         resume_.reset();
+        get_result_.reset();
     }
 
     void AfterSetupStart() override {
@@ -129,9 +154,21 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
     }
 
     void GetResult(Result& out) override {
+        if (!get_result_.is_valid()) return;
         nb::gil_scoped_acquire gil;
-        nb::object r = call("get_result");
-        if (!r.is_none()) fill_profile_result(nb::cast<nb::dict>(r), out);
+        nb::object r;
+        try {
+            r = get_result_();
+        } catch (...) {
+            mew_set_pending_abort(std::current_exception());
+            return;
+        }
+        if (r.is_none()) return;
+        if (!nb::isinstance<nb::dict>(r) || !fill_profile_result(nb::borrow<nb::dict>(r), out)) {
+            set_manager_result_type_error(
+                "profiler manager get_result() must return a flat dict with string keys and "
+                "string or numeric values, or None");
+        }
     }
 
    private:
@@ -151,6 +188,7 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
     std::atomic<bool> active_{false};
     nb::object pause_;
     nb::object resume_;
+    nb::object get_result_;
 };
 
 // GB holds raw pointers to these for the length of the run.
