@@ -320,6 +320,11 @@ def test_loop_scoped_captures_carry_no_stacks(tmp_path):
     `write_flamegraph` re-roots them."""
     memray = pytest.importorskip("memray")
 
+    from mew.memory import _TRACE_PYTHON_ALLOCATORS
+
+    def tracker_for(path):
+        return memray.Tracker(path, trace_python_allocators=_TRACE_PYTHON_ALLOCATORS)
+
     def read_stacks(path):
         reader = memray.FileReader(path)
         stacks = [
@@ -331,13 +336,13 @@ def test_loop_scoped_captures_carry_no_stacks(tmp_path):
         return stacks
 
     def start_in_helper(path, box):
-        tracker = memray.Tracker(path)
+        tracker = tracker_for(path)
         tracker.__enter__()
         box.append(tracker)
 
     # Tracker entered in the same frame as the allocation: the frame is recorded.
     same = tmp_path / "same.bin"
-    tracker = memray.Tracker(same)
+    tracker = tracker_for(same)
     tracker.__enter__()
     keep = bytearray(300_000)
     del keep
