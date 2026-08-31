@@ -345,6 +345,30 @@ def test_pyinstrument_is_rejected_before_import_on_free_threaded(monkeypatch):
         _cpu.require_pyinstrument()
 
 
+def test_hottest_frame_excludes_pyinstrument_internals(tmp_path):
+    from mew.cpu import _hottest_frame
+
+    class Frame:
+        is_synthetic = False
+        line_no = 1
+
+        def __init__(self, function, file_path, self_time, children=()):
+            self.function = function
+            self.file_path = file_path
+            self.total_self_time = self_time
+            self.children = list(children)
+
+    user = Frame("work", str(tmp_path / "project" / "bench.py"), 0.1)
+    sampler = Frame(
+        "_start_sampling",
+        str(tmp_path / "venv" / "pyinstrument" / "stack_sampler.py"),
+        1.0,
+        [user],
+    )
+
+    assert _hottest_frame(cast("Any", sampler)) == ("work (bench.py:1)", 0.1)
+
+
 @pytest.mark.parametrize("interval", [0, -1, float("nan"), float("inf")])
 def test_pyinstrument_manager_rejects_invalid_interval(interval):
     from mew.cpu import PyinstrumentManager
