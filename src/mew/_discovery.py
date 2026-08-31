@@ -1,7 +1,4 @@
-"""Pytest-style benchmark discovery: walk paths, glob for files, import them.
-
-Internal: not part of the public API, carries no stability guarantee.
-"""
+"""Discover and import benchmark modules."""
 
 from __future__ import annotations
 
@@ -74,14 +71,8 @@ def collect_files(
 
 
 def import_file(path: Path) -> None:
-    """Import ``path`` as a module; decorator side-effects populate :data:`REGISTRY`.
-
-    Prepends the parent dir to ``sys.path`` (pytest ``prepend`` mode) so a bench file
-    can import a sibling; left in place so run-time-deferred imports still resolve.
-    """
-    # Stable module name from the resolved path so reimports are no-ops; a
-    # content-addressed digest keeps it deterministic across processes and
-    # collision-resistant, unlike the salted built-in hash.
+    """Import a benchmark file, allowing imports from its parent directory."""
+    # Use a stable, collision-resistant module name.
     resolved = path.resolve()
     digest = hashlib.sha1(str(resolved).encode()).hexdigest()[:16]
     mod_name = f"mew._bench_{digest}"
@@ -106,11 +97,7 @@ def import_file(path: Path) -> None:
 
 @contextmanager
 def discovered() -> Iterator[None]:
-    """Unload whatever was imported in the block at exit.
-
-    Wrap collection *and the run* so modules stay live during execution, then get
-    cleaned up at the boundary. Only additions made inside the block are undone.
-    """
+    """Remove benchmark modules and paths added within the context on exit."""
     mod_mark = len(_loaded_modules)
     path_mark = len(_inserted_paths)
     try:

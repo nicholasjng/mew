@@ -1,11 +1,4 @@
-"""Optional memory profiling via memray, wired in as a Google Benchmark memory manager.
-
-Google Benchmark drives the capture itself: when a memory manager is registered
-it runs one extra, untimed pass of each benchmark body per repetition, bracketed
-by :meth:`MemrayManager.start` / :meth:`MemrayManager.stop`, and stamps the
-returned figures onto that repetition's ``Run``. They reach reporters as the
-``memory`` block of a :class:`~mew._typing.BenchmarkResult`, projected by ``Run.to_dict``.
-"""
+"""Memory profiling with memray and Google Benchmark's memory manager."""
 
 from __future__ import annotations
 
@@ -33,14 +26,7 @@ _MEW_DIR = str(Path(__file__).parent)
 
 
 def _caller_frame() -> Frame:
-    """The benchmark frame memray is about to drop, as ``(function, file, lineno)``.
-
-    memray seeds its shadow stack with the frame active at tracker start and pops
-    it on return. :meth:`MemrayManager.start` is called from C++ and returns
-    before the body allocates, so grabbing the frame here is the only chance to
-    keep it. Walks past mew's own frames, so a family reports the user's body
-    rather than the generated trampoline.
-    """
+    """Return the first caller frame outside mew."""
     frame = sys._getframe(1)
     while frame is not None and frame.f_code.co_filename.startswith(_MEW_DIR):
         frame = frame.f_back
@@ -51,10 +37,7 @@ def _caller_frame() -> Frame:
 
 @dataclass(frozen=True, slots=True)
 class _RootedRecord:
-    """A memray ``AllocationRecord`` with a synthetic root frame appended.
-
-    Stacks are leaf-first, so the benchmark frame goes last.
-    """
+    """A memray allocation record rooted at its benchmark frame."""
 
     size: int
     n_allocations: int

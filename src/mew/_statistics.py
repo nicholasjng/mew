@@ -1,11 +1,4 @@
-"""Custom-statistic reducers for ``mew compare``.
-
-A :data:`Statistic` reduces a benchmark's per-repetition values to one scalar.
-:func:`resolve_statistic` accepts a built-in name; every reducer is handed a
-``list[float]``. The built-ins are numpy-free and cover the cases a comparison
-needs -- a plugin hook for arbitrary importable reducers would add a class of
-runtime failures (bad import, non-callable, wrong signature) to a CLI flag.
-"""
+"""Built-in reducers for ``mew compare``."""
 
 from __future__ import annotations
 

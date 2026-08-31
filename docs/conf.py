@@ -91,13 +91,7 @@ html_theme_options = {
 
 
 def _render_cli_help() -> None:
-    """Capture argparse ``--help`` output for the CLI reference page.
-
-    Imports mew.cli lazily so a missing extension build at conf-load time
-    surfaces as a Sphinx warning rather than an import crash. ``main`` is the
-    argparse entrypoint; ``--help`` prints to stdout and raises ``SystemExit``,
-    which the capture below suppresses.
-    """
+    """Write captured CLI help to the generated reference file."""
     out_dir = os.path.join(os.path.dirname(__file__), "_generated")
     os.makedirs(out_dir, exist_ok=True)
     try:

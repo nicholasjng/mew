@@ -21,18 +21,14 @@ setup = "benchmarks/conf.py"
 
 ## Where measurement settings live
 
-The config file holds *project* settings (discovery paths, session tagging,
-regression rules); measurement settings deliberately live elsewhere, where they
-are visible next to what they affect:
+The config file holds project settings such as discovery paths and regression
+rules. Configure measurements in decorators or CLI flags:
 
 - **Per benchmark** — decorator options (`min_time=`, `repetitions=`,
-  `iterations=`, `unit=`, …), versioned with the benchmark itself. These take
-  precedence over any global flag.
+  `iterations=`, `unit=`, …). These take precedence over global flags.
 - **Per invocation** — `mew run` flags (`--min-time`, `--min-warmup-time`,
-  `--repetitions`, `--random-interleaving`), so a result's provenance is the
-  command that produced it. For persistent invocation defaults, use your task
-  runner (justfile, Makefile, CI yaml) — the flags stay visible at the call
-  site.
+  `--repetitions`, `--random-interleaving`). Use a task runner or CI
+  configuration for persistent invocation defaults.
 
 ## Picking sensible defaults
 

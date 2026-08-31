@@ -1,10 +1,8 @@
 # Installation
 
-`mew-bench` is distributed as a CPython 3.11+ package with a small C++ extension
-(Google Benchmark via nanobind). Install it as `mew-bench`, import it as `mew`
-(the shorter name was already taken on PyPI); the CLI is `mew` either way.
-On supported platforms a pre-built wheel is
-installed; otherwise the C++ extension is compiled from source; see
+Install the `mew-bench` package and import it as `mew`; its CLI command is also
+`mew`. Supported platforms use a pre-built wheel. Other platforms compile the
+C++ extension from source; see
 [](../development/building.md) for the toolchain requirements.
 
 ## Using `uv`
@@ -34,19 +32,11 @@ To make `mew` available system-wide, install it as a [uv tool](https://docs.astr
 $ uv tool install mew-bench
 ```
 
-This drops `mew` into an isolated tool environment that uv keeps on your `PATH`.
-Verify with `mew --version`.
+The tool environment does not contain your benchmark suite's dependencies:
 
-That isolation is the catch: the tool environment contains **only** `mew`, not
-your benchmark suite's dependencies. So the commands split in two:
-
-- **Work anywhere**: `mew compare` (reads result files), `mew completions`, and
-  Tab completion. The completion callbacks read a cached benchmark index and
-  never import your `bench_*.py`, so they resolve from outside the project (see
-  [](../guide/cli.md#mew-completions)).
-- **Need your project's deps**: `mew run` and `mew list` import
-  your benchmark files. If those import anything beyond the standard library and
-  `mew`, a bare tool environment can't resolve them.
+- `mew compare` and `mew completions` work from the tool environment.
+- `mew run` and `mew list` require the dependencies imported by the benchmark
+  files.
 
 For the second group, either pull the extra packages into the tool environment:
 
@@ -54,21 +44,13 @@ For the second group, either pull the extra packages into the tool environment:
 $ uv tool install mew-bench --with numpy --with pandas
 ```
 
-or, usually simpler, run `mew` from the project environment that already has
-them, with no global install at all:
+Alternatively, run `mew` from the project environment:
 
 ```console
 $ uv run mew run benchmarks/        # from the project directory; uv syncs first
 ```
 
-`uv run` resolves the project environment without activation. Activating it
-(`source .venv/bin/activate`) puts the same `mew` shim on `PATH` for that shell,
-after which a bare `mew run …` works too, but that's scoped to the active
-shell, not system-wide.
-
-A good split is a global `uv tool` install for the always-on CLI and shell
-completions, plus `uv run mew run` inside each project to actually execute its
-benchmarks.
+`uv run` resolves the project environment without activation.
 
 ## Optional extras
 

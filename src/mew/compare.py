@@ -1,15 +1,4 @@
-"""Compare benchmark result files: deltas, speedups, optional stddev.
-
-Structured as three stages so new comparison dimensions feed the same renderer:
-
-1. **Load** (:func:`_load_sessions`): read a result file into per-session
-   sample groups, discarding nothing.
-2. **Select** (:func:`_select_latest`, :func:`_resolve_session`): resolve the
-   groups to one sample set per file, either by ``path@selector`` or by
-   defaulting to the latest session per name.
-3. **Render** (:func:`_render`): compare a list of labelled columns, one per
-   file or (under ``--by``) one per value of a pivot dimension in a single file.
-"""
+"""Load, compare, and render benchmark results."""
 
 from __future__ import annotations
 
@@ -56,7 +45,7 @@ _CTX_SKEW_FIELDS = ("num_cpus", "cpu_scaling_enabled")
 
 @dataclass(frozen=True, slots=True)
 class Sample:
-    """One benchmark's reduced measurement, the unit every column compares.
+    """A reduced benchmark measurement.
 
     Attributes
     ----------
@@ -92,12 +81,7 @@ class Sample:
 
 @dataclass(frozen=True, slots=True)
 class SessionData:
-    """One session's worth of samples from a result file.
-
-    ``key`` is ``(date, host, session_id)``; the id component is empty for
-    files written before sessions were persisted, where ``(date, host)`` is
-    the best identity available.
-    """
+    """Measurements and context from one benchmark session."""
 
     key: tuple[str, str, str]
     context: dict[str, Any] = field(repr=False)
@@ -132,12 +116,7 @@ def _is_aggregate_row(row: dict[str, Any]) -> bool:
 
 
 def _is_measurement_row(row: dict[str, Any]) -> bool:
-    """A per-repetition benchmark measurement usable for statistics.
-
-    Excludes non-benchmark rows, GB aggregate rows (we recompute statistics
-    ourselves), and skipped rows (their zeroed timings would drag medians
-    toward 0 and produce infinite speedups).
-    """
+    """Return whether a row is a successful, non-aggregate measurement."""
     return (
         isinstance(row.get("name"), str) and not _is_aggregate_row(row) and not row.get("skipped")
     )
@@ -229,12 +208,7 @@ def _pivot_value(row: dict[str, Any], dimension: str) -> Any:
 
 
 def _session_key(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, str, str]:
-    """Identify which session a row belongs to.
-
-    JSONL rows carry the `session` block per-row; JSON rows inherit the file's
-    single one via ``file_ctx``. The id keeps two runs distinct even when they
-    share a wall-clock second on one host. Date leads so chronological sort holds.
-    """
+    """Return ``(date, host, id)`` for a result row."""
     sess = _session_block(row, file_ctx)
     return (str(sess.get("date") or ""), str(sess.get("host") or ""), str(sess.get("id") or ""))
 
@@ -246,15 +220,7 @@ def _session_block(row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[str, A
 
 
 def _session_group(row: dict[str, Any], file_ctx: dict[str, Any]) -> tuple[str, str]:
-    """The bucket a row aggregates into, which is *not* its identity.
-
-    Runs on one host sharing a ``session.tag``, or (absent one) the same
-    ``context.vcs.commit``, are one bucket: repeated runs at one revision belong
-    together, so an ``--append`` archive of interleaved A/B runs reduces over
-    every repetition instead of keeping only the last. Record the commit with
-    ``mew.update_context(mew.vcs_context())``. Runs with neither fall back to
-    their own session id (or date), one bucket per run.
-    """
+    """Group runs on one host by tag, VCS commit, or session identity."""
     sess = _session_block(row, file_ctx)
     host = str(sess.get("host") or "")
     if tag := sess.get("tag"):
@@ -279,12 +245,7 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
 
 
 class _NoMetricValues(ValueError):
-    """A row group carries no values for the requested metric (skip the benchmark).
-
-    Distinct from ``ValueError`` so a failing custom statistic (e.g.
-    ``statistics.StatisticsError``, a ``ValueError`` subclass) is surfaced to the
-    user instead of silently dropping the benchmark.
-    """
+    """A row group has no values for the requested metric."""
 
 
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
@@ -295,12 +256,7 @@ def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
 def _aggregate_group(
     rows: list[dict[str, Any]], metric: str, statistic: Statistic | None = None
 ) -> tuple[float, float | None]:
-    """Center and (sample) stddev across a group of per-repetition rows.
-
-    The center is the median by default (stdlib, no numpy); ``statistic`` swaps in
-    a custom reducer (p95, geometric mean, …) via :func:`reduce_statistic`. stddev
-    stays the spread measure either way, feeding the noise (CV) flag.
-    """
+    """Return the selected center and sample standard deviation for a row group."""
     values = _metric_values(rows, metric)
     if not values:
         raise _NoMetricValues(f"no {metric!r} values in group")
@@ -391,14 +347,7 @@ def _samples_from_groups(
 def _group_by_session(
     rows: list[dict[str, Any]], file_ctx: dict[str, Any]
 ) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
-    """Bucket benchmark rows by session key, keeping only measurement rows
-    (see :func:`_is_measurement_row`).
-
-    Shared front half of both load paths: :func:`_load_sessions` sub-groups each
-    bucket by name, :func:`_load_pivot_columns` keeps the latest bucket whole and
-    pivots it on a dimension. Aggregate rows are dropped because we recompute statistics
-    ourselves, so results are consistent whether a file used ``--repetitions=1`` or N.
-    """
+    """Group successful measurement rows by session."""
     buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for r in rows:
         if not _is_measurement_row(r):
@@ -423,11 +372,7 @@ def _group_by_name(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]
 def _load_sessions(
     path: Path, metric: str, statistic: Statistic | None = None
 ) -> list[SessionData]:
-    """Load every session in a result file, sorted by ascending date.
-
-    Nothing is discarded here; collapsing to one sample set per file is the select
-    stage's job (:func:`_select_latest` today, ``path@…`` selectors later).
-    """
+    """Load all sessions in ascending date order."""
     rows, file_ctx = _read_rows(path)
 
     sessions: list[SessionData] = []
@@ -451,13 +396,7 @@ def _load_sessions(
 def _load_pivot_columns(
     path: Path, metric: str, key: str, dimension: str, statistic: Statistic | None = None
 ) -> list[tuple[str, dict[str, Sample], dict[str, Any]]]:
-    """Pivot one file's latest session into ``(value, samples, context)`` columns.
-
-    The pivot dimension and sessions are orthogonal: pick the latest session, then
-    group its rows by ``dimension`` (typically ``context.<key>``, set per suite with
-    :func:`mew.set_context`). Column order follows first encounter, which is the
-    order the rows were written in.
-    """
+    """Pivot the latest session into ``(value, samples, context)`` columns."""
     rows, file_ctx = _read_rows(path)
     by_session = _group_by_session(rows, file_ctx)
     if not by_session:
@@ -484,11 +423,7 @@ def _load_pivot_columns(
 def _select_latest(
     path: Path, sessions: list[SessionData]
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
-    """Default session selection: per name, the latest session that has it wins.
-
-    Warns (once) when older sessions are discarded, so concatenated archives
-    don't silently compare stale numbers.
-    """
+    """Select each benchmark's latest session, warning about discarded data."""
     if not sessions:
         return {}, {}
     merged: dict[str, Sample] = {}
@@ -518,12 +453,7 @@ _MIN_ID_PREFIX = 4
 
 
 def _split_selector(raw: str) -> tuple[Path, str | None]:
-    """Split ``path@selector`` into its parts.
-
-    A file existing on disk under the whole argument is an escape hatch for names
-    containing ``@`` (returned as a plain path). Otherwise the part after the last
-    ``@`` is the selector.
-    """
+    """Split ``path@selector``, preserving existing paths that contain ``@``."""
     if Path(raw).exists():
         return Path(raw), None
     base, sep, selector = raw.rpartition("@")

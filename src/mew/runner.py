@@ -134,25 +134,15 @@ def _gb_argv(
     repetitions: int | None,
     random_interleaving: bool,
 ) -> list[str]:
-    """Google Benchmark argv for the structured global knobs.
+    """Build Google Benchmark arguments for global run options.
 
-    Deliberately closed: per-benchmark knobs live on the decorators, benchmark
-    selection is Python-side (:meth:`Registry.filter` / ``entries``), and GB's
-    output/reporting flags would fight mew's own reporters. A new global knob
-    earns a keyword on :func:`run`, not an argv passthrough.
-
-    Every knob is emitted on every call, pinned to GB's own default when unset:
-    GB flags are process-global, so a value parsed for one run would otherwise
-    silently apply to every later :func:`run` in the same process (e.g.
-    ``repetitions=2`` once → doubled rows forever after). Per-benchmark
-    decorator options still win over these globals inside GB.
+    All values are emitted because Google Benchmark flags persist across runs
+    in the same process. Decorator options take precedence.
     """
     if min_time is None:
         mt = "0.5s"  # GB's default min time
     else:
-        # A bare number means seconds, but GB deprecates the suffix-less form
-        # (one "should have a suffix" line per benchmark on stderr): stamp the
-        # `s`. Non-numeric strings ("100x", "0.5s") pass through untouched.
+        # Add the suffix Google Benchmark requires for seconds.
         mt = str(min_time).strip()
         try:
             float(mt)

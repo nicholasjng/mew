@@ -53,10 +53,8 @@ $ mew run --format json | jq '.benchmarks | length'
 
 ### Selecting from stdin
 
-`--stdin` reads newline-delimited selectors from standard input, so you can pipe
-a filtered `mew list` straight into a run, no `xargs`. Each line is matched
-**literally**, so a displayed `name[label]` (brackets and all) works without
-escaping. Lines come in two shapes:
+`--stdin` reads literal, newline-delimited selectors. This supports piping a
+filtered `mew list` directly into `mew run`:
 
 ```console
 $ mew list -k slow | mew run --stdin                    # file.py::name selectors
@@ -66,10 +64,8 @@ $ mew list --show-cases -k 'n=1000' | mew run --stdin   # one case; no -F needed
 - A line **with `::`** (`file.py::name`, the default `mew list` output) is a
   selector: `mew run` imports that path and filters by the name. The path is
   relative, so run from the directory you listed from.
-- A **path-free** line (`mew list --names-only` output) is
-  a name *filter*: `mew run` discovers benchmarks its usual way (positional paths
-  or `[tool.mew] benchpaths`) and keeps the ones whose name matches. Because the
-  name carries no path, this round-trips from **any** directory:
+- A **path-free** line (`mew list --names-only` output) filters benchmarks
+  discovered from positional paths or `[tool.mew] benchpaths`:
 
 ```console
 $ mew list --names-only -k slow | mew run benchmarks/ --stdin
@@ -124,13 +120,10 @@ See [](regressions.md) for matching, metrics, the regression gate, and allowlist
 ## `mew completions`
 
 Print a shell-completion script for `bash`, `zsh`, or `fish` to
-stdout. The scripts are generated from the CLI itself, so they stay in sync with
-the commands and flags. They complete subcommands, per-command options, file
-paths for path arguments, and fixed choices (`--format`, the shell list).
+stdout. They complete commands, options, paths, and fixed choices.
 
-The scripts are **static**: they never call `mew` at completion time. Install
-them as a **file**, generated once, so shell startup doesn't depend on `mew`
-being importable — which matters when `mew` lives only in a virtualenv.
+The scripts are static and never call `mew` during completion. Install them as
+files:
 
 ```console
 # bash
@@ -143,9 +136,7 @@ $ mew completions zsh > ~/.mew-completions.zsh
 $ mew completions fish > ~/.config/fish/completions/mew.fish
 ```
 
-The `eval` one-liner (`eval "$(mew completions zsh)"` in your rc) also works, but
-it re-runs `mew` at every shell startup, so **guard it**, or you'll get a
-`command not found: mew` on every new shell when no venv is active:
+To generate completions at shell startup, guard against a missing command:
 
 ```console
 $ command -v mew >/dev/null 2>&1 && eval "$(mew completions zsh)"

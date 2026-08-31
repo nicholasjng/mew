@@ -22,7 +22,6 @@ __all__ = ["vcs_context"]
 
 def _run(cwd: Path | None, program: str, *args: str) -> str | None:
     """Stripped stdout of ``program args``, or None on failure/empty."""
-    # Deferred: keeps subprocess (~6ms) off the `import mew` path.
     import shutil
     import subprocess
 

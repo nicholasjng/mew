@@ -415,20 +415,7 @@ def compare(
 
 
 class _CommandHelpFormatter(argparse.HelpFormatter):
-    """Help formatter for the git-style layout, with light ANSI color.
-
-    Tweaks over the argparse default:
-
-    * Drop the ``<command>`` metavar header argparse renders above a subparsers
-      group, so commands sit directly under the ``commands:`` heading.
-    * Render value placeholders as ``<spiky-braces>`` (e.g. ``--pattern
-      <pattern>``) instead of ``UPPERCASE``.
-    * On a color terminal, bold the section headings and tint option flags. The
-      styling wraps matches *after* argparse lays the text out (ANSI codes around
-      disjoint regex matches add no visible characters), so column alignment is
-      untouched; it falls back to plain when stdout isn't a TTY or ``NO_COLOR``
-      is set, keeping pipes, CI logs, and the docs ``--help`` capture clean.
-    """
+    """Render git-style help with optional ANSI color."""
 
     def _format_action(self, action: argparse.Action) -> str:
         text = super()._format_action(action)
@@ -447,15 +434,12 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
 
     def format_help(self) -> str:
         text = super().format_help()
-        # TTY check at format time, not import: the docs generator captures stdout
-        # (non-TTY) and must get plain text.
+        # Captured help and redirected output remain plain text.
         if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
             return text
         from mew._console import sgr
 
-        # Wrap disjoint matches in ANSI: column-0 headings, long/short flags, and
-        # <metavars>. The patterns don't overlap (and ANSI codes carry no -, --,
-        # or <>), so sequential subs never nest.
+        # Style headings, flags, and metavariables after layout.
         for pattern, style in (
             (r"(?m)^[A-Za-z][A-Za-z ]*:", "bold"),
             (r"(?<![\w-])--[A-Za-z][\w-]*", "cyan"),
