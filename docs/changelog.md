@@ -85,6 +85,8 @@ variant orchestration and native-profiler integrations have been removed.
   streams are reset after finalization.
 - Native warning flags are selected correctly for MSVC, and Google Benchmark
   patches are applied reproducibly across platforms.
+- CPU profiling is rejected on free-threaded Python instead of allowing
+  pyinstrument's native sampler to silently enable the GIL.
 
 ## Version 0.1.1 (Jul 30, 2026)
 

@@ -4,6 +4,10 @@
 [pyinstrument](https://pyinstrument.readthedocs.io/) in a separate pass and
 attaches the sample count and hottest frame to its result.
 
+Pyinstrument's native sampler does not currently support free-threaded Python;
+use a regular CPython build for CPU profiling. Mew rejects `--sample` rather
+than letting the import silently enable the GIL.
+
 This is **in-process** sampling: it sees Python frames only. To capture native
 (C/C++) frames from a compiled extension, see {doc}`profiling-native`.
 
