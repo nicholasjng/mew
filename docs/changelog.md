@@ -79,14 +79,16 @@ variant orchestration and native-profiler integrations have been removed.
   cheaply.
 - Optional profiler `get_result()` methods and `None` results are handled
   correctly; malformed manager result dictionaries raise descriptive errors.
+- Duplicate low-level manager registration is rejected safely.
 - Invalid global run options and malformed regression thresholds or allow rules
   are rejected instead of being silently ignored or coerced.
 - Reusing a `JSONReporter` no longer corrupts comma placement, and owned output
   streams are reset after finalization.
 - Native warning flags are selected correctly for MSVC, and Google Benchmark
   patches are applied reproducibly across platforms.
-- CPU profiling is rejected on free-threaded Python instead of allowing
-  pyinstrument's native sampler to silently enable the GIL.
+- CPU profiling excludes pyinstrument's own frames from hottest-function
+  summaries. It is rejected on free-threaded Python instead of silently
+  enabling the GIL.
 
 ## Version 0.1.1 (Jul 30, 2026)
 
