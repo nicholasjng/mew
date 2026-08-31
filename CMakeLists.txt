@@ -171,7 +171,11 @@ nanobind_add_module(
 
 # Scoped to _core so the fetched Google Benchmark keeps its own warning settings.
 # Not -Werror: a newer compiler or nanobind release must not break the build.
-target_compile_options(_core PRIVATE -Wall -Wextra)
+if(MSVC)
+    target_compile_options(_core PRIVATE /W4)
+else()
+    target_compile_options(_core PRIVATE -Wall -Wextra)
+endif()
 
 target_include_directories(_core PRIVATE src/_mew)
 target_link_libraries(_core PRIVATE benchmark::benchmark)
