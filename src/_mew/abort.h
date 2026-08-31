@@ -1,13 +1,4 @@
-// One channel for "stop this run and rethrow afterwards".
-//
-// GB's callback interfaces are effectively noexcept, and nanobind cannot hand a
-// Python error to a frame not prepared for one, so every boundary (trampoline,
-// reporter, manager) catches and stashes here; `run_benchmarks` rethrows once
-// the loop returns. The trampoline also polls `mew_abort_pending()`, so a broken
-// sink or a Ctrl-C stops the suite instead of measuring results it will discard.
-//
-// A body raising a plain `Exception` is not an abort: that is a per-benchmark
-// `SkipWithError` and the run continues.
+// Store exceptions that cannot unwind through Google Benchmark callbacks.
 
 #pragma once
 

@@ -1,4 +1,4 @@
-// State bindings: wraps benchmark::State for Python iteration and metrics.
+// Python interface to benchmark::State.
 
 #include <benchmark/benchmark.h>
 #include <nanobind/nanobind.h>
@@ -12,8 +12,7 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 namespace {
-// ScopedPauseTiming is non-movable; hold it behind unique_ptr to defer
-// construction until __enter__.
+// ScopedPauseTiming is non-movable and starts timing control on construction.
 struct PauseScope {
     benchmark::State* state;
     std::unique_ptr<benchmark::ScopedPauseTiming> guard;
@@ -59,8 +58,7 @@ void register_state(nb::module_& m) {
             "__enter__",
             [](PauseScope& self) -> PauseScope& {
                 self.guard = std::make_unique<benchmark::ScopedPauseTiming>(*self.state);
-                // Suspend the in-process sampler too, so `pause()` excludes setup
-                // from the CPU profile exactly as it excludes it from the timing.
+                // Match CPU sampling to the timed region.
                 mew_profiler_pause();
                 return self;
             },
@@ -68,9 +66,7 @@ void register_state(nb::module_& m) {
         .def(
             "__exit__",
             [](PauseScope& self, nb::object, nb::object, nb::object) {
-                // Guard the pairing: an __exit__ without a matching __enter__
-                // would leave the profiler's depth counter below zero, after
-                // which it never suspends again.
+                // Ignore an unmatched direct __exit__ call.
                 if (!self.guard) return;
                 mew_profiler_resume();
                 self.guard.reset();
@@ -95,10 +91,7 @@ void register_state(nb::module_& m) {
                 if (n <= 0) throw nb::value_error("batch size must be positive");
                 return self.KeepRunningBatch(n);
             },
-            "n"_a,
-            "Advance the iteration counter by `n`; return whether the budget permits another "
-            "batch.\n"
-            "Prefer `State.batches` for the idiomatic loop form.")
+            "n"_a, "Advance by `n` iterations and return whether another batch should run.")
         .def(
             "batches",
             [](benchmark::State& self, int64_t n) {
@@ -106,11 +99,8 @@ void register_state(nb::module_& m) {
                 return BatchIter{&self, n};
             },
             nb::keep_alive<0, 1>(), "n"_a,
-            "Return an iterator yielding `n` once per batch until the budget is spent.\n"
-            "Use with a nested `for _ in range(n)` to amortize `__next__` dispatch for very fast "
-            "bodies.\n"
-            "Reported times include a small per-batch overshoot; do not mix with `for _ in state` "
-            "results.")
+            "Iterate in batches of `n`, reducing dispatch overhead for fast bodies.\n"
+            "The final batch may exceed the iteration budget.")
         .def(
             "pause", [](benchmark::State& self) { return PauseScope{&self, nullptr}; },
             nb::keep_alive<0, 1>(),
@@ -136,9 +126,7 @@ void register_state(nb::module_& m) {
                 self.counters[name] = benchmark::Counter(value, flags, one_k);
             },
             "name"_a, "value"_a,
-            // Spell the default symbolically. nanobind renders defaults with
-            // PyObject_Repr, and since 3.11 every IntFlag member reprs as a bare
-            // int (enum.ReprEnum inherits int.__repr__), so this would read `= 0`.
+            // Keep enum names in generated signatures.
             "flags"_a.sig("CounterFlags.kDefaults") = benchmark::Counter::kDefaults,
             "one_k"_a.sig("CounterOneK.kIs1000") = benchmark::Counter::kIs1000,
             "Attach a user-defined counter, surfaced in `BenchmarkResult['counters']`.\n"
@@ -156,10 +144,7 @@ void register_state(nb::module_& m) {
                 }
                 return self.range(pos);
             },
-            "pos"_a = 0,
-            "The `pos`-th range argument this benchmark was registered with.\n"
-            "`@parametrize` / `@product` families use `range(0)` as the case index; "
-            "the trampoline reads it to bind that case's kwargs and label.")
+            "pos"_a = 0, "Return the range argument at `pos`.")
         .def_prop_ro("range_size", &benchmark::State::range_size,
                      "Number of range arguments available to `range`.")
         .def_prop_ro("iterations", &benchmark::State::iterations,

@@ -1,5 +1,4 @@
-// Registry bindings: register a Python callable as a Google Benchmark,
-// exposing the Benchmark* as a chainable handle.
+// Register Python callables with Google Benchmark.
 
 #include <benchmark/benchmark.h>
 #include <nanobind/nanobind.h>
@@ -18,7 +17,6 @@ void register_registry(nb::module_& m) {
     nb::class_<benchmark::Benchmark>(
         m, "BenchmarkHandle",
         "Handle to a registered Google Benchmark.\n"
-        "Methods return the same handle so options can be chained.\n"
         "Invalidated by the next `clear_registered_benchmarks()` call or "
         "interpreter shutdown; using a stale handle is undefined behaviour.")
         .def("min_time", &benchmark::Benchmark::MinTime, "seconds"_a, nb::rv_policy::reference,
@@ -46,10 +44,7 @@ void register_registry(nb::module_& m) {
              "Register one case per value in `[start, limit]`, readable via `State.range`.")
         .def("threads", &benchmark::Benchmark::Threads, "n"_a, nb::rv_policy::reference,
              "Run the benchmark with `n` threads, each with its own State and timer.\n"
-             "Requires a free-threaded interpreter: under the GIL the "
-             "trampoline holds the GIL across Google Benchmark's per-thread start "
-             "barrier, so the workers deadlock rather than run. On a GIL build mew "
-             "warns and skips threaded benchmarks by default (see mew.run).")
+             "Requires a free-threaded interpreter; mew skips it otherwise.")
         .def("thread_range", &benchmark::Benchmark::ThreadRange, "min_threads"_a, "max_threads"_a,
              nb::rv_policy::reference,
              "Run the benchmark once per thread count in [min_threads, max_threads], "
@@ -68,12 +63,10 @@ void register_registry(nb::module_& m) {
     m.def(
         "register_benchmark",
         [](const std::string& name, nb::callable fn) -> benchmark::Benchmark* {
-            // Wrap the Python callable in a shared_ptr so the lambda is copyable
-            // (Google Benchmark stores it as a std::function).
+            // Google Benchmark stores a copyable std::function.
             auto holder = std::make_shared<nb::callable>(std::move(fn));
             return benchmark::RegisterBenchmark(name, [holder](benchmark::State& s) {
-                // The run is already aborting (a Ctrl-C, or a reporter/manager
-                // that raised): wind down without touching Python again.
+                // Avoid Python calls while an abort is pending.
                 if (mew_abort_pending()) {
                     s.SkipWithError("aborted");
                     return;

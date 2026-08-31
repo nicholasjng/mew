@@ -1,9 +1,4 @@
-// Reporter bindings: bridges a Python reporter into GB's BenchmarkReporter
-// interface and exposes `run_benchmarks`.
-//
-// The C++ `Run` is never handed to Python: `run_to_dict` projects it to a
-// `BenchmarkResult` at the boundary, so reporters only ever see dicts -- the one shape
-// every row source can produce, including the ones Google Benchmark never made.
+// Python adapter for Google Benchmark's reporter interface.
 
 #include <benchmark/benchmark.h>
 #include <nanobind/nanobind.h>
@@ -64,7 +59,7 @@ nb::dict profile_block(const Run& r) {
     return d;
 }
 
-// The single Run -> BenchmarkResult projection; everything a reporter sees comes through here.
+// Convert a native result to the public mapping shape.
 nb::dict run_to_dict(const Run& r) {
     nb::dict d;
     d["name"] = r.benchmark_name();
@@ -99,11 +94,9 @@ nb::dict run_to_dict(const Run& r) {
 class PyReporter : public BenchmarkReporter {
    public:
     nb::object py;
-    // Caller keys (session id/tag, user context) overlaid onto the GB context
-    // before the Python reporter sees it. Empty when no provenance is passed.
+    // Context supplied by the Python runner.
     nb::dict extra_context;
-    // Rows mew built itself (benchmarks it declined to run), flushed after the
-    // context so they precede finalize, where buffering reporters write.
+    // Rows for benchmarks rejected before native registration.
     nb::list extra_rows;
 
     PyReporter(nb::object obj, nb::dict extra, nb::list rows)
@@ -116,8 +109,6 @@ class PyReporter : public BenchmarkReporter {
         extra_rows.reset();
     }
 
-    // GB's own Context carries nothing mew needs: `mew.runner` assembles the
-    // whole block and passes it as `extra_context`.
     bool ReportContext(const Context&) override {
         nb::gil_scoped_acquire gil;
         try {
@@ -125,8 +116,6 @@ class PyReporter : public BenchmarkReporter {
             if (extra_rows.size() > 0) py.attr("report_runs")(extra_rows);
             return true;
         } catch (...) {
-            // The only way a reporter stops the run: `false` makes GB skip every
-            // benchmark, and `run_benchmarks` rethrows once the loop returns.
             mew_set_pending_abort(std::current_exception());
             return false;
         }
@@ -161,11 +150,7 @@ void register_reporter(nb::module_& m) {
     m.def(
         "warmup_free_threading",
         [] {
-            // Force CPython's first secondary-thread attach before Google
-            // Benchmark starts several raw workers concurrently. Do this in
-            // native code: handing a Python callable to threading.Thread
-            // exercises biased cross-thread refcounting and obscures mew's
-            // own races under ThreadSanitizer.
+            // Attach one thread before Google Benchmark starts its workers.
             nb::gil_scoped_release release;
             std::thread worker([] { nb::gil_scoped_acquire acquire; });
             worker.join();
@@ -178,11 +163,7 @@ void register_reporter(nb::module_& m) {
             benchmark::CPUInfo::Get();
             benchmark::SystemInfo::Get();
         },
-        "Force Google Benchmark's lazy CPU/system-info probes to run now.\n"
-        "Their platform diagnostics go straight to fd 2 (e.g. the macOS\n"
-        "hw.cpufrequency sysctl failure); calling this under a scoped fd-2\n"
-        "redirect keeps that noise out of user-visible stderr without\n"
-        "silencing the benchmark run itself.");
+        "Initialize Google Benchmark's CPU and system information.");
     m.def(
         "cpu_info",
         [] {
@@ -237,8 +218,6 @@ void register_reporter(nb::module_& m) {
             // Do NOT clear here: callers clear before registering and atexit
             // handles teardown, so BenchmarkHandles stay valid until the next clear.
 
-            // First abort wins, and it already stopped the run, so there is
-            // nothing to rank. nanobind restores the Python error indicator.
             if (auto abort = mew_take_pending_abort()) {
                 std::rethrow_exception(abort);
             }
@@ -247,10 +226,5 @@ void register_reporter(nb::module_& m) {
         "argv"_a, "reporter"_a = nb::none(), "extra_context"_a = nb::dict(),
         "extra_rows"_a = nb::list(),
         "Initialize Google Benchmark with `argv` and run all registered benchmarks.\n"
-        "Returns the number of benchmarks run.\n"
-        "`extra_context` keys are overlaid onto the context dict passed to the "
-        "reporter's `report_context` (session id/tag, user context).\n"
-        "`extra_rows` are pre-built BenchmarkResults reported right after the context, for "
-        "benchmarks mew declined to run.\n"
-        "Pass a `Fanout` reporter to multiplex into multiple sinks.");
+        "Returns the number of benchmarks run.");
 }

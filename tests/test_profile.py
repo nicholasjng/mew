@@ -67,6 +67,28 @@ class FakeProfilerManager:
         return self._result
 
 
+def test_memory_manager_registration_rejects_replacement():
+    from mew import _core
+
+    _core.register_memory_manager(FakeMemoryManager())
+    try:
+        with pytest.raises(ValueError, match="already registered"):
+            _core.register_memory_manager(FakeMemoryManager())
+    finally:
+        _core.unregister_memory_manager()
+
+
+def test_profiler_manager_registration_rejects_replacement():
+    from mew import _core
+
+    _core.register_profiler_manager(FakeProfilerManager())
+    try:
+        with pytest.raises(ValueError, match="already registered"):
+            _core.register_profiler_manager(FakeProfilerManager())
+    finally:
+        _core.unregister_profiler_manager()
+
+
 # --- manager registration and the Run stamp ----------------------------------
 
 
