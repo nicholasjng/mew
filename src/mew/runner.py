@@ -15,6 +15,7 @@ from mew import _core
 from mew._console import overflow
 from mew._registry import REGISTRY, Entry
 from mew._session import new_session_id
+from mew._typing import MemoryManager, ProfilerManager
 from mew.machine import _silence_native_stderr, machine_context
 from mew.reporter import Reporter
 
@@ -181,8 +182,8 @@ def run(
     random_interleaving: bool = False,
     session_tag: str | None = None,
     strict: bool = False,
-    memory_manager: Any | None = None,
-    profiler_manager: Any | None = None,
+    memory_manager: MemoryManager | None = None,
+    profiler_manager: ProfilerManager | None = None,
 ) -> int:
     """Run benchmarks via the C++ Google Benchmark backend.
 
@@ -220,11 +221,11 @@ def run(
         the rest, so a mixed suite still works on stock CPython. Set ``strict`` to
         raise a :class:`RuntimeError` instead, e.g. in CI where the threaded
         benchmarks are the point and a silent skip would mask a misconfiguration.
-    memory_manager : object, optional
+    memory_manager : MemoryManager, optional
         A Google Benchmark memory manager (``start()`` / ``stop()``), e.g.
         :class:`mew.memory.MemrayManager`. Registered for the duration of the run;
         its figures land in each row's ``memory`` block.
-    profiler_manager : object, optional
+    profiler_manager : ProfilerManager, optional
         A Google Benchmark profiler manager (``after_setup_start()`` /
         ``before_teardown_stop()``, optionally ``get_result()`` and
         ``pause()``/``resume()``), e.g. :class:`mew.cpu.PyinstrumentManager`.

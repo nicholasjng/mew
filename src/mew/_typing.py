@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
-from typing import Any, Literal, NotRequired, Protocol, TypedDict, runtime_checkable
+from typing import Any, Literal, NotRequired, Protocol, TypeAlias, TypedDict, runtime_checkable
 
-from mew._core import TimeUnit
+from mew._core import CounterFlags, CounterOneK, TimeUnit
 
 TimeUnitStr = Literal["ns", "us", "ms", "s"]
 
@@ -78,8 +78,8 @@ class BenchmarkOptions(TypedDict, total=False):
     All keys are optional; omit one to fall back to Google Benchmark's default.
 
     Threaded options require a free-threaded interpreter. On a GIL build,
-    :func:`mew.run` skips them unless ``strict=True``. ``threads`` and
-    ``thread_range`` are mutually exclusive.
+    :func:`mew.run` skips them unless ``strict=True``. ``threads``,
+    ``thread_range``, and ``dense_thread_range`` are mutually exclusive.
     """
 
     min_time: float
@@ -93,6 +93,62 @@ class BenchmarkOptions(TypedDict, total=False):
     report_aggregates_only: bool
     threads: int
     thread_range: tuple[int, int]
+    dense_thread_range: tuple[int, int, int]
+
+
+class MemoryMetrics(TypedDict, total=False):
+    """Measurements returned by a memory manager.
+
+    Attributes
+    ----------
+    total_allocations : int, optional
+        Number of allocations.
+    peak_bytes : int, optional
+        Maximum live bytes.
+    total_bytes : int, optional
+        Total allocated bytes.
+    net_heap_growth : int, optional
+        Live-byte increase over the measurement.
+    """
+
+    total_allocations: int
+    peak_bytes: int
+    total_bytes: int
+    net_heap_growth: int
+
+
+ProfilerSummary: TypeAlias = dict[str, str | float]
+
+
+@runtime_checkable
+class MemoryManager(Protocol):
+    """Memory-measurement callbacks accepted by :func:`mew.run`."""
+
+    def start(self) -> None: ...
+    def stop(self) -> MemoryMetrics | None: ...
+
+
+@runtime_checkable
+class ProfilerManager(Protocol):
+    """Required profiler callbacks accepted by :func:`mew.run`."""
+
+    def after_setup_start(self) -> None: ...
+    def before_teardown_stop(self) -> None: ...
+
+
+@runtime_checkable
+class ProfilerResultProvider(Protocol):
+    """Optional profiler capability that attaches a summary to each result."""
+
+    def get_result(self) -> ProfilerSummary | None: ...
+
+
+@runtime_checkable
+class PausableProfiler(Protocol):
+    """Optional profiler capability that suspends across ``state.pause()``."""
+
+    def pause(self) -> None: ...
+    def resume(self) -> None: ...
 
 
 @runtime_checkable
@@ -119,7 +175,13 @@ class State(Protocol):
     def keep_running_batch(self, n: int) -> bool: ...
     def batches(self, n: int) -> Iterator[int]: ...
     def pause(self) -> AbstractContextManager[None]: ...
-    def set_counter(self, name: str, value: float, flags: int = ...) -> None: ...
+    def set_counter(
+        self,
+        name: str,
+        value: float,
+        flags: CounterFlags = ...,
+        one_k: CounterOneK = ...,
+    ) -> None: ...
     def set_label(self, label: str) -> None: ...
     def set_items_processed(self, n: int) -> None: ...
     def set_bytes_processed(self, n: int) -> None: ...

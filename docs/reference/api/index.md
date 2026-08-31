@@ -30,6 +30,10 @@ importable from `mew` directly:
    product
    State
    BenchmarkFn
+   MemoryManager
+   ProfilerManager
+   ProfilerResultProvider
+   PausableProfiler
    run
    Reporter
    RichReporter
@@ -38,6 +42,7 @@ importable from `mew` directly:
    Fanout
    BenchmarkResult
    SessionInfo
+   MemoryMetrics
    TimeUnit
    CounterFlags
    CounterOneK
@@ -53,3 +58,6 @@ importable from `mew` directly:
    vcs_context
    machine_context
 ```
+
+{data}`mew.ProfilerSummary` describes the free-form dictionary returned by a
+{class}`mew.ProfilerResultProvider`.

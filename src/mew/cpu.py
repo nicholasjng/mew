@@ -14,6 +14,8 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mew._typing import ProfilerSummary
+
 if TYPE_CHECKING:
     from pyinstrument import Profiler
     from pyinstrument.frame import Frame
@@ -87,7 +89,7 @@ class PyinstrumentManager:
         if self._prof is not None and self._depth == 0:
             self._prof.start()
 
-    def get_result(self) -> dict[str, float | str] | None:
+    def get_result(self) -> ProfilerSummary | None:
         """Summarize the last session, or ``None`` when nothing was sampled.
 
         A body too fast for the interval would otherwise report a

@@ -27,9 +27,9 @@ class FakeMemoryManager:
     def start(self) -> None:
         self.starts += 1
 
-    def stop(self) -> dict[str, int]:
+    def stop(self) -> mew.MemoryMetrics:
         self.stops += 1
-        return dict(self._figures)
+        return cast(mew.MemoryMetrics, self._figures.copy())
 
 
 class FakeProfilerManager:
