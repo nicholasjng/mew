@@ -39,6 +39,11 @@ void register_state(nb::module_& m) {
         .value("kAvgIterationsRate", benchmark::Counter::kAvgIterationsRate)
         .value("kInvert", benchmark::Counter::kInvert);
 
+    nb::enum_<benchmark::Counter::OneK>(m, "CounterOneK",
+                                        "Base used to scale a counter for display.")
+        .value("kIs1000", benchmark::Counter::kIs1000)
+        .value("kIs1024", benchmark::Counter::kIs1024);
+
     nb::class_<BatchIter>(m, "BatchIter", "Iterator yielding batch sizes from `State.batches`.")
         .def(
             "__iter__", [](BatchIter& self) -> BatchIter& { return self; },
@@ -127,16 +132,17 @@ void register_state(nb::module_& m) {
         .def(
             "set_counter",
             [](benchmark::State& self, const std::string& name, double value,
-               benchmark::Counter::Flags flags) {
-                self.counters[name] = benchmark::Counter(value, flags);
+               benchmark::Counter::Flags flags, benchmark::Counter::OneK one_k) {
+                self.counters[name] = benchmark::Counter(value, flags, one_k);
             },
             "name"_a, "value"_a,
             // Spell the default symbolically. nanobind renders defaults with
             // PyObject_Repr, and since 3.11 every IntFlag member reprs as a bare
             // int (enum.ReprEnum inherits int.__repr__), so this would read `= 0`.
             "flags"_a.sig("CounterFlags.kDefaults") = benchmark::Counter::kDefaults,
+            "one_k"_a.sig("CounterOneK.kIs1000") = benchmark::Counter::kIs1000,
             "Attach a user-defined counter, surfaced in `BenchmarkResult['counters']`.\n"
-            "`flags` controls how Google Benchmark normalizes it (see `CounterFlags`).")
+            "`flags` controls normalization; `one_k` selects decimal or binary scaling.")
         .def(
             "range",
             [](const benchmark::State& self, std::size_t pos) {

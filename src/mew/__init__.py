@@ -5,6 +5,8 @@ import atexit
 from mew._core import (
     BENCHMARK_COMMIT,
     BENCHMARK_VERSION,
+    CounterFlags,
+    CounterOneK,
     TimeUnit,
     clear_registered_benchmarks as _clear_registered_benchmarks,
 )
@@ -35,6 +37,8 @@ __all__ = [
     "REGISTRY",
     "BenchmarkFn",
     "BenchmarkResult",
+    "CounterFlags",
+    "CounterOneK",
     "Entry",
     "Fanout",
     "JSONLReporter",

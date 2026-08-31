@@ -99,7 +99,7 @@ Confirm the GIL stays disabled after importing the extension:
 $ .venv-ft/bin/python -c "import sys, mew._core; assert not sys._is_gil_enabled()"
 ```
 
-Threaded benchmarks (`threads` / `thread_range`) only run here; on a GIL
+Threaded benchmarks (`threads`, `thread_range`, or `dense_thread_range`) only run here; on a GIL
 interpreter, mew skips them with a warning to avoid deadlocking on Google Benchmark's start barrier.
 
 ```console

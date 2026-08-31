@@ -39,6 +39,8 @@ importable from `mew` directly:
    BenchmarkResult
    SessionInfo
    TimeUnit
+   CounterFlags
+   CounterOneK
    Registry
    Entry
    REGISTRY

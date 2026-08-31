@@ -33,6 +33,8 @@ def _is_threaded(opts: BenchmarkOptions) -> bool:
         return True
     if (tr := opts.get("thread_range")) is not None:
         return max(tr) > 1
+    if (tr := opts.get("dense_thread_range")) is not None:
+        return tr[1] > 1
     return False
 
 
@@ -42,6 +44,8 @@ def _requested_threads(opts: BenchmarkOptions) -> int:
         return int(v)
     if (tr := opts.get("thread_range")) is not None:
         return int(max(tr))
+    if (tr := opts.get("dense_thread_range")) is not None:
+        return int(tr[1])
     return 1
 
 
@@ -119,6 +123,9 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
     if (tr := opts.get("thread_range")) is not None:
         lo, hi = tr
         handle.thread_range(int(lo), int(hi))
+    if (tr := opts.get("dense_thread_range")) is not None:
+        lo, hi, stride = tr
+        handle.dense_thread_range(int(lo), int(hi), int(stride))
     if (v := opts.get("threads")) is not None:
         handle.threads(int(v))
 
@@ -206,7 +213,8 @@ def run(
         ``session_id`` in the reporter context.
     strict : bool, default False
         Govern what happens when threaded benchmarks (``threads`` /
-        ``thread_range``) are selected on a GIL interpreter, where they can't run
+        ``thread_range`` / ``dense_thread_range``) are selected on a GIL interpreter,
+        where they can't run
         (they would deadlock on Google Benchmark's start barrier). By default mew
         warns and skips them (emitting a ``skipped`` row per benchmark) and runs
         the rest, so a mixed suite still works on stock CPython. Set ``strict`` to

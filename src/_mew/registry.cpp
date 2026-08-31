@@ -55,6 +55,10 @@ void register_registry(nb::module_& m) {
              "Run the benchmark once per thread count in [min_threads, max_threads], "
              "stepping by the range multiplier (powers of two). See `threads` for the "
              "free-threading requirement.")
+        .def("dense_thread_range", &benchmark::Benchmark::DenseThreadRange, "min_threads"_a,
+             "max_threads"_a, "stride"_a = 1, nb::rv_policy::reference,
+             "Run once per thread count in [min_threads, max_threads], stepping by stride.\n"
+             "See `threads` for the free-threading requirement.")
         .def("arg", &benchmark::Benchmark::Arg, "value"_a, nb::rv_policy::reference,
              "Register one case with a single range argument, readable via `State.range`.")
         .def("arg_name", &benchmark::Benchmark::ArgName, "name"_a, nb::rv_policy::reference,
