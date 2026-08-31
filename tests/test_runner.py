@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from typing import get_type_hints
 
 import pytest
 from _helpers import Capture
@@ -23,6 +24,24 @@ def test_run_single_benchmark_captures_one_run():
     assert cap.finalized
     assert cap.context is not None
     assert cap.context["context"]["num_cpus"] >= 1
+
+
+def test_run_exposes_manager_protocol_annotations():
+    hints = get_type_hints(mew.run)
+    assert hints["memory_manager"] == mew.MemoryManager | None
+    assert hints["profiler_manager"] == mew.ProfilerManager | None
+
+
+def test_counter_binary_scaling_option_is_accepted():
+    @mew.benchmark(iterations=1)
+    def bench_counter(state):
+        for _ in state:
+            pass
+        state.set_counter("bytes", 1024, one_k=mew.CounterOneK.kIs1024)
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    assert cap.runs[0]["counters"]["bytes"] == 1024
 
 
 def test_run_benchmarks_passes_extra_context_through():
@@ -91,6 +110,21 @@ def test_is_threaded_helper():
     assert _is_threaded({"threads": 2})
     assert not _is_threaded({"thread_range": (1, 1)})
     assert _is_threaded({"thread_range": (1, 8)})
+    assert not _is_threaded({"dense_thread_range": (1, 1, 1)})
+    assert _is_threaded({"dense_thread_range": (1, 8, 1)})
+
+
+def test_dense_thread_range_is_applied_to_native_handle():
+    from mew.runner import _apply_options
+
+    calls = []
+
+    class Handle:
+        def dense_thread_range(self, lo, hi, stride):
+            calls.append((lo, hi, stride))
+
+    _apply_options(Handle(), {"dense_thread_range": (2, 8, 2)})  # ty: ignore[invalid-argument-type]
+    assert calls == [(2, 8, 2)]
 
 
 def test_threaded_benchmark_skipped_on_gil_build(monkeypatch):

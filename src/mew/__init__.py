@@ -11,7 +11,18 @@ from mew._core import (
     clear_registered_benchmarks as _clear_registered_benchmarks,
 )
 from mew._registry import REGISTRY, Entry, Registry
-from mew._typing import BenchmarkFn, BenchmarkResult, SessionInfo, State
+from mew._typing import (
+    BenchmarkFn,
+    BenchmarkResult,
+    MemoryManager,
+    MemoryMetrics,
+    PausableProfiler,
+    ProfilerManager,
+    ProfilerResultProvider,
+    ProfilerSummary,
+    SessionInfo,
+    State,
+)
 from mew.api import benchmark, parametrize, product
 from mew.context import clear_context, get_context, set_context, update_context
 from mew.machine import machine_context
@@ -43,6 +54,12 @@ __all__ = [
     "Fanout",
     "JSONLReporter",
     "JSONReporter",
+    "MemoryManager",
+    "MemoryMetrics",
+    "PausableProfiler",
+    "ProfilerManager",
+    "ProfilerResultProvider",
+    "ProfilerSummary",
     "Registry",
     "Reporter",
     "RichReporter",

@@ -17,6 +17,8 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from mew._typing import MemoryMetrics
+
 if TYPE_CHECKING:
     from memray import Tracker
 
@@ -117,7 +119,7 @@ class MemrayManager:
         self._tracker = memray.Tracker(self._dest, trace_python_allocators=_TRACE_PYTHON_ALLOCATORS)
         self._tracker.__enter__()
 
-    def stop(self) -> dict[str, int] | None:
+    def stop(self) -> MemoryMetrics | None:
         import memray
 
         tracker, dest = self._tracker, self._dest
