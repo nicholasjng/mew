@@ -132,14 +132,12 @@ class MemrayManager:
         self.captures.append((dest, self._root))
         reader = memray.FileReader(dest)
         meta = reader.metadata
-        # From metadata, not get_allocation_records(): that scan is O(every
-        # allocation), minutes and gigabytes on an allocation-heavy body.
-        # High-watermark records are bounded by peak concurrent allocations.
-        hwm = reader.get_high_watermark_allocation_records(merge_threads=True)
+        # Metadata avoids scanning every allocation, which can take minutes and
+        # gigabytes for an allocation-heavy body. Consequently this manager
+        # leaves the optional cumulative `total_bytes` metric unset.
         return {
             "peak_bytes": meta.peak_memory,
             "total_allocations": meta.total_allocations,
-            "total_bytes": sum(r.size for r in hwm),
         }
 
 

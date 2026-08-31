@@ -98,6 +98,33 @@ def test_list_discovers_all_entries(mew_cli, benchdir, tmp_path):
     assert any(n.endswith("::bench_two") for n in names)
 
 
+@pytest.mark.parametrize(
+    "args",
+    [("-h",), ("list", "-h"), ("run", "-h"), ("compare", "-h"), ("completions", "-h")],
+)
+def test_help_is_plain_terminal_text(mew_cli, tmp_path, args):
+    res = mew_cli(*args, cwd=tmp_path)
+    assert res.returncode == 0
+    assert "usage: mew" in res.stdout
+    assert "`" not in res.stdout
+
+
+def test_argument_help_uses_sentences():
+    import argparse
+
+    from mew.cli import _build_parser
+
+    pending = [_build_parser()]
+    while pending:
+        parser = pending.pop()
+        for action in parser._actions:
+            if action.help not in (None, argparse.SUPPRESS):
+                assert action.help[0].isupper(), action.help
+                assert action.help.endswith("."), action.help
+            if isinstance(action, argparse._SubParsersAction):
+                pending.extend(action.choices.values())
+
+
 def test_list_pattern_filter(mew_cli, benchdir, tmp_path):
     res = mew_cli("list", str(benchdir), "-k", "bench_one", cwd=tmp_path)
     assert res.returncode == 0
@@ -279,6 +306,27 @@ def test_run_min_warmup_time_accepts_durations(mew_cli, benchdir, tmp_path):
     assert "invalid --min-warmup-time" in res.stderr
 
 
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--min-time", "0x"),
+        ("--min-time", "nan"),
+        ("--min-warmup-time", "-1"),
+        ("--repetitions", "0"),
+        ("--sample-interval", "0"),
+    ],
+)
+def test_run_rejects_invalid_numeric_options(mew_cli, benchdir, tmp_path, flag, value):
+    res = mew_cli("run", str(benchdir), flag, value, cwd=tmp_path)
+    assert res.returncode == 2
+
+
+def test_run_append_requires_jsonl_file(mew_cli, benchdir, tmp_path):
+    res = mew_cli("run", str(benchdir), "--append", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "--append requires" in res.stderr
+
+
 def test_run_promoted_gb_flags_accepted(mew_cli, benchdir, tmp_path):
     # The promoted global knobs translate to GB flags GB actually accepts —
     # a bad flag would make benchmark::Initialize exit() before any run.
@@ -449,6 +497,20 @@ def test_compare_regression_threshold_requires_percent_suffix(mew_cli, tmp_path)
     assert "'5'" in res.stderr
 
 
+@pytest.mark.parametrize("value", ["-1%", "nan%", "inf%"])
+def test_compare_regression_threshold_must_be_non_negative_and_finite(mew_cli, tmp_path, value):
+    other, base = _write_pair(tmp_path, other=[], base=[])
+    res = mew_cli("compare", str(other), str(base), "--regression-threshold", value, cwd=tmp_path)
+    assert res.returncode == 2
+
+
+def test_compare_baseline_requires_by(mew_cli, tmp_path):
+    other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("b", 1.0)])
+    res = mew_cli("compare", str(other), str(base), "--baseline", "x", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "--baseline requires --by" in res.stderr
+
+
 def test_compare_regression_threshold_alone_is_report_only(mew_cli, tmp_path):
     # A regression is detected and printed, but without --exit-non-zero-on-regression
     # the command still exits 0 — the panel is informational, not a gate.
@@ -490,9 +552,6 @@ def test_run_invalid_min_warmup_time_is_usage_error(mew_cli, tmp_path):
     res = mew_cli("run", "--min-warmup-time", "nonsense", cwd=tmp_path)
     assert res.returncode == 2
     assert "--min-warmup-time" in res.stderr
-
-
-# --- mew profile --slowest selection (in-process; no profiler backend needed) ---
 
 
 def _ends(entries, suffix):

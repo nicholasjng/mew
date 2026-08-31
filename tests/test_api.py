@@ -111,6 +111,18 @@ def test_parametrize_ids_length_mismatch():
                 pass
 
 
+def test_failed_parametrize_can_be_corrected():
+    def bench_x(state, n):
+        for _ in state:
+            pass
+
+    with pytest.raises(ValueError, match="duplicate case label"):
+        mew.parametrize([{"n": []}, {"n": []}])(bench_x)
+
+    mew.parametrize([{"n": []}, {"n": []}], ids=["first", "second"])(bench_x)
+    assert REGISTRY.all()[0].case_labels == ["first", "second"]
+
+
 def test_parametrize_accepts_generator():
     @mew.parametrize({"n": n} for n in range(3))
     def bench_x(state, n):
