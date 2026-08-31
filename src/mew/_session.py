@@ -1,11 +1,4 @@
-"""Session identity for benchmark runs.
-
-Each :func:`mew.run` invocation is one *session*: a time-ordered ``session_id``
-(UUIDv7) plus an optional ``session_tag`` the caller passes. Reporters persist
-both, so a result file holding several runs stays addressable
-(`mew compare path@tag`) instead of collapsing to "latest by timestamp" with
-second-granularity ties.
-"""
+"""Session identifiers for benchmark runs."""
 
 from __future__ import annotations
 
@@ -15,11 +8,7 @@ import uuid
 
 
 def new_session_id() -> str:
-    """A UUIDv7 (RFC 9562) string: 48-bit unix-ms timestamp, then random bits.
-
-    Time-ordered by construction, so the lexicographically greatest id in a file is the
-    latest session. Stdlib ``uuid.uuid7`` arrives in 3.14; hand-rolled here for 3.12/3.13.
-    """
+    """Return a time-ordered UUIDv7 string."""
     unix_ms = time.time_ns() // 1_000_000
     rand_a = int.from_bytes(os.urandom(2)) & 0x0FFF
     rand_b = int.from_bytes(os.urandom(8)) & 0x3FFF_FFFF_FFFF_FFFF

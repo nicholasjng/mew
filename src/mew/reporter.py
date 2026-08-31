@@ -93,12 +93,7 @@ def _indent_block(text: str, spaces: int) -> str:
 
 
 def _open_sink(output: Path | TextIO | None, mode: str = "w") -> tuple[TextIO, bool]:
-    """Resolve ``output`` to ``(file, owns_it)``.
-
-    A Path is opened (owned), ``None`` → stdout, a stream is used as-is. ``mode``
-    applies only to a Path sink. Appending to a ``.gz`` Path writes a new gzip
-    member rather than recompressing, keeping archive appends O(new data).
-    """
+    """Resolve ``output`` to a stream and an ownership flag."""
     if isinstance(output, Path):
         if output.name.endswith(".gz"):
             import gzip
@@ -117,14 +112,10 @@ def _close_sink(fh: TextIO | None, owns_fh: bool) -> None:
 
 
 class JSONReporter:
-    """Emit a single ``{"context": ..., "benchmarks": [...]}`` document, GB-style.
+    """Stream one ``{"context": ..., "benchmarks": [...]}`` document.
 
-    Streams forward-only, exactly like Google Benchmark's own JSON reporter:
-    :meth:`report_context` writes the context and the opening bracket, each
-    :meth:`report_runs` appends rows, and :meth:`finalize` writes the closing
-    ``]}``. Never seeks, so files, pipes, and stdout behave identically. The
-    document is valid JSON only after finalize; for an interruption-safe
-    archive use :class:`JSONLReporter`.
+    The document becomes valid JSON when :meth:`finalize` completes. Use
+    :class:`JSONLReporter` for an interruption-safe stream.
 
     Parameters
     ----------
@@ -141,9 +132,7 @@ class JSONReporter:
 
     def report_context(self, context: dict[str, Any]) -> None:
         self._fh, self._owns_fh = _open_sink(self._output)
-        # A reporter instance may be reused for several mew.run() calls. Each
-        # context starts a fresh JSON document, so its first row must not inherit
-        # the comma state from the preceding document.
+        # Reset comma state when the reporter is reused.
         self._first_row = True
         # default=str: don't crash on Path/datetime; lossy by design.
         ctx = _indent_block(json.dumps(context, indent=2, default=str), 2)

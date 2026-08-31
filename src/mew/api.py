@@ -108,9 +108,7 @@ def _check_options(options: Mapping[str, Any]) -> None:
 
 
 def _check_addressable(text: str, what: str) -> None:
-    """Reject constructs in a user-supplied name/label that collide with mew's
-    addressing grammar. Auto-derived names are well-formed by construction; an
-    explicit ``name=`` or case label is not."""
+    """Reject names and labels that conflict with selector syntax."""
     if not text.strip():
         raise ValueError(f"{what} must not be empty")
     for bad, why in (

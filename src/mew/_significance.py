@@ -1,11 +1,4 @@
-"""Mann-Whitney U significance test for ``mew compare``, stdlib-only.
-
-A rank-sum test on two repetition samples: real delta or noise.
-Normal-approximation proxy for scipy's ``mannwhitneyu``
-(tie- and continuity-corrected, same formula as ``method="asymptotic"``).
-Good enough at typical repetition counts (5-20),
-underpowered rather than wrong at very small n.
-"""
+"""A tie- and continuity-corrected Mann-Whitney U test."""
 
 from __future__ import annotations
 
@@ -42,11 +35,7 @@ def _norm_cdf(x: float) -> float:
 
 
 def mannwhitney_p(a: list[float], b: list[float]) -> float | None:
-    """Two-sided p-value for the null "``a`` and ``b`` are the same distribution."
-
-    ``None`` when either group is empty. Near 1.0: indistinguishable from
-    noise. Small (conventionally < 0.05): probably a real difference.
-    """
+    """Return a two-sided p-value, or ``None`` if either sample is empty."""
     n1, n2 = len(a), len(b)
     if n1 == 0 or n2 == 0:
         return None
