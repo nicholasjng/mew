@@ -1,0 +1,8 @@
+# Patches in `patches/` are matched byte-for-byte against a freshly cloned
+# Google Benchmark tree, so their line endings must not depend on the platform
+# that checked them out. Without this, a Windows checkout with
+# `core.autocrlf=true` rewrites them to CRLF while the fetched upstream tree
+# stays LF (or vice versa), and every hunk fails with "patch does not apply".
+# See the matching `GIT_CONFIG` on the FetchContent_Declare in CMakeLists.txt,
+# which pins the other side of the comparison to LF.
+*.patch -text
