@@ -7,10 +7,9 @@ suite records what it was built from::
 
     mew.update_context(mew.vcs_context())
 
-Opt-in: it shells out to jj or git, which not every run wants to pay for, and a
-suite outside a work tree has nothing to record. The values land under
-``custom.vcs`` in the context and on every stored row, where ``mew compare``
-groups runs by ``custom.vcs.commit`` when no explicit ``--session-tag`` is set.
+The provider shells out to jj or git and returns nothing outside a work tree.
+Results store it under ``context.vcs``; ``mew compare`` uses the commit to group
+untagged runs.
 """
 
 from __future__ import annotations
@@ -78,15 +77,20 @@ def _git(cwd: Path | None) -> dict[str, Any] | None:
 
 
 def vcs_context(cwd: Path | None = None) -> dict[str, Any]:
-    """Source-control provenance for ``cwd``, as ``{"vcs": {...}}``.
+    """Return source-control provenance for a working directory.
 
     Tries jj, then git; returns ``{}`` outside a work tree or when neither tool
-    is installed, so ``update_context(vcs_context())`` is always safe to call.
+    is installed.
 
-    The block carries ``backend`` and the full ``commit`` (plus ``dirty``, and
-    ``change_id`` under jj / ``branch`` under git). ``commit`` is full-length on
-    purpose: it is what ``mew compare`` groups runs by, and an abbreviation can
-    collide as history grows.
+    Parameters
+    ----------
+    cwd : Path, optional
+        Directory to inspect. Defaults to the current directory.
+
+    Returns
+    -------
+    dict[str, Any]
+        ``{"vcs": {...}}`` with backend, commit, and dirty state, or ``{}``.
     """
     info = _jj(cwd) or _git(cwd)
     return {"vcs": info} if info else {}

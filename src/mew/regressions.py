@@ -168,11 +168,20 @@ def load_config(
 ) -> RegressionConfig:
     """Build a :class:`RegressionConfig`.
 
-    Reads ``[tool.mew.regressions]`` from ``path``; when that is ``None`` it uses
-    ``root/pyproject.toml``, or walks up from the cwd if no ``root`` is given.
-    Callers that already resolved ``[tool.mew]`` should pass
-    :attr:`Config.project_root` so one ``mew compare`` does not walk and parse the
-    same file twice. Rules are searched in file order.
+    Parameters
+    ----------
+    default_threshold : float
+        Threshold used when configuration does not override it.
+    path : Path, optional
+        Explicit TOML file.
+    root : Path, optional
+        Project root containing ``pyproject.toml``. When omitted, search upward
+        from the current directory.
+
+    Returns
+    -------
+    RegressionConfig
+        Parsed threshold and ordered allowlist rules.
     """
     rules: list[AllowRule] = []
     threshold = default_threshold
@@ -216,6 +225,8 @@ def render_panel(
     ----------
     verdicts : list of BenchmarkVerdict
         One entry per gated benchmark in display order.
+    default_threshold : float
+        Threshold shown in the panel heading.
 
     Returns
     -------

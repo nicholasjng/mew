@@ -136,7 +136,15 @@ def _hottest_frame(root: Frame) -> tuple[str, float]:
 
 
 def write_html(sessions: list[Session], path: Path) -> None:
-    """Render every captured session into one combined pyinstrument HTML report."""
+    """Render captured sessions as one pyinstrument HTML report.
+
+    Parameters
+    ----------
+    sessions : list[Session]
+        Sessions to combine.
+    path : Path
+        Destination HTML file.
+    """
     from functools import reduce
 
     from pyinstrument.renderers import HTMLRenderer

@@ -1,8 +1,7 @@
 # Comparisons and regression gating
 
-`mew compare` diffs two or more result files (`.json`, `.jsonl`, or `.jsonl.gz`; every sink `mew run -o` writes).
-The last is the baseline; earlier files are diffed against it (`mew compare head.json baseline.json` reads like "compare head against baseline").
-With `--regression-threshold` it also computes and prints a regression panel; add `--exit-non-zero-on-regression` to turn that into a CI gate, returning exit code 2 when any benchmark drifts in the wrong direction by more than the threshold.
+`mew compare` diffs `.json`, `.jsonl`, or `.jsonl.gz` results. The last file is the baseline.
+Add a regression threshold and exit flag to use it as a CI gate.
 
 ## Basic comparison
 
@@ -22,13 +21,13 @@ $ mew compare -m memory.peak_bytes head.json baseline.json
 $ mew compare -m memory.allocations_per_iteration ducky.jsonl duckdb.jsonl
 ```
 
-Prefer `memory.allocations_per_iteration` for cross-engine / cross-run comparisons: `memory.total_allocations` is cumulative over the (run-dependent) iteration count, so a faster engine reports a higher raw total for the same per-call work. `peak_bytes` is a high-water mark and comparable as-is.
+Use `memory.allocations_per_iteration` across runs because total allocations
+depend on the memory-pass iteration count. `peak_bytes` is comparable as-is.
 
 ## Matching benchmarks across suites
 
-By default, benchmarks are matched by their full registered name (`file.py::func`), which is right for before/after comparisons of the same suite.
-For A/B suites in different files (two engine bindings, two implementations), the file prefix makes every name unique, so nothing overlaps.
-`--key func` matches on the function name alone:
+The default key is the full registered name (`file.py::func`).
+For equivalent benchmarks in different files, use `--key func`:
 
 ```console
 $ mew run benchmarks/bench_ducky.py -o ducky.jsonl
@@ -38,21 +37,24 @@ $ mew compare --key func ducky.jsonl duckdb.jsonl
 
 If stripping the prefix makes two benchmarks in one file collide, `compare` exits with an error rather than guessing.
 
-When pivoting within a single result file (`mew compare results.jsonl --by context.engine`), `--key` defaults to `func` automatically; every column carries the same file prefix, so matching on the function name is what lines them up.
+With `--by`, the key defaults to `func`.
 
-Parametrize cases are rendered and matched by their human id (`bench_udf_scalar[n=10000]` rather than Google Benchmark's raw `bench_udf_scalar/case:0`), and per-benchmark option suffixes like `/min_time:0.200` are ignored for matching, so files run with different options still align.
+Parametrized cases match by their human-readable IDs.
+Google Benchmark option suffixes are ignored.
 
 ## Context and noise
 
-Each file's context block is printed above the table (host, CPU count, scaling, date, plus any `mew.set_context()` values), and `compare` warns on stderr when files differ in `host_name`, `num_cpus`, or CPU scaling; deltas then reflect the environment, not the code.
-Custom context keys whose values differ across files (e.g. `engine=duckdb 1.5.3`) are appended to the column labels, so an apples-vs-oranges comparison documents itself.
+Context is printed above each column. `compare` warns when machine properties
+differ and adds differing custom values to column labels.
 
-When a file contains per-repetition rows (`--repetitions N`), rows whose coefficient of variation exceeds 25% are flagged with a red `±N% (!)` marker: their median is too noisy to trust, regardless of what the delta says.
+For repeated measurements, a red `±N% (!)` marks a coefficient of variation
+above 25%. Treat that delta as unreliable.
 
 (comparing-sessions-in-one-file)=
 ## Comparing sessions in one file
 
-Each `mew run` is one *session* (see [](context.md#session-identity)). Normally each run writes its own file and you compare files, the recommended shape for CI. For local before/after experiments, though, it's handy to keep both runs in one file with `--append`, then address them by `path@selector`:
+Each `mew run` is one *session* (see [](context.md#session-identity)). For local
+experiments, append several sessions to one file and select them with `path@selector`:
 
 ```console
 $ mew run --session-tag before -o results.jsonl
@@ -101,9 +103,11 @@ A selector picks one session from a multi-session file:
 - `@<tag>`: exact `session_tag` match (one per host, since a tag groups its runs).
 - `@<id-prefix>`: a `session_id` prefix, at least 4 characters.
 
-Ambiguous id-prefix matches and misses are errors, so a selector always resolves to exactly one session. Without a selector, `compare` uses the latest session per benchmark and warns about discarded older ones (so a plain two-file comparison is unchanged). A file whose name genuinely contains `@` is taken literally as long as it exists on disk.
+Selectors must resolve uniquely. Without one, `compare` uses the latest session
+per benchmark and warns when it discards older data. Existing filenames that
+contain `@` are treated literally.
 
-Selectors address sessions, they don't query them. For something like "the most recent master run in a rolling history file", select upstream in SQL (DuckDB/polars) and hand `compare` a file holding just the two sessions you want.
+Selectors address sessions; use SQL or a dataframe tool for richer queries.
 
 ## Gating CI
 
@@ -111,7 +115,8 @@ Selectors address sessions, they don't query them. For something like "the most 
 $ mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json baseline.json
 ```
 
-The threshold is a percent, and the `%` is required (`--regression-threshold 5` is a CLI error, not a silent "5 percent"). `--regression-threshold` alone always prints the regression panel; only `--exit-non-zero-on-regression` turns a regression into a nonzero exit — so a CI workflow only fails once you opt in, and you can calibrate thresholds locally by watching the panel without risking a red build.
+The `%` suffix is required. A threshold prints the panel;
+`--exit-non-zero-on-regression` additionally returns exit code 2 on regression.
 
 ## Allowlist
 
@@ -145,7 +150,7 @@ rule must either set `ignore=true` or `threshold=<float>`.
 | `ALLOWED_OVER`  | Over the default, but a rule raised the bar. Shown as a warning, not a failure. |
 | `IGNORED`       | A matching rule says skip gating entirely. Listed for visibility.                |
 
-The panel printed to stderr surfaces all four buckets; the regressed list drives the exit code (only when `--exit-non-zero-on-regression` is set).
+The panel goes to stderr. `REGRESSED` controls the optional nonzero exit.
 
 ## A typical CI workflow
 
@@ -161,4 +166,4 @@ The panel printed to stderr surfaces all four buckets; the regressed list drives
   run: mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json baseline.json
 ```
 
-Then persist `head.json` (e.g. via `actions/cache` keyed on the merged SHA) so the next run on `main` becomes the next baseline.
+Persist `head.json` after merging so it becomes the next baseline.

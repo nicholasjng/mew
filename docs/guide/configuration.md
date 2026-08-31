@@ -1,6 +1,7 @@
 # Configuration
 
-`mew` resolves a `[tool.mew]` table from the nearest `pyproject.toml`; all keys are optional. Keys are kebab-case (`python-files`); mew coerces them to its snake-case fields, so the underscore spelling is also accepted.
+`mew` reads `[tool.mew]` from the nearest `pyproject.toml`. All keys are optional.
+Both kebab-case and snake_case spellings are accepted.
 
 ```toml
 [tool.mew]

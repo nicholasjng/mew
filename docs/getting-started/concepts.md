@@ -3,7 +3,8 @@
 ## Benchmarks and families
 
 A **benchmark** is a single function decorated with `@mew.benchmark`.
-A **benchmark family** is a set of benchmarks produced by `@mew.parametrize` or `@mew.product`, where the same function body is registered once per parameter combination.
+A **benchmark family** is produced by `@mew.parametrize` or `@mew.product`.
+It registers the same body once per parameter combination.
 The variant label is appended to the registration name in brackets: `bench_sort[n=10-algo=merge]`.
 
 ## Registration name
@@ -28,7 +29,7 @@ for _ in state:
     ...  # timed
 ```
 
-For sections that should be excluded from the timing (deserialization, randomization, etc.), use the `State.pause()` context manager:
+Use `State.pause()` to exclude setup from timing:
 
 ```python
 for _ in state:
@@ -60,6 +61,6 @@ See [](../guide/reporters.md).
 
 ## Context
 
-`mew.set_context()` and `mew.update_context()` populate a process-global metadata dict that's merged into every reporter's context under the `custom` key.
+`mew.set_context()` and `mew.update_context()` populate metadata stored under the reporter's `context` key.
 Use it to stamp results with a git SHA, dataset identifiers, or hardware tags, anything you'd later want to filter on.
 See [](../guide/context.md).

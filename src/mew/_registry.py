@@ -31,6 +31,26 @@ def compile_name_filter(pattern: str, *, literal: bool = False) -> re.Pattern[st
 
 @dataclass(slots=True)
 class Entry:
+    """One registered benchmark or parametrized family.
+
+    Attributes
+    ----------
+    name : str
+        Registered benchmark name.
+    fn : BenchmarkFn
+        Callable passed to the native runner.
+    file : str, optional
+        Source file.
+    options : BenchmarkOptions
+        Per-benchmark Google Benchmark options.
+    tags : frozenset[str]
+        Selection tags.
+    case_labels : list[str], optional
+        Human-readable family case labels.
+    cases : list[int], optional
+        Selected case indices; ``None`` selects every case.
+    """
+
     name: str
     fn: BenchmarkFn
     file: str | None = None
@@ -138,11 +158,25 @@ def narrow_entry(
 
 
 class Registry:
+    """Process-global collection populated by benchmark decorators."""
+
     def __init__(self) -> None:
         self._entries: list[Entry] = []
         self._names: set[str] = set()
 
     def add(self, entry: Entry) -> None:
+        """Add an entry.
+
+        Parameters
+        ----------
+        entry : Entry
+            Entry to register.
+
+        Raises
+        ------
+        ValueError
+            If its name is already registered.
+        """
         # Two entries sharing a name would run as indistinguishable rows and
         # merge into one distribution on compare.
         if entry.name in self._names:
@@ -154,10 +188,18 @@ class Registry:
         self._entries.append(entry)
 
     def clear(self) -> None:
+        """Remove all entries."""
         self._entries.clear()
         self._names.clear()
 
     def all(self) -> list[Entry]:
+        """Return a copy of all entries.
+
+        Returns
+        -------
+        list[Entry]
+            Entries in registration order.
+        """
         return list(self._entries)
 
     def filter(
@@ -167,14 +209,26 @@ class Registry:
         tags: Iterable[str] | None = None,
         literal: bool = False,
     ) -> list[Entry]:
-        """Filter by ``pattern`` (a regex matched against the name) and/or ``tags``.
+        """Filter entries by name and tags.
 
-        A ``pattern`` that matches only some cases of a parametrized family
-        narrows that family to those cases (see :func:`narrow_entry`). With
-        ``literal=True`` the pattern is matched as a fixed string. Tags use OR
-        semantics: an entry passes when it has any of the requested tags; entries
-        with no tags are excluded whenever ``tags`` is non-empty. Raises
-        :class:`ValueError` if ``pattern`` is not a valid regex.
+        Parameters
+        ----------
+        pattern : str, optional
+            Name regex. A case-only match narrows a family to those cases.
+        tags : Iterable[str], optional
+            Tags with OR semantics.
+        literal : bool, default False
+            Treat ``pattern`` as literal text.
+
+        Returns
+        -------
+        list[Entry]
+            Matching entries in registration order.
+
+        Raises
+        ------
+        ValueError
+            If ``pattern`` is invalid.
         """
         out = list(self._entries)
         if pattern:

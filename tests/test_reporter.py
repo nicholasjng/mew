@@ -50,6 +50,24 @@ def test_json_reporter_writes_to_stream():
     assert doc["benchmarks"][0]["iterations"] >= 1
 
 
+def test_json_reporter_can_be_reused(tmp_path):
+    out = tmp_path / "results.json"
+    rep = JSONReporter(output=out)
+
+    @mew.benchmark
+    def bench_reuse(state):
+        for _ in state:
+            pass
+
+    mew.run(min_time="1x", reporter=rep)
+    first = json.loads(out.read_text())
+    mew.run(min_time="1x", reporter=rep)
+    second = json.loads(out.read_text())
+
+    assert len(first["benchmarks"]) == 1
+    assert len(second["benchmarks"]) == 1
+
+
 def _fake_row(name: str, label: str = "") -> BenchmarkResult:
     """A minimal BenchmarkResult dict, the shape reporters now consume directly."""
     return {

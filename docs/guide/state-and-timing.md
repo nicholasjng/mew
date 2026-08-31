@@ -24,14 +24,12 @@ def bench_tight(state):
 ```
 
 :::{warning}
-Batched and naive (`for _ in state`) timings are **not directly comparable**: the batched form removes per-iter dispatch overhead from the measurement.
-Pick one style per benchmark and don't switch back and forth across releases.
-A consistent `tags=("batched",)` is a good way to flag these runs for downstream comparison.
+Batched and ordinary iteration are not directly comparable. Use one style
+consistently for a given benchmark.
 :::
 
-The last batch may overshoot `max_iterations` by up to `n - 1` body executions.
-GB reports the actual iteration count and divides by it, so per-iter time stays accurate; just expect a slightly higher total wall time when the body has visible side effects.
-Keep `n` well below `max_iterations` (1024 is a reasonable default).
+The last batch may exceed `max_iterations` by up to `n - 1` calls. Google
+Benchmark reports the actual count, so per-iteration timing remains correct.
 
 ## Pausing the timer
 
@@ -51,25 +49,19 @@ def bench_shuffle_then_sort(state):
         sorted(data)
 ```
 
-The `pause()` context manager keeps the timer in a consistent state even when the body raises.
+The context manager resumes timing when its body raises.
 
 ## Repetitions vs iterations
 
-- **Iterations** are the inner loop count chosen by Google Benchmark to
-  reach `min_time`. Forcing this disables auto-tuning; only do it when
-  comparing against an absolute baseline.
-- **Repetitions** rerun the entire benchmark, including warm-up, _N_
-  times so you get `_mean`, `_median`, `_stddev` aggregate rows.
+- **Iterations** are the inner-loop count. Google Benchmark chooses it to reach
+  `min_time`; setting it explicitly disables auto-tuning.
+- **Repetitions** rerun the benchmark, including warm-up, and produce aggregate rows.
 
-Combine `repetitions=10` with `report_aggregates_only=True` if you only
-care about the aggregates and want the per-rep rows hidden from output
-sinks.
+Use `report_aggregates_only=True` to hide per-repetition rows.
 
 :::{warning}
-Only do that for output you read by eye. `mew compare` recomputes statistics
-from the per-repetition rows and discards Google Benchmark's aggregate rows, so
-an aggregates-only benchmark disappears from a comparison **silently** — no
-warning, exit code 0. See [](trusting-results.md).
+Do not use aggregates-only output with `mew compare`: it discards Google
+Benchmark aggregates and needs the per-repetition rows.
 :::
 
 ## Real vs. CPU time
@@ -95,28 +87,17 @@ def bench_parallel(state):
         process(DATA[lo:hi])
 ```
 
-Each thread gets its own `State` and timer; `state.threads` is the thread count
-and `state.thread_index` is this thread's 0-based id; use them to partition work
-so the threads don't all redo the same thing. `thread_range=(1, 8)` runs the
-benchmark once per thread count `1, 2, 4, 8` so you can chart scaling.
+Each thread gets its own `State` and timer. Use `state.threads` and
+`state.thread_index` to partition work. `thread_range=(1, 8)` runs at 1, 2, 4, and 8 threads.
 
 :::{warning}
 **Threaded mode requires a free-threaded interpreter (CPython 3.14t+).**
-On a stock (GIL) interpreter the worker threads would deadlock on Google
-Benchmark's start barrier rather than run. mew detects this up front: by default
-it **warns and skips** the threaded benchmarks (emitting a `skipped` row for
-each) and runs the rest, so a mixed suite still works on stock CPython. Run it
-again on a free-threaded build to execute them. Pass `mew run --strict` (or
-`mew.run(strict=True)`) to turn the skip into a `RuntimeError` — useful in CI
-where the threaded benchmarks are the point and a silent skip would hide a
-misconfiguration.
+On a GIL build, mew warns and emits skipped rows because Google Benchmark's
+worker barrier would deadlock. Use `--strict` (or `strict=True`) to raise instead.
 :::
 
-Counters and labels follow Google Benchmark's convention: `set_counter` /
-`set_items_processed` are summed across threads into the merged result, so set
-per-thread values and let the merge total them, or guard one-shot calls with
-`if state.thread_index == 0`. Thread-safety of the benchmark body itself is your
-responsibility: _N_ threads invoke the same Python callable at once.
+Counters are summed across threads. Set per-thread values, or guard one-time
+updates with `if state.thread_index == 0`. The benchmark body must be thread-safe.
 
 ## Manual time
 

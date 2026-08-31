@@ -134,6 +134,29 @@ def test_threaded_benchmark_strict_raises_on_gil_build(monkeypatch):
         mew.run(min_time="1x", reporter=Capture(), strict=True)
 
 
+def test_all_skipped_finalizes_reporter_when_report_runs_raises(monkeypatch):
+    """The Python-driven all-skipped lifecycle must close reporters on errors,
+    just like Google Benchmark's normal reporter lifecycle does."""
+    from mew import runner
+
+    monkeypatch.setattr(runner, "_gil_enabled", lambda: True)
+
+    @mew.benchmark(threads=2)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    class RaisingReporter(Capture):
+        def report_runs(self, runs):
+            raise RuntimeError("report failed")
+
+    rep = RaisingReporter()
+    with pytest.warns(RuntimeWarning), pytest.raises(RuntimeError, match="report failed"):
+        mew.run(min_time="1x", reporter=rep)
+
+    assert rep.finalized
+
+
 def test_mixed_suite_skips_threaded_runs_rest_on_gil_build(monkeypatch):
     """A mixed suite runs its non-threaded benchmarks and skips only the threaded
     ones — the dual-interpreter workflow."""
