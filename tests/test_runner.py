@@ -275,6 +275,7 @@ def test_threaded_benchmark_runs_without_deadlock():
     cap = Capture()
     mew.run(min_time="1x", reporter=cap)
     assert len(cap.runs) == 1
+    assert cap.runs[0]["skipped"] is False
     assert cap.runs[0]["threads"] == 4
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from typing import Any, cast
 
 import pytest
@@ -302,6 +303,10 @@ def test_memray_manager_reports_loop_allocations(tmp_path):
     )
 
 
+@pytest.mark.skipif(
+    not getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="pyinstrument's native sampler enables the GIL",
+)
 def test_pyinstrument_manager_summarizes_the_hot_frame(tmp_path):
     pytest.importorskip("pyinstrument")
     from mew import cpu as _cpu
@@ -330,6 +335,14 @@ def test_pyinstrument_manager_summarizes_the_hot_frame(tmp_path):
     assert "spin" in cpu["top_function"]
     # Sessions are retained only so --sample-html can render one combined report.
     assert mgr.sessions
+
+
+def test_pyinstrument_is_rejected_before_import_on_free_threaded(monkeypatch):
+    from mew import cpu as _cpu
+
+    monkeypatch.setattr(_cpu, "_gil_enabled", lambda: False)
+    with pytest.raises(SystemExit, match="does not support free-threaded Python"):
+        _cpu.require_pyinstrument()
 
 
 @pytest.mark.parametrize("interval", [0, -1, float("nan"), float("inf")])

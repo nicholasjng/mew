@@ -10,6 +10,7 @@ returns is stamped onto that repetition's ``Run`` and reaches reporters as the
 
 from __future__ import annotations
 
+import sys
 from importlib.util import find_spec
 from math import isfinite
 from pathlib import Path
@@ -23,8 +24,18 @@ if TYPE_CHECKING:
     from pyinstrument.session import Session
 
 
+def _gil_enabled() -> bool:
+    """Return whether this interpreter currently has the GIL enabled."""
+    return getattr(sys, "_is_gil_enabled", lambda: True)()
+
+
 def require_pyinstrument() -> None:
-    """Raise a SystemExit with install instructions if pyinstrument is missing."""
+    """Check that pyinstrument is installed and safe for this interpreter."""
+    if not _gil_enabled():
+        raise SystemExit(
+            "pyinstrument does not support free-threaded Python: importing its "
+            "native sampler would enable the GIL"
+        )
     if find_spec("pyinstrument") is None:
         raise SystemExit(
             "pyinstrument is required for CPU profiling. "
@@ -67,6 +78,7 @@ class PyinstrumentManager:
         self.sessions: list[Session] = []
 
     def after_setup_start(self) -> None:
+        require_pyinstrument()
         import pyinstrument
 
         self._session = None
