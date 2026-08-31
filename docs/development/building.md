@@ -23,7 +23,7 @@ The `[tool.uv]` config in `pyproject.toml` opts out of build isolation, so nanob
 ## Rebuilding after a C++ change
 
 ```console
-$ uv sync --reinstall-package=mew  # editable install picks up the rebuilt .so
+$ uv sync --reinstall-package=mew-bench  # editable install picks up the rebuilt .so
 ```
 
 Alternatively, rebuild the configured tree directly. The build dir is
@@ -57,7 +57,7 @@ and ABI mismatches. Force a clean rebuild with:
 
 ```console
 $ rm -rf build/
-$ uv sync --reinstall-package=nanobind --reinstall-package=mew
+$ uv sync --reinstall-package=nanobind --reinstall-package=mew-bench
 ```
 
 ## Test, lint, type-check
@@ -75,7 +75,7 @@ Build a separate ASAN wheel (lands in `build/asan/`, leaving the Release wheel
 alone; a plain `uv sync` afterwards swaps the editable install back to Release):
 
 ```console
-$ MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
+$ MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew-bench
 ```
 
 `uv run pytest` alone does *not* preload the ASAN runtime, so the test process
@@ -126,7 +126,7 @@ the ASAN build can't see. It mirrors the ASAN flow (lands in `build/tsan/`, and
 is mutually exclusive with ASAN):
 
 ```console
-$ MEW_TSAN=1 uv sync --all-extras --all-groups --no-install-package duckdb --reinstall-package=mew
+$ MEW_TSAN=1 uv sync --all-extras --all-groups --no-install-package duckdb --reinstall-package=mew-bench
 ```
 
 Preload the TSAN runtime when running, the same way ASAN needs preloading

@@ -111,7 +111,7 @@ jobs:
         env:
           CC: gcc
           CXX: g++
-        run: MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew
+        run: MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew-bench
 
       # libstdc++ must be preloaded alongside libasan.
       - name: Run tests under AddressSanitizer
@@ -141,7 +141,7 @@ jobs:
           CXX: g++
         run: >
           MEW_TSAN=1 uv sync --python 3.14t --all-extras --all-groups
-          --no-install-package duckdb --reinstall-package=mew
+          --no-install-package duckdb --reinstall-package=mew-bench
 
       - name: Assert the GIL stays disabled after import
         run: |
