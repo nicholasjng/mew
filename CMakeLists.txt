@@ -11,16 +11,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
 
 # The file lands in ${CMAKE_BINARY_DIR}; with build-dir = "build/{wheel_tag}"
 # in pyproject.toml that path varies per ABI, so clangd's auto-discovery
-# (which probes ./build/ and the source root) won't find it. Symlink it to
-# the source root so IDE tooling picks it up without configuration.
-add_custom_target(
-    symlink_compile_commands ALL
-    COMMAND ${CMAKE_COMMAND} -E create_symlink
-        ${CMAKE_BINARY_DIR}/compile_commands.json
-        ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
-    BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
-    COMMENT "Symlinking compile_commands.json to source root"
-    VERBATIM)
+# (which probes ./build/ and the source root) won't find it. For a top-level
+# mew build, symlink it into the source root. Never write into mew's checkout
+# when a consumer brings it in with add_subdirectory or FetchContent.
+if(PROJECT_IS_TOP_LEVEL)
+    add_custom_target(
+        symlink_compile_commands ALL
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+            ${CMAKE_BINARY_DIR}/compile_commands.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
+        BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
+        COMMENT "Symlinking compile_commands.json to source root"
+        VERBATIM)
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -232,8 +235,8 @@ if(_ruff_available EQUAL 0)
     )
 endif()
 
-# Updating the repository copy is an explicit maintainer action. Normal builds
-# only read the source tree.
+# Updating the repository copy is an explicit maintainer action.
+# Normal builds only read the source tree.
 add_custom_target(
     update_mew_core_stub
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -241,4 +244,16 @@ add_custom_target(
         ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
     DEPENDS mew_core_stub
     COMMENT "Updating checked-in src/mew/_core.pyi"
+    VERBATIM)
+
+# CI/release check: generation remains read-only, but a stale checked-in stub
+# fails loudly. Run after installing the development dependencies so ruff is
+# available and the generated file has its canonical formatting.
+add_custom_target(
+    check_mew_core_stub
+    COMMAND ${CMAKE_COMMAND} -E compare_files
+        ${_MEW_CORE_STUB}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi
+    DEPENDS mew_core_stub
+    COMMENT "Checking checked-in src/mew/_core.pyi"
     VERBATIM)
