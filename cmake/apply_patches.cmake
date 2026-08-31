@@ -34,6 +34,25 @@ foreach(patch IN LISTS PATCHES)
         COMMAND "${GIT}" -C "${SRC}" apply --3way --whitespace=nowarn "${patch}"
         RESULT_VARIABLE _rc
         ERROR_VARIABLE _err)
+
+    # `--3way` merges blobs rather than matching text, so it is the one mode
+    # that cannot absorb a CRLF/LF difference between the patch and the tree --
+    # `--ignore-whitespace` can, but the two flags do not combine. `.gitattributes`
+    # and the GIT_CONFIG on the FetchContent_Declare should keep both sides at
+    # LF; this retry keeps a stray checkout setting from failing the configure.
+    if(NOT _rc EQUAL 0)
+        execute_process(
+            COMMAND "${GIT}" -C "${SRC}" apply --ignore-whitespace "${patch}"
+            RESULT_VARIABLE _rc
+            ERROR_QUIET)
+        if(_rc EQUAL 0)
+            message(WARNING
+                "Google Benchmark patch ${_name} only applied after ignoring "
+                "whitespace; the checkout's line endings likely differ from the "
+                "patch (expected LF on both sides).")
+        endif()
+    endif()
+
     if(NOT _rc EQUAL 0)
         message(FATAL_ERROR
             "Google Benchmark patch failed to apply: ${_name}\n"

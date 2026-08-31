@@ -108,6 +108,11 @@ FetchContent_Declare(
     googlebenchmark
     GIT_REPOSITORY https://github.com/google/benchmark.git
     GIT_TAG ${MEW_BENCHMARK_COMMIT}
+    # Keep the fetched tree LF on every platform. A Windows runner's global
+    # `core.autocrlf=true` would otherwise check this clone out as CRLF while
+    # `.gitattributes` holds the patches at LF, and the mismatch makes every
+    # hunk fail with "patch does not apply".
+    GIT_CONFIG core.autocrlf=false core.eol=lf
     # PATCH_COMMAND runs without a shell; the -P script carries the
     # already-applied guard and the failure message.
     PATCH_COMMAND ${CMAKE_COMMAND}
