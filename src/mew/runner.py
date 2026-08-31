@@ -94,11 +94,7 @@ def _warmup_free_threading() -> None:
     if _FT_WARMED_UP:
         return
     _FT_WARMED_UP = True
-    import threading
-
-    t = threading.Thread(target=lambda: None)
-    t.start()
-    t.join()
+    _core.warmup_free_threading()
 
 
 def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> None:

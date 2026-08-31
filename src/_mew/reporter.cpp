@@ -13,6 +13,7 @@
 #include <exception>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "abort.h"
@@ -157,6 +158,19 @@ class PyReporter : public BenchmarkReporter {
 }  // namespace
 
 void register_reporter(nb::module_& m) {
+    m.def(
+        "warmup_free_threading",
+        [] {
+            // Force CPython's first secondary-thread attach before Google
+            // Benchmark starts several raw workers concurrently. Do this in
+            // native code: handing a Python callable to threading.Thread
+            // exercises biased cross-thread refcounting and obscures mew's
+            // own races under ThreadSanitizer.
+            nb::gil_scoped_release release;
+            std::thread worker([] { nb::gil_scoped_acquire acquire; });
+            worker.join();
+        },
+        "Attach one native thread to initialize free-threaded CPython state.");
     m.def(
         "preload_system_info",
         [] {
