@@ -8,6 +8,7 @@ import warnings
 from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
 from datetime import UTC, datetime
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 import mew.context as _context
@@ -156,7 +157,7 @@ def _gb_argv(
         # A bare number means seconds, but GB deprecates the suffix-less form
         # (one "should have a suffix" line per benchmark on stderr): stamp the
         # `s`. Non-numeric strings ("100x", "0.5s") pass through untouched.
-        mt = str(min_time)
+        mt = str(min_time).strip()
         try:
             float(mt)
         except ValueError:
@@ -170,6 +171,34 @@ def _gb_argv(
         f"--benchmark_repetitions={repetitions if repetitions is not None else 1}",
         f"--benchmark_enable_random_interleaving={'true' if random_interleaving else 'false'}",
     ]
+
+
+def _validate_run_options(
+    min_time: str | float | None,
+    min_warmup_time: float | None,
+    repetitions: int | None,
+) -> None:
+    """Reject global values Google Benchmark otherwise ignores or mishandles."""
+    if repetitions is not None and (
+        isinstance(repetitions, bool) or not isinstance(repetitions, int) or repetitions < 1
+    ):
+        raise ValueError(f"repetitions must be an integer >= 1, got {repetitions!r}")
+    if min_warmup_time is not None and (not isfinite(min_warmup_time) or min_warmup_time < 0):
+        raise ValueError(f"min_warmup_time must be a finite number >= 0, got {min_warmup_time!r}")
+    if min_time is None:
+        return
+    text = str(min_time).strip()
+    number = text[:-1] if text.endswith(("s", "x")) else text
+    try:
+        value = float(number)
+    except ValueError:
+        raise ValueError(
+            f"min_time must be positive seconds or an iteration count like '100x', got {min_time!r}"
+        ) from None
+    if not isfinite(value) or value <= 0 or (text.endswith("x") and not number.isdigit()):
+        raise ValueError(
+            f"min_time must be positive seconds or an iteration count like '100x', got {min_time!r}"
+        )
 
 
 def run(
@@ -236,7 +265,13 @@ def run(
     -------
     int
         Number of benchmarks Google Benchmark executed; ``0`` if none were selected.
+
+    Raises
+    ------
+    ValueError
+        If a global timing or repetition option is outside its valid range.
     """
+    _validate_run_options(min_time, min_warmup_time, repetitions)
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
         return 0

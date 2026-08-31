@@ -32,10 +32,10 @@ from mew._typing import BenchmarkResult
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
 from mew.reporter import _ROW_STAMP_FIELDS, _fmt_bytes, canonical_name
 
-# `memory.total_bytes` and `memory.total_allocations` stay in stored files but
-# are not compare metrics: total_bytes duplicates peak_bytes, and
-# total_allocations is not comparable across differing iteration counts
-# (allocations_per_iteration is the comparable form).
+# `memory.total_bytes` and `memory.total_allocations` may stay in stored files
+# but are not compare metrics: total allocated bytes describes cumulative work,
+# and total allocations is not comparable across differing iteration counts
+# (`allocations_per_iteration` is the comparable form).
 _MEMORY_METRICS = frozenset(
     {
         "memory.peak_bytes",
@@ -51,7 +51,7 @@ _KEYS = frozenset({"name", "func"})
 _CV_UNRELIABLE = 0.25
 
 # Context fields that make timings incomparable when they differ across files.
-_CTX_SKEW_FIELDS = ("host_name", "num_cpus", "cpu_scaling_enabled")
+_CTX_SKEW_FIELDS = ("num_cpus", "cpu_scaling_enabled")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1043,6 +1043,8 @@ def compare(
             raise SystemExit(f"mew compare --by {by} takes exactly one result file")
         columns = _pivot_columns(files[0], metric, key, by, baseline, statistic)
     else:
+        if baseline is not None:
+            raise SystemExit("mew compare --baseline requires --by")
         if len(files) < 2:
             raise SystemExit("mew compare needs at least two result files")
         parsed = [_split_selector(str(p)) for p in files]

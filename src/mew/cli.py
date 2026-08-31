@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import re
 import sys
@@ -148,10 +149,7 @@ def _collect_or_exit(paths: list[str], **kwargs: Any) -> list[Entry]:
     return entries
 
 
-_PATHS_HELP = (
-    "Files, directories, or `<path>::<filter>` selectors to discover benchmarks from. "
-    "Defaults to `[tool.mew] benchpaths`."
-)
+_PATHS_HELP = "Discover benchmarks from files, directories, or <path>::<filter> selectors."
 
 
 def list_(
@@ -216,6 +214,10 @@ def _build_reporters(
             show_cpu=show_cpu,
             show_label=show_label,
         )
+
+    if append and not any(raw.lower().endswith((".jsonl", ".jsonl.gz")) for raw in outputs):
+        print("--append requires a .jsonl or .jsonl.gz output sink", file=sys.stderr)
+        raise SystemExit(2)
 
     if not outputs:
         return [_stdout()]
@@ -365,6 +367,9 @@ def compare(
     regressions_config: Path | None = None,
 ) -> None:
     """Compare benchmark result files; the last file is the baseline."""
+    if baseline is not None and by is None:
+        print("mew compare: --baseline requires --by", file=sys.stderr)
+        raise SystemExit(2)
     from mew._statistics import resolve_statistic
     from mew.compare import compare as _compare
 
@@ -455,7 +460,7 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
             (r"(?m)^[A-Za-z][A-Za-z ]*:", "bold"),
             (r"(?<![\w-])--[A-Za-z][\w-]*", "cyan"),
             (r"(?<![\w-])-[A-Za-z](?![\w-])", "green"),
-            (r"<[\w-]+>", "yellow"),
+            (r"<[^>]+>", "yellow"),
         ):
             text = re.sub(pattern, lambda m, s=style: sgr(m.group(), s), text)
         return text
@@ -473,10 +478,14 @@ def _warmup_seconds(value: str) -> float:
     dur = value.strip()
     try:
         if dur.endswith("ms"):  # before "m": "500ms" is not minutes
-            return float(dur[:-2]) / 1000
-        if dur.endswith("m"):
-            return float(dur[:-1]) * 60
-        return float(dur.removesuffix("s"))
+            seconds = float(dur[:-2]) / 1000
+        elif dur.endswith("m"):
+            seconds = float(dur[:-1]) * 60
+        else:
+            seconds = float(dur.removesuffix("s"))
+        if not math.isfinite(seconds) or seconds < 0:
+            raise ValueError
+        return seconds
     except ValueError:
         # ArgumentTypeError gets argparse's usage-error exit (2); SystemExit
         # would exit 1, colliding with the "nothing matched" code.
@@ -486,13 +495,52 @@ def _warmup_seconds(value: str) -> float:
         ) from None
 
 
+def _min_time(value: str) -> str:
+    """Validate seconds or an ``Nx`` fixed-iteration count for --min-time."""
+    text = value.strip()
+    number = text[:-1] if text.endswith(("s", "x")) else text
+    try:
+        parsed = float(number)
+    except ValueError:
+        parsed = math.nan
+    if not math.isfinite(parsed) or parsed <= 0 or (text.endswith("x") and not number.isdigit()):
+        raise argparse.ArgumentTypeError(
+            f"invalid --min-time {value!r}; use positive seconds ('0.5', '1s') "
+            "or iterations ('100x')"
+        )
+    return text
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}") from None
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError:
+        parsed = math.nan
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive finite number, got {value!r}")
+    return parsed
+
+
 def _percent(value: str) -> float:
     """argparse type for --regression-threshold: '5%' → 5.0. Requires the '%' suffix
     so the flag reads unambiguously at the call site, not just in --help."""
     try:
         if not value.endswith("%"):
             raise ValueError
-        return float(value[:-1])
+        parsed = float(value[:-1])
+        if not math.isfinite(parsed) or parsed < 0:
+            raise ValueError
+        return parsed
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected a percent like '5%', got {value!r}") from None
 
@@ -501,14 +549,14 @@ def _add_filter_args(
     p: argparse.ArgumentParser,
     *,
     pattern_help: str,
-    literal_help: str = "Match -k as a literal string.",
+    literal_help: str = "Treat -k as a literal string.",
 ) -> None:
     """Add the coupled ``-k/--pattern`` + ``-F/--literal`` pair.
 
     ``-F`` only means anything alongside ``-k``, so the two are always registered
     together; only the help text differs per command.
     """
-    p.add_argument("-k", "--pattern", help=pattern_help)
+    p.add_argument("-k", "--pattern", metavar="<regex>", help=pattern_help)
     p.add_argument("-F", "--literal", action="store_true", help=literal_help)
 
 
@@ -519,7 +567,7 @@ def _add_tag_arg(p: argparse.ArgumentParser) -> None:
         "--tag",
         action="append",
         default=[],
-        help="Filter benchmarks by tag. Repeatable, OR semantics.",
+        help="Select benchmarks with <tag> (repeatable, OR semantics).",
     )
 
 
@@ -529,47 +577,48 @@ def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
         aliases=["ls"],
         help="List discovered benchmarks.",
         formatter_class=_CommandHelpFormatter,
+        add_help=False,
     )
+    p.add_argument("-h", "--help", action="help", help="Show this help.")
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
     _add_filter_args(
         p,
-        pattern_help="List benchmarks whose name matches this regex (re.search, so a plain "
-        "word works as a substring). A family case also matches by its `name[label]` "
-        "form; pass --literal to match `[...]` without escaping.",
-        literal_help="Match -k as a literal string, not a regex (e.g. paste `bench_sort[n=1000]`).",
+        pattern_help="List benchmarks whose name matches <regex>.",
+        literal_help="Treat -k as a literal string.",
     )
     _add_tag_arg(p)
-    p.add_argument("--show-tags", action="store_true", help="Show tags alongside each name.")
+    p.add_argument("--show-tags", action="store_true", help="Show tags alongside benchmark names.")
     p.add_argument(
         "--show-cases",
         action="store_true",
-        help="Expand each parametrized family into one row per case (`name[label]`).",
+        help="Show every case in a parametrized family.",
     )
     p.add_argument(
         "-n",
         "--names-only",
         action="store_true",
-        help="Print the bare name without the `file.py::` prefix. Path-free, so "
-        "`mew list -n | mew run --stdin` round-trips from any directory.",
+        help="Omit the file.py:: prefix from benchmark names.",
     )
     p.set_defaults(_func=list_)
 
 
 def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
-        "run", help="Discover and run benchmarks.", formatter_class=_CommandHelpFormatter
+        "run",
+        help="Discover and run benchmarks.",
+        formatter_class=_CommandHelpFormatter,
+        add_help=False,
     )
+    p.add_argument("-h", "--help", action="help", help="Show this help.")
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
     _add_filter_args(
         p,
-        pattern_help="Only run benchmarks whose name matches this regex (re.search). A family "
-        "case also matches by its `name[label]` form; pass --literal to match `[...]`.",
+        pattern_help="Run benchmarks whose name matches <regex>.",
     )
     p.add_argument(
         "--stdin",
         action="store_true",
-        help="Read newline-delimited selectors from stdin (`mew list | mew run --stdin`). "
-        "Lines match literally; a path-free name is resolved against run's own discovery.",
+        help="Read literal benchmark selectors from standard input.",
     )
     _add_tag_arg(p)
     p.add_argument(
@@ -577,130 +626,133 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         "--output",
         action="append",
         default=[],
-        help="Output sink, repeatable: `-`/`stdout` for the terminal, "
-        "`<path>.json` / `<path>.jsonl` / `<path>.jsonl.gz` for a file. Default: `-`.",
+        metavar="<file>",
+        help="Write results to <file> (repeatable; '-' for standard output).",
     )
     p.add_argument(
         "--format",
         default="rich",
-        metavar="(rich|json|jsonl)",
-        help="Format of stdout output: `rich` (table), `json`, or `jsonl`. "
-        "Use json/jsonl to pipe machine-readable rows (`mew run --format jsonl | jq`).",
+        metavar="<format>",
+        help="Set standard-output format to rich, json, or jsonl.",
     )
     p.add_argument(
-        "--min-time", help="Min time per benchmark, seconds (e.g. `0.5`) or iters (`100x`)."
+        "--min-time",
+        type=_min_time,
+        metavar="<time>",
+        help="Run each benchmark for at least <time> or N iterations.",
     )
     p.add_argument(
         "--min-warmup-time",
         type=_warmup_seconds,
-        help="Warmup time per benchmark before measurement starts "
-        "(seconds, or a duration like `200ms`).",
+        metavar="<time>",
+        help="Warm up each benchmark for at least <time>.",
     )
-    p.add_argument("--repetitions", type=int, metavar="<N>", help="Repeat each benchmark N times.")
+    p.add_argument(
+        "--repetitions", type=_positive_int, metavar="<n>", help="Repeat each benchmark <n> times."
+    )
     p.add_argument(
         "--random-interleaving",
         action="store_true",
-        help="Randomly interleave repetitions across benchmarks to decorrelate "
-        "thermal/load drift (effective with --repetitions > 1).",
+        help="Randomly interleave benchmark repetitions.",
     )
     p.add_argument(
         "--session-tag",
-        help="Label this run's output as a session (e.g. `before`), addressable "
-        "later as `mew compare results.jsonl@before`. Runs sharing a tag are "
-        "compared as one session.",
+        metavar="<tag>",
+        help="Identify this run as session <tag>.",
     )
     p.add_argument(
         "--append",
         action="store_true",
-        help="Append as a new session to existing `.jsonl[.gz]` sinks.",
+        help="Append a session to existing JSONL output.",
     )
     p.add_argument(
         "--strict",
         action="store_true",
-        help="Error instead of skipping when threaded benchmarks (threads / "
-        "thread_range) are selected on a GIL interpreter, where they can't run.",
+        help="Fail instead of skipping unsupported threaded benchmarks.",
     )
     p.add_argument(
         "--profile-memory",
         action="store_true",
-        help="Profile memory allocations with `memray`, via Google Benchmark's memory "
-        "manager (an extra untimed pass per repetition).",
+        help="Profile memory allocations with memray.",
     )
     p.add_argument(
         "--flamegraph",
         type=Path,
-        help="Write an HTML allocation flame graph to this path. Implies --profile-memory.",
+        metavar="<file>",
+        help="Write an allocation flame graph to <file> (implies --profile-memory).",
     )
     p.add_argument(
         "--sample",
         action="store_true",
-        help="Sample CPU in-process with `pyinstrument` (Python frames).",
+        help="Sample Python CPU usage with pyinstrument.",
     )
     p.add_argument(
         "--sample-interval",
-        type=float,
+        type=_positive_float,
         default=1e-4,
-        help="pyinstrument sampling interval in seconds (default 1e-4).",
+        metavar="<seconds>",
+        help="Set the pyinstrument sampling interval (default 1e-4).",
     )
     p.add_argument(
         "--sample-html",
         type=Path,
-        help="Write a pyinstrument HTML report to this path. Implies --sample.",
+        metavar="<file>",
+        help="Write a pyinstrument report to <file> (implies --sample).",
     )
     p.set_defaults(_func=run)
 
 
 def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
-        "compare", help="Compare benchmark result files.", formatter_class=_CommandHelpFormatter
+        "compare",
+        help="Compare benchmark result files.",
+        formatter_class=_CommandHelpFormatter,
+        add_help=False,
     )
-    p.add_argument("files", nargs="+", type=Path, help="Result files; the last is the baseline.")
+    p.add_argument("-h", "--help", action="help", help="Show this help.")
+    p.add_argument(
+        "files", nargs="+", type=Path, help="Compare result files against the last file."
+    )
     p.add_argument(
         "-m",
         "--metric",
         default="real_time",
-        help="Metric: real_time, cpu_time, iterations, or (for --profile-memory results) "
-        "memory.peak_bytes / memory.allocations_per_iteration.",
+        help="Compare using <metric> (default real_time).",
     )
     p.add_argument(
         "--key",
-        help="How benchmarks are matched: `name` (full) or `func` (strip the `file.py::` "
-        "prefix). Defaults to `func` with --by, `name` otherwise.",
+        metavar="<key>",
+        help="Match benchmarks by name or func (default name; func with --by).",
     )
-    _add_filter_args(p, pattern_help="Regex filter (re.search).")
-    p.add_argument("--stddev", action="store_true", help="Show stddev columns if present.")
+    _add_filter_args(p, pattern_help="Compare benchmarks whose name matches <regex>.")
+    p.add_argument("--stddev", action="store_true", help="Show standard-deviation columns.")
     p.add_argument(
         "--by",
-        help="Pivot one file on a field instead of comparing files, e.g. "
-        "`context.engine` (set per suite with mew.set_context).",
+        metavar="<field>",
+        help="Compare groups in one file, split by <field>.",
     )
-    p.add_argument("--baseline", help="With --by, the baseline column (default: first written).")
+    p.add_argument("--baseline", metavar="<value>", help="Use <value> as the --by baseline.")
     p.add_argument(
         "--statistic",
-        help="Reducer over per-repetition values, for display and the regression gate: "
-        "min, max, mean, median, gmean, or a pNN percentile like p95. "
-        "Default: median. Overrides [tool.mew] statistic.",
+        metavar="<name>",
+        help="Reduce repetitions with min, max, mean, median, gmean, or pNN.",
     )
     p.add_argument(
         "--regression-threshold",
         type=_percent,
-        metavar="<N%>",
-        help="Regression magnitude that triggers a REGRESSED verdict, e.g. `5%%`. "
-        "Always prints the regression panel; pair with --exit-non-zero-on-regression "
-        "to also fail the command. Defaults to [tool.mew.regressions] default_threshold.",
+        metavar="<n%>",
+        help="Report regressions over <n%%>.",
     )
     p.add_argument(
         "--exit-non-zero-on-regression",
         action="store_true",
-        help="Exit 2 if any benchmark regressed past the threshold (the "
-        "[tool.mew.regressions] default when no --regression-threshold is given). "
-        "Without this, the regression panel is informational only and the exit "
-        "code is unaffected.",
+        help="Exit with status 2 when a regression is found.",
     )
     p.add_argument(
         "--regressions-config",
         type=Path,
-        help="TOML file with [tool.mew.regressions] (default: ./pyproject.toml).",
+        metavar="<file>",
+        help="Read regression rules from <file> (default pyproject.toml).",
     )
     p.set_defaults(_func=compare)
 
@@ -712,12 +764,14 @@ def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
         "completions",
         help="Print a shell-completion script for eval/install.",
         formatter_class=_CommandHelpFormatter,
+        add_help=False,
     )
+    p.add_argument("-h", "--help", action="help", help="Show this help.")
     p.add_argument(
         "shell",
         choices=list(SHELLS),
         metavar="<shell>",
-        help=f"Target shell: {', '.join(SHELLS)}.",
+        help=f"Generate completions for {', '.join(SHELLS)}.",
     )
     p.set_defaults(_func=completions)
 
@@ -728,11 +782,15 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="mew",
         description="Microbenchmarking for Python via Google Benchmark.",
         formatter_class=_CommandHelpFormatter,
+        add_help=False,
         # git-style: global options up front, then `<command> [<args>]`, instead
         # of argparse's default `{list,ls,run,…} ...` enumeration.
         usage="mew [-h] [--version] <command> [<args>]",
     )
-    parser.add_argument("--version", action="version", version=_VERSION)
+    parser.add_argument("-h", "--help", action="help", help="Show this help.")
+    parser.add_argument(
+        "--version", action="version", version=_VERSION, help="Show version information."
+    )
     # metavar `<command>` keeps the command list out of curly braces; prog="mew"
     # so each subcommand's own usage reads `mew run …` (not the parent's usage
     # string, which argparse would otherwise splice in).

@@ -9,6 +9,7 @@ threshold, matched against the full name via :func:`fnmatch.fnmatchcase`.
 from __future__ import annotations
 
 import fnmatch
+import math
 import sys
 import tomllib
 from collections.abc import Mapping
@@ -56,6 +57,19 @@ class AllowRule:
     ignore: bool = False
     threshold: float | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.ignore, bool):
+            raise TypeError("ignore must be a boolean")
+        if self.threshold is not None and (
+            isinstance(self.threshold, bool)
+            or not isinstance(self.threshold, int | float)
+            or not math.isfinite(self.threshold)
+            or self.threshold < 0
+        ):
+            raise ValueError("threshold must be a finite, non-negative number")
+        if self.ignore == (self.threshold is not None):
+            raise ValueError("set exactly one of ignore=true or threshold=<float>")
+
     def matches(self, name: str) -> bool:
         """Whether ``name`` falls under this rule's pattern."""
         return fnmatch.fnmatchcase(name, self.pattern)
@@ -85,6 +99,15 @@ class RegressionConfig:
 
     default_threshold: float
     rules: tuple[AllowRule, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.default_threshold, bool)
+            or not isinstance(self.default_threshold, int | float)
+            or not math.isfinite(self.default_threshold)
+            or self.default_threshold < 0
+        ):
+            raise ValueError("default_threshold must be a finite, non-negative number")
 
     def find_rule(self, name: str) -> AllowRule | None:
         """The first rule matching ``name``, or ``None`` if none do."""
@@ -135,10 +158,23 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
     if not isinstance(pattern, str) or not pattern:
         raise ValueError(f"{source}: allow rule missing 'pattern'")
 
-    ignore = bool(raw.get("ignore", False))
+    ignore = raw.get("ignore", False)
+    if not isinstance(ignore, bool):
+        # Malformed configuration is reported uniformly as ValueError by the
+        # CLI, including fields whose specific problem is their runtime type.
+        raise ValueError(  # noqa: TRY004
+            f"{source}: allow rule {pattern!r}: ignore must be a boolean"
+        )
     threshold = raw.get("threshold")
-    if threshold is not None and not isinstance(threshold, int | float):
-        raise ValueError(f"{source}: allow rule {pattern!r}: threshold must be a number")
+    if threshold is not None and (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, int | float)
+        or not math.isfinite(threshold)
+        or threshold < 0
+    ):
+        raise ValueError(
+            f"{source}: allow rule {pattern!r}: threshold must be a finite, non-negative number"
+        )
 
     reason = raw.get("reason")
     if not isinstance(reason, str) or not reason.strip():
@@ -147,9 +183,9 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
             "(document why this is allowlisted)"
         )
 
-    if not ignore and threshold is None:
+    if ignore == (threshold is not None):
         raise ValueError(
-            f"{source}: allow rule {pattern!r}: set either ignore=true or threshold=<float>"
+            f"{source}: allow rule {pattern!r}: set exactly one of ignore=true or threshold=<float>"
         )
 
     return AllowRule(
@@ -207,7 +243,17 @@ def load_config(
             doc = tomllib.load(fh)
         table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
         if "default_threshold" in table:
-            threshold = float(table["default_threshold"])
+            raw_threshold = table["default_threshold"]
+            if (
+                isinstance(raw_threshold, bool)
+                or not isinstance(raw_threshold, int | float)
+                or not math.isfinite(raw_threshold)
+                or raw_threshold < 0
+            ):
+                raise ValueError(
+                    f"{source}: default_threshold must be a finite, non-negative number"
+                )
+            threshold = float(raw_threshold)
         for raw in table.get("allow", []):
             rules.append(_coerce_rule(raw, source=source))
 
