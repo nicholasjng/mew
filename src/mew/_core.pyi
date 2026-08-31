@@ -76,6 +76,13 @@ class CounterFlags(enum.IntFlag):
 
     kInvert = -2147483648
 
+class CounterOneK(enum.Enum):
+    """Base used to scale a counter for display."""
+
+    kIs1000 = 1000
+
+    kIs1024 = 1024
+
 class BatchIter:
     """Iterator yielding batch sizes from `State.batches`."""
 
@@ -142,11 +149,15 @@ class State:
         """Record how many bytes the body handled, reported as bytes/second."""
 
     def set_counter(
-        self, name: str, value: float, flags: CounterFlags = CounterFlags.kDefaults
+        self,
+        name: str,
+        value: float,
+        flags: CounterFlags = CounterFlags.kDefaults,
+        one_k: CounterOneK = CounterOneK.kIs1000,
     ) -> None:
         """
         Attach a user-defined counter, surfaced in `BenchmarkResult['counters']`.
-        `flags` controls how Google Benchmark normalizes it (see `CounterFlags`).
+        `flags` controls normalization; `one_k` selects decimal or binary scaling.
         """
 
     def range(self, pos: int = 0) -> int:
@@ -243,6 +254,14 @@ class BenchmarkHandle:
     def thread_range(self, min_threads: int, max_threads: int) -> BenchmarkHandle:
         """
         Run the benchmark once per thread count in [min_threads, max_threads], stepping by the range multiplier (powers of two). See `threads` for the free-threading requirement.
+        """
+
+    def dense_thread_range(
+        self, min_threads: int, max_threads: int, stride: int = 1
+    ) -> BenchmarkHandle:
+        """
+        Run once per thread count in [min_threads, max_threads], stepping by stride.
+        See `threads` for the free-threading requirement.
         """
 
     def arg(self, value: int) -> BenchmarkHandle:

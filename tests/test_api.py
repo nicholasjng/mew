@@ -196,6 +196,16 @@ def test_thread_range_option_accepted_on_parametrize():
     assert entry.options["thread_range"] == (1, 8)
 
 
+def test_dense_thread_range_option_accepted_on_parametrize():
+    @mew.parametrize([{"n": 1}], dense_thread_range=(1, 8, 1))
+    def bench_x(state, n):
+        for _ in state:
+            pass
+
+    (entry,) = REGISTRY.all()
+    assert entry.options["dense_thread_range"] == (1, 8, 1)
+
+
 def test_product_pulls_threads_out_of_kwargs():
     @mew.product(n=[1, 2], threads=2)
     def bench_x(state, n):
@@ -364,6 +374,15 @@ def test_product_threads_and_thread_range_mutually_exclusive():
                 pass
 
 
+def test_dense_thread_options_mutually_exclusive():
+    with pytest.raises(TypeError, match="mutually exclusive"):
+
+        @mew.benchmark(thread_range=(1, 4), dense_thread_range=(1, 4, 1))
+        def _bench(state):
+            for _ in state:
+                pass
+
+
 def test_thread_range_shape_validated_at_decoration():
     with pytest.raises(TypeError, match="min, max"):
 
@@ -375,6 +394,22 @@ def test_thread_range_shape_validated_at_decoration():
     with pytest.raises(TypeError, match="1 <= min <= max"):
 
         @mew.benchmark(thread_range=(4, 2))
+        def _bench2(state):
+            for _ in state:
+                pass
+
+
+def test_dense_thread_range_validated_at_decoration():
+    with pytest.raises(TypeError, match="min, max, stride"):
+
+        @mew.benchmark(dense_thread_range=(1, 4))  # ty: ignore[invalid-argument-type]
+        def _bench(state):
+            for _ in state:
+                pass
+
+    with pytest.raises(TypeError, match="stride >= 1"):
+
+        @mew.benchmark(dense_thread_range=(1, 4, 0))
         def _bench2(state):
             for _ in state:
                 pass

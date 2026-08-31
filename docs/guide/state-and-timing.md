@@ -74,10 +74,17 @@ Reporters print both `Real` and `CPU` columns; the difference is informative:
 
 Set `use_real_time=True` if your benchmark's primary metric is wall-clock time.
 
+## Counters
+
+`state.set_counter()` attaches a numeric measurement to the result. Use
+{class}`mew.CounterFlags` for rates and other normalization, and set
+`one_k=mew.CounterOneK.kIs1024` when human-readable output should use binary
+rather than decimal prefixes.
+
 ## Threaded benchmarks (free-threading)
 
 Google Benchmark can run a single benchmark body concurrently across _N_ threads.
-mew exposes this through the `threads` and `thread_range` options:
+mew exposes this through `threads`, `thread_range`, and `dense_thread_range`:
 
 ```python
 @mew.benchmark(threads=4)
@@ -88,7 +95,8 @@ def bench_parallel(state):
 ```
 
 Each thread gets its own `State` and timer. Use `state.threads` and
-`state.thread_index` to partition work. `thread_range=(1, 8)` runs at 1, 2, 4, and 8 threads.
+`state.thread_index` to partition work. `thread_range=(1, 8)` runs at 1, 2, 4,
+and 8 threads; `dense_thread_range=(1, 8, 1)` runs every count from 1 through 8.
 
 :::{warning}
 **Threaded mode requires a free-threaded interpreter (CPython 3.14t+).**

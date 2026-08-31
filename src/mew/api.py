@@ -74,10 +74,15 @@ def _check_options(options: Mapping[str, Any]) -> None:
         raise TypeError(f"min_time must be positive, got {v!r}")
     if (v := options.get("min_warmup_time")) is not None and float(v) < 0:
         raise TypeError(f"min_warmup_time must be >= 0, got {v!r}")
-    if options.get("threads") is not None and options.get("thread_range") is not None:
+    thread_options = [
+        key
+        for key in ("threads", "thread_range", "dense_thread_range")
+        if options.get(key) is not None
+    ]
+    if len(thread_options) > 1:
         # GB *accumulates* thread counts, so passing both would silently run
         # the union rather than one overriding the other.
-        raise TypeError("threads and thread_range are mutually exclusive")
+        raise TypeError("threads, thread_range, and dense_thread_range are mutually exclusive")
 
     tr: tuple[int, int] | None = options.get("thread_range")
     if tr is not None:
@@ -87,6 +92,19 @@ def _check_options(options: Mapping[str, Any]) -> None:
             raise TypeError(f"thread_range must be a (min, max) pair, got {tr!r}") from None
         if int(lo) < 1 or int(hi) < int(lo):
             raise TypeError(f"thread_range must satisfy 1 <= min <= max, got {tr!r}")
+
+    dtr: tuple[int, int, int] | None = options.get("dense_thread_range")
+    if dtr is not None:
+        try:
+            lo, hi, stride = dtr
+        except (TypeError, ValueError):
+            raise TypeError(
+                f"dense_thread_range must be a (min, max, stride) triple, got {dtr!r}"
+            ) from None
+        if int(lo) < 1 or int(hi) < int(lo) or int(stride) < 1:
+            raise TypeError(
+                f"dense_thread_range must satisfy 1 <= min <= max and stride >= 1, got {dtr!r}"
+            )
 
 
 def _check_addressable(text: str, what: str) -> None:
@@ -397,6 +415,7 @@ def product(
     report_aggregates_only: bool = False,
     threads: int | None = None,
     thread_range: tuple[int, int] | None = None,
+    dense_thread_range: tuple[int, int, int] | None = None,
     **iterables: Iterable[Any],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a benchmark family from the cartesian product of iterables.
@@ -428,6 +447,9 @@ def product(
     thread_range : tuple[int, int], optional
         Run each case once per thread count in ``[min, max]`` (powers of two).
         Mutually exclusive with ``threads``; same free-threading requirement.
+    dense_thread_range : tuple[int, int, int], optional
+        ``(min, max, stride)`` thread counts. Mutually exclusive with ``threads``
+        and ``thread_range``; same free-threading requirement.
     **iterables
         Parameter name → iterable of values.
 
@@ -468,6 +490,7 @@ def product(
         "report_aggregates_only": report_aggregates_only,
         "threads": threads,
         "thread_range": thread_range,
+        "dense_thread_range": dense_thread_range,
     }
     options = cast(
         BenchmarkOptions,
