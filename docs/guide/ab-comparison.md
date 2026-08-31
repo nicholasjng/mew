@@ -18,7 +18,7 @@ it records the version skew in the output.
 # bench_alpha.py
 import mew
 
-mew.update_context(mew.vcs_context())     # records the commit both sides ran at
+mew.update_context(mew.vcs_context())  # records the commit both sides ran at
 mew.set_context("engine", "alpha 1.5.3")
 
 

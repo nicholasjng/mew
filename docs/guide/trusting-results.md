@@ -97,10 +97,10 @@ instead of accumulating against the second one.
 ## Don't compare across machines
 
 `compare` prints one provenance line per column and warns on stderr when files
-disagree on `host_name`, `num_cpus`, or CPU scaling:
+disagree on the session host, CPU count, or CPU scaling:
 
 ```console
-warning: result files differ in host_name (baseline: ci-runner-3, head: laptop);
+warning: result files differ in host (baseline: ci-runner-3, head: laptop);
 deltas may reflect the environment, not the code
 ```
 

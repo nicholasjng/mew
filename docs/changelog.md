@@ -4,11 +4,87 @@ All notable changes to `mew` are documented here. Versions follow
 [semantic versioning](https://semver.org/); until 1.0 the public API may still
 change between minor releases.
 
-## Unreleased
+## Version 0.2.0 (unreleased)
 
-- `mew compare` marks statistically significant deltas with `(signif.)`, via a
-  stdlib-only Mann-Whitney U test over per-repetition values (2+ repetitions
-  required on both sides).
+This release narrows mew around benchmark execution, reporting, and comparison.
+Profiling now uses Google Benchmark's manager interfaces, while specialized
+variant orchestration and native-profiler integrations have been removed.
+
+### Added
+
+- `mew.run()` accepts custom memory and profiler managers. Profiling runs in
+  separate, untimed passes scoped to the benchmark timing loop; summaries are
+  attached to each result under `memory` and `cpu_profile`. Profiler summaries
+  and `pause()` / `resume()` hooks are optional.
+- Public `MemoryManager`, `ProfilerManager`, `ProfilerResultProvider`, and
+  `PausableProfiler` protocols document the manager contracts. `MemoryMetrics`
+  describes the fixed memory-result schema.
+- `mew.machine_context()` and `mew.vcs_context()` provide reusable provenance.
+  `[tool.mew] setup` imports a project setup file before benchmark discovery,
+  allowing context to be configured once for every CLI run.
+- `mew compare --by FIELD` pivots one result file on any session or context
+  field, replacing the variant-specific comparison path. Untagged runs can be
+  grouped by `context.vcs.commit`.
+- `mew compare` marks statistically significant deltas with `(signif.)`, using
+  a stdlib-only Mann–Whitney U test over per-repetition values. Both sides need
+  at least two repetitions.
+- `dense_thread_range=(min, max, stride)` runs a benchmark at evenly spaced
+  thread counts on a free-threaded interpreter.
+- `CounterFlags` is available from the package root. `CounterOneK` and the new
+  `one_k=` argument to `State.set_counter()` select decimal or binary scaling
+  in Google Benchmark's native console output.
+
+### Changed
+
+- Reporter callbacks now receive plain `BenchmarkResult` dictionaries directly
+  from the native runner. The public native `Run`, `RunType`, and
+  `BenchmarkName` wrappers have been removed.
+- `Reporter.report_context()` returns `None`; an exception from any reporter or
+  manager callback aborts the run. Reporter finalization now also runs for
+  suites whose selected benchmarks were all skipped.
+- Session identity and provenance are stored in separate `session` and
+  `context` blocks. JSONL rows carry both blocks, and result readers support
+  selecting and combining sessions from append-only archives.
+- CPU and memory profiling are driven by Google Benchmark itself instead of
+  Python-side result projection. `State.pause()` regions are excluded from CPU
+  sampling as well as timing.
+- The generated native stub is written to the build tree. Wheels install the
+  checked-in formatted stub; maintainers update it explicitly with the
+  `update_mew_core_stub` CMake target, so dependency builds do not dirty local
+  checkouts.
+- Public documentation and docstrings were reorganized and tightened around
+  the reduced API.
+
+### Removed
+
+- The `--variant` runner, variant worker processes, and `[tool.mew]` variant
+  configuration. Run independent environments explicitly and compare them via
+  shared context plus `mew compare --by`.
+- The `mew profile` command and bundled `perf`, `py-spy`, and `xctrace`
+  adapters. The guide now documents invoking native profilers externally;
+  `mew run --sample` and `--profile-memory` remain for in-process profiling.
+- Arbitrary custom comparison statistics. The built-in reducers remain
+  available for persisted-result comparison.
+- Dynamic benchmark-name shell completion and its cache. Generated completion
+  scripts remain static and side-effect free.
+- `[tool.mew.session-tag]` command execution. Use an explicit `--session-tag`
+  or populate version-control context from `[tool.mew] setup`.
+
+### Fixed
+
+- Memray now traces Python allocators on free-threaded CPython, where object
+  allocation otherwise bypassed its system-allocator hooks.
+- Memray no longer reports peak-live allocation bytes as cumulative
+  `total_bytes`; the optional field is omitted when it cannot be computed
+  cheaply.
+- Optional profiler `get_result()` methods and `None` results are handled
+  correctly; malformed manager result dictionaries raise descriptive errors.
+- Invalid global run options and malformed regression thresholds or allow rules
+  are rejected instead of being silently ignored or coerced.
+- Reusing a `JSONReporter` no longer corrupts comma placement, and owned output
+  streams are reset after finalization.
+- Native warning flags are selected correctly for MSVC, and Google Benchmark
+  patches are applied reproducibly across platforms.
 
 ## Version 0.1.1 (Jul 30, 2026)
 

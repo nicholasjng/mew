@@ -7,6 +7,8 @@ Google Benchmark caps this pass at `min(16, iterations)` calls.
 
 Use `allocations_per_iteration` for comparisons. `total_allocations` depends on
 the memory-pass iteration count; `peak_bytes` is comparable as-is.
+Memray results omit the optional cumulative `total_bytes` field because computing
+it requires scanning every allocation in the capture.
 
 ## Prerequisites
 
