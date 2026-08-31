@@ -9,6 +9,9 @@ BENCHMARK_COMMIT: str = "a8460680f0df91fd26205e0931708a26c3b4094d"
 
 BENCHMARK_VERSION: str = "v1.9.5-74-ga8460680-dirty"
 
+def warmup_free_threading() -> None:
+    """Attach one native thread to initialize free-threaded CPython state."""
+
 def preload_system_info() -> None:
     """
     Force Google Benchmark's lazy CPU/system-info probes to run now.
