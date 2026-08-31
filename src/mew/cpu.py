@@ -132,7 +132,7 @@ class PyinstrumentManager:
 
 
 def _hottest_frame(root: Frame) -> tuple[str, float]:
-    """Return ``("func (file.py:12)", self_seconds)`` for the hottest call site.
+    """Return ``("func (file.py:12)", self_seconds)`` for the hottest user call site.
 
     Summed per call site, not per frame: pyinstrument records one frame per
     *call*, so a helper invoked N times holds 1/N of the time in each of N
@@ -146,9 +146,10 @@ def _hottest_frame(root: Frame) -> tuple[str, float]:
     while stack:
         f = stack.pop()
         stack.extend(f.children)
-        if f.is_synthetic:
+        path = Path(f.file_path) if f.file_path else None
+        if f.is_synthetic or (path is not None and "pyinstrument" in path.parts):
             continue
-        file_name = Path(f.file_path).name if f.file_path else "?"
+        file_name = path.name if path is not None else "?"
         key = (f.function, file_name, f.line_no)
         totals[key] = totals.get(key, 0.0) + f.total_self_time
     if not totals:
