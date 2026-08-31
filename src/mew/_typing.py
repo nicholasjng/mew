@@ -25,20 +25,9 @@ class SessionInfo(TypedDict):
 
 
 class BenchmarkResult(TypedDict):
-    """One benchmark run, serialized: the contract every reporter consumes and
-    every result file stores.
+    """Serialized benchmark row consumed by reporters and result readers.
 
-    The binding projects each Google Benchmark run to one of these before any
-    Python code sees it, so a reporter only ever handles dicts -- the one shape
-    every row source can produce, including rows Google Benchmark never made
-    (benchmarks mew declined to run). The measurement keys (``name``,
-    ``real_time``, ``cpu_time``, ``iterations``, ``time_unit``, ``label``,
-    ``counters``, …) are always present; the keys below are optional.
-
-    ``session`` and ``context`` are absent when a reporter receives the result
-    and present when it is read back from a JSONL archive, where each line
-    stands alone. Because both are single keys, a new context field never
-    widens this schema.
+    Measurement keys are always present. The blocks below are optional.
 
     Attributes
     ----------
@@ -88,14 +77,9 @@ class BenchmarkOptions(TypedDict, total=False):
 
     All keys are optional; omit one to fall back to Google Benchmark's default.
 
-    ``threads`` and ``thread_range`` enable Google Benchmark's threaded mode (each
-    thread gets its own ``State`` and timer). They **require** a free-threaded
-    interpreter: under the GIL the trampoline holds the GIL across
-    Google Benchmark's per-thread start barrier, so the workers deadlock rather
-    than run. On a GIL build :func:`mew.run` warns and skips threaded benchmarks
-    by default (``strict=True`` raises instead). ``thread_range`` runs once per
-    thread count in ``[min, max]`` (powers of two) and is mutually exclusive with
-    ``threads``.
+    Threaded options require a free-threaded interpreter. On a GIL build,
+    :func:`mew.run` skips them unless ``strict=True``. ``threads`` and
+    ``thread_range`` are mutually exclusive.
     """
 
     min_time: float

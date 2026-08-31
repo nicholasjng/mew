@@ -281,11 +281,16 @@ def run(
         # All skipped: GB emits no context for an empty registry, so drive the
         # reporter lifecycle here to surface the skipped rows.
         if rep is not None:
-            rep.report_context(extra_context)
-            if skipped_rows:
-                rep.report_runs(skipped_rows)
-            if fn := getattr(rep, "finalize", None):
-                fn()
+            try:
+                rep.report_context(extra_context)
+                if skipped_rows:
+                    rep.report_runs(skipped_rows)
+            finally:
+                # Match Google Benchmark's normal reporter lifecycle: once
+                # reporting starts, finalize even when a callback raises. This
+                # closes owned sinks and terminates streamed JSON documents.
+                if fn := getattr(rep, "finalize", None):
+                    fn()
         return 0
 
     cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving)

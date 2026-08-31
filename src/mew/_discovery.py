@@ -1,7 +1,6 @@
 """Pytest-style benchmark discovery: walk paths, glob for files, import them.
 
-Internal: consumed by the CLI; not part of the public
-API and carries no stability guarantee.
+Internal: not part of the public API, carries no stability guarantee.
 """
 
 from __future__ import annotations
@@ -57,11 +56,6 @@ def collect_files(
         if path.is_file():
             candidates = [path]
         else:
-            # One tree walk matched against every pattern; rglob would re-walk
-            # the tree once per pattern, and this also runs on every Tab press
-            # (the completion cache's freshness check). A pattern without a `/`
-            # matches file names at any depth (rglob-style); one with a `/`
-            # matches the path relative to the selector root.
             candidates = []
             for dirpath, _, filenames in os.walk(path):
                 reldir = os.path.relpath(dirpath, path)

@@ -131,6 +131,28 @@ def test_profiler_manager_returning_none_leaves_row_unannotated(tmp_path):
     assert "cpu_profile" not in json.loads(out.read_text())["benchmarks"][0]
 
 
+def test_profiler_manager_get_result_is_optional(tmp_path):
+    class MinimalProfilerManager:
+        def after_setup_start(self) -> None:
+            pass
+
+        def before_teardown_stop(self) -> None:
+            pass
+
+    @mew.benchmark
+    def bench_minimal(state):
+        for _ in state:
+            pass
+
+    out = tmp_path / "out.json"
+    mew.run(
+        min_time="1x",
+        reporter=JSONReporter(output=out),
+        profiler_manager=MinimalProfilerManager(),
+    )
+    assert "cpu_profile" not in json.loads(out.read_text())["benchmarks"][0]
+
+
 def test_profiler_manager_is_suspended_across_state_pause(tmp_path):
     @mew.benchmark
     def bench_paused(state):
@@ -177,6 +199,39 @@ def test_manager_exception_propagates_out_of_run(tmp_path):
             min_time="1x",
             reporter=JSONReporter(output=tmp_path / "o.json"),
             memory_manager=Exploding(),
+        )
+
+
+@pytest.mark.parametrize("kind", ["memory", "profiler"])
+def test_malformed_manager_result_propagates_out_of_run(tmp_path, kind):
+    """Python result conversion belongs to the guarded native callback boundary."""
+
+    @mew.benchmark
+    def bench_bad_result(state):
+        for _ in state:
+            pass
+
+    kwargs: dict[str, Any]
+    if kind == "memory":
+
+        class BadMemory(FakeMemoryManager):
+            def stop(self):
+                return {"peak_bytes": "not an integer"}
+
+        kwargs = {"memory_manager": BadMemory()}
+    else:
+
+        class BadProfiler(FakeProfilerManager):
+            def get_result(self):
+                return {"sample_count": object()}
+
+        kwargs = {"profiler_manager": BadProfiler()}
+
+    with pytest.raises(TypeError):
+        mew.run(
+            min_time="1x",
+            reporter=JSONReporter(output=tmp_path / "bad.json"),
+            **kwargs,
         )
 
 

@@ -1,16 +1,11 @@
 """Generate static shell-completion scripts from the argparse parser.
 
-Rolled by hand (no dependency): introspect the parser (subcommands, their
-options, and each value's completion kind: file / fixed choices / none) and
-emit a completion script per shell. ``mew completions <shell>`` prints it for
-``eval`` or install.
+Introspect the parser (subcommands, their options, and each value's completion kind:
+file / fixed choices / none) and emit a completion script per shell.
+``mew completions <shell>`` prints it for ``eval`` or install.
 
-Deliberately **static**: command and option names, file completion for path
-arguments, and fixed choices (``--format``, the shell list). Completing live
-benchmark names would mean either importing the suite on every Tab press (slow,
-and it runs user code) or maintaining an on-disk cache of them (a cache-invalidation
-problem, and a disk write as a side effect of every ``mew run``). Neither is worth
-saving a few keystrokes: use ``mew list -n`` to see the names.
+Deliberately dependency-free and static: command and option names, file completion
+for path arguments, and fixed choices (``--format``, the shell list).
 """
 
 from __future__ import annotations

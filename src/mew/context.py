@@ -2,8 +2,8 @@
 
 A process-global ``dict[str, Any]`` populated via :func:`set_context` and
 :func:`update_context`. Dotted keys nest, so ``set_context("dataset.size", 1024)``
-yields ``{"dataset": {"size": 1024}}``. A snapshot is merged into the reporter's
-context dict under ``ctx["custom"]`` when :func:`mew.run` starts.
+yields ``{"dataset": {"size": 1024}}``. :func:`mew.run` stores a snapshot under
+the reporter's ``context`` key.
 """
 
 from __future__ import annotations
@@ -30,8 +30,6 @@ def _set_nested(target: dict[str, Any], key: str, value: Any) -> None:
     parts = _check_key(key)
     cur: dict[str, Any] = target
     for i, part in enumerate(parts[:-1]):
-        # Sentinel, not None: an explicitly stored None leaf must raise like
-        # any other non-dict value, not be silently replaced by a subtree.
         existing = cur.get(part, _MISSING)
         if existing is _MISSING:
             cur[part] = {}

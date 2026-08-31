@@ -219,11 +219,7 @@ def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[
 
 
 def _pivot_value(row: dict[str, Any], dimension: str) -> Any:
-    """Read a dotted ``dimension`` off a row, e.g. ``custom.vcs.commit``.
-
-    Any depth: a pivot dimension and the grouping key are both user-chosen paths
-    into ``custom``, which nests arbitrarily.
-    """
+    """Read a dotted ``dimension`` from a row, such as ``context.vcs.commit``."""
     node: Any = row
     for part in dimension.split("."):
         if not isinstance(node, dict):
@@ -458,7 +454,7 @@ def _load_pivot_columns(
     """Pivot one file's latest session into ``(value, samples, context)`` columns.
 
     The pivot dimension and sessions are orthogonal: pick the latest session, then
-    group its rows by ``dimension`` (typically ``custom.<key>``, set per suite with
+    group its rows by ``dimension`` (typically ``context.<key>``, set per suite with
     :func:`mew.set_context`). Column order follows first encounter, which is the
     order the rows were written in.
     """
@@ -614,7 +610,7 @@ def _label(path: Path, others: list[Path]) -> str:
 
 
 def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    """Flatten nested custom-context dicts to dotted keys for display/diffing."""
+    """Flatten nested user-context values to dotted keys for display."""
     out: dict[str, Any] = {}
     for k, v in d.items():
         dotted = f"{prefix}{k}"
@@ -626,10 +622,9 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
 
 
 def _ctx_summary(ctx: dict[str, Any], *, exclude: Iterable[str] = ()) -> str:
-    """One provenance line per column: session, host, cpus, scaling, date, custom.*.
+    """Build one provenance line per comparison column.
 
-    ``exclude`` skips custom keys already shown in that column's diff-annotated
-    label, so e.g. ``engine=...`` isn't printed twice on the same line.
+    ``exclude`` omits user-context keys already shown in the column label.
     """
     exclude = set(exclude)
     sess = ctx.get("session") or {}
@@ -1010,7 +1005,7 @@ def compare(
         Add per-file stddev columns when stddev data is present.
     by : str, optional
         Pivot dimension: compare values of one field *within* a single file, one
-        column each, instead of comparing files. Typically ``"custom.<key>"``, read
+        column each, instead of comparing files. Typically ``"context.<key>"``, read
         from the per-suite values :func:`mew.set_context` records on every row.
     baseline : str, optional
         With ``by``, which value is the baseline column (default: the first one
@@ -1082,15 +1077,18 @@ def compare(
 def read_results(path: str | Path) -> list[BenchmarkResult]:
     """Read a result file into its rows, newest session last.
 
-    Accepts every shape mew writes -- single-document ``.json``, newline-delimited
-    ``.jsonl``, and either gzipped -- and returns the rows as stored. Rows written
-    without their own ``session``/``context`` (single-document JSON, where the
-    file carries one block) inherit the file's, so every row is self-describing
-    whatever the source.
+    Accepts JSON, JSONL, and gzip-compressed results. File-level session and
+    context fields are copied onto each row.
 
-    Nothing is filtered: Google Benchmark's aggregate rows (``aggregate_name`` of
-    ``"mean"``, ``"median"``, …) and skipped rows come through too. Use
-    :func:`read_sessions` for comparable numbers with those handled.
+    Parameters
+    ----------
+    path : str or Path
+        Result file to read.
+
+    Returns
+    -------
+    list[BenchmarkResult]
+        Stored rows, including aggregate and skipped rows.
     """
     rows, file_ctx = _read_rows(Path(path))
     # Single-document JSON keeps identity in one block rather than per row;
@@ -1110,21 +1108,20 @@ def read_sessions(
 ) -> list[SessionData]:
     """Read a result file into comparable per-session samples, oldest first.
 
-    Does what a script would otherwise reimplement: drops aggregate and skipped
-    rows, canonicalizes ``bench.py::f/case:0`` to ``bench.py::f[n=10]``, groups
-    repetitions, and reduces each group to one :class:`Sample` carrying the
-    center, the stddev, and the raw per-repetition ``values``.
-
-    Runs that belong together are one session -- see
-    :func:`mew.compare._session_group` for what "together" means.
-
     Parameters
     ----------
+    path : str or Path
+        Result file to read.
     metric : str, default "real_time"
         Which measurement ``Sample.value`` reduces. ``Sample`` is metric-specific,
         so comparing two metrics means two calls.
     statistic : callable, optional
         Reducer over each benchmark's per-repetition values; defaults to the median.
+
+    Returns
+    -------
+    list[SessionData]
+        Sessions with aggregate and skipped rows removed and repetitions reduced.
     """
     if metric not in _METRICS:
         raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")

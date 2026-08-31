@@ -1,6 +1,8 @@
 # CPU profiling
 
-`--sample` runs each selected benchmark under [pyinstrument](https://pyinstrument.readthedocs.io/) once, separately from the timing pass, and attaches a summary, including sample count and hottest frame, to each run.
+`--sample` profiles each benchmark with
+[pyinstrument](https://pyinstrument.readthedocs.io/) in a separate pass and
+attaches the sample count and hottest frame to its result.
 
 This is **in-process** sampling: it sees Python frames only. To capture native
 (C/C++) frames from a compiled extension, see {doc}`profiling-native`.

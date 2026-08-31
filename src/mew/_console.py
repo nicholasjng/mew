@@ -1,11 +1,9 @@
 """Minimal terminal rendering, so the runtime needs no third-party dependency.
 
-Replaces the handful of rich primitives mew used (``Console``, ``Text``,
-``Table``, ``markup.escape``). Scope is only what mew renders: the streamed
-results table (:class:`~mew.reporter.RichReporter`), the comparison table, and
-colorized ``--help``. There is no markup language; a cell carries its style
-out of band, so ``[label]`` needs no escaping. Long cells in the one flexible
-column are left-ellipsized; there is no wrapping or East-Asian width handling.
+Scope is only what mew renders: the streamed results table (:class:`~mew.reporter.RichReporter`),
+the comparison table, and colorized ``--help``. There is no markup language; a cell carries
+its style out of band, so ``[label]`` needs no escaping. Long cells in the one flexible column
+are left-ellipsized; there is no wrapping or East-Asian width handling.
 """
 
 from __future__ import annotations

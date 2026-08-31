@@ -1,15 +1,4 @@
-"""argparse CLI: `mew run`, `mew list`, `mew compare`.
-
-Built on stdlib argparse, with help colorized by a small ANSI helper
-(:mod:`mew._console`). Each command is a plain function with keyword args;
-:func:`_build_parser` mirrors those args as ``add_argument`` calls and
-:func:`main` dispatches via the parsed namespace.
-
-The command functions are the CLI layer, not a supported Python API: each
-keyword mirrors a flag, and the ``add_argument`` help text in the
-``_add_*_cmd`` builders is the canonical documentation for what it does.
-Drive benchmarks programmatically through :func:`mew.run` instead.
-"""
+"""The ``mew`` command-line interface (CLI)."""
 
 from __future__ import annotations
 
@@ -36,8 +25,6 @@ from mew import (
 )
 from mew._registry import compile_name_filter, narrow_entry
 
-# BENCHMARK_VERSION is a git describe (`v1.9.5-74-ga8460680`), so it already
-# carries the commit; the full SHA stays available as `mew.BENCHMARK_COMMIT`.
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
 
@@ -324,9 +311,6 @@ def run(
             append=append,
         )
 
-        # Both profilers are Google Benchmark managers: GB drives them during the
-        # run and stamps the results onto each Run, so there is no pre-pass and
-        # no second execution of the suite.
         with ExitStack() as stack:
             memory_manager = None
             profiler_manager = None
@@ -384,8 +368,6 @@ def compare(
     from mew._statistics import resolve_statistic
     from mew.compare import compare as _compare
 
-    # One config walk for the whole command: the statistic default and the
-    # regression gate both come out of the same [tool.mew] resolution.
     cfg_file = _load_config_or_exit()
     # --statistic wins; else fall back to [tool.mew] statistic; else stdlib median.
     spec = statistic if statistic is not None else cfg_file.statistic
@@ -690,7 +672,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--by",
         help="Pivot one file on a field instead of comparing files, e.g. "
-        "`custom.engine` (set per suite with mew.set_context).",
+        "`context.engine` (set per suite with mew.set_context).",
     )
     p.add_argument("--baseline", help="With --by, the baseline column (default: first written).")
     p.add_argument(
@@ -772,8 +754,7 @@ def main(argv: list[str] | None = None) -> int:
     if func is None:
         parser.print_help()
         return 0
-    # Namespace dests mirror each command's keyword params; `_command`/`_func`
-    # are internal and excluded.
+
     kwargs = {k: v for k, v in vars(args).items() if not k.startswith("_")}
     func(**kwargs)
     return 0

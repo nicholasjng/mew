@@ -142,10 +142,17 @@ class MemrayManager:
 
 
 def manager(stack: ExitStack) -> MemrayManager:
-    """Build a :class:`MemrayManager` whose capture directory is tied to ``stack``.
+    """Create a memory manager whose temporary files are owned by ``stack``.
 
-    The directory lives exactly as long as the stack does, which must outlast the
-    benchmark run: the captures are read during it, one per repetition.
+    Parameters
+    ----------
+    stack : ExitStack
+        Stack that keeps capture files alive through the benchmark run.
+
+    Returns
+    -------
+    MemrayManager
+        Manager ready to pass to :func:`mew.run`.
     """
     require_memray()
     tmpdir = stack.enter_context(tempfile.TemporaryDirectory())
@@ -155,16 +162,12 @@ def manager(stack: ExitStack) -> MemrayManager:
 def write_flamegraph(manager: MemrayManager, path: Path) -> None:
     """Render ``manager``'s captures into one HTML allocation flame graph.
 
-    Uses the captures the timing run already took, so the suite runs once and the
-    graph covers the same region the ``memory`` block reports.
-
-    Capture *files* cannot be merged, but ``FlameGraphReporter.from_snapshot``
-    takes any iterable of records, and they stay valid after their reader closes.
-    Each is re-rooted at the frame :func:`_caller_frame` grabbed, without which
-    the graph is unlabelled and body-level allocations carry no stack at all.
-
-    ``memory_records=()``: each capture's timeline restarts at zero, so the
-    over-time chart would be a sawtooth of unrelated runs.
+    Parameters
+    ----------
+    manager : MemrayManager
+        Manager containing completed captures.
+    path : Path
+        Destination HTML file.
     """
     require_memray()
     import memray

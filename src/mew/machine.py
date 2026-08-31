@@ -42,11 +42,15 @@ def _silence_native_stderr() -> Iterator[None]:
 
 
 def machine_context() -> dict[str, Any]:
-    """CPU count and frequency-scaling state, as a context mapping.
+    """Return CPU count and frequency-scaling state.
 
     ``cpu_scaling_enabled`` is ``True`` only when scaling was positively
-    detected; an undetectable state reads as ``False``, since the warning it
-    drives should not fire on a maybe.
+    detected.
+
+    Returns
+    -------
+    dict[str, Any]
+        Machine metadata suitable for benchmark context.
     """
     with _silence_native_stderr():
         info = _core.cpu_info()

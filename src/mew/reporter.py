@@ -141,6 +141,10 @@ class JSONReporter:
 
     def report_context(self, context: dict[str, Any]) -> None:
         self._fh, self._owns_fh = _open_sink(self._output)
+        # A reporter instance may be reused for several mew.run() calls. Each
+        # context starts a fresh JSON document, so its first row must not inherit
+        # the comma state from the preceding document.
+        self._first_row = True
         # default=str: don't crash on Path/datetime; lossy by design.
         ctx = _indent_block(json.dumps(context, indent=2, default=str), 2)
         self._fh.write('{\n  "context": ' + ctx + ',\n  "benchmarks": [')
@@ -160,10 +164,10 @@ class JSONReporter:
             self._fh.write(_JSON_CLOSER)
             self._fh.flush()
         _close_sink(self._fh, self._owns_fh)
+        self._fh = None
+        self._owns_fh = False
 
 
-# Context fields stamped onto every JSONL row so each line is self-contained.
-# Optional identity (session_id/session_tag/custom) is stamped only when present.
 # Stamped onto every JSONL row so each line stands alone: `session` is what
 # compare groups and orders by, `context` is the provenance that goes with it.
 # Two keys, so a new context field never widens the row schema.
@@ -206,8 +210,7 @@ class JSONLReporter:
     def report_runs(self, runs: list[BenchmarkResult]) -> None:
         assert self._fh is not None  # report_context runs first, always
         for row in runs:
-            # Row-carried values win: rows merged from another process bring
-            # their own `custom`, which must not be clobbered.
+            # Preserve row-carried context when merging data from another process.
             self._fh.write(json.dumps({**self._stamp, **row}, default=str) + "\n")
         self._fh.flush()
 

@@ -1,12 +1,8 @@
 # Reporters
 
-A reporter is a Python class with `report_context(context)` and `report_runs(runs)` methods, plus an optional `finalize()`.
-Calls arrive on the main thread, so a reporter needs no locking of its own.
-
-`report_runs` receives a list of {class}`~mew.BenchmarkResult` dicts, one per completed
-run, with any `memory` / `cpu_profile` blocks already attached. Rows are plain
-dicts (`row["real_time"]`, `row.get("memory")`), so one reporter serves ordinary
-runs and externally merged rows alike.
+A reporter implements `report_context(context)` and `report_runs(runs)`, with an
+optional `finalize()`. Calls arrive on the main thread. Rows are plain
+{class}`~mew.BenchmarkResult` dictionaries.
 
 ## Built-ins
 
@@ -18,23 +14,20 @@ runs and externally merged rows alike.
   `--profile-memory` / `--sample`.
 
 {class}`~mew.JSONReporter`
-: Emits a single `{"context": ..., "benchmarks": [...]}` document, shaped
-  like Google Benchmark's own JSON. Buffers in memory and writes on
-  `finalize()`. Pass `output=Path(...)`, a text stream, or omit for
-  stdout.
+: Streams one `{"context": ..., "benchmarks": [...]}` document. It becomes
+  valid JSON at `finalize()`. Pass a path, text stream, or omit for stdout.
+
+{class}`~mew.JSONLReporter`
+: Streams self-contained NDJSON rows. Use it for append-only or
+  interruption-tolerant archives.
 
 {class}`~mew.Fanout`
-: Broadcasts each callback to a list of reporters; what `mew run` uses when
-  several `-o` sinks are given. A sub-reporter that raises halts the run, so the
-  strictest one wins.
+: Broadcasts callbacks to several reporters. A child exception stops the run.
 
 ## Reading results back
 
-`mew` writes result files; {func}`mew.compare.read_results` and
-{func}`mew.compare.read_sessions` read them. Both accept `.json`, `.jsonl` and
-either gzipped. They live in `mew.compare` rather than the top-level namespace:
-the top level is for *writing* benchmarks, and this is analysis machinery you
-reach for in a separate script.
+{func}`mew.compare.read_results` and {func}`mew.compare.read_sessions` accept
+JSON, JSONL, and gzip-compressed results.
 
 ```python
 from mew.compare import read_sessions
@@ -45,14 +38,11 @@ for session in read_sessions("results.jsonl"):
         print(f"  {name}  {sample.value:.1f} {sample.time_unit}  cv={sample.cv:.3f}")
 ```
 
-`read_sessions` does what a script would otherwise reimplement: it drops Google
-Benchmark's aggregate rows and skipped rows, canonicalizes `bench.py::f/case:0`
-to `bench.py::f[n=10]`, groups repetitions, and reduces each group to one
-{class}`~mew.compare.Sample` carrying the center, the stddev and the raw
-`values`. Pass `metric=` for a measurement other than `real_time`.
+`read_sessions` drops aggregate and skipped rows, canonicalizes case names, and
+reduces repetitions to {class}`~mew.compare.Sample` objects. Pass `metric=` for
+a measurement other than `real_time`.
 
-`read_results` is the raw view — every row as stored, nothing filtered — for
-feeding a dataframe or doing your own reduction.
+`read_results` returns every stored row without filtering.
 
 ## Choosing a sink
 
@@ -63,10 +53,8 @@ feeding a dataframe or doing your own reduction.
 | Growing archive, SQL analytics            | `JSONLReporter` (`-o b.jsonl[.gz]`) |
 | Console output + persisted artifact       | `-o -` plus `-o file.{json,jsonl}` |
 
-JSONL rows are self-contained — each carries its `session` identity and `context`
-context — so an archive is plain NDJSON that analytical tools read directly.
-`.jsonl.gz` compresses it; `--append` adds each run as a new gzip member, so
-appends stay cheap.
+Each JSONL row carries `session` and `context`. `.jsonl.gz` compresses the archive;
+`--append` adds a gzip member without rewriting earlier data.
 
 ## Custom reporters
 
@@ -91,10 +79,8 @@ class MetricsExporter:
         self._sink.flush()
 ```
 
-Each `row` is a {class}`~mew.BenchmarkResult`: the base keys (`name`, `real_time`,
-`cpu_time`, `iterations`, `time_unit`, `label`, `counters`, …) are always
-present; `session`, `context`, `memory`, and `cpu_profile` appear only when relevant
-(under {func}`mew.set_context` / `--profile-memory` / `--sample`).
+Base measurement keys are always present; `session`, `context`, `memory`, and
+`cpu_profile` are conditional.
 
 Pass it directly to {func}`mew.run`:
 
@@ -107,7 +93,7 @@ run(REGISTRY.all(), reporter=MetricsExporter(sink))
 ## SQL and dataframe recipes
 
 DuckDB, pandas, and polars read the JSONL archive directly: nested blocks
-(`custom`, `memory`) arrive as structs, and gzip is handled transparently
+(`context`, `memory`) arrive as structs, and gzip is handled transparently
 (polars: decompress first).
 
 ```sql

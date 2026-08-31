@@ -149,8 +149,6 @@ def _make_family_trampoline(
     The trampoline reads ``state.range(0)`` to look up variant kwargs and label, then dispatches.
     """
 
-    # Plain function (not functools.wraps): the wrapper type would hide __globals__,
-    # which BenchmarkFn requires. Copy identity attributes by hand instead.
     def trampoline(state, _fn=fn, _cases=cases, _labels=labels):
         idx = state.range(0)
         state.set_label(_labels[idx])

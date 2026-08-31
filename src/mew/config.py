@@ -83,9 +83,6 @@ def load(start: Path | None = None) -> Config:
     ------
     ValueError
         If a config field has the wrong shape.
-    TypeError
-        If ``[tool.mew.session-tag]`` is not a table, or one of its fields has
-        the wrong type.
     """
     cwd = (start or Path.cwd()).resolve()
     for parent in [cwd, *cwd.parents]:
