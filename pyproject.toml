@@ -75,9 +75,6 @@ typing = [
 
 [tool.uv]
 default-groups = ["build", "typing"]
-# Build against the project .venv so includes from Python packages
-# (nanobind) in compile_commands.json survive across rebuilds.
-no-build-isolation-package = ["mew-bench"]
 exclude-newer = "1 week"
 exclude-newer-package = { ruff = false, ty = false, nanobind = false }
 

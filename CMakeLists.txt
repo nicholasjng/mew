@@ -5,23 +5,20 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Emit compile_commands.json for clangd / IDE LSPs. Also force-set here in
-# case the project is built without scikit-build-core (e.g. raw `cmake -B`).
+# Generate a compilation database for each build tree. Developer builds can
+# copy theirs to the repository root without letting isolated package builds
+# replace it with paths from a temporary environment.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
-
-# The file lands in ${CMAKE_BINARY_DIR}; with build-dir = "build/{wheel_tag}"
-# in pyproject.toml that path varies per ABI, so clangd's auto-discovery
-# (which probes ./build/ and the source root) won't find it. For a top-level
-# mew build, symlink it into the source root. Never write into mew's checkout
-# when a consumer brings it in with add_subdirectory or FetchContent.
-if(PROJECT_IS_TOP_LEVEL)
+option(MEW_SYNC_COMPILE_COMMANDS
+    "Copy compile_commands.json to the source root" OFF)
+if(PROJECT_IS_TOP_LEVEL AND MEW_SYNC_COMPILE_COMMANDS)
     add_custom_target(
-        symlink_compile_commands ALL
-        COMMAND ${CMAKE_COMMAND} -E create_symlink
+        sync_compile_commands ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_BINARY_DIR}/compile_commands.json
             ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
         BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
-        COMMENT "Symlinking compile_commands.json to source root"
+        COMMENT "Syncing compile_commands.json to source root"
         VERBATIM)
 endif()
 
