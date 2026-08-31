@@ -78,7 +78,7 @@ Set `use_real_time=True` if your benchmark's primary metric is wall-clock time.
 
 `state.set_counter()` attaches a numeric measurement to the result. Use
 {class}`mew.CounterFlags` for rates and other normalization, and set
-`one_k=mew.CounterOneK.kIs1024` when human-readable output should use binary
+`one_k=mew.CounterOneK.kIs1024` when Google Benchmark's native console output should use binary
 rather than decimal prefixes.
 
 ## Threaded benchmarks (free-threading)

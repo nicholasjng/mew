@@ -37,13 +37,13 @@ $ mew run --sample-html cpu.html
 
 ## Tuning the sampler
 
-| Flag                    | Default | Notes                                                   |
-| ----------------------- | ------- | ------------------------------------------------------- |
-| `--sample-interval F`   | `1e-4`  | Smaller = more samples = higher overhead.               |
-| `--sample-iterations N` | `1000`  | How many times the body runs under the sampler.         |
+| Flag                  | Default | Notes                                     |
+| --------------------- | ------- | ----------------------------------------- |
+| `--sample-interval F` | `1e-4`  | Smaller = more samples = higher overhead. |
 
 The profiling pass is **separate** from the timing pass, so profiler overhead doesn't pollute timing numbers.
-But the profiled iteration count is independent of `min_time`, so don't read timings out of the profiling report.
+It repeats the iteration count selected by the timing pass; don't read timings out
+of the profiling report.
 
 ## Reading the report
 

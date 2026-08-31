@@ -17,8 +17,9 @@ __version__ = "X.Y.Z"
 
 ## 2. Close the changelog section
 
-Entries accumulate under `## Unreleased` in `docs/changelog.md` during the cycle; write them for users, not for the commit log.
-Rename that heading to `## Version X.Y.Z (Mon D, YYYY)` to close it.
+Entries accumulate under `## Version X.Y.Z (unreleased)` in `docs/changelog.md` during
+the cycle; write them for users, not for the commit log. Replace `unreleased` with the
+release date (`Mon D, YYYY`) to close the section.
 
 ## 3. Check
 
@@ -26,6 +27,7 @@ Rename that heading to `## Version X.Y.Z (Mon D, YYYY)` to close it.
 uv run pytest -q
 uvx prek run --all-files
 uv run --all-extras --group test ty check
+cmake --build build/<wheel-tag> --target check_mew_core_stub
 uv run --group docs sphinx-build -W -b html docs docs/_build/html
 uv run mew --version    # mew X.Y.Z (Google Benchmark ...)
 ```
@@ -60,7 +62,7 @@ uv run --with mew-bench==X.Y.Z --no-project -- mew --version
 
 ## 7. Open the next cycle
 
-Add a fresh `## Unreleased` heading above the release you just cut.
+Add a fresh `## Version X.Y.Z (unreleased)` heading above the release you just cut.
 
 ## Notes
 

@@ -40,6 +40,12 @@ checked-in, formatted copy. After changing the native API, refresh that copy exp
 $ cmake --build build/cp312-abi3-macosx_26_0_arm64 --target update_mew_core_stub
 ```
 
+CI verifies that the generated and checked-in files match. Run the same check locally with:
+
+```console
+$ cmake --build build/cp312-abi3-macosx_26_0_arm64 --target check_mew_core_stub
+```
+
 ## Rebuilding after a dependency bump
 
 The `build/{wheel_tag}` tree persists across rebuilds for fast incremental
