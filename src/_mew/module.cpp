@@ -1,4 +1,4 @@
-// nanobind module entry point: wires up the three binding groups.
+// nanobind module entry point.
 
 #include <benchmark/benchmark.h>
 #include <nanobind/nanobind.h>
@@ -21,7 +21,6 @@ NB_MODULE(_core, m) {
     m.attr("BENCHMARK_COMMIT") = MEW_BENCHMARK_COMMIT;
     m.attr("BENCHMARK_VERSION") = benchmark::GetBenchmarkVersion();
 
-    // Reporter first so registry/run_benchmarks can reference Run and TimeUnit.
     register_reporter(m);
     register_state(m);
     register_registry(m);

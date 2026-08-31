@@ -13,13 +13,7 @@ def warmup_free_threading() -> None:
     """Attach one native thread to initialize free-threaded CPython state."""
 
 def preload_system_info() -> None:
-    """
-    Force Google Benchmark's lazy CPU/system-info probes to run now.
-    Their platform diagnostics go straight to fd 2 (e.g. the macOS
-    hw.cpufrequency sysctl failure); calling this under a scoped fd-2
-    redirect keeps that noise out of user-visible stderr without
-    silencing the benchmark run itself.
-    """
+    """Initialize Google Benchmark's CPU and system information."""
 
 def cpu_info() -> dict:
     """
@@ -47,9 +41,6 @@ def run_benchmarks(
     """
     Initialize Google Benchmark with `argv` and run all registered benchmarks.
     Returns the number of benchmarks run.
-    `extra_context` keys are overlaid onto the context dict passed to the reporter's `report_context` (session id/tag, user context).
-    `extra_rows` are pre-built BenchmarkResults reported right after the context, for benchmarks mew declined to run.
-    Pass a `Fanout` reporter to multiplex into multiple sinks.
     """
 
 class CounterFlags(enum.IntFlag):
@@ -112,16 +103,12 @@ class State:
     def __iter__(self) -> State: ...
     def __next__(self) -> None: ...
     def keep_running_batch(self, n: int) -> bool:
-        """
-        Advance the iteration counter by `n`; return whether the budget permits another batch.
-        Prefer `State.batches` for the idiomatic loop form.
-        """
+        """Advance by `n` iterations and return whether another batch should run."""
 
     def batches(self, n: int) -> BatchIter:
         """
-        Return an iterator yielding `n` once per batch until the budget is spent.
-        Use with a nested `for _ in range(n)` to amortize `__next__` dispatch for very fast bodies.
-        Reported times include a small per-batch overshoot; do not mix with `for _ in state` results.
+        Iterate in batches of `n`, reducing dispatch overhead for fast bodies.
+        The final batch may exceed the iteration budget.
         """
 
     def pause(self) -> PauseScope:
@@ -164,10 +151,7 @@ class State:
         """
 
     def range(self, pos: int = 0) -> int:
-        """
-        The `pos`-th range argument this benchmark was registered with.
-        `@parametrize` / `@product` families use `range(0)` as the case index; the trampoline reads it to bind that case's kwargs and label.
-        """
+        """Return the range argument at `pos`."""
 
     @property
     def range_size(self) -> int:
@@ -206,7 +190,6 @@ class State:
 class BenchmarkHandle:
     """
     Handle to a registered Google Benchmark.
-    Methods return the same handle so options can be chained.
     Invalidated by the next `clear_registered_benchmarks()` call or interpreter shutdown; using a stale handle is undefined behaviour.
     """
 
@@ -251,7 +234,7 @@ class BenchmarkHandle:
     def threads(self, n: int) -> BenchmarkHandle:
         """
         Run the benchmark with `n` threads, each with its own State and timer.
-        Requires a free-threaded interpreter: under the GIL the trampoline holds the GIL across Google Benchmark's per-thread start barrier, so the workers deadlock rather than run. On a GIL build mew warns and skips threaded benchmarks by default (see mew.run).
+        Requires a free-threaded interpreter; mew skips it otherwise.
         """
 
     def thread_range(self, min_threads: int, max_threads: int) -> BenchmarkHandle:
@@ -290,8 +273,7 @@ def clear_registered_benchmarks() -> None:
 def register_memory_manager(manager: object) -> None:
     """
     Register `manager` as Google Benchmark's memory manager.
-    Needs `start()` and `stop()`; `stop` returns the `memory` block's keys
-    (peak_bytes, total_bytes, total_allocations) as a dict, or None.
+    Requires `start()` and `stop()`; `stop()` returns memory metrics or None.
     Pair with `unregister_memory_manager`.
     """
 
@@ -299,9 +281,8 @@ def unregister_memory_manager() -> None: ...
 def register_profiler_manager(manager: object) -> None:
     """
     Register `manager` as Google Benchmark's profiler manager.
-    Needs `after_setup_start()` and `before_teardown_stop()`; may add
-    `get_result()` (a flat dict stamped onto the Run as `cpu_profile`) and
-    `pause()`/`resume()`, called around `state.pause()` regions.
+    Requires `after_setup_start()` and `before_teardown_stop()`; supports optional
+    `get_result()`, `pause()`, and `resume()` hooks.
     Pair with `unregister_profiler_manager`.
     """
 

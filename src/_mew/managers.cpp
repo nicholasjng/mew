@@ -1,9 +1,4 @@
-// Manager bindings: let a plain Python object act as a Google Benchmark
-// MemoryManager or ProfilerManager.
-//
-// GB registration is a process-global raw pointer with `nullptr` as the only way
-// off, so the trampoline lives in a static here and `mew.runner` pairs
-// register/unregister on an ExitStack.
+// Python adapters for Google Benchmark's process-global managers.
 
 #include "managers.h"
 
@@ -31,8 +26,7 @@ void set_manager_result_type_error(const char* message) {
     }
 }
 
-// Holds the Python manager and calls it under the GIL, never letting an
-// exception escape into Google Benchmark.
+// Calls the Python manager without unwinding through Google Benchmark.
 class PyManager {
    public:
     explicit PyManager(nb::object obj) : py_(std::move(obj)) {}
@@ -42,10 +36,7 @@ class PyManager {
     }
 
    protected:
-    // The GIL must be held by the caller: the returned object outlives this
-    // frame, so a scope acquired here would release before the caller's
-    // temporary is destroyed, decref'ing without the GIL. Returns None if the
-    // call failed (already stashed).
+    // The caller holds the GIL for the returned object's lifetime.
     nb::object call(const char* name) {
         try {
             return py_.attr(name)();
@@ -72,8 +63,7 @@ bool fill_memory_result(const nb::dict& d, benchmark::MemoryManager::Result& out
            set("net_heap_growth", out.net_heap_growth);
 }
 
-// One flat Python dict -> the Result's two maps, split by value type, so the
-// manager author never sees that C++ keeps strings and numbers apart.
+// Split a flat Python mapping into Google Benchmark's label and value maps.
 bool fill_profile_result(const nb::dict& d, benchmark::ProfilerManager::Result& out) {
     for (auto [k, v] : d) {
         std::string key;
@@ -114,9 +104,7 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
 class PyProfilerManager final : public benchmark::ProfilerManager, public PyManager {
    public:
     explicit PyProfilerManager(nb::object obj) : PyManager(std::move(obj)) {
-        // Resolved once: `state.pause()` can run per iteration, so a hasattr
-        // probe per call would be a permanent tax. Absent hooks mean the
-        // profiler samples through the pause.
+        // Cache optional hooks used inside benchmark loops.
         nb::gil_scoped_acquire gil;
         if (nb::hasattr(py_, "pause")) pause_ = py_.attr("pause");
         if (nb::hasattr(py_, "resume")) resume_ = py_.attr("resume");
@@ -141,11 +129,7 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
         call("before_teardown_stop");
     }
 
-    // Called around a `state.pause()` region -- from *any* run, including the
-    // timed one, which GB drives with no profiler manager at all. Forwarding
-    // then would be a Python call per pause that suspends nothing, and in a
-    // threaded run several worker threads would race on the manager's own
-    // depth counter, leaving the real sampling pass unable to suspend.
+    // Only forward pauses during the profiler pass.
     void Pause() {
         if (active_) invoke(pause_);
     }
@@ -182,9 +166,7 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
         }
     }
 
-    // True only between AfterSetupStart and BeforeTeardownStop, i.e. inside the
-    // profiler's own pass. Written on that pass's single thread (GB drives it
-    // through a ThreadManager(1)), read from the timed run's worker threads.
+    // Written by the profiler pass and read by timed-run worker threads.
     std::atomic<bool> active_{false};
     nb::object pause_;
     nb::object resume_;
@@ -209,13 +191,14 @@ void register_managers(nb::module_& m) {
     m.def(
         "register_memory_manager",
         [](nb::object obj) {
-            g_memory = std::make_unique<PyMemoryManager>(std::move(obj));
-            benchmark::RegisterMemoryManager(g_memory.get());
+            if (g_memory) throw nb::value_error("a memory manager is already registered");
+            auto manager = std::make_unique<PyMemoryManager>(std::move(obj));
+            benchmark::RegisterMemoryManager(manager.get());
+            g_memory = std::move(manager);
         },
         "manager"_a,
         "Register `manager` as Google Benchmark's memory manager.\n"
-        "Needs `start()` and `stop()`; `stop` returns the `memory` block's keys\n"
-        "(peak_bytes, total_bytes, total_allocations) as a dict, or None.\n"
+        "Requires `start()` and `stop()`; `stop()` returns memory metrics or None.\n"
         "Pair with `unregister_memory_manager`.");
     m.def("unregister_memory_manager", [] {
         benchmark::RegisterMemoryManager(nullptr);
@@ -225,14 +208,15 @@ void register_managers(nb::module_& m) {
     m.def(
         "register_profiler_manager",
         [](nb::object obj) {
-            g_profiler = std::make_unique<PyProfilerManager>(std::move(obj));
-            benchmark::RegisterProfilerManager(g_profiler.get());
+            if (g_profiler) throw nb::value_error("a profiler manager is already registered");
+            auto manager = std::make_unique<PyProfilerManager>(std::move(obj));
+            benchmark::RegisterProfilerManager(manager.get());
+            g_profiler = std::move(manager);
         },
         "manager"_a,
         "Register `manager` as Google Benchmark's profiler manager.\n"
-        "Needs `after_setup_start()` and `before_teardown_stop()`; may add\n"
-        "`get_result()` (a flat dict stamped onto the Run as `cpu_profile`) and\n"
-        "`pause()`/`resume()`, called around `state.pause()` regions.\n"
+        "Requires `after_setup_start()` and `before_teardown_stop()`; supports optional\n"
+        "`get_result()`, `pause()`, and `resume()` hooks.\n"
         "Pair with `unregister_profiler_manager`.");
     m.def("unregister_profiler_manager", [] {
         benchmark::RegisterProfilerManager(nullptr);

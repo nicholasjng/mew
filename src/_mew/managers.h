@@ -1,8 +1,4 @@
-// Cross-TU channel for the GB manager bindings.
-//
-// `managers.cpp` owns the MemoryManager / ProfilerManager trampolines;
-// `state.cpp` suspends the profiler across a `state.pause()` region.
-// A raising manager goes through the shared abort channel (`abort.h`).
+// Profiler hooks used by State.pause().
 
 #pragma once
 
