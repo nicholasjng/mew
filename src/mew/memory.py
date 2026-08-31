@@ -20,8 +20,12 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from memray import Tracker
 
-#: A memray stack frame: ``(function, filename, lineno)``.
+# A memray stack frame: ``(function, filename, lineno)``.
 Frame = tuple[str, str, int]
+
+# Free-threaded CPython serves object allocations from mimalloc, which never
+# reaches the system allocator memray hooks by default, so track them separately.
+_TRACE_PYTHON_ALLOCATORS = not getattr(sys, "_is_gil_enabled", lambda: True)()
 
 _MEW_DIR = str(Path(__file__).parent)
 
@@ -110,7 +114,7 @@ class MemrayManager:
         self._i += 1
         # Before entering the tracker: see _caller_frame.
         self._root = _caller_frame()
-        self._tracker = memray.Tracker(self._dest)
+        self._tracker = memray.Tracker(self._dest, trace_python_allocators=_TRACE_PYTHON_ALLOCATORS)
         self._tracker.__enter__()
 
     def stop(self) -> dict[str, int] | None:
