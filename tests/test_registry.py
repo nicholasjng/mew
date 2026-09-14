@@ -30,7 +30,7 @@ def test_add_rejects_duplicate_name():
     with pytest.raises(ValueError, match="already registered"):
         r.add(Entry(name="a", fn=lambda s: None))
     assert len(r) == 1
-    # clear() resets the name set alongside the entries.
+    # clear() makes registration names available again.
     r.clear()
     r.add(Entry(name="a", fn=lambda s: None))
     assert len(r) == 1
@@ -170,3 +170,15 @@ def test_filter_pattern_and_tags_combine():
 def test_module_global_registry_is_singleton():
     REGISTRY.add(Entry(name="x", fn=lambda s: None))
     assert any(e.name == "x" for e in REGISTRY.all())
+
+
+def test_registry_preserves_order_and_returns_an_independent_list():
+    registry = Registry()
+    entries = [Entry(name=name, fn=lambda s: None) for name in ("z", "a", "m")]
+    for entry in entries:
+        registry.add(entry)
+    snapshot = registry.all()
+    assert snapshot == entries
+    snapshot.pop()
+    assert registry.all() == entries
+    assert registry.filter() == entries

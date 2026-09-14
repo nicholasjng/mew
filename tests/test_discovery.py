@@ -144,3 +144,43 @@ def test_collect_files_missing_path_raises(tmp_path):
             [discovery.Selector(tmp_path / "nope")],
             file_patterns=["bench_*.py"],
         )
+
+
+@pytest.mark.parametrize(
+    ("stdin_name", "expected_cases"),
+    [(None, None), ("f[n=10]", [1])],
+)
+def test_select_entries_is_independent_of_discovery(tmp_path, stdin_name, expected_cases):
+    from mew._registry import Entry, compile_name_filter
+
+    # These paths do not exist: selection uses already-resolved lexical paths.
+    source = tmp_path / "suite" / "bench_example.py"
+    entry = Entry("f", lambda s: None, case_labels=["n=1", "n=10"])
+    selector = discovery.ResolvedSelector(source.parent, True, None)
+    names = [compile_name_filter(stdin_name, literal=True)] if stdin_name else []
+    selected = discovery.select_entries([(entry, source)], [selector], names=names)
+    assert len(selected) == 1
+    assert selected[0].cases == expected_cases
+    assert entry.cases is None
+    assert len(REGISTRY) == 0
+
+
+def test_select_entries_combines_path_filters_pattern_and_tags(tmp_path):
+    from mew._registry import Entry, compile_name_filter
+
+    a, b = tmp_path / "a.py", tmp_path / "b.py"
+    entries = [
+        (Entry("f", lambda s: None, tags=frozenset({"fast"})), a),
+        (Entry("g", lambda s: None, tags=frozenset({"fast"})), a),
+        (Entry("f", lambda s: None, tags=frozenset({"fast"})), b),
+        (Entry("g", lambda s: None, tags=frozenset({"slow"})), b),
+    ]
+    selectors = [
+        discovery.ResolvedSelector(a, False, compile_name_filter("f")),
+        discovery.ResolvedSelector(b, False, compile_name_filter("g")),
+    ]
+    assert discovery.select_entries(entries, selectors) == [entries[0][0], entries[3][0]]
+    assert discovery.select_entries(entries, selectors, tags=["fast"]) == [entries[0][0]]
+    assert discovery.select_entries(entries, selectors, pattern=compile_name_filter("g")) == [
+        entries[3][0]
+    ]

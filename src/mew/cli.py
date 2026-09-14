@@ -25,7 +25,7 @@ from mew import (
     run as _run,
 )
 from mew._options import parse_min_time
-from mew._registry import compile_name_filter, narrow_entry
+from mew._registry import compile_name_filter
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -121,24 +121,21 @@ def _collect(
     for f in files:
         _discovery.import_file(f)
 
-    # Per-selector filters and path-less stdin names OR together, then AND with
-    # the global -k. Compiled up front so a bad pattern fails before any run.
+    # Keep each filter attached to its discovery path. Otherwise selecting
+    # a.py::x and b.py::y also selects a.py::y and b.py::x.
     try:
-        selector_res = [compile_name_filter(s.filter, literal=lit) for s, lit in pairs if s.filter]
-        selector_res += [compile_name_filter(n, literal=True) for n in name_filters]
+        selectors = [_discovery.ResolvedSelector.resolve(s, literal=lit) for s, lit in pairs]
+        names = [compile_name_filter(n, literal=True) for n in name_filters]
         pattern_re = compile_name_filter(pattern, literal=literal) if pattern else None
     except ValueError as e:
         print(e, file=sys.stderr)
         raise SystemExit(2) from e
-    entries = [
-        narrowed
-        for e in REGISTRY.all()
-        if (narrowed := narrow_entry(e, any_of=selector_res, all_of=pattern_re)) is not None
+    candidates = [
+        (entry, Path(entry.file).resolve() if entry.file else None) for entry in REGISTRY.all()
     ]
-    if tags:
-        wanted = set(tags)
-        entries = [e for e in entries if wanted.intersection(e.tags)]
-    return entries
+    return _discovery.select_entries(
+        candidates, selectors, names=names, pattern=pattern_re, tags=tags or ()
+    )
 
 
 def _collect_or_exit(paths: list[str], **kwargs: Any) -> list[Entry]:

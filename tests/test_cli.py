@@ -751,3 +751,46 @@ def test_setup_file_missing_is_a_clear_error(mew_cli, tmp_path: Path):
     res = mew_cli("run", "--min-time=1x", cwd=tmp_path)
     assert res.returncode != 0
     assert "setup file not found" in res.stderr
+
+
+@pytest.mark.parametrize("second_filter", ["::bench_two", ""])
+def test_path_filters_are_scoped_to_their_files(mew_cli, tmp_path, second_filter):
+    for name in ("a", "b"):
+        (tmp_path / f"bench_{name}.py").write_text(textwrap.dedent(FIXTURE))
+    res = mew_cli("list", "bench_a.py::bench_one", f"bench_b.py{second_filter}", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    expected = {"bench_a.py::bench_one", "bench_b.py::bench_two"}
+    if not second_filter:
+        expected.add("bench_b.py::bench_one")
+    assert set(res.stdout.splitlines()) == expected
+
+
+def test_stdin_path_selectors_do_not_cross_select_family_cases(mew_cli, tmp_path):
+    for name in ("a", "b"):
+        (tmp_path / f"bench_{name}.py").write_text(textwrap.dedent(FIXTURE))
+    res = mew_cli(
+        "run",
+        "--stdin",
+        "--min-time",
+        "1x",
+        "--format",
+        "json",
+        stdin="bench_a.py::bench_two[n=1]\nbench_b.py::bench_two[n=2]\n",
+        cwd=tmp_path,
+    )
+    assert res.returncode == 0, res.stderr
+    rows = json.loads(res.stdout)["benchmarks"]
+    assert [(r["name"].split("/case:")[0], r["label"]) for r in rows] == [
+        ("bench_a.py::bench_two", "n=1"),
+        ("bench_b.py::bench_two", "n=2"),
+    ]
+
+
+def test_directory_selectors_keep_filters_scoped_with_global_pattern(mew_cli, tmp_path):
+    for directory in ("a", "b"):
+        nested = tmp_path / directory / "nested"
+        nested.mkdir(parents=True)
+        (nested / "bench_fixture.py").write_text(textwrap.dedent(FIXTURE))
+    res = mew_cli("list", "a::bench_one", "b::bench_two", "-k", "bench_two", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.splitlines() == [str(Path("b/nested/bench_fixture.py::bench_two"))]
