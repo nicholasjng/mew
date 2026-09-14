@@ -54,6 +54,7 @@ build = [
     "nanobind>=3.0",
     "ruff>=0.15.12",  # for CMake's post-build stub formatting step.
     "scikit-build-core >=1.0,<2",  # keep in sync with build-system.requires.
+    "ty>=0.0.42",
 ]
 docs = [
     "sphinx >=8",
@@ -69,12 +70,9 @@ test = [
     "pytest >=8",
     "pytest-xdist>=3.8.0",
 ]
-typing = [
-    "ty>=0.0.42",
-]
 
 [tool.uv]
-default-groups = ["build", "typing"]
+default-groups = ["build"]
 exclude-newer = "1 week"
 exclude-newer-package = { ruff = false, ty = false, nanobind = false }
 
