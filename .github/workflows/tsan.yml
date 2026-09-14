@@ -1,0 +1,75 @@
+name: free-threaded TSAN instrumentation check
+
+on:
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tsan:
+    name: tsan · free-threaded CPython
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CPYTHON_REF: v3.14.7
+      CPYTHON_SRC: ${{ runner.temp }}/cpython-src
+      CPYTHON_PREFIX: ${{ runner.temp }}/cpython-tsan
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+
+      - name: Install CPython build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            clang make git \
+            libbz2-dev libffi-dev libgdbm-dev liblzma-dev libncursesw5-dev \
+            libreadline-dev libsqlite3-dev libssl-dev libz-dev uuid-dev
+
+      - name: Build free-threaded TSAN CPython
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          git clone --depth 1 --branch "$CPYTHON_REF" \
+            https://github.com/python/cpython.git "$CPYTHON_SRC"
+          cd "$CPYTHON_SRC"
+          ./configure \
+            --prefix="$CPYTHON_PREFIX" \
+            --disable-gil \
+            --with-pydebug \
+            --with-thread-sanitizer
+          make -j"$(nproc)"
+          make install
+
+      - name: Build the TSAN editable install
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          MEW_TSAN=1 uv sync \
+            --python "$CPYTHON_PREFIX/bin/python3" \
+            --all-extras --all-groups \
+            --no-install-package duckdb \
+            --reinstall-package=mew-bench
+
+      - name: Assert the GIL stays disabled after import
+        run: |
+          .venv/bin/python - <<'PY'
+          import sys
+          assert not sys._is_gil_enabled(), "interpreter is not free-threaded"
+          PY
+
+      - name: Run tests under ThreadSanitizer
+        run: |
+          TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0:suppressions=$CPYTHON_SRC/Tools/tsan/suppressions_free_threading.txt" \
+            .venv/bin/python -m pytest --capture no
