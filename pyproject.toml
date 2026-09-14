@@ -138,8 +138,7 @@ target-version = "py311"
 ignore = ["PLW1510"]  # don't require check=False on subprocesses bound to a variable.
 
 [tool.ruff.lint.isort]
-# Merge `from x import y` and `from x import z as z` into one statement
-# instead of leaving the aliased form on its own line.
+# Merge `from x import y` and `from x import z as z` into one statement.
 combine-as-imports = true
 
 [tool.ruff.lint.per-file-ignores]
