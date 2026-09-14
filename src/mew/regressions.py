@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import cast
 
 
 class Verdict(Enum):
@@ -158,24 +159,6 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
     if not isinstance(pattern, str) or not pattern:
         raise ValueError(f"{source}: allow rule missing 'pattern'")
 
-    ignore = raw.get("ignore", False)
-    if not isinstance(ignore, bool):
-        # Malformed configuration is reported uniformly as ValueError by the
-        # CLI, including fields whose specific problem is their runtime type.
-        raise ValueError(  # noqa: TRY004
-            f"{source}: allow rule {pattern!r}: ignore must be a boolean"
-        )
-    threshold = raw.get("threshold")
-    if threshold is not None and (
-        isinstance(threshold, bool)
-        or not isinstance(threshold, int | float)
-        or not math.isfinite(threshold)
-        or threshold < 0
-    ):
-        raise ValueError(
-            f"{source}: allow rule {pattern!r}: threshold must be a finite, non-negative number"
-        )
-
     reason = raw.get("reason")
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError(
@@ -183,17 +166,16 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
             "(document why this is allowlisted)"
         )
 
-    if ignore == (threshold is not None):
-        raise ValueError(
-            f"{source}: allow rule {pattern!r}: set exactly one of ignore=true or threshold=<float>"
+    try:
+        return AllowRule(
+            pattern=pattern,
+            reason=reason.strip(),
+            ignore=cast(bool, raw.get("ignore", False)),
+            threshold=cast(float | None, raw.get("threshold")),
         )
-
-    return AllowRule(
-        pattern=pattern,
-        reason=reason.strip(),
-        ignore=ignore,
-        threshold=float(threshold) if threshold is not None else None,
-    )
+    except (TypeError, ValueError) as e:
+        # The model owns validation; the loader adds configuration context.
+        raise ValueError(f"{source}: allow rule {pattern!r}: {e}") from e
 
 
 def load_config(
@@ -242,22 +224,16 @@ def load_config(
         with source.open("rb") as fh:
             doc = tomllib.load(fh)
         table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
-        if "default_threshold" in table:
-            raw_threshold = table["default_threshold"]
-            if (
-                isinstance(raw_threshold, bool)
-                or not isinstance(raw_threshold, int | float)
-                or not math.isfinite(raw_threshold)
-                or raw_threshold < 0
-            ):
-                raise ValueError(
-                    f"{source}: default_threshold must be a finite, non-negative number"
-                )
-            threshold = float(raw_threshold)
+        threshold = table.get("default_threshold", default_threshold)
         for raw in table.get("allow", []):
             rules.append(_coerce_rule(raw, source=source))
 
-    return RegressionConfig(default_threshold=threshold, rules=tuple(rules))
+    try:
+        return RegressionConfig(default_threshold=threshold, rules=tuple(rules))
+    except ValueError as e:
+        if source is None:
+            raise
+        raise ValueError(f"{source}: {e}") from e
 
 
 def render_panel(

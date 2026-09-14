@@ -24,6 +24,7 @@ from mew import (
     _discovery,
     run as _run,
 )
+from mew._options import parse_min_time
 from mew._registry import compile_name_filter, narrow_entry
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
@@ -481,18 +482,13 @@ def _warmup_seconds(value: str) -> float:
 
 def _min_time(value: str) -> str:
     """Validate seconds or an ``Nx`` fixed-iteration count for --min-time."""
-    text = value.strip()
-    number = text[:-1] if text.endswith(("s", "x")) else text
     try:
-        parsed = float(number)
-    except ValueError:
-        parsed = math.nan
-    if not math.isfinite(parsed) or parsed <= 0 or (text.endswith("x") and not number.isdigit()):
+        return parse_min_time(value)
+    except ValueError as e:
         raise argparse.ArgumentTypeError(
             f"invalid --min-time {value!r}; use positive seconds ('0.5', '1s') "
             "or iterations ('100x')"
-        )
-    return text
+        ) from e
 
 
 def _positive_int(value: str) -> int:

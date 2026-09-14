@@ -647,3 +647,18 @@ def test_skipped_rows_reach_a_reporter_before_finalize(monkeypatch):
     # The skipped row lands first, ahead of anything Google Benchmark reports.
     assert order[1] == "row:bench_threaded"
     assert any(o.startswith("row:bench_plain") for o in order)
+
+
+@pytest.mark.parametrize("min_time", [0.00001, "0.00001", "0.00001s", " 7x "])
+def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
+    @mew.benchmark
+    def bench_time_option(state):
+        for _ in state:
+            pass
+
+    cap = Capture()
+    assert mew.run(min_time=min_time, reporter=cap) == 1
+    assert len(cap.runs) == 1
+    assert cap.runs[0]["iterations"] > 0
+    if min_time == " 7x ":
+        assert cap.runs[0]["iterations"] == 7
