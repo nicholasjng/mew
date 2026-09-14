@@ -23,8 +23,9 @@ Positional path args can be plain paths or `<path>::<filter>` selectors, pytest-
 $ mew run 'benchmarks/bench_sort.py::n=1000'
 ```
 
-The `::<filter>` portion is a substring match against the registered benchmark name.
-Per-selector filters are OR'd with the global `-k`.
+The `::<filter>` portion is a regular expression matched against benchmark names
+within that path. Selectors are combined with OR; the global `-k` further narrows
+the selection with AND. An unfiltered path selects all benchmarks within it.
 
 ### Output sinks
 

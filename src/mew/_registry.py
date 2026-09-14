@@ -69,7 +69,7 @@ def case_names(entry: Entry) -> Iterator[tuple[int, str]]:
 
     A ``-k`` regex matches against these. ``name/case:i`` addresses by index;
     ``name[label]`` addresses by the human label and mirrors
-    ``compare._canonical_name``, so one pattern selects the same set in
+    ``reporter.canonical_name``, so one pattern selects the same set in
     ``mew run`` and ``mew compare``.
     """
     for i, label in enumerate(entry.case_labels or ()):
@@ -161,8 +161,8 @@ class Registry:
     """Process-global collection populated by benchmark decorators."""
 
     def __init__(self) -> None:
-        self._entries: list[Entry] = []
-        self._names: set[str] = set()
+        # Keys snapshot registration names, as duplicate detection always has.
+        self._entries: dict[str, Entry] = {}
 
     def add(self, entry: Entry) -> None:
         """Add an entry.
@@ -179,18 +179,16 @@ class Registry:
         """
         # Two entries sharing a name would run as indistinguishable rows and
         # merge into one distribution on compare.
-        if entry.name in self._names:
+        if entry.name in self._entries:
             raise ValueError(
                 f"a benchmark named {entry.name!r} is already registered; "
                 "pass a unique name= to disambiguate"
             )
-        self._names.add(entry.name)
-        self._entries.append(entry)
+        self._entries[entry.name] = entry
 
     def clear(self) -> None:
         """Remove all entries."""
         self._entries.clear()
-        self._names.clear()
 
     def all(self) -> list[Entry]:
         """Return a copy of all entries.
@@ -200,7 +198,7 @@ class Registry:
         list[Entry]
             Entries in registration order.
         """
-        return list(self._entries)
+        return list(self._entries.values())
 
     def filter(
         self,
@@ -230,7 +228,7 @@ class Registry:
         ValueError
             If ``pattern`` is invalid.
         """
-        out = list(self._entries)
+        out = list(self._entries.values())
         if pattern:
             rx = compile_name_filter(pattern, literal=literal)
             out = [n for e in out if (n := narrow_entry(e, all_of=rx)) is not None]

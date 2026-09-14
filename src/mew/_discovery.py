@@ -7,11 +7,14 @@ import fnmatch
 import hashlib
 import importlib.util
 import os
+import re
 import sys
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+from mew._registry import Entry, compile_name_filter, narrow_entry
 
 # Tracked so discovered() drops exactly what import_file added, and nothing else.
 _loaded_modules: list[str] = []
@@ -28,6 +31,59 @@ class Selector:
 
     path: Path
     filter: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedSelector:
+    """A selector with filesystem state and its name filter resolved once."""
+
+    path: Path
+    is_directory: bool
+    pattern: re.Pattern[str] | None
+
+    @classmethod
+    def resolve(cls, selector: Selector, *, literal: bool = False) -> ResolvedSelector:
+        path = selector.path.resolve()
+        pattern = compile_name_filter(selector.filter, literal=literal) if selector.filter else None
+        return cls(path, path.is_dir(), pattern)
+
+    def includes(self, source: Path) -> bool:
+        return source == self.path or (self.is_directory and source.is_relative_to(self.path))
+
+
+def select_entries(
+    candidates: Iterable[tuple[Entry, Path | None]],
+    selectors: Sequence[ResolvedSelector],
+    *,
+    names: Sequence[re.Pattern[str]] = (),
+    pattern: re.Pattern[str] | None = None,
+    tags: Iterable[str] = (),
+) -> list[Entry]:
+    """Select entries without filesystem access, imports, or registry mutation.
+
+    Each candidate pairs an entry with its resolved source path. Path selectors
+    and stdin names form an OR group; the global pattern and tags narrow it.
+    An unfiltered path selects everything beneath it unless stdin names restrict
+    that discovery path. Family filters produce views without changing entries.
+    """
+    wanted = set(tags)
+    selected = []
+    for entry, source in candidates:
+        if wanted and not wanted.intersection(entry.tags):
+            continue
+        applicable = [
+            selector.pattern
+            for selector in selectors
+            if source is not None and selector.includes(source)
+        ]
+        if not applicable:
+            continue
+        unrestricted = None in applicable and not names
+        filters = [] if unrestricted else [rx for rx in applicable if rx is not None] + list(names)
+        narrowed = narrow_entry(entry, any_of=filters, all_of=pattern)
+        if narrowed is not None:
+            selected.append(narrowed)
+    return selected
 
 
 def parse(arg: str) -> Selector:
