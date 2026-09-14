@@ -2,8 +2,8 @@
 
 ## Reading results
 
-Two views of a result file. {func}`~mew.read_results` gives the rows as stored;
-{func}`~mew.read_sessions` gives comparable numbers, which is usually what a
+Two views of a result file. {func}`~mew.compare.read_results` gives the rows as stored;
+{func}`~mew.compare.read_sessions` gives comparable numbers, which is usually what a
 script wants.
 
 ```{eval-rst}

@@ -189,7 +189,7 @@ def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
 
 
 def test_jsonl_append_makes_two_sessions(tmp_path: Path):
-    from mew.compare import _load_sessions
+    from mew._results import _load_sessions
 
     @mew.benchmark
     def bench_s(state):
@@ -219,7 +219,7 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path):
 def test_jsonl_gz_append_concatenates_sessions(tmp_path: Path):
     # Gzip archive: each --append run writes a new gzip member; readers see
     # one stream, compare sees two sessions.
-    from mew.compare import _load_sessions
+    from mew._results import _load_sessions
 
     @mew.benchmark
     def bench_s(state):

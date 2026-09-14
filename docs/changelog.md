@@ -72,6 +72,15 @@ variant orchestration and native-profiler integrations have been removed.
 
 ### Fixed
 
+- Thread counts remain distinct in displayed benchmark names and comparison
+  samples instead of being merged as repetitions.
+- Historical comparison files with missing benchmarks no longer hide
+  candidate-versus-baseline regressions.
+- Path selectors apply their filters only within the selected file or directory,
+  including selectors read from standard input.
+- Grouped sessions with different declared time units normalize measurements
+  before calculating statistics.
+
 - Memray now traces Python allocators on free-threaded CPython, where object
   allocation otherwise bypassed its system-allocator hooks.
 - Memray no longer reports peak-live allocation bytes as cumulative
