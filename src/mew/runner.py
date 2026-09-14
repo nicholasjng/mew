@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import mew.context as _context
 from mew import _core
 from mew._console import overflow
+from mew._options import parse_min_time
 from mew._registry import REGISTRY, Entry
 from mew._session import new_session_id
 from mew._typing import MemoryManager, ProfilerManager
@@ -129,7 +130,7 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
 
 
 def _gb_argv(
-    min_time: str | float | None,
+    min_time: str | None,
     min_warmup_time: float | None,
     repetitions: int | None,
     random_interleaving: bool,
@@ -139,17 +140,7 @@ def _gb_argv(
     All values are emitted because Google Benchmark flags persist across runs
     in the same process. Decorator options take precedence.
     """
-    if min_time is None:
-        mt = "0.5s"  # GB's default min time
-    else:
-        # Add the suffix Google Benchmark requires for seconds.
-        mt = str(min_time).strip()
-        try:
-            float(mt)
-        except ValueError:
-            pass
-        else:
-            mt += "s"
+    mt = min_time if min_time is not None else "0.5s"
     return [
         "mew",
         f"--benchmark_min_time={mt}",
@@ -163,28 +154,15 @@ def _validate_run_options(
     min_time: str | float | None,
     min_warmup_time: float | None,
     repetitions: int | None,
-) -> None:
-    """Reject global values Google Benchmark otherwise ignores or mishandles."""
+) -> str | None:
+    """Validate run options and normalize min_time for Google Benchmark."""
     if repetitions is not None and (
         isinstance(repetitions, bool) or not isinstance(repetitions, int) or repetitions < 1
     ):
         raise ValueError(f"repetitions must be an integer >= 1, got {repetitions!r}")
     if min_warmup_time is not None and (not isfinite(min_warmup_time) or min_warmup_time < 0):
         raise ValueError(f"min_warmup_time must be a finite number >= 0, got {min_warmup_time!r}")
-    if min_time is None:
-        return
-    text = str(min_time).strip()
-    number = text[:-1] if text.endswith(("s", "x")) else text
-    try:
-        value = float(number)
-    except ValueError:
-        raise ValueError(
-            f"min_time must be positive seconds or an iteration count like '100x', got {min_time!r}"
-        ) from None
-    if not isfinite(value) or value <= 0 or (text.endswith("x") and not number.isdigit()):
-        raise ValueError(
-            f"min_time must be positive seconds or an iteration count like '100x', got {min_time!r}"
-        )
+    return parse_min_time(min_time) if min_time is not None else None
 
 
 def run(
@@ -257,7 +235,7 @@ def run(
     ValueError
         If a global timing or repetition option is outside its valid range.
     """
-    _validate_run_options(min_time, min_warmup_time, repetitions)
+    min_time = _validate_run_options(min_time, min_warmup_time, repetitions)
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
         return 0
