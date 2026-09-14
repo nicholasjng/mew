@@ -26,8 +26,8 @@ release date (`Mon D, YYYY`) to close the section.
 ```bash
 uv run pytest -q
 uvx prek run --all-files
-uv run --all-extras --group test ty check
-cmake --build build/<wheel-tag> --target check_mew_core_stub
+uv run --no-sync python scripts/configure-clangd.py
+cmake --build build/clangd --target check_mew_core_stub
 uv run --group docs sphinx-build -W -b html docs docs/_build/html
 uv run mew --version    # mew X.Y.Z (Google Benchmark ...)
 ```

@@ -56,8 +56,6 @@ jobs:
           python-version: "3.12"
           enable-cache: false
 
-      # `uv build` needs the backend importable without build isolation,
-      # which `no-build-isolation-package = ["mew-bench"]` asks for.
       - run: uv sync --no-install-project
       - run: uv build --sdist
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -41,16 +41,10 @@ $ for i in 1 2 3 4 5; do
 $ mew compare results.jsonl --by context.engine
 ```
 
-Two things make this work:
-
-- **Interleaving** (A B A B …, not AAAAA BBBBB) decorrelates thermal and load
-  drift from the axis you are comparing, so the second suite is not
-  systematically penalised for running later.
-- **The shared commit** makes all ten runs one session, so every repetition
-  feeds the statistic. Without it each run is its own session and `compare` keeps
-  only the newest — which is what `mew.vcs_context()` in the suite is for. Pass
-  `--session-tag ab` to both instead if the two sides sit at different revisions.
-  See {doc}`regressions` for the details.
+Interleave the suites (A B A B …, not AAAAA BBBBB) to avoid bias from thermal
+and load drift. A shared commit groups all repetitions into one session;
+use `--session-tag ab` when the sides use different revisions.
+See {doc}`regressions` for session details.
 
 ```console
                        Comparison (real_time)

@@ -5,10 +5,8 @@ Python frames. To see **native** (C/C++) frames — where a compiled extension
 actually spends its time — sample the whole process from the outside with a
 system profiler.
 
-mew has no command for this on purpose: `py-spy`, `perf`, and `xctrace` are
-better at it than a wrapper would be, and they already know how to write
-artifacts their own viewers understand. What mew provides is the piece they
-need: a way to run one benchmark body, on its own, in a fresh process.
+Run an external profiler against a small runner script that executes one
+benchmark body in a fresh process.
 
 ## The runner script
 

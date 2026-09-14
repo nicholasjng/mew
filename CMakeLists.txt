@@ -26,12 +26,9 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# AddressSanitizer build, driven by -DMEW_ASAN=ON or MEW_ASAN=1 in the env.
-# `add_compile_options` covers the fetched googlebenchmark target so its
-# objects stay instrumented; the per-target repeat below is required for
-# nanobind's stubgen sanitizer detector.
+# AddressSanitizer, enabled with -DMEW_ASAN=ON or MEW_ASAN=1. Global flags also
+# instrument Google Benchmark; _core repeats them for nanobind's stub generator.
 option(MEW_ASAN "Build with AddressSanitizer" OFF)
-# Compare the value, not just DEFINED: `MEW_ASAN=0 cmake …` must not enable it.
 if(NOT MEW_ASAN AND DEFINED ENV{MEW_ASAN} AND "$ENV{MEW_ASAN}")
     set(MEW_ASAN ON)
 endif()
@@ -88,10 +85,7 @@ set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 
-# Patches carried against the pinned tree, applied in listed order at populate
-# time. Keep this list in sync with `patches/`; each entry must apply cleanly to
-# MEW_BENCHMARK_COMMIT or the configure fails loudly rather than silently
-# building an unpatched Google Benchmark.
+# Apply these patches in order to the pinned Google Benchmark tree.
 set(MEW_BENCHMARK_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profilermanager-result.patch")
 
@@ -126,12 +120,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googlebenchmark)
 
-# Report the commit FetchContent actually checked out, not just the requested
-# tag. A stale or diverged `_deps` checkout (e.g. a CMake cache that kept an old
-# pin) would otherwise make BENCHMARK_COMMIT lie about what was really built.
-# Falls back to the requested pin when there is no `.git` (vendored sdist).
-# NOTE: this reports the *upstream* SHA even though MEW_BENCHMARK_PATCHES has
-# been applied on top, so it under-describes the tree that was really built.
+# Report the checked-out upstream SHA rather than the requested pin. Fall back
+# to the pin for vendored sdists; local patches are not reflected in this value.
 set(MEW_BENCHMARK_BUILT_COMMIT "${MEW_BENCHMARK_COMMIT}")
 if(Git_FOUND AND IS_DIRECTORY "${googlebenchmark_SOURCE_DIR}/.git")
     execute_process(
@@ -213,8 +203,7 @@ nanobind_add_stub(
 # need neither ruff nor permission to modify mew's source checkout.
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi DESTINATION mew)
 
-# Run `ruff format` on the freshly-generated stub. Skipped if ruff isn't
-# available (e.g. building from an sdist without dev extras).
+# Apply Ruff fixes and formatting to the generated stub when Ruff is available.
 execute_process(
     COMMAND ${Python_EXECUTABLE} -m ruff --version
     RESULT_VARIABLE _ruff_available

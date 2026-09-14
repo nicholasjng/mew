@@ -89,10 +89,7 @@ $ mew run --repetitions 10 --random-interleaving
 
 This requires `--repetitions > 1`.
 
-For an A/B between two implementations, {doc}`ab-comparison` applies the same
-idea across processes: alternate the two suites (rep 0: A B, rep 1: A B, …)
-rather than running one to completion first, so drift hits both sides equally
-instead of accumulating against the second one.
+For comparisons across processes, see {doc}`ab-comparison`.
 
 ## Don't compare across machines
 

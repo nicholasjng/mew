@@ -61,8 +61,8 @@ Extras enabling additional CLI features:
 | `cpu`      | `pyinstrument`            | `mew run --sample`, `--sample-html report.html`          |
 | `memory`   | `memray` (non-Windows)    | `mew run --profile-memory`, `--flamegraph alloc.html`    |
 
-Local development uses dependency groups (`build`, `docs`, `test`, `typing`)
-rather than extras; see [](../development/contributing.md).
+Local development uses dependency groups (`build`, `docs`, `test`) rather than extras;
+see [](../development/contributing.md).
 
 ```console
 $ uv add 'mew-bench[cpu,memory]'

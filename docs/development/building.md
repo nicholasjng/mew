@@ -36,34 +36,29 @@ environment.
 $ uv sync --reinstall-package=mew-bench  # editable install picks up the rebuilt .so
 ```
 
-Alternatively, rebuild the configured tree directly. The build dir is
-wheel-tag-specific (`build/{wheel_tag}`), so adjust the path to yours:
+Alternatively, rebuild the stable developer tree directly:
 
 ```console
-$ cmake --build build/cp312-abi3-macosx_26_0_arm64
+$ cmake --build build/clangd
 ```
 
 The normal build generates `_core.pyi` in the build tree, while installs use the
 checked-in, formatted copy. After changing the native API, refresh that copy explicitly:
 
 ```console
-$ cmake --build build/cp312-abi3-macosx_26_0_arm64 --target update_mew_core_stub
+$ cmake --build build/clangd --target update_mew_core_stub
 ```
 
 CI verifies that the generated and checked-in files match. Run the same check locally with:
 
 ```console
-$ cmake --build build/cp312-abi3-macosx_26_0_arm64 --target check_mew_core_stub
+$ cmake --build build/clangd --target check_mew_core_stub
 ```
 
 ## Rebuilding after a dependency bump
 
-The `build/{wheel_tag}` tree persists across rebuilds for fast incremental
-compiles. After bumping a native dependency (e.g. nanobind), object files in it
-may have been compiled against the old headers, and because ninja decides what
-to recompile from file timestamps, a freshly installed header whose mtime
-doesn't exceed the cached object can be skipped, which can cause linker errors
-and ABI mismatches. Force a clean rebuild with:
+After bumping a native dependency (for example, nanobind), clean `build/`:
+Ninja can retain objects compiled against older headers.
 
 ```console
 $ rm -rf build/
@@ -102,11 +97,8 @@ scripts/asan-pytest.sh
 
 ## Free-threaded (3.14t+) build
 
-mew's extension is built with nanobind's `FREE_THREADED` flag. nanobind keeps
-the stable-ABI (`cp312`) wheel on a stock interpreter and switches to a
-version-specific free-threaded wheel (`Py_MOD_GIL_NOT_USED`) on a free-threaded
-one; the two ABIs are mutually exclusive on 3.13/3.14, so the
-`if.abi-flags = "t"` override in `pyproject.toml` drops `wheel.py-api` there.
+Free-threaded Python builds a version-specific extension.
+Use `.venv-ft` to keep it separate from the normal environment.
 
 Build a separate free-threaded editable install in `.venv-ft` so it doesn't
 clobber the default `.venv`:
