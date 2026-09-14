@@ -33,7 +33,9 @@ jobs:
         run: uvx prek run --all-files --show-diff-on-failure
 
       - name: Check generated native stub
-        run: cmake --build build/* --target check_mew_core_stub
+        run: |
+          uv run --no-sync python scripts/configure-clangd.py
+          cmake --build build/clangd --target check_mew_core_stub
 
   test:
     name: ${{ matrix.os }} · py${{ matrix.python-version }}
