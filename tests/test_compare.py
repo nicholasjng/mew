@@ -15,19 +15,17 @@ from _helpers import (
     write_pair as _write_pair,
 )
 
-from mew._statistics import reduce_statistic, resolve_statistic
-from mew.compare import (
-    _aggregate_group,
+from mew._results import (
+    _aggregate_values,
     _load,
     _load_pivot_columns,
     _load_sessions,
     _resolve_session,
     _select_latest,
     _split_selector,
-    compare,
-    read_results,
-    read_sessions,
 )
+from mew._statistics import reduce_statistic, resolve_statistic
+from mew.compare import compare, read_results, read_sessions
 
 
 def test_load_basic(tmp_path: Path) -> None:
@@ -39,32 +37,32 @@ def test_load_basic(tmp_path: Path) -> None:
     assert samples["bench_x"].time_unit == "ns"
 
 
-def test_aggregate_group_median_and_stddev() -> None:
-    rows = [_row("b", 5.0), _row("b", 7.0), _row("b", 6.0)]
-    median, stddev = _aggregate_group(rows, "real_time")
+def test_aggregate_values_median_and_stddev() -> None:
+    values = [5.0, 7.0, 6.0]
+    median, stddev = _aggregate_values(values)
     assert median == 6.0
     assert stddev is not None and stddev > 0
 
 
-def test_aggregate_group_custom_statistic_replaces_center() -> None:
+def test_aggregate_values_custom_statistic_replaces_center() -> None:
     # max(1,2,3,100)=100 instead of the median 2.5; stddev is unchanged.
-    rows = [_row("b", v) for v in (1.0, 2.0, 3.0, 100.0)]
-    median, base_stddev = _aggregate_group(rows, "real_time")
-    center, stddev = _aggregate_group(rows, "real_time", np.max)
+    values = [1.0, 2.0, 3.0, 100.0]
+    median, base_stddev = _aggregate_values(values)
+    center, stddev = _aggregate_values(values, np.max)
     assert median == 2.5
     assert center == 100.0
     assert stddev == base_stddev
 
 
-def test_aggregate_group_custom_statistic_gets_list() -> None:
+def test_aggregate_values_custom_statistic_gets_list() -> None:
     seen: list[object] = []
 
     def reduce(a):
         seen.append(a)
         return sum(a) / len(a)
 
-    rows = [_row("b", 2.0), _row("b", 4.0)]
-    center, _ = _aggregate_group(rows, "real_time", reduce)
+    values = [2.0, 4.0]
+    center, _ = _aggregate_values(values, reduce)
     assert center == 3.0
     # mew hands every reducer the raw per-repetition list (numpy/scipy accept it).
     assert seen[0] == [2.0, 4.0]
@@ -1154,3 +1152,100 @@ def test_read_sessions_rejects_an_unknown_metric(tmp_path: Path) -> None:
     _write_json(p, [_row("b", 1.0)])
     with pytest.raises(SystemExit, match="unknown metric"):
         read_sessions(p, metric="nope")
+
+
+@pytest.mark.parametrize("family", [False, True])
+def test_thread_counts_remain_distinct_samples(tmp_path: Path, family: bool) -> None:
+    path = tmp_path / "threads.json"
+    prefix = "b/case:0" if family else "b"
+    _write_json(
+        path,
+        [
+            _row(
+                f"{prefix}/iterations:10/threads:{n}",
+                value,
+                label="size=10" if family else "",
+                threads=n,
+            )
+            for n, value in [(1, 100), (2, 200), (4, 400)]
+        ],
+    )
+    samples, _ = _load(path, "real_time")
+    base = "b[size=10]" if family else "b"
+    assert {name: sample.value for name, sample in samples.items()} == {
+        f"{base}/threads:1": 100,
+        f"{base}/threads:2": 200,
+        f"{base}/threads:4": 400,
+    }
+    assert all(sample.stddev is None for sample in samples.values())
+
+
+@pytest.mark.parametrize("metric", ["real_time", "cpu_time"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_grouped_sessions_normalize_units_before_reduction(
+    tmp_path: Path, metric: str, reverse: bool
+) -> None:
+    path = tmp_path / "units.jsonl"
+    rows = [
+        _row("b", 1000, time_unit="ns", session_tag="same", date="2026-01-01"),
+        _row("b", 1, time_unit="us", session_tag="same", date="2026-01-02"),
+    ]
+    if reverse:
+        rows.reverse()
+    _write_jsonl(path, rows)
+    sessions = read_sessions(path, metric=metric)
+    assert len(sessions) == 1
+    sample = sessions[0].samples["b"]
+    expected = 1 if reverse else 1000
+    assert sample.value == expected
+    assert sample.stddev == 0
+    assert sample.values == (expected, expected)
+    assert sample.time_unit == ("us" if reverse else "ns")
+
+
+@pytest.mark.parametrize("show_stddev", [False, True])
+def test_history_missing_a_benchmark_cannot_hide_regression(
+    tmp_path: Path, capsys, show_stddev: bool
+) -> None:
+    from mew.regressions import RegressionConfig
+
+    head, history, baseline = [tmp_path / f"{name}.json" for name in ("head", "history", "base")]
+    _write_json(head, [_row("slow", 200), _row("ok", 100)])
+    _write_json(baseline, [_row("slow", 100), _row("ok", 100)])
+    _write_json(history, [_row("ok", 100)])
+    console = Console(width=200)
+    assert (
+        compare(
+            [head, history, baseline],
+            regressions=RegressionConfig(5),
+            show_stddev=show_stddev,
+            console=console,
+        )
+        == 2
+    )
+    assert "slow" in console.export_text()
+    assert "+100.00%" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("metric", "base_value", "other_value", "base_unit", "other_unit", "delta", "ratio"),
+    [
+        ("real_time", 1000, 1, "ns", "us", 0, 1),
+        ("cpu_time", 1, 2000, "us", "ns", 1, 0.5),
+        ("iterations", 100, 200, "ns", "us", 1, 2),
+        ("memory.peak_bytes", 100, 200, "ns", "us", 1, 0.5),
+        ("real_time", 0, 1, "ns", "ns", float("inf"), 0),
+        ("real_time", 1, 0, "ns", "ns", -1, float("inf")),
+    ],
+)
+def test_comparison_math_without_rendering(
+    metric, base_value, other_value, base_unit, other_unit, delta, ratio
+):
+    from mew.compare import Sample, _compare_samples
+
+    base = Sample("b", base_value, None, base_unit, None)
+    other = Sample("b", other_value, None, other_unit, None)
+    result = _compare_samples(base, other, metric)
+    assert result.delta == delta
+    assert result.speedup == ratio
+    assert result.p_value is None

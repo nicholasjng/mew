@@ -2,6 +2,9 @@
 
 `mew compare` diffs `.json`, `.jsonl`, or `.jsonl.gz` results. The last file is the baseline.
 Add a regression threshold and exit flag to use it as a CI gate.
+With more than two files, the gate compares the first file against the last;
+intermediate files are informational. Missing historical measurements appear as
+dashes and do not exclude a benchmark from gating.
 
 ## Basic comparison
 
@@ -40,7 +43,9 @@ If stripping the prefix makes two benchmarks in one file collide, `compare` exit
 With `--by`, the key defaults to `func`.
 
 Parametrized cases match by their human-readable IDs.
-Google Benchmark option suffixes are ignored.
+Thread counts remain distinct (`/threads:1`, `/threads:2`, etc.). Other Google
+Benchmark option suffixes are ignored. Time measurements are converted to a
+common unit before reducing repetitions, including grouped sessions.
 
 ## Context and noise
 

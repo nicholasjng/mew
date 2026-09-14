@@ -46,7 +46,7 @@ def _fmt_bytes(n: int) -> str:
 # segments in the registered name can't false-match.
 _OPTION_SUFFIXES_RE = re.compile(
     r"(?:/(?:min_time:[^/]+|min_warmup_time:[^/]+|iterations:\d+|repeats:\d+"
-    r"|manual_time|process_time|real_time|threads:\d+))+$"
+    r"|manual_time|process_time|real_time|(?P<threads>threads:\d+)))+$"
 )
 # `/case:N` at the end of a name, or before Google Benchmark's aggregate suffix
 # (`_mean`, `_median`, ...), which it appends *after* the args part.
@@ -75,12 +75,18 @@ def canonical_name(name: str, label: Any) -> str:
     distinguishable from the per-repetition rows it summarizes:
     ``bench.py::f/case:0_mean`` becomes ``bench.py::f[n=10000]_mean``.
     """
-    name = _OPTION_SUFFIXES_RE.sub("", name)
+    # Thread count is a benchmark dimension, unlike timing configuration.
+    # Extract it before stripping options so cases remain addressable by label.
+    options = _OPTION_SUFFIXES_RE.search(name)
+    threads = options.group("threads") if options else None
+    thread_suffix = f"/{threads}" if threads else ""
+    if options:
+        name = name[: options.start()]
     if label and isinstance(label, str) and (m := _CASE_SUFFIX_RE.search(name)):
         # Rebuild rather than substitute: the label bracket replaces the case
         # index in place, keeping any aggregate suffix trailing it.
-        return f"{name[: m.start()]}[{label}]{name[m.end() :]}"
-    return name
+        return f"{name[: m.start()]}[{label}]{name[m.end() :]}{thread_suffix}"
+    return name + thread_suffix
 
 
 # Closing `]}` of the streamed doc, written once at finalize (GB-style).
