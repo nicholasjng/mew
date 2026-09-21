@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from mew._typing import MemoryMetrics
+from mew.machine import _gil_enabled
 
 if TYPE_CHECKING:
     from memray import Tracker
@@ -20,7 +21,7 @@ Frame = tuple[str, str, int]
 
 # Free-threaded CPython serves object allocations from mimalloc, which never
 # reaches the system allocator memray hooks by default, so track them separately.
-_TRACE_PYTHON_ALLOCATORS = not getattr(sys, "_is_gil_enabled", lambda: True)()
+_TRACE_PYTHON_ALLOCATORS = not _gil_enabled()
 
 _MEW_DIR = str(Path(__file__).parent)
 
@@ -113,11 +114,11 @@ class MemrayManager:
         # Only after a clean close, so a half-written capture never reaches the
         # flame graph.
         self.captures.append((dest, self._root))
-        reader = memray.FileReader(dest)
-        meta = reader.metadata
-        # Metadata avoids scanning every allocation, which can take minutes and
-        # gigabytes for an allocation-heavy body. Consequently this manager
-        # leaves the optional cumulative `total_bytes` metric unset.
+        # Metadata avoids scanning every allocation, which can take minutes for
+        # an allocation-heavy body, so the optional cumulative `total_bytes`
+        # metric stays unset.
+        with memray.FileReader(dest) as reader:
+            meta = reader.metadata
         return {
             "peak_bytes": meta.peak_memory,
             "total_allocations": meta.total_allocations,
@@ -171,18 +172,17 @@ def write_flamegraph(manager: MemrayManager, path: Path) -> None:
 
     records: list[_RootedRecord] = []
     for capture, root in manager.captures:
-        reader = memray.FileReader(capture)
-        for rec in reader.get_high_watermark_allocation_records(merge_threads=True):
-            records.append(
-                _RootedRecord(
-                    size=rec.size,
-                    n_allocations=rec.n_allocations,
-                    tid=rec.tid,
-                    thread_name=rec.thread_name,
-                    stack=(*rec.stack_trace(), root),
+        with memray.FileReader(capture) as reader:
+            for rec in reader.get_high_watermark_allocation_records(merge_threads=True):
+                records.append(
+                    _RootedRecord(
+                        size=rec.size,
+                        n_allocations=rec.n_allocations,
+                        tid=rec.tid,
+                        thread_name=rec.thread_name,
+                        stack=(*rec.stack_trace(), root),
+                    )
                 )
-            )
-        reader.close()
 
     reporter = FlameGraphReporter.from_snapshot(
         # Duck-typed stand-ins for AllocationRecord; see _RootedRecord.

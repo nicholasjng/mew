@@ -8,23 +8,18 @@ block of a :class:`~mew._typing.BenchmarkResult`.
 
 from __future__ import annotations
 
-import sys
 from importlib.util import find_spec
 from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mew._typing import ProfilerSummary
+from mew.machine import _gil_enabled
 
 if TYPE_CHECKING:
     from pyinstrument import Profiler
     from pyinstrument.frame import Frame
     from pyinstrument.session import Session
-
-
-def _gil_enabled() -> bool:
-    """Return whether this interpreter currently has the GIL enabled."""
-    return getattr(sys, "_is_gil_enabled", lambda: True)()
 
 
 def require_pyinstrument() -> None:
@@ -64,11 +59,14 @@ class PyinstrumentManager:
     ------
     ValueError
         If ``interval`` is not positive and finite.
+    SystemExit
+        If pyinstrument is missing or the interpreter is free-threaded.
     """
 
     def __init__(self, interval: float = 1e-4) -> None:
         if not isfinite(interval) or interval <= 0:
             raise ValueError(f"interval must be a positive finite number, got {interval!r}")
+        require_pyinstrument()
         self._interval = interval
         self._prof: Profiler | None = None
         self._session: Session | None = None
@@ -76,7 +74,6 @@ class PyinstrumentManager:
         self.sessions: list[Session] = []
 
     def after_setup_start(self) -> None:
-        require_pyinstrument()
         import pyinstrument
 
         self._session = None

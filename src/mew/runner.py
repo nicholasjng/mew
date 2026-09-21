@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import socket
-import sys
 import warnings
 from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
@@ -11,23 +10,18 @@ from datetime import UTC, datetime
 from math import isfinite
 from typing import TYPE_CHECKING, Any
 
-import mew.context as _context
 from mew import _core
 from mew._console import overflow
 from mew._options import parse_min_time
 from mew._registry import REGISTRY, Entry
 from mew._session import new_session_id
 from mew._typing import MemoryManager, ProfilerManager
-from mew.machine import _silence_native_stderr, machine_context
+from mew.context import get_context
+from mew.machine import _gil_enabled, _silence_native_stderr, machine_context
 from mew.reporter import Reporter
 
 if TYPE_CHECKING:
     from mew._typing import BenchmarkOptions, BenchmarkResult
-
-
-def _gil_enabled() -> bool:
-    """True on a stock (GIL) interpreter, False on a free-threaded build."""
-    return getattr(sys, "_is_gil_enabled", lambda: True)()
 
 
 def _is_threaded(opts: BenchmarkOptions) -> bool:
@@ -268,7 +262,7 @@ def run(
             _skipped_row(e.name, _requested_threads(e.options), skip_msg) for e in threaded
         ]
         selected = [e for e in selected if not _is_threaded(e.options)]
-        threaded = []  # filtered out of `selected`; none run this call
+        threaded = []
 
     rep = _to_single_reporter(reporter)
 
@@ -283,7 +277,7 @@ def run(
             session["tag"] = session_tag
         # The machine provider is applied first so a suite can override it.
         extra_context["session"] = session
-        extra_context["context"] = {**machine_context(), **_context._snapshot()}
+        extra_context["context"] = {**machine_context(), **get_context()}
 
     if not selected:
         # All skipped: GB emits no context for an empty registry, so drive the

@@ -102,10 +102,6 @@ def clear_context() -> None:
     _CONTEXT.clear()
 
 
-def _snapshot() -> dict[str, Any]:
-    return copy.deepcopy(_CONTEXT)
-
-
 __all__ = [
     "clear_context",
     "get_context",

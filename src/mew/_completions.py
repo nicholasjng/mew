@@ -36,7 +36,7 @@ class _Cmd:
     positional: str | list[str] | None = None  # value kind of the positional arg
 
 
-def _value_kind(action: argparse.Action, command: str) -> str | list[str] | None:
+def _value_kind(action: argparse.Action) -> str | list[str] | None:
     """Completion kind for an action's value: a choices list, ``"file"``, or None."""
     if action.choices:
         return [str(c) for c in action.choices]
@@ -67,8 +67,6 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
     # choices values type as `object`.
     choices = cast(dict[str, argparse.ArgumentParser], sub.choices)
     for name, subp in choices.items():
-        if name.startswith("_"):  # hidden internal command (e.g. __complete)
-            continue
         key = id(subp)
         if key not in grouped:
             grouped[key] = _Cmd(names=[], help=help_by_name.get(name, ""))
@@ -80,12 +78,12 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
                             list(a.option_strings),
                             a.help or "",
                             a.nargs != 0,
-                            _value_kind(a, name),
+                            _value_kind(a),
                             repeat=isinstance(a, argparse._AppendAction),
                         )
                     )
                 else:
-                    grouped[key].positional = _value_kind(a, name)
+                    grouped[key].positional = _value_kind(a)
         grouped[key].names.append(name)
     return [grouped[k] for k in order]
 
