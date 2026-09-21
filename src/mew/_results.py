@@ -142,9 +142,14 @@ def _rows_from_json(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         raise ValueError(f"{path}: invalid JSON: {e}") from e
     benchmarks = doc.get("benchmarks") if isinstance(doc, dict) else None
     if not isinstance(benchmarks, list):
-        raise ValueError(f"{path}: missing 'benchmarks' array")  # noqa: TRY004
+        raise ValueError(f"{path}: missing 'benchmarks' array")
     ctx = doc.get("context") or {}
-    return [_inherit_metadata(row, ctx) for row in benchmarks], ctx
+    rows: list[dict[str, Any]] = []
+    for i, row in enumerate(benchmarks):
+        if not isinstance(row, dict):
+            raise ValueError(f"{path}: benchmarks[{i}] is not a JSON object")
+        rows.append(_inherit_metadata(row, ctx))
+    return rows, ctx
 
 
 def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -174,7 +179,7 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             except json.JSONDecodeError as e:
                 raise ValueError(f"{path}:{lineno}: invalid JSON: {e}") from e
             if not isinstance(obj, dict):
-                raise TypeError(f"{path}:{lineno}: expected a JSON object per line")
+                raise ValueError(f"{path}:{lineno}: expected a JSON object per line")
             if "name" in obj:
                 rows.append(_inherit_metadata(obj, current))
             else:

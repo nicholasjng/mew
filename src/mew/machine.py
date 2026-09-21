@@ -17,6 +17,11 @@ from mew import _core
 __all__ = ["machine_context"]
 
 
+def _gil_enabled() -> bool:
+    """True on a stock (GIL) interpreter, False on a free-threaded build."""
+    return getattr(sys, "_is_gil_enabled", lambda: True)()
+
+
 @contextmanager
 def _silence_native_stderr() -> Iterator[None]:
     """Redirect OS-level fd 2 to /dev/null within the scope.

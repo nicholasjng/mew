@@ -321,7 +321,6 @@ def run(
             if sample or sample_html is not None:
                 from mew import cpu as _cpu
 
-                _cpu.require_pyinstrument()
                 profiler_manager = _cpu.PyinstrumentManager(interval=sample_interval)
 
             _run(
@@ -386,11 +385,15 @@ def compare(
     ):
         from mew.regressions import load_config
 
-        cfg = load_config(
-            default_threshold=regression_threshold if regression_threshold is not None else 5.0,
-            path=regressions_config,
-            root=cfg_file.project_root,
-        )
+        try:
+            cfg = load_config(
+                default_threshold=regression_threshold if regression_threshold is not None else 5.0,
+                path=regressions_config,
+                root=cfg_file.project_root,
+            )
+        except ValueError as e:
+            print(f"mew compare: invalid regressions config: {e}", file=sys.stderr)
+            raise SystemExit(2) from e
 
     code = _compare(
         files,

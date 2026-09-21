@@ -209,6 +209,8 @@ class JSONLReporter:
 
     def finalize(self) -> None:
         _close_sink(self._fh, self._owns_fh)
+        self._fh = None
+        self._owns_fh = False
 
 
 class RichReporter:

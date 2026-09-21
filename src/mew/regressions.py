@@ -225,7 +225,10 @@ def load_config(
             doc = tomllib.load(fh)
         table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
         threshold = table.get("default_threshold", default_threshold)
-        for raw in table.get("allow", []):
+        allow = table.get("allow", [])
+        if not isinstance(allow, list) or not all(isinstance(r, dict) for r in allow):
+            raise ValueError(f"{source}: [tool.mew.regressions] allow must be an array of tables")
+        for raw in allow:
             rules.append(_coerce_rule(raw, source=source))
 
     try:
