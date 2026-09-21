@@ -36,7 +36,7 @@ class FakeMemoryManager:
 class FakeProfilerManager:
     """Profiler manager returning a fixed summary, standing in for pyinstrument."""
 
-    _DEFAULT = {  # noqa: RUF012
+    _DEFAULT = {  # ruff: ignore[RUF012]
         "profiler": "pyinstrument",
         "wall_time": 0.5,
         "sample_count": 500,

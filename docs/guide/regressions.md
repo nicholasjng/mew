@@ -137,7 +137,7 @@ threshold = 15.0
 reason = "I/O is noisy on the CI runner; raise the bar."
 
 [[tool.mew.regressions.allow]]
-pattern = "*[algo='bubble']"
+pattern = "*[algo=bubble]"
 ignore = true
 reason = "Bubble sort is intentionally slow; skip the gate."
 ```

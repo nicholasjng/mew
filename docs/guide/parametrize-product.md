@@ -24,8 +24,8 @@ def bench_sort(state: mew.State, n: int, algo: str) -> None:
 Registered names:
 
 ```
-benchmarks/bench_sort.py::bench_sort[n=10-algo='merge']
-benchmarks/bench_sort.py::bench_sort[n=100-algo='quick']
+benchmarks/bench_sort.py::bench_sort[n=10-algo=merge]
+benchmarks/bench_sort.py::bench_sort[n=100-algo=quick]
 ```
 
 You can override the labels with the `ids` argument:

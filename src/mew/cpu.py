@@ -1,11 +1,9 @@
-"""Optional CPU profiling via pyinstrument, wired in as a Google Benchmark profiler manager.
+"""CPU profiling with pyinstrument as a Google Benchmark profiler manager.
 
-Google Benchmark drives the sampling itself: when a profiler manager is
-registered it runs one extra, untimed pass of each benchmark body per
-repetition, starting the sampler at the first ``for _ in state`` (after fixture
-setup) and stopping it at loop exit. The summary :meth:`PyinstrumentManager.get_result`
-returns is stamped onto that repetition's ``Run`` and reaches reporters as the
-``cpu_profile`` block of a :class:`~mew._typing.BenchmarkResult`.
+Google Benchmark runs one extra, untimed pass per repetition with the sampler
+active from the first ``for _ in state`` to loop exit. The summary from
+:meth:`PyinstrumentManager.get_result` reaches reporters as the ``cpu_profile``
+block of a :class:`~mew._typing.BenchmarkResult`.
 """
 
 from __future__ import annotations

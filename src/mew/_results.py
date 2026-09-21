@@ -150,10 +150,8 @@ def _rows_from_json(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Read the JSONL sink (plain or gzip): one self-contained row per line.
 
-    Current files are pure NDJSON; every row carries its session identity.
-    Files from older versions (and worker channels that merge rows) interleave
-    ``{"context": ...}`` header lines with rows; rows inherit their segment's
-    identity for those, and ``file_ctx`` is the last segment's context.
+    A line without a ``name`` is a ``{"context": ...}`` header; rows after it
+    inherit its identity, and ``file_ctx`` is the last header seen.
     """
     rows: list[dict[str, Any]] = []
     file_ctx: dict[str, Any] = {}
@@ -180,15 +178,13 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             if "name" in obj:
                 rows.append(_inherit_metadata(obj, current))
             else:
-                # Older archives have context headers; also accept a bare
-                # context object (a line without a benchmark name).
                 current = obj.get("context", obj) or {}
                 file_ctx = current
     return rows, file_ctx
 
 
 def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[str, Any]:
-    """Combine legacy file properties with already-normalized row metadata."""
+    """Combine file-level context with the row's own session and context stamps."""
     ctx = {key: value for key, value in file_ctx.items() if key not in _ROW_STAMP_FIELDS}
     ctx.update({key: rep_row[key] for key in _ROW_STAMP_FIELDS if key in rep_row})
     return ctx

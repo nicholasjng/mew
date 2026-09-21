@@ -57,7 +57,7 @@ foreach(patch IN LISTS PATCHES)
         message(FATAL_ERROR
             "Google Benchmark patch failed to apply: ${_name}\n"
             "The pinned commit has probably moved out from under it; rebase the "
-            "patch against the new pin (see notes/advancing-google-benchmark.md).\n"
+            "patch against the new pin.\n"
             "${_err}")
     endif()
     message(STATUS "Google Benchmark patch applied: ${_name}")

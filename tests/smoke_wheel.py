@@ -1,12 +1,8 @@
 """Assert an installed wheel is usable, for cibuildwheel's test step.
 
-Not a pytest module (the filename keeps it out of collection): it must run
-against the *installed* package, from a directory that is not the source tree.
-Behaviour is covered by the suite in ci.yml, which builds from source; what only
-a wheel can tell us is whether the artifact itself is intact, i.e. that the
-extension survived auditwheel/delocate repair and that the declared package data
-was actually shipped. An editable src/-layout install answers neither question,
-because `import mew` resolves to src/mew there no matter what the wheel holds.
+Not a pytest module: it runs against the *installed* package from outside the
+source tree, checking that the repaired extension loads and that the declared
+package data shipped. Behaviour is covered by the regular suite.
 """
 
 import sys

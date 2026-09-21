@@ -51,9 +51,9 @@ computes the coefficient of variation (stddev / median). Any row above **25%** i
 flagged red as `±N% (!)`:
 
 ```text
-Benchmark    │ baseline │ ± stddev │      head │      Δ% │ speedup
-────────────────────────────────────────────────────────────────────
-bench_parse  │ 1.20 µs  │  0.31 µs │   1.44 µs │ +20.0%  │ ×0.83 ±26% (!)
+Benchmark    │ baseline │ ± stddev │            head │      Δ% │ speedup
+──────────────────────────────────────────────────────────────────────────
+bench_parse  │  1.20 us │  0.31 us │ 1.44 us ±26% (!) │ +20.00% │  ×0.833
 ```
 
 Treat a flagged row as inconclusive. Improve the environment or collect more
@@ -71,9 +71,9 @@ With at least two repetitions on each side, `compare` runs a Mann-Whitney U test
 and marks deltas with p < 0.05 as `(signif.)`:
 
 ```text
-Benchmark    │ baseline │      head │              Δ% │ speedup
-─────────────────────────────────────────────────────────────────
-bench_parse  │ 1.20 µs  │   1.44 µs │ +20.0% (signif.) │ ×0.83
+Benchmark    │ baseline │    head │                Δ% │ speedup
+────────────────────────────────────────────────────────────────
+bench_parse  │  1.20 us │ 1.44 us │ +20.00% (signif.) │  ×0.833
 ```
 
 A marker is evidence against equal distributions. Its absence is not evidence

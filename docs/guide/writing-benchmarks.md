@@ -72,16 +72,13 @@ Combine with `-k` for AND across tag and name.
 - **Setup inside the loop.** The body of `for _ in state:` is the measured
   region. Move data construction, file reads, and randomization outside
   the loop, or wrap them in {meth}`State.pause`.
-- **Measuring nothing.** There is no `DoNotOptimize` to reach for, because
-  CPython won't elide a call: `sorted(data)` as a bare statement still compiles
-  to `CALL` + `POP_TOP`. What *does* vanish is constant work — `2 + 3` is folded
-  at compile time and the statement disappears entirely, leaving a loop that
-  measures the loop. The subtler versions are timing an `lru_cache` hit instead
-  of the computation behind it, and timing an attribute lookup instead of the
-  call. If the body really is a few nanoseconds, per-iteration dispatch
-  dominates the measurement; use
-  [](state-and-timing.md#batched-iteration-for-very-fast-bodies) rather than
-  trying to defeat an optimiser that isn't there.
+- **Measuring nothing.** CPython does not elide calls, so there is no
+  `DoNotOptimize`; `sorted(data)` as a bare statement still runs. Constant
+  expressions such as `2 + 3` are folded at compile time, leaving a loop that
+  measures only itself. Also watch for timing an `lru_cache` hit instead of the
+  computation, or an attribute lookup instead of the call. If the body really is
+  a few nanoseconds, per-iteration dispatch dominates; use
+  [](state-and-timing.md#batched-iteration-for-very-fast-bodies).
 - **One decorator per function.** Applying both `@benchmark` and
   `@parametrize` to the same function raises a `RuntimeError` at import
   time. Split into two functions if you need both shapes.

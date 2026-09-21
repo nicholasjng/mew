@@ -432,7 +432,7 @@ def product(
         Per-variant Google Benchmark timing options.
     iterations, repetitions : int, optional
         Per-variant Google Benchmark iteration controls.
-    unit : str, optional
+    unit : str or TimeUnit, optional
         Override Google Benchmark's reported time unit.
     use_real_time, use_manual_time, measure_process_cpu_time : bool
         Flag-style Google Benchmark options.
