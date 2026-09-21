@@ -281,6 +281,7 @@ def run(
     append: bool = False,
     strict: bool = False,
     profile_memory: bool = False,
+    memory_iterations: int | None = None,
     flamegraph: Path | None = None,
     sample: bool = False,
     sample_interval: float = 1e-4,
@@ -333,6 +334,7 @@ def run(
                 session_tag=session_tag,
                 strict=strict,
                 memory_manager=memory_manager,
+                memory_iterations=memory_iterations,
                 profiler_manager=profiler_manager,
             )
 
@@ -654,6 +656,12 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         "--profile-memory",
         action="store_true",
         help="Profile memory allocations with memray.",
+    )
+    p.add_argument(
+        "--memory-iterations",
+        type=_positive_int,
+        metavar="<n>",
+        help="Run at most <n> iterations under the memory profiler (default 16).",
     )
     p.add_argument(
         "--flamegraph",

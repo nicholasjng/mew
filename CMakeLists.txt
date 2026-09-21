@@ -87,7 +87,11 @@ set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 
 # Apply these patches in order to the pinned Google Benchmark tree.
 set(MEW_BENCHMARK_PATCHES
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profilermanager-result.patch")
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profilermanager-result.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-threaded-manager-passes.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-memory-iterations-flag.patch")
+
+string(JOIN "|" _mew_patches_arg ${MEW_BENCHMARK_PATCHES})
 
 # Needed by PATCH_COMMAND below, so it must resolve *before* the Declare (the
 # built-commit probe further down reuses it).
@@ -108,11 +112,12 @@ FetchContent_Declare(
     # hunk fail with "patch does not apply".
     GIT_CONFIG core.autocrlf=false core.eol=lf
     # PATCH_COMMAND runs without a shell; the -P script carries the
-    # already-applied guard and the failure message.
+    # already-applied guard and the failure message. The patch list is
+    # |-joined: a ;-list would be split into separate arguments here.
     PATCH_COMMAND ${CMAKE_COMMAND}
         "-DGIT=${GIT_EXECUTABLE}"
         "-DSRC=<SOURCE_DIR>"
-        "-DPATCHES=${MEW_BENCHMARK_PATCHES}"
+        "-DPATCHES=${_mew_patches_arg}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_patches.cmake"
     # Without this, a reconfigure re-runs the git update step, which resets the
     # tree and drops the patch before PATCH_COMMAND gets a chance to re-run.

@@ -1,0 +1,72 @@
+diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
+index 282e53d..5feb7a9 100644
+--- a/src/benchmark_runner.cc
++++ b/src/benchmark_runner.cc
+@@ -500,17 +500,29 @@ void BenchmarkRunner::RunWarmUp() {
+   }
+ }
+ 
+-MemoryManager::Result BenchmarkRunner::RunMemoryManager(
+-    IterationCount memory_iterations) {
+-  MemoryLoopScope scope(memory_manager);
++// Run one manager-driven pass with the benchmark's configured thread count, so
++// a body that partitions work by thread_index, or synchronizes across threads,
++// behaves as it does in the timed run. The manager hooks fire from thread 0's
++// State only: every worker State calls AfterSetupStart/BeforeTeardownStop, and
++// a manager must be started once per pass, not once per thread.
++void BenchmarkRunner::RunManagerPass(IterationCount iters_per_thread,
++                                     ProfilerManager* pm,
++                                     PerfCountersMeasurement* pcm) {
+   std::unique_ptr<internal::ThreadManager> manager;
+-  manager.reset(new internal::ThreadManager(1));
++  manager.reset(new internal::ThreadManager(b.threads()));
+   b.Setup();
+-  RunInThread(&b, memory_iterations, 0, manager.get(),
+-              perf_counters_measurement_ptr,
+-              /*profiler_manager=*/&scope);
++  thread_runner->RunThreads([&](int thread_idx) {
++    RunInThread(&b, iters_per_thread, thread_idx, manager.get(), pcm,
++                thread_idx == 0 ? pm : nullptr);
++  });
+   manager.reset();
+   b.Teardown();
++}
++
++MemoryManager::Result BenchmarkRunner::RunMemoryManager(
++    IterationCount memory_iterations) {
++  MemoryLoopScope scope(memory_manager);
++  RunManagerPass(memory_iterations, &scope, perf_counters_measurement_ptr);
+   scope.CloseIfDangling();
+   // A body that never entered its timing loop never started the manager. Leave
+   // memory_iterations at 0 so reporters can tell "not measured" from "measured
+@@ -522,14 +534,8 @@ MemoryManager::Result BenchmarkRunner::RunMemoryManager(
+ 
+ ProfilerManager::Result BenchmarkRunner::RunProfilerManager(
+     IterationCount profile_iterations) {
+-  std::unique_ptr<internal::ThreadManager> manager;
+-  manager.reset(new internal::ThreadManager(1));
+-  b.Setup();
+-  RunInThread(&b, profile_iterations, 0, manager.get(),
+-              /*perf_counters_measurement_ptr=*/nullptr,
+-              /*profiler_manager=*/profiler_manager);
+-  manager.reset();
+-  b.Teardown();
++  RunManagerPass(profile_iterations, profiler_manager,
++                 /*pcm=*/nullptr);
+   ProfilerManager::Result profile_result;
+   profiler_manager->GetResult(profile_result);
+   return profile_result;
+diff --git a/src/benchmark_runner.h b/src/benchmark_runner.h
+index d8dbc83..729baaf 100644
+--- a/src/benchmark_runner.h
++++ b/src/benchmark_runner.h
+@@ -105,6 +105,9 @@ class BenchmarkRunner {
+   };
+   IterationResults DoNIterations();
+ 
++  void RunManagerPass(IterationCount iters_per_thread, ProfilerManager* pm,
++                      PerfCountersMeasurement* pcm);
++
+   MemoryManager::Result RunMemoryManager(IterationCount memory_iterations);
+ 
+   ProfilerManager::Result RunProfilerManager(IterationCount profile_iterations);

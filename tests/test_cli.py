@@ -559,6 +559,12 @@ def test_compare_malformed_regressions_config_is_usage_error(mew_cli, tmp_path):
     assert "Traceback" not in res.stderr
 
 
+def test_run_memory_iterations_must_be_positive(mew_cli, tmp_path):
+    res = mew_cli("run", "--memory-iterations", "0", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "--memory-iterations" in res.stderr
+
+
 def test_run_invalid_min_warmup_time_is_usage_error(mew_cli, tmp_path):
     # argparse type errors exit 2 (usage), not 1 (the "nothing matched" code).
     res = mew_cli("run", "--min-warmup-time", "nonsense", cwd=tmp_path)

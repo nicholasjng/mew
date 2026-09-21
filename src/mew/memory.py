@@ -78,9 +78,9 @@ class MemrayManager:
 
     Notes
     -----
-    Google Benchmark caps the memory pass at ``min(16, iterations)``, so
-    ``allocations_per_iteration`` amortizes one-time allocations over at most 16
-    calls. Compare it across engines, not across differing iteration counts.
+    The memory pass runs ``min(memory_iterations, iterations)`` calls (16 by
+    default; see :func:`mew.run`), so ``allocations_per_iteration`` amortizes
+    one-time allocations over at most that many calls.
     """
 
     def __init__(self, tmpdir: Path) -> None:

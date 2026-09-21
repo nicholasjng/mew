@@ -43,11 +43,21 @@ def test_run_exposes_manager_protocol_annotations():
         ({"min_time": "0x"}, "min_time"),
         ({"min_time": "1.5x"}, "min_time"),
         ({"min_time": "forever"}, "min_time"),
+        ({"memory_iterations": 0}, "memory_iterations"),
+        ({"memory_iterations": True}, "memory_iterations"),
     ],
 )
 def test_run_rejects_invalid_global_options(kwargs, message):
     with pytest.raises(ValueError, match=message):
         mew.run(**kwargs)
+
+
+def test_gb_argv_always_pins_the_memory_pass_cap():
+    from mew.runner import _gb_argv
+
+    # Every flag is emitted so a previous run's value cannot leak into this one.
+    assert "--benchmark_memory_iterations=16" in _gb_argv(None, None, None, False)
+    assert "--benchmark_memory_iterations=4" in _gb_argv(None, None, None, False, 4)
 
 
 def test_counter_binary_scaling_option_is_accepted():

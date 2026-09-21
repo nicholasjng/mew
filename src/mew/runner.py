@@ -123,11 +123,15 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
         handle.threads(int(v))
 
 
+_DEFAULT_MEMORY_ITERATIONS = 16
+
+
 def _gb_argv(
     min_time: str | None,
     min_warmup_time: float | None,
     repetitions: int | None,
     random_interleaving: bool,
+    memory_iterations: int | None = None,
 ) -> list[str]:
     """Build Google Benchmark arguments for global run options.
 
@@ -135,25 +139,31 @@ def _gb_argv(
     in the same process. Decorator options take precedence.
     """
     mt = min_time if min_time is not None else "0.5s"
+    mi = memory_iterations if memory_iterations is not None else _DEFAULT_MEMORY_ITERATIONS
     return [
         "mew",
         f"--benchmark_min_time={mt}",
         f"--benchmark_min_warmup_time={min_warmup_time if min_warmup_time is not None else 0}",
         f"--benchmark_repetitions={repetitions if repetitions is not None else 1}",
         f"--benchmark_enable_random_interleaving={'true' if random_interleaving else 'false'}",
+        f"--benchmark_memory_iterations={mi}",
     ]
+
+
+def _check_positive_int(value: int | None, name: str) -> None:
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+        raise ValueError(f"{name} must be an integer >= 1, got {value!r}")
 
 
 def _validate_run_options(
     min_time: str | float | None,
     min_warmup_time: float | None,
     repetitions: int | None,
+    memory_iterations: int | None = None,
 ) -> str | None:
     """Validate run options and normalize min_time for Google Benchmark."""
-    if repetitions is not None and (
-        isinstance(repetitions, bool) or not isinstance(repetitions, int) or repetitions < 1
-    ):
-        raise ValueError(f"repetitions must be an integer >= 1, got {repetitions!r}")
+    _check_positive_int(repetitions, "repetitions")
+    _check_positive_int(memory_iterations, "memory_iterations")
     if min_warmup_time is not None and (not isfinite(min_warmup_time) or min_warmup_time < 0):
         raise ValueError(f"min_warmup_time must be a finite number >= 0, got {min_warmup_time!r}")
     return parse_min_time(min_time) if min_time is not None else None
@@ -170,6 +180,7 @@ def run(
     session_tag: str | None = None,
     strict: bool = False,
     memory_manager: MemoryManager | None = None,
+    memory_iterations: int | None = None,
     profiler_manager: ProfilerManager | None = None,
 ) -> int:
     """Run benchmarks via the C++ Google Benchmark backend.
@@ -212,6 +223,10 @@ def run(
         A Google Benchmark memory manager (``start()`` / ``stop()``), e.g.
         :class:`mew.memory.MemrayManager`. Registered for the duration of the run;
         its figures land in each row's ``memory`` block.
+    memory_iterations : int, optional
+        Cap on the iterations run under ``memory_manager``; the pass runs
+        ``min(memory_iterations, iterations)``. Defaults to 16. Raise it to
+        amortize one-time allocations in ``allocations_per_iteration``.
     profiler_manager : ProfilerManager, optional
         A Google Benchmark profiler manager (``after_setup_start()`` /
         ``before_teardown_stop()``, optionally ``get_result()`` and
@@ -229,7 +244,7 @@ def run(
     ValueError
         If a global timing or repetition option is outside its valid range.
     """
-    min_time = _validate_run_options(min_time, min_warmup_time, repetitions)
+    min_time = _validate_run_options(min_time, min_warmup_time, repetitions, memory_iterations)
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
         return 0
@@ -295,7 +310,7 @@ def run(
                     fn()
         return 0
 
-    cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving)
+    cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, memory_iterations)
 
     # Clear before registering so a second mew.run() in the same process
     # doesn't double-register entries.
