@@ -14,7 +14,7 @@ from typing import Any, TextIO, cast
 from mew._console import overflow
 from mew._statistics import Statistic, reduce_statistic
 from mew._typing import BenchmarkResult
-from mew.reporter import _ROW_STAMP_FIELDS, canonical_name
+from mew.reporter import _ROW_STAMP_FIELDS, canonical_row_name
 
 _NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
 _TIME_METRICS = frozenset({"real_time", "cpu_time"})
@@ -363,7 +363,7 @@ def _group_by_name(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]
     """Bucket rows by canonical ``name[label]``, the unit both load paths aggregate over."""
     groups: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        groups.setdefault(canonical_name(r["name"], r.get("label")), []).append(r)
+        groups.setdefault(canonical_row_name(r), []).append(r)
     return groups
 
 

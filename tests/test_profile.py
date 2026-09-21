@@ -359,6 +359,45 @@ def test_pyinstrument_manager_summarizes_the_hot_frame(tmp_path):
     assert mgr.sessions
 
 
+@pytest.mark.parametrize(("memory_iterations", "expected"), [(None, 16), (4, 4), (1000, 50)])
+def test_memory_iterations_caps_the_memory_pass(tmp_path, memory_iterations, expected):
+    @mew.benchmark(iterations=50)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    out = tmp_path / "out.json"
+    mew.run(
+        reporter=JSONReporter(output=out),
+        memory_manager=FakeMemoryManager(),
+        memory_iterations=memory_iterations,
+    )
+    mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
+    assert mem["iterations"] == expected
+
+
+@pytest.mark.skipif(
+    getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="threaded mode requires a free-threaded interpreter",
+)
+def test_manager_passes_run_with_the_configured_thread_count(tmp_path):
+    """The profiler pass spawns every worker like the timed run does, and the
+    manager hooks fire once per pass rather than once per thread."""
+    seen: list[int] = []
+
+    @mew.benchmark(threads=2, iterations=10)
+    def bench_x(state):
+        seen.append(state.thread_index)
+        for _ in state:
+            pass
+
+    mgr = FakeProfilerManager()
+    mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
+    assert mgr.starts == 1 and mgr.stops == 1
+    # Timed run + profiler pass: both threads ran in both.
+    assert seen.count(0) >= 2 and seen.count(1) >= 2
+
+
 def test_pyinstrument_is_rejected_before_import_on_free_threaded(monkeypatch):
     from mew import cpu as _cpu
 
