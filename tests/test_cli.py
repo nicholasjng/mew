@@ -547,6 +547,18 @@ def test_compare_exit_non_zero_on_regression_gates_alone(mew_cli, tmp_path):
     assert "❌" in res.stderr
 
 
+def test_compare_malformed_regressions_config_is_usage_error(mew_cli, tmp_path):
+    # A broken allow rule is a CLI error, not a ValueError traceback.
+    other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("b", 1.0)])
+    cfg = tmp_path / "regressions.toml"
+    cfg.write_text('[[tool.mew.regressions.allow]]\npattern = "b"\nignore = true\n')
+    res = mew_cli("compare", str(other), str(base), "--regressions-config", str(cfg), cwd=tmp_path)
+    assert res.returncode == 2
+    assert "invalid regressions config" in res.stderr
+    assert "reason" in res.stderr
+    assert "Traceback" not in res.stderr
+
+
 def test_run_invalid_min_warmup_time_is_usage_error(mew_cli, tmp_path):
     # argparse type errors exit 2 (usage), not 1 (the "nothing matched" code).
     res = mew_cli("run", "--min-warmup-time", "nonsense", cwd=tmp_path)

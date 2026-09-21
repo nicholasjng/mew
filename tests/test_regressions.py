@@ -178,6 +178,13 @@ def test_load_config_rejects_invalid_rule_modes(tmp_path: Path, body: str) -> No
         load_config(default_threshold=5.0, path=py)
 
 
+def test_load_config_rejects_non_array_allow_table(tmp_path: Path) -> None:
+    py = tmp_path / "pyproject.toml"
+    py.write_text('[tool.mew.regressions]\nallow = "b*"\n')
+    with pytest.raises(ValueError, match="allow must be an array of tables"):
+        load_config(default_threshold=5.0, path=py)
+
+
 @pytest.mark.parametrize("threshold", [-1, float("nan"), float("inf"), True])
 def test_regression_config_rejects_invalid_default_threshold(threshold) -> None:
     with pytest.raises(ValueError, match="default_threshold"):

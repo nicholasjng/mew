@@ -289,6 +289,20 @@ def test_load_jsonl_rejects_invalid_line(tmp_path: Path) -> None:
         _load(p, "real_time")
 
 
+def test_load_jsonl_rejects_non_object_line(tmp_path: Path) -> None:
+    p = tmp_path / "a.jsonl"
+    p.write_text('{"context": {}}\n[1, 2]\n')
+    with pytest.raises(SystemExit, match="a.jsonl:2: expected a JSON object"):
+        _load(p, "real_time")
+
+
+def test_load_rejects_json_with_non_object_rows(tmp_path: Path) -> None:
+    p = tmp_path / "a.json"
+    p.write_text('{"context": {}, "benchmarks": [1]}')
+    with pytest.raises(SystemExit, match=r"benchmarks\[0\] is not a JSON object"):
+        _load(p, "real_time")
+
+
 def test_load_rejects_malformed_json(tmp_path: Path) -> None:
     p = tmp_path / "a.json"
     p.write_text("not json")
