@@ -1,9 +1,7 @@
 """Machine context: what the benchmarks ran on.
 
-:func:`machine_context` is a context provider like :func:`mew.vcs_context`, but
-:func:`mew.run` applies it by default: ``cpu_scaling_enabled`` is the signal that
-says whether the numbers can be trusted at all, and a tool that silently stops
-reporting it is worse than one that always does.
+Unlike :func:`mew.vcs_context`, :func:`mew.run` applies this provider by default,
+so ``cpu_scaling_enabled`` is always recorded.
 """
 
 from __future__ import annotations

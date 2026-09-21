@@ -163,9 +163,7 @@ class JSONReporter:
         self._owns_fh = False
 
 
-# Stamped onto every JSONL row so each line stands alone: `session` is what
-# compare groups and orders by, `context` is the provenance that goes with it.
-# Two keys, so a new context field never widens the row schema.
+# Stamped onto every JSONL row so each line stands alone.
 _ROW_STAMP_FIELDS = ("session", "context")
 
 

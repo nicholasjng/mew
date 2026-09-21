@@ -5,9 +5,8 @@ modules statically link different versions of the same native library, a GIL
 build against a free-threaded one, a release build against an AddressSanitizer
 one. Run each side in its own process and merge the results into one file.
 
-mew has no orchestrator for this. A shell loop does it in five lines, and the
-loop is more capable than a built-in flag would be — it can use a *different
-interpreter* per side, which is the whole point of the exercise.
+mew has no orchestrator for this; a shell loop does it, and can use a different
+interpreter per side.
 
 ## Tag each suite
 
@@ -57,7 +56,7 @@ scan      │          1.79 us │ 3.28 us │ +83.41% (signif.) │  ×0.545
 
 ## Different interpreters
 
-Because it is just a loop, each side can run under whatever Python it needs:
+Each side can run under whatever Python it needs:
 
 ```console
 $ for i in 1 2 3; do

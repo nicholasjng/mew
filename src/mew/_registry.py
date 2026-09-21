@@ -161,7 +161,6 @@ class Registry:
     """Process-global collection populated by benchmark decorators."""
 
     def __init__(self) -> None:
-        # Keys snapshot registration names, as duplicate detection always has.
         self._entries: dict[str, Entry] = {}
 
     def add(self, entry: Entry) -> None:

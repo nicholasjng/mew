@@ -23,7 +23,7 @@ By default `mew` discovers files matching `bench_*.py` or `*_bench.py` under `be
 
 ```console
 $ mew run
-mew · host=laptop cpus=10 @ 3200MHz scaling=enabled
+mew · host=laptop cpus=10 scaling=enabled
 Benchmark                              │     Iters │       Real │        CPU
 ────────────────────────────────────────────────────────────────────────────
 benchmarks/bench_sort.py::bench_sorted │ 1,000,000 │   32.10 ns │   32.05 ns

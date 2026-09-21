@@ -6,9 +6,9 @@ change between minor releases.
 
 ## Version 0.2.0 (unreleased)
 
-This release narrows mew around benchmark execution, reporting, and comparison.
-Profiling now uses Google Benchmark's manager interfaces, while specialized
-variant orchestration and native-profiler integrations have been removed.
+This release focuses mew on benchmark execution, reporting, and comparison.
+Profiling uses Google Benchmark's manager interfaces; variant orchestration and
+native-profiler integrations have been removed.
 
 ### Added
 
@@ -80,7 +80,6 @@ variant orchestration and native-profiler integrations have been removed.
   including selectors read from standard input.
 - Grouped sessions with different declared time units normalize measurements
   before calculating statistics.
-
 - Memray now traces Python allocators on free-threaded CPython, where object
   allocation otherwise bypassed its system-allocator hooks.
 - Memray no longer reports peak-live allocation bytes as cumulative
@@ -91,6 +90,7 @@ variant orchestration and native-profiler integrations have been removed.
 - Duplicate low-level manager registration is rejected safely.
 - Invalid global run options and malformed regression thresholds or allow rules
   are rejected instead of being silently ignored or coerced.
+- Memray capture files are closed after reading their metadata.
 - Reusing a `JSONReporter` no longer corrupts comma placement, and owned output
   streams are reset after finalization.
 - Native warning flags are selected correctly for MSVC, and Google Benchmark

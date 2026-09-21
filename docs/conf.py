@@ -72,7 +72,6 @@ doctest_global_setup = "import mew"
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
-    "pyarrow": ("https://arrow.apache.org/docs/", None),
 }
 
 # -- HTML output -------------------------------------------------------------

@@ -33,6 +33,7 @@ Pass `-o` (repeatable):
 
 - `-` or `stdout`: terminal output, formatted by `--format`.
 - `*.json`: Google Benchmark-shaped JSON document.
+- `*.jsonl`: one self-contained row per line.
 - `*.jsonl.gz`: same rows, gzip-compressed (appends add a new gzip member).
 
 Duplicate sinks (two stdout sinks, or two writers pointing at the same path) are an error.
