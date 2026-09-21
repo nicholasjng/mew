@@ -31,6 +31,11 @@ class PyManager {
    public:
     explicit PyManager(nb::object obj) : py_(std::move(obj)) {}
     virtual ~PyManager() {
+        // Static destruction after Py_Finalize: leak rather than touch the interpreter.
+        if (!Py_IsInitialized()) {
+            py_.release();
+            return;
+        }
         nb::gil_scoped_acquire gil;
         py_.reset();
     }
@@ -112,6 +117,12 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
     }
 
     ~PyProfilerManager() override {
+        if (!Py_IsInitialized()) {
+            pause_.release();
+            resume_.release();
+            get_result_.release();
+            return;
+        }
         nb::gil_scoped_acquire gil;
         pause_.reset();
         resume_.reset();
