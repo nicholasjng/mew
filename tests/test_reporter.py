@@ -342,6 +342,17 @@ def test_jsonl_reporter_flushes_incrementally(tmp_path):
     rep.finalize()
 
 
+def test_jsonl_reporter_releases_owned_sink_after_finalize(tmp_path):
+    out = tmp_path / "out.jsonl"
+    rep = JSONLReporter(output=out)
+    _run_one(rep)
+    assert rep._fh is None
+    # Reusable: a second run reopens the sink instead of writing to a closed one.
+    mew.REGISTRY.clear()
+    _run_one(rep)
+    assert out.read_text().count("\n") == 1
+
+
 def test_fanout_finalize_runs_every_sink_despite_failure():
     """One sink failing to finalize (e.g. full disk) must not skip the others."""
     from mew.reporter import Fanout
