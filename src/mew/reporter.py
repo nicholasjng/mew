@@ -6,6 +6,7 @@ import contextlib
 import json
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol, TextIO, cast, runtime_checkable
 
@@ -67,9 +68,8 @@ def canonical_name(name: str, label: Any) -> str:
     """Strip GB option suffixes and render a parametrize case by its human label.
 
     ``bench.py::f/case:0/min_time:0.200`` with label ``n=10000`` becomes
-    ``bench.py::f[n=10000]``. Shared by :class:`RichReporter` and :mod:`mew.compare`
-    so both show the same name; the stored ``name`` field stays the raw GB name
-    (compare canonicalizes on read).
+    ``bench.py::f[n=10000]``. The regex fallback behind :func:`canonical_row_name`
+    for rows without ``name_parts``; the stored ``name`` stays the raw GB name.
 
     An aggregate row's ``_mean``/``_median``/… suffix is preserved, so it stays
     distinguishable from the per-repetition rows it summarizes:
@@ -87,6 +87,36 @@ def canonical_name(name: str, label: Any) -> str:
         # index in place, keeping any aggregate suffix trailing it.
         return f"{name[: m.start()]}[{label}]{name[m.end() :]}{thread_suffix}"
     return name + thread_suffix
+
+
+def _canonical_from_parts(parts: Mapping[str, str], label: Any, aggregate: str) -> str:
+    """Build the canonical name from Google Benchmark's decomposed ``BenchmarkName``."""
+    name = parts.get("function_name", "")
+    args = parts.get("args", "")
+    if args:
+        # mew registers exactly one arg, the family case index; a label
+        # replaces it. Anything else stays as GB rendered it.
+        if label and isinstance(label, str) and args.startswith("case:") and "/" not in args:
+            name += f"[{label}]"
+        else:
+            name += f"/{args}"
+    if threads := parts.get("threads"):
+        name += f"/{threads}"
+    if aggregate:
+        name += f"_{aggregate}"
+    return name
+
+
+def canonical_row_name(row: Mapping[str, Any]) -> str:
+    """:func:`canonical_name` for a stored row.
+
+    Rows written by mew 0.2+ carry ``name_parts`` and need no suffix parsing;
+    older rows fall back to the regex grammar.
+    """
+    parts = row.get("name_parts")
+    if isinstance(parts, dict):
+        return _canonical_from_parts(parts, row.get("label"), row.get("aggregate_name") or "")
+    return canonical_name(row["name"], row.get("label"))
 
 
 # Closing `]}` of the streamed doc, written once at finalize (GB-style).
@@ -327,7 +357,7 @@ class RichReporter:
         label = row["label"]
         # Canonical `file.py::f[label]` form (no `/case:N/min_time:…` noise), so
         # the live table reads the same as `mew compare`.
-        name = canonical_name(row["name"], label)
+        name = canonical_row_name(row)
         # Left-ellipsize: keep the disambiguating function suffix / case:N tail.
         name = _truncate_left(name, w["name"])
 

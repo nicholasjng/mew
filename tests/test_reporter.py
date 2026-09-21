@@ -384,6 +384,52 @@ def test_fanout_finalize_runs_every_sink_despite_failure():
     assert calls == ["boom", "ok"]
 
 
+def test_rows_carry_google_benchmarks_decomposed_name(tmp_path):
+    @mew.parametrize([{"n": 1}, {"n": 2}], min_time=0.001)
+    def bench_fam(state, n):
+        for _ in state:
+            pass
+
+    out = tmp_path / "o.json"
+    mew.run(min_time="1x", reporter=JSONReporter(output=out))
+    rows = json.loads(out.read_text())["benchmarks"]
+    parts = rows[0]["name_parts"]
+    assert parts["function_name"].endswith(".bench_fam")
+    assert parts["args"] == "case:0"
+    assert parts["min_time"] == "min_time:0.001"
+    assert parts["threads"] == ""
+    # Suffix-free reconstruction of the display name.
+    from mew.reporter import canonical_row_name
+
+    assert canonical_row_name(rows[0]) == f"{parts['function_name']}[n=1]"
+
+
+def test_canonical_row_name_prefers_parts_and_falls_back_to_the_regex():
+    from mew.reporter import canonical_row_name
+
+    parts = {"function_name": "b.py::f", "args": "case:0", "min_time": "min_time:0.200"}
+    base = {"name": "b.py::f/case:0/min_time:0.200/threads:2", "label": "n=10"}
+    # Parts: threads stays a dimension, the aggregate suffix trails it.
+    assert canonical_row_name({**base, "name_parts": {**parts, "threads": "threads:2"}}) == (
+        "b.py::f[n=10]/threads:2"
+    )
+    assert (
+        canonical_row_name(
+            {**base, "aggregate_name": "mean", "name_parts": {**parts, "threads": "threads:2"}}
+        )
+        == "b.py::f[n=10]/threads:2_mean"
+    )
+    # A non-case arg is left as Google Benchmark rendered it.
+    assert (
+        canonical_row_name(
+            {"name": "x", "label": "", "name_parts": {"function_name": "f", "args": "8"}}
+        )
+        == "f/8"
+    )
+    # No parts (a pre-0.2 file, or a row mew synthesized): regex grammar.
+    assert canonical_row_name(base) == "b.py::f[n=10]/threads:2"
+
+
 def test_canonical_name_keeps_the_aggregate_suffix():
     """GB appends `_mean`/`_median`/... *after* the args part, so `/case:N` is not
     at the end of an aggregate row's name. The label still swaps in, and the

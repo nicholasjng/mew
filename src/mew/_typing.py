@@ -31,6 +31,11 @@ class BenchmarkResult(TypedDict):
 
     Attributes
     ----------
+    name_parts : dict[str, str], optional
+        Google Benchmark's decomposed ``run_name``: ``function_name``, ``args``,
+        ``min_time``, ``min_warmup_time``, ``iterations``, ``repetitions``,
+        ``time_type``, ``threads``. Absent on rows mew synthesizes itself and in
+        files written before 0.2.
     session : SessionInfo, optional
         Identity of the run that produced this result.
     context : dict, optional
@@ -66,6 +71,7 @@ class BenchmarkResult(TypedDict):
     skipped: bool
     skip_message: str
     counters: dict[str, float]
+    name_parts: NotRequired[dict[str, str]]
     session: NotRequired[SessionInfo]
     context: NotRequired[dict[str, Any]]
     memory: NotRequired[dict[str, Any]]

@@ -60,10 +60,26 @@ nb::dict profile_block(const Run& r) {
 }
 
 // Convert a native result to the public mapping shape.
+// GB's decomposed name, so readers need not parse `/min_time:…` suffixes back
+// out of `name`.
+nb::dict name_parts(const benchmark::BenchmarkName& n) {
+    nb::dict d;
+    d["function_name"] = n.function_name;
+    d["args"] = n.args;
+    d["min_time"] = n.min_time;
+    d["min_warmup_time"] = n.min_warmup_time;
+    d["iterations"] = n.iterations;
+    d["repetitions"] = n.repetitions;
+    d["time_type"] = n.time_type;
+    d["threads"] = n.threads;
+    return d;
+}
+
 nb::dict run_to_dict(const Run& r) {
     nb::dict d;
     d["name"] = r.benchmark_name();
     d["run_name"] = r.run_name.str();
+    d["name_parts"] = name_parts(r.run_name);
     d["family_index"] = r.family_index;
     d["per_family_instance_index"] = r.per_family_instance_index;
     d["run_type"] = r.run_type == Run::RT_Aggregate ? "aggregate" : "iteration";
