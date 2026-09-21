@@ -89,6 +89,7 @@ frames, sample the process from outside: see {doc}`profiling-native`.
 | `--sample-html FILE`    | Write an HTML pyinstrument report.                  |
 | `--sample-interval F`   | Sampling interval seconds (default `1e-4`).         |
 | `--profile-memory`      | Run each benchmark under `memray`.                  |
+| `--memory-iterations N` | Cap the memory pass at `N` iterations (default 16).  |
 | `--flamegraph FILE`     | Write an HTML flame graph with allocation data.     |
 
 `--sample-html`/`--flamegraph` imply `--sample` / `--profile-memory` respectively.

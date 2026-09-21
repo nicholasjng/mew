@@ -30,6 +30,10 @@ native-profiler integrations have been removed.
   at least two repetitions.
 - `dense_thread_range=(min, max, stride)` runs a benchmark at evenly spaced
   thread counts on a free-threaded interpreter.
+- `mew run --memory-iterations N` (and `mew.run(memory_iterations=)`) caps the
+  memory-profiling pass at `N` iterations instead of the fixed 16.
+- Result rows carry `name_parts`, Google Benchmark's decomposed run name, so
+  readers no longer parse option suffixes out of `name`.
 - `CounterFlags` is available from the package root. `CounterOneK` and the new
   `one_k=` argument to `State.set_counter()` select decimal or binary scaling
   in Google Benchmark's native console output.
@@ -74,6 +78,9 @@ native-profiler integrations have been removed.
 
 - Thread counts remain distinct in displayed benchmark names and comparison
   samples instead of being merged as repetitions.
+- The CPU and memory profiling passes run with the benchmark's configured thread
+  count. They previously ran a single thread while `state.threads` still
+  reported the configured count.
 - Historical comparison files with missing benchmarks no longer hide
   candidate-versus-baseline regressions.
 - Path selectors apply their filters only within the selected file or directory,

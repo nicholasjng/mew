@@ -106,6 +106,8 @@ worker barrier would deadlock. Use `--strict` (or `strict=True`) to raise instea
 
 Counters are summed across threads. Set per-thread values, or guard one-time
 updates with `if state.thread_index == 0`. The benchmark body must be thread-safe.
+The `--sample` and `--profile-memory` passes run with the same thread count as
+the timed run.
 
 ## Manual time
 
