@@ -114,6 +114,7 @@ def _render_cli_help() -> None:
         "run": (["run", "--help"], "mew run --help"),
         "ls": (["list", "--help"], "mew list --help"),
         "compare": (["compare", "--help"], "mew compare --help"),
+        "sessions": (["sessions", "--help"], "mew sessions --help"),
         "completions": (["completions", "--help"], "mew completions --help"),
     }
     with open(os.path.join(out_dir, "cli-help.txt"), "w") as fh:

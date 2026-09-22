@@ -31,6 +31,13 @@ see [](../guide/cli.md).
 :language: console
 ```
 
+(cli-sessions)=
+## `mew sessions`
+
+```{literalinclude} ../_generated/cli-help-sessions.txt
+:language: console
+```
+
 (cli-completions)=
 ## `mew completions`
 
