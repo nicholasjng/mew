@@ -22,18 +22,19 @@ native-profiler integrations have been removed.
 - `mew.machine_context()` and `mew.vcs_context()` provide reusable provenance.
   `[tool.mew] setup` imports a project setup file before benchmark discovery,
   allowing context to be configured once for every CLI run.
-- `mew compare --by FIELD` pivots one result file on any session or context
-  field, replacing the variant-specific comparison path. Untagged runs can be
-  grouped by `context.vcs.commit`.
+- `mew compare path@<tag>` selects the session(s) written with that
+  `--session-tag` from a multi-session file; `path@latest` names the newest.
+  `mew sessions FILE` lists a file's sessions, newest first.
 - `mew compare` marks statistically significant deltas with `(signif.)`, using
   a stdlib-only Mann–Whitney U test over per-repetition values. Both sides need
   at least two repetitions.
-- `dense_thread_range=(min, max, stride)` runs a benchmark at evenly spaced
-  thread counts on a free-threaded interpreter.
+- `threads` accepts a sequence of thread counts (`threads=[1, 2, 4, 8]`) and
+  runs the benchmark once per count on a free-threaded interpreter.
 - `mew run --memory-iterations N` (and `mew.run(memory_iterations=)`) caps the
   memory-profiling pass at `N` iterations instead of the fixed 16.
-- Result rows carry `name_parts`, Google Benchmark's decomposed run name, so
-  readers no longer parse option suffixes out of `name`.
+- Result rows carry `benchmark`, the addressable name mew uses in `mew list`
+  and `-k` (`file.py::func[label]`), so readers and SQL queries no longer parse
+  option suffixes out of `name`.
 - `CounterFlags` is available from the package root. `CounterOneK` and the new
   `one_k=` argument to `State.set_counter()` select decimal or binary scaling
   in Google Benchmark's native console output.
@@ -47,8 +48,9 @@ native-profiler integrations have been removed.
   manager callback aborts the run. Reporter finalization now also runs for
   suites whose selected benchmarks were all skipped.
 - Session identity and provenance are stored in separate `session` and
-  `context` blocks. JSONL rows carry both blocks, and result readers support
-  selecting and combining sessions from append-only archives.
+  `context` blocks. JSONL rows carry both blocks. A multi-session archive
+  contributes its newest session to `mew compare` unless a `@<tag>` selector
+  says otherwise; sessions sharing a tag pool as repetitions.
 - CPU and memory profiling are driven by Google Benchmark itself instead of
   Python-side result projection. `State.pause()` regions are excluded from CPU
   sampling as well as timing.
@@ -62,8 +64,11 @@ native-profiler integrations have been removed.
 ### Removed
 
 - The `--variant` runner, variant worker processes, and `[tool.mew]` variant
-  configuration. Run independent environments explicitly and compare them via
-  shared context plus `mew compare --by`.
+  configuration. Run independent environments explicitly, one result file per
+  side, and compare the files.
+- `mew compare --by` / `--baseline` pivots. Use one file per side, or
+  `--session-tag` plus `path@<tag>` selectors within one archive; richer
+  slicing is a DuckDB query away (see the reporters guide).
 - The `mew profile` command and bundled `perf`, `py-spy`, and `xctrace`
   adapters. The guide now documents invoking native profilers externally;
   `mew run --sample` and `--profile-memory` remain for in-process profiling.
@@ -73,6 +78,11 @@ native-profiler integrations have been removed.
   scripts remain static and side-effect free.
 - `[tool.mew.session-tag]` command execution. Use an explicit `--session-tag`
   or populate version-control context from `[tool.mew] setup`.
+- `thread_range` and `dense_thread_range`; pass the thread counts to `threads`.
+- `mew compare --regressions-config`; allow rules live in the project's
+  `pyproject.toml` only.
+- Reading JSONL archives with 0.1.x `{"context": ...}` header lines. Every
+  JSONL row is self-contained; rewrite older archives with `read_results`.
 
 ### Fixed
 
