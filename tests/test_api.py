@@ -195,27 +195,28 @@ def test_threads_option_accepted_on_benchmark():
             pass
 
     (entry,) = REGISTRY.all()
-    assert entry.options["threads"] == 4
+    assert entry.options["threads"] == (4,)
 
 
-def test_thread_range_option_accepted_on_parametrize():
-    @mew.parametrize([{"n": 1}], thread_range=(1, 8))
+def test_threads_accepts_a_sequence_of_counts():
+    @mew.parametrize([{"n": 1}], threads=(n for n in [1, 2, 4, 4]))
     def bench_x(state, n):
         for _ in state:
             pass
 
     (entry,) = REGISTRY.all()
-    assert entry.options["thread_range"] == (1, 8)
+    # Snapshotted (the generator is consumed once) and de-duplicated in order.
+    assert entry.options["threads"] == (1, 2, 4)
 
 
-def test_dense_thread_range_option_accepted_on_parametrize():
-    @mew.parametrize([{"n": 1}], dense_thread_range=(1, 8, 1))
-    def bench_x(state, n):
-        for _ in state:
-            pass
+@pytest.mark.parametrize("threads", [0, True, [], [1, 0], [2.5], "4"])
+def test_threads_validated_at_decoration(threads):
+    with pytest.raises(TypeError, match="threads"):
 
-    (entry,) = REGISTRY.all()
-    assert entry.options["dense_thread_range"] == (1, 8, 1)
+        @mew.benchmark(threads=threads)
+        def _bench(state):
+            for _ in state:
+                pass
 
 
 def test_product_pulls_threads_out_of_kwargs():
@@ -226,7 +227,7 @@ def test_product_pulls_threads_out_of_kwargs():
 
     (entry,) = REGISTRY.all()
     assert entry.case_labels == ["n=1", "n=2"]  # threads is an option, not an axis
-    assert entry.options["threads"] == 2
+    assert entry.options["threads"] == (2,)
 
 
 def test_product_needs_at_least_one_iterable():
@@ -359,15 +360,6 @@ def test_parametrize_duplicate_labels_ok_with_explicit_ids():
     assert entry.case_labels == ["small", "large"]
 
 
-def test_threads_and_thread_range_mutually_exclusive():
-    with pytest.raises(TypeError, match="mutually exclusive"):
-
-        @mew.benchmark(threads=2, thread_range=(1, 4))
-        def _bench(state):
-            for _ in state:
-                pass
-
-
 def test_product_signature_covers_all_benchmark_options():
     # product() can't use **options: Unpack[BenchmarkOptions] like benchmark()/
     # parametrize() (its **kwargs slot is taken by **iterables), so each
@@ -375,56 +367,6 @@ def test_product_signature_covers_all_benchmark_options():
     # This guards against a field being added there but forgotten here.
     params = set(inspect.signature(mew.product).parameters)
     assert _OptionKeys <= params
-
-
-def test_product_threads_and_thread_range_mutually_exclusive():
-    with pytest.raises(TypeError, match="mutually exclusive"):
-
-        @mew.product(threads=2, thread_range=(1, 4), n=[1, 2])
-        def _bench(state, n):
-            for _ in state:
-                pass
-
-
-def test_dense_thread_options_mutually_exclusive():
-    with pytest.raises(TypeError, match="mutually exclusive"):
-
-        @mew.benchmark(thread_range=(1, 4), dense_thread_range=(1, 4, 1))
-        def _bench(state):
-            for _ in state:
-                pass
-
-
-def test_thread_range_shape_validated_at_decoration():
-    with pytest.raises(TypeError, match="min, max"):
-
-        @mew.benchmark(thread_range=(1,))  # ty: ignore[invalid-argument-type]
-        def _bench(state):
-            for _ in state:
-                pass
-
-    with pytest.raises(TypeError, match="1 <= min <= max"):
-
-        @mew.benchmark(thread_range=(4, 2))
-        def _bench2(state):
-            for _ in state:
-                pass
-
-
-def test_dense_thread_range_validated_at_decoration():
-    with pytest.raises(TypeError, match="min, max, stride"):
-
-        @mew.benchmark(dense_thread_range=(1, 4))  # ty: ignore[invalid-argument-type]
-        def _bench(state):
-            for _ in state:
-                pass
-
-    with pytest.raises(TypeError, match="stride >= 1"):
-
-        @mew.benchmark(dense_thread_range=(1, 4, 0))
-        def _bench2(state):
-            for _ in state:
-                pass
 
 
 def test_benchmark_tags_propagate():

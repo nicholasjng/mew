@@ -84,7 +84,7 @@ rather than decimal prefixes.
 ## Threaded benchmarks (free-threading)
 
 Google Benchmark can run a single benchmark body concurrently across _N_ threads.
-mew exposes this through `threads`, `thread_range`, and `dense_thread_range`:
+mew exposes this through the `threads` option:
 
 ```python
 @mew.benchmark(threads=4)
@@ -95,8 +95,9 @@ def bench_parallel(state):
 ```
 
 Each thread gets its own `State` and timer. Use `state.threads` and
-`state.thread_index` to partition work. `thread_range=(1, 8)` runs at 1, 2, 4,
-and 8 threads; `dense_thread_range=(1, 8, 1)` runs every count from 1 through 8.
+`state.thread_index` to partition work. Pass a sequence to run once per thread
+count: `threads=[1, 2, 4, 8]`, or `threads=range(1, 9)` for every count from 1
+through 8.
 
 :::{warning}
 **Threaded mode requires a free-threaded interpreter (CPython 3.14t+).**

@@ -24,26 +24,17 @@ if TYPE_CHECKING:
     from mew._typing import BenchmarkOptions, BenchmarkResult
 
 
+def _thread_counts(opts: BenchmarkOptions) -> tuple[int, ...]:
+    """The thread counts a benchmark asked for; ``(1,)`` when unspecified."""
+    v = opts.get("threads")
+    if v is None:
+        return (1,)
+    return (v,) if isinstance(v, int) else tuple(v)
+
+
 def _is_threaded(opts: BenchmarkOptions) -> bool:
     """Whether ``opts`` asks Google Benchmark to spawn more than one worker thread."""
-    if (v := opts.get("threads")) is not None and v > 1:
-        return True
-    if (tr := opts.get("thread_range")) is not None:
-        return max(tr) > 1
-    if (tr := opts.get("dense_thread_range")) is not None:
-        return tr[1] > 1
-    return False
-
-
-def _requested_threads(opts: BenchmarkOptions) -> int:
-    """The thread count a threaded benchmark asked for (max of a range)."""
-    if (v := opts.get("threads")) is not None:
-        return int(v)
-    if (tr := opts.get("thread_range")) is not None:
-        return int(max(tr))
-    if (tr := opts.get("dense_thread_range")) is not None:
-        return int(tr[1])
-    return 1
+    return max(_thread_counts(opts)) > 1
 
 
 def _skipped_row(name: str, threads: int, message: str) -> BenchmarkResult:
@@ -113,32 +104,29 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
         handle.measure_process_cpu_time()
     if opts.get("report_aggregates_only"):
         handle.report_aggregates_only(True)
-    if (tr := opts.get("thread_range")) is not None:
-        lo, hi = tr
-        handle.thread_range(int(lo), int(hi))
-    if (tr := opts.get("dense_thread_range")) is not None:
-        lo, hi, stride = tr
-        handle.dense_thread_range(int(lo), int(hi), int(stride))
-    if (v := opts.get("threads")) is not None:
-        handle.threads(int(v))
+    if opts.get("threads") is not None:
+        # GB accumulates: one Threads() call per count runs the benchmark once each.
+        for n in _thread_counts(opts):
+            handle.threads(int(n))
 
 
+_DEFAULT_MIN_TIME = "0.5s"
 _DEFAULT_MEMORY_ITERATIONS = 16
 
 
 def _gb_argv(
-    min_time: str | None,
+    min_time: str | float | None,
     min_warmup_time: float | None,
     repetitions: int | None,
     random_interleaving: bool,
     memory_iterations: int | None = None,
 ) -> list[str]:
-    """Build Google Benchmark arguments for global run options.
+    """Render the global run options as Google Benchmark flags.
 
     All values are emitted because Google Benchmark flags persist across runs
     in the same process. Decorator options take precedence.
     """
-    mt = min_time if min_time is not None else "0.5s"
+    mt = parse_min_time(min_time) if min_time is not None else _DEFAULT_MIN_TIME
     mi = memory_iterations if memory_iterations is not None else _DEFAULT_MEMORY_ITERATIONS
     return [
         "mew",
@@ -160,13 +148,14 @@ def _validate_run_options(
     min_warmup_time: float | None,
     repetitions: int | None,
     memory_iterations: int | None = None,
-) -> str | None:
-    """Validate run options and normalize min_time for Google Benchmark."""
+) -> None:
+    """Reject invalid global run options before the run has any side effects."""
     _check_positive_int(repetitions, "repetitions")
     _check_positive_int(memory_iterations, "memory_iterations")
     if min_warmup_time is not None and (not isfinite(min_warmup_time) or min_warmup_time < 0):
         raise ValueError(f"min_warmup_time must be a finite number >= 0, got {min_warmup_time!r}")
-    return parse_min_time(min_time) if min_time is not None else None
+    if min_time is not None:
+        parse_min_time(min_time)
 
 
 def run(
@@ -211,9 +200,8 @@ def run(
         Human label for this session (e.g. ``"before"``), persisted next to
         ``session_id`` in the reporter context.
     strict : bool, default False
-        Govern what happens when threaded benchmarks (``threads`` /
-        ``thread_range`` / ``dense_thread_range``) are selected on a GIL interpreter,
-        where they can't run
+        Govern what happens when threaded benchmarks (``threads``) are selected
+        on a GIL interpreter, where they can't run
         (they would deadlock on Google Benchmark's start barrier). By default mew
         warns and skips them (emitting a ``skipped`` row per benchmark) and runs
         the rest, so a mixed suite still works on stock CPython. Set ``strict`` to
@@ -244,7 +232,7 @@ def run(
     ValueError
         If a global timing or repetition option is outside its valid range.
     """
-    min_time = _validate_run_options(min_time, min_warmup_time, repetitions, memory_iterations)
+    _validate_run_options(min_time, min_warmup_time, repetitions, memory_iterations)
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
         return 0
@@ -274,7 +262,7 @@ def run(
         )
         skip_msg = f"skipped: {reason}"
         skipped_rows = [
-            _skipped_row(e.name, _requested_threads(e.options), skip_msg) for e in threaded
+            _skipped_row(e.name, max(_thread_counts(e.options)), skip_msg) for e in threaded
         ]
         selected = [e for e in selected if not _is_threaded(e.options)]
         threaded = []
@@ -347,7 +335,50 @@ def run(
         if profiler_manager is not None:
             _core.register_profiler_manager(profiler_manager)
             stack.callback(_core.unregister_profiler_manager)
-        return _core.run_benchmarks(cli, rep, extra_context, skipped_rows)
+        stamped = _BenchmarkStamp(rep, selected) if rep is not None else None
+        return _core.run_benchmarks(cli, stamped, extra_context, skipped_rows)
+
+
+def _addressable_name(entry: Entry, row: BenchmarkResult) -> str:
+    """``name[label]/threads:N``: the row's benchmark as ``mew list`` and ``-k`` address it."""
+    name = entry.name
+    if entry.case_labels is not None:
+        name += f"[{row['label']}]"
+    if entry.options.get("threads") is not None:
+        name += f"/threads:{row['threads']}"
+    return name
+
+
+class _BenchmarkStamp:
+    """Reporter wrapper that stamps ``benchmark`` onto every row before forwarding.
+
+    Google Benchmark numbers registered families in registration order, and
+    mew registers ``entries`` in order without a filter, so ``family_index``
+    maps a row back to its :class:`Entry`.
+    """
+
+    def __init__(self, inner: Reporter, entries: Sequence[Entry]) -> None:
+        self._inner = inner
+        self._entries = entries
+
+    def report_context(self, context: dict[str, Any]) -> None:
+        self._inner.report_context(context)
+
+    def report_runs(self, runs: list[BenchmarkResult]) -> None:
+        for row in runs:
+            if "benchmark" in row:  # a row mew synthesized itself
+                continue
+            entry = self._entries[row["family_index"]]
+            if not row["run_name"].startswith(entry.name):
+                raise RuntimeError(
+                    f"cannot attribute result {row['run_name']!r} to a registered benchmark"
+                )
+            row["benchmark"] = _addressable_name(entry, row)
+        self._inner.report_runs(runs)
+
+    def finalize(self) -> None:
+        if fn := getattr(self._inner, "finalize", None):
+            fn()
 
 
 def _to_single_reporter(

@@ -67,44 +67,39 @@ def _check_options(options: Mapping[str, Any]) -> None:
     # Validate at decoration time, where the mistake is on screen. GB guards
     # these values with asserts compiled out of release builds, so bad values
     # would otherwise misbehave silently.
-    for key in ("iterations", "repetitions", "threads"):
+    for key in ("iterations", "repetitions"):
         if (v := options.get(key)) is not None and int(v) < 1:
             raise TypeError(f"{key} must be >= 1, got {v!r}")
     if (v := options.get("min_time")) is not None and float(v) <= 0:
         raise TypeError(f"min_time must be positive, got {v!r}")
     if (v := options.get("min_warmup_time")) is not None and float(v) < 0:
         raise TypeError(f"min_warmup_time must be >= 0, got {v!r}")
-    thread_options = [
-        key
-        for key in ("threads", "thread_range", "dense_thread_range")
-        if options.get(key) is not None
-    ]
-    if len(thread_options) > 1:
-        # GB *accumulates* thread counts, so passing both would silently run
-        # the union rather than one overriding the other.
-        raise TypeError("threads, thread_range, and dense_thread_range are mutually exclusive")
 
-    tr: tuple[int, int] | None = options.get("thread_range")
-    if tr is not None:
-        try:
-            lo, hi = tr
-        except (TypeError, ValueError):
-            raise TypeError(f"thread_range must be a (min, max) pair, got {tr!r}") from None
-        if int(lo) < 1 or int(hi) < int(lo):
-            raise TypeError(f"thread_range must satisfy 1 <= min <= max, got {tr!r}")
 
-    dtr: tuple[int, int, int] | None = options.get("dense_thread_range")
-    if dtr is not None:
-        try:
-            lo, hi, stride = dtr
-        except (TypeError, ValueError):
-            raise TypeError(
-                f"dense_thread_range must be a (min, max, stride) triple, got {dtr!r}"
-            ) from None
-        if int(lo) < 1 or int(hi) < int(lo) or int(stride) < 1:
-            raise TypeError(
-                f"dense_thread_range must satisfy 1 <= min <= max and stride >= 1, got {dtr!r}"
-            )
+def _normalize_threads(value: Any) -> tuple[int, ...]:
+    """Coerce ``threads`` (an int or an iterable of ints) to a tuple of distinct counts.
+
+    Google Benchmark accumulates thread counts, so each count runs the benchmark
+    once; duplicates are dropped and the given order is kept.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | Iterable):
+        raise TypeError(f"threads must be an int or an iterable of ints, got {value!r}")
+    counts = (value,) if isinstance(value, int) else tuple(dict.fromkeys(value))
+    if not counts:
+        raise TypeError("threads must name at least one thread count")
+    for n in counts:
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise TypeError(f"threads must be integers >= 1, got {n!r}")
+    return counts
+
+
+def _normalize_options(options: Mapping[str, Any]) -> BenchmarkOptions:
+    """Validate decorator options and snapshot iterables (``threads``) into tuples."""
+    _check_options(options)
+    normalized = dict(options)
+    if (threads := normalized.get("threads")) is not None:
+        normalized["threads"] = _normalize_threads(threads)
+    return cast(BenchmarkOptions, normalized)
 
 
 def _check_addressable(text: str, what: str) -> None:
@@ -235,7 +230,7 @@ def benchmark(
     ...     for _ in state:
     ...         sorted([3, 1, 2])
     """
-    _check_options(options)
+    norm_options = _normalize_options(options)
     if name is not None:
         _check_name(name)
     norm_tags = _normalize_tags(tags)
@@ -250,7 +245,7 @@ def benchmark(
                 name=name or _qualified_name(target, file),
                 fn=target,
                 file=file,
-                options=options,
+                options=norm_options,
                 tags=norm_tags,
             )
         )
@@ -391,10 +386,12 @@ def parametrize(
     ...     for _ in state:
     ...         sorted(data)
     """
-    _check_options(options)
+    norm_options = _normalize_options(options)
     norm_tags = _normalize_tags(tags)
     variants = [dict(p) for p in parameters]  # snapshot, allow generators
-    return _make_family_decorator(variants, name=name, ids=ids, options=options, tags=norm_tags)
+    return _make_family_decorator(
+        variants, name=name, ids=ids, options=norm_options, tags=norm_tags
+    )
 
 
 def product(
@@ -411,9 +408,7 @@ def product(
     use_manual_time: bool = False,
     measure_process_cpu_time: bool = False,
     report_aggregates_only: bool = False,
-    threads: int | None = None,
-    thread_range: tuple[int, int] | None = None,
-    dense_thread_range: tuple[int, int, int] | None = None,
+    threads: int | Iterable[int] | None = None,
     **iterables: Iterable[Any],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a benchmark family from the cartesian product of iterables.
@@ -438,16 +433,10 @@ def product(
         Flag-style Google Benchmark options.
     report_aggregates_only : bool
         Suppress per-repetition rows when ``repetitions > 1``.
-    threads : int, optional
-        Run each case with this many threads. Requires a free-threaded interpreter;
-        on a GIL build :func:`mew.run` warns and skips threaded
-        benchmarks by default. See :class:`~mew._typing.BenchmarkOptions`.
-    thread_range : tuple[int, int], optional
-        Run each case once per thread count in ``[min, max]`` (powers of two).
-        Mutually exclusive with ``threads``; same free-threading requirement.
-    dense_thread_range : tuple[int, int, int], optional
-        ``(min, max, stride)`` thread counts. Mutually exclusive with ``threads``
-        and ``thread_range``; same free-threading requirement.
+    threads : int or Iterable[int], optional
+        Run each case with this many threads, or once per count in the iterable.
+        Requires a free-threaded interpreter; on a GIL build :func:`mew.run`
+        warns and skips threaded benchmarks by default.
     **iterables
         Parameter name → iterable of values.
 
@@ -459,8 +448,7 @@ def product(
     Raises
     ------
     TypeError
-        If no iterables are supplied, or an option value is illegal
-        (e.g. ``threads`` and ``thread_range`` both set).
+        If no iterables are supplied, or an option value is illegal.
     ValueError
         If a name/label collides with mew's addressing grammar
         (``::``, ``[``/``]``, newlines).
@@ -487,14 +475,10 @@ def product(
         "measure_process_cpu_time": measure_process_cpu_time,
         "report_aggregates_only": report_aggregates_only,
         "threads": threads,
-        "thread_range": thread_range,
-        "dense_thread_range": dense_thread_range,
     }
-    options = cast(
-        BenchmarkOptions,
-        {k: v for k, v in local_options.items() if v is not None and v is not False},
+    options = _normalize_options(
+        {k: v for k, v in local_options.items() if v is not None and v is not False}
     )
-    _check_options(options)
 
     norm_tags = _normalize_tags(tags)
     keys = list(iterables.keys())
