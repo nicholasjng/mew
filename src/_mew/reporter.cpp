@@ -59,27 +59,22 @@ nb::dict profile_block(const Run& r) {
     return d;
 }
 
-// Convert a native result to the public mapping shape.
-// GB's decomposed name, so readers need not parse `/min_time:…` suffixes back
-// out of `name`.
-nb::dict name_parts(const benchmark::BenchmarkName& n) {
-    nb::dict d;
-    d["function_name"] = n.function_name;
-    d["args"] = n.args;
-    d["min_time"] = n.min_time;
-    d["min_warmup_time"] = n.min_warmup_time;
-    d["iterations"] = n.iterations;
-    d["repetitions"] = n.repetitions;
-    d["time_type"] = n.time_type;
-    d["threads"] = n.threads;
-    return d;
+// The benchmark as mew addresses it (`mew list --show-cases`, `-k -F`):
+// registration name, `[label]` for a family case, `/threads:N` when set.
+// Assembled from BenchmarkName's fields, never parsed from its rendering.
+std::string addressable_name(const Run& r) {
+    std::string name = r.run_name.function_name;
+    if (r.run_name.args.rfind("case:", 0) == 0) name += "[" + r.report_label + "]";
+    if (!r.run_name.threads.empty()) name += "/" + r.run_name.threads;
+    return name;
 }
 
+// Convert a native result to the public mapping shape.
 nb::dict run_to_dict(const Run& r) {
     nb::dict d;
     d["name"] = r.benchmark_name();
     d["run_name"] = r.run_name.str();
-    d["name_parts"] = name_parts(r.run_name);
+    d["benchmark"] = addressable_name(r);
     d["family_index"] = r.family_index;
     d["per_family_instance_index"] = r.per_family_instance_index;
     d["run_type"] = r.run_type == Run::RT_Aggregate ? "aggregate" : "iteration";

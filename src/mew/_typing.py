@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager
 from typing import Any, Literal, NotRequired, Protocol, TypeAlias, TypedDict, runtime_checkable
 
@@ -12,10 +12,10 @@ TimeUnitStr = Literal["ns", "us", "ms", "s"]
 
 
 class SessionInfo(TypedDict):
-    """Which run a result came from: what :mod:`mew.compare` orders and groups by.
+    """Which run a result came from: what :mod:`mew.compare` orders and selects by.
 
-    Runs sharing a ``tag`` on one ``host`` -- or, absent one, the same
-    ``context.vcs.commit`` -- are compared as a single session.
+    ``mew compare`` reads a file's newest session unless ``path@<tag>`` names
+    one; runs sharing a ``tag`` are pooled as repetitions.
     """
 
     id: str
@@ -31,11 +31,11 @@ class BenchmarkResult(TypedDict):
 
     Attributes
     ----------
-    name_parts : dict[str, str], optional
-        Google Benchmark's decomposed ``run_name``: ``function_name``, ``args``,
-        ``min_time``, ``min_warmup_time``, ``iterations``, ``repetitions``,
-        ``time_type``, ``threads``. Absent on rows mew synthesizes itself and in
-        files written before 0.2.
+    benchmark : str, optional
+        The benchmark as mew addresses it: the registered name, ``[label]`` for
+        a family case, ``/threads:N`` when the benchmark set ``threads``. Shared
+        by all repetition and aggregate rows of one benchmark. Absent in files
+        written before 0.2.
     session : SessionInfo, optional
         Identity of the run that produced this result.
     context : dict, optional
@@ -71,7 +71,7 @@ class BenchmarkResult(TypedDict):
     skipped: bool
     skip_message: str
     counters: dict[str, float]
-    name_parts: NotRequired[dict[str, str]]
+    benchmark: NotRequired[str]
     session: NotRequired[SessionInfo]
     context: NotRequired[dict[str, Any]]
     memory: NotRequired[dict[str, Any]]
@@ -83,9 +83,9 @@ class BenchmarkOptions(TypedDict, total=False):
 
     All keys are optional; omit one to fall back to Google Benchmark's default.
 
-    Threaded options require a free-threaded interpreter. On a GIL build,
-    :func:`mew.run` skips them unless ``strict=True``. ``threads``,
-    ``thread_range``, and ``dense_thread_range`` are mutually exclusive.
+    ``threads`` requires a free-threaded interpreter. On a GIL build,
+    :func:`mew.run` skips threaded benchmarks unless ``strict=True``. An
+    iterable runs the benchmark once per thread count, e.g. ``[1, 2, 4, 8]``.
     """
 
     min_time: float
@@ -97,9 +97,7 @@ class BenchmarkOptions(TypedDict, total=False):
     use_manual_time: bool
     measure_process_cpu_time: bool
     report_aggregates_only: bool
-    threads: int
-    thread_range: tuple[int, int]
-    dense_thread_range: tuple[int, int, int]
+    threads: int | Iterable[int]
 
 
 class MemoryMetrics(TypedDict, total=False):
