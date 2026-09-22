@@ -43,6 +43,7 @@ def _skipped_row(name: str, threads: int, message: str) -> BenchmarkResult:
     return {
         "name": name,
         "run_name": name,
+        "benchmark": name,
         "family_index": 0,
         "per_family_instance_index": 0,
         "run_type": "iteration",
@@ -335,50 +336,7 @@ def run(
         if profiler_manager is not None:
             _core.register_profiler_manager(profiler_manager)
             stack.callback(_core.unregister_profiler_manager)
-        stamped = _BenchmarkStamp(rep, selected) if rep is not None else None
-        return _core.run_benchmarks(cli, stamped, extra_context, skipped_rows)
-
-
-def _addressable_name(entry: Entry, row: BenchmarkResult) -> str:
-    """``name[label]/threads:N``: the row's benchmark as ``mew list`` and ``-k`` address it."""
-    name = entry.name
-    if entry.case_labels is not None:
-        name += f"[{row['label']}]"
-    if entry.options.get("threads") is not None:
-        name += f"/threads:{row['threads']}"
-    return name
-
-
-class _BenchmarkStamp:
-    """Reporter wrapper that stamps ``benchmark`` onto every row before forwarding.
-
-    Google Benchmark numbers registered families in registration order, and
-    mew registers ``entries`` in order without a filter, so ``family_index``
-    maps a row back to its :class:`Entry`.
-    """
-
-    def __init__(self, inner: Reporter, entries: Sequence[Entry]) -> None:
-        self._inner = inner
-        self._entries = entries
-
-    def report_context(self, context: dict[str, Any]) -> None:
-        self._inner.report_context(context)
-
-    def report_runs(self, runs: list[BenchmarkResult]) -> None:
-        for row in runs:
-            if "benchmark" in row:  # a row mew synthesized itself
-                continue
-            entry = self._entries[row["family_index"]]
-            if not row["run_name"].startswith(entry.name):
-                raise RuntimeError(
-                    f"cannot attribute result {row['run_name']!r} to a registered benchmark"
-                )
-            row["benchmark"] = _addressable_name(entry, row)
-        self._inner.report_runs(runs)
-
-    def finalize(self) -> None:
-        if fn := getattr(self._inner, "finalize", None):
-            fn()
+        return _core.run_benchmarks(cli, rep, extra_context, skipped_rows)
 
 
 def _to_single_reporter(

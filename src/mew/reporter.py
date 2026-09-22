@@ -69,7 +69,7 @@ def canonical_name(name: str, label: Any) -> str:
 
     ``bench.py::f/case:0/min_time:0.200`` with label ``n=10000`` becomes
     ``bench.py::f[n=10000]``. The regex fallback behind :func:`canonical_row_name`
-    for rows without ``name_parts``; the stored ``name`` stays the raw GB name.
+    for rows without a ``benchmark`` stamp; the stored ``name`` stays the raw GB name.
 
     An aggregate row's ``_mean``/``_median``/… suffix is preserved, so it stays
     distinguishable from the per-repetition rows it summarizes:
@@ -89,33 +89,17 @@ def canonical_name(name: str, label: Any) -> str:
     return name + thread_suffix
 
 
-def _canonical_from_parts(parts: Mapping[str, str], label: Any, aggregate: str) -> str:
-    """Build the canonical name from Google Benchmark's decomposed ``BenchmarkName``."""
-    name = parts.get("function_name", "")
-    args = parts.get("args", "")
-    if args:
-        # mew registers exactly one arg, the family case index; a label
-        # replaces it. Anything else stays as GB rendered it.
-        if label and isinstance(label, str) and args.startswith("case:") and "/" not in args:
-            name += f"[{label}]"
-        else:
-            name += f"/{args}"
-    if threads := parts.get("threads"):
-        name += f"/{threads}"
-    if aggregate:
-        name += f"_{aggregate}"
-    return name
-
-
 def canonical_row_name(row: Mapping[str, Any]) -> str:
-    """:func:`canonical_name` for a stored row.
+    """The display name of a stored row.
 
-    Rows written by mew 0.2+ carry ``name_parts`` and need no suffix parsing;
-    older rows fall back to the regex grammar.
+    Rows written by mew 0.2+ carry ``benchmark``, the addressable name mew
+    stamped at run time; an aggregate row appends its ``_mean``/``_median``
+    suffix. Older rows fall back to parsing GB's rendered name.
     """
-    parts = row.get("name_parts")
-    if isinstance(parts, dict):
-        return _canonical_from_parts(parts, row.get("label"), row.get("aggregate_name") or "")
+    benchmark = row.get("benchmark")
+    if isinstance(benchmark, str):
+        aggregate = row.get("aggregate_name")
+        return f"{benchmark}_{aggregate}" if aggregate else benchmark
     return canonical_name(row["name"], row.get("label"))
 
 

@@ -384,8 +384,8 @@ def test_fanout_finalize_runs_every_sink_despite_failure():
     assert calls == ["boom", "ok"]
 
 
-def test_rows_carry_google_benchmarks_decomposed_name(tmp_path):
-    @mew.parametrize([{"n": 1}, {"n": 2}], min_time=0.001)
+def test_rows_carry_the_addressable_benchmark_name(tmp_path):
+    @mew.parametrize([{"n": 1}, {"n": 2}], min_time=0.001, repetitions=2)
     def bench_fam(state, n):
         for _ in state:
             pass
@@ -393,41 +393,36 @@ def test_rows_carry_google_benchmarks_decomposed_name(tmp_path):
     out = tmp_path / "o.json"
     mew.run(min_time="1x", reporter=JSONReporter(output=out))
     rows = json.loads(out.read_text())["benchmarks"]
-    parts = rows[0]["name_parts"]
-    assert parts["function_name"].endswith(".bench_fam")
-    assert parts["args"] == "case:0"
-    assert parts["min_time"] == "min_time:0.001"
-    assert parts["threads"] == ""
-    # Suffix-free reconstruction of the display name.
+    (entry,) = mew.REGISTRY.all()
+    # Repetition and aggregate rows of one case share the stamp; `name` differs.
+    by_case = {row["benchmark"] for row in rows}
+    assert by_case == {f"{entry.name}[n=1]", f"{entry.name}[n=2]"}
+    assert all(
+        row["benchmark"] in row["name"].replace("/case:0", "[n=1]")
+        for row in rows
+        if row["label"] == "n=1"
+    )
     from mew.reporter import canonical_row_name
 
-    assert canonical_row_name(rows[0]) == f"{parts['function_name']}[n=1]"
+    mean = next(r for r in rows if r["aggregate_name"] == "mean" and r["label"] == "n=1")
+    assert canonical_row_name(mean) == f"{entry.name}[n=1]_mean"
 
 
-def test_canonical_row_name_prefers_parts_and_falls_back_to_the_regex():
+def test_canonical_row_name_prefers_the_stamp_and_falls_back_to_the_regex():
     from mew.reporter import canonical_row_name
 
-    parts = {"function_name": "b.py::f", "args": "case:0", "min_time": "min_time:0.200"}
-    base = {"name": "b.py::f/case:0/min_time:0.200/threads:2", "label": "n=10"}
-    # Parts: threads stays a dimension, the aggregate suffix trails it.
-    assert canonical_row_name({**base, "name_parts": {**parts, "threads": "threads:2"}}) == (
+    raw = {"name": "b.py::f/case:0/min_time:0.200/threads:2", "label": "n=10"}
+    assert canonical_row_name({**raw, "benchmark": "b.py::f[n=10]/threads:2"}) == (
         "b.py::f[n=10]/threads:2"
     )
     assert (
         canonical_row_name(
-            {**base, "aggregate_name": "mean", "name_parts": {**parts, "threads": "threads:2"}}
+            {**raw, "aggregate_name": "mean", "benchmark": "b.py::f[n=10]/threads:2"}
         )
         == "b.py::f[n=10]/threads:2_mean"
     )
-    # A non-case arg is left as Google Benchmark rendered it.
-    assert (
-        canonical_row_name(
-            {"name": "x", "label": "", "name_parts": {"function_name": "f", "args": "8"}}
-        )
-        == "f/8"
-    )
-    # No parts (a pre-0.2 file, or a row mew synthesized): regex grammar.
-    assert canonical_row_name(base) == "b.py::f[n=10]/threads:2"
+    # No stamp (a pre-0.2 file): regex grammar.
+    assert canonical_row_name(raw) == "b.py::f[n=10]/threads:2"
 
 
 def test_canonical_name_keeps_the_aggregate_suffix():
