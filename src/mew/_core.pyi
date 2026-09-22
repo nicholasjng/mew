@@ -234,20 +234,7 @@ class BenchmarkHandle:
     def threads(self, n: int) -> BenchmarkHandle:
         """
         Run the benchmark with `n` threads, each with its own State and timer.
-        Requires a free-threaded interpreter; mew skips it otherwise.
-        """
-
-    def thread_range(self, min_threads: int, max_threads: int) -> BenchmarkHandle:
-        """
-        Run the benchmark once per thread count in [min_threads, max_threads], stepping by the range multiplier (powers of two). See `threads` for the free-threading requirement.
-        """
-
-    def dense_thread_range(
-        self, min_threads: int, max_threads: int, stride: int = 1
-    ) -> BenchmarkHandle:
-        """
-        Run once per thread count in [min_threads, max_threads], stepping by stride.
-        See `threads` for the free-threading requirement.
+        Repeat to run once per thread count. Requires a free-threaded interpreter; mew skips it otherwise.
         """
 
     def arg(self, value: int) -> BenchmarkHandle:

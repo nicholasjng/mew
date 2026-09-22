@@ -136,23 +136,21 @@ def test_is_threaded_helper():
     assert not _is_threaded({})
     assert not _is_threaded({"threads": 1})
     assert _is_threaded({"threads": 2})
-    assert not _is_threaded({"thread_range": (1, 1)})
-    assert _is_threaded({"thread_range": (1, 8)})
-    assert not _is_threaded({"dense_thread_range": (1, 1, 1)})
-    assert _is_threaded({"dense_thread_range": (1, 8, 1)})
+    assert not _is_threaded({"threads": (1,)})
+    assert _is_threaded({"threads": (1, 8)})
 
 
-def test_dense_thread_range_is_applied_to_native_handle():
+def test_thread_counts_are_each_applied_to_native_handle():
     from mew.runner import _apply_options
 
     calls = []
 
     class Handle:
-        def dense_thread_range(self, lo, hi, stride):
-            calls.append((lo, hi, stride))
+        def threads(self, n):
+            calls.append(n)
 
-    _apply_options(Handle(), {"dense_thread_range": (2, 8, 2)})  # ty: ignore[invalid-argument-type]
-    assert calls == [(2, 8, 2)]
+    _apply_options(Handle(), {"threads": (2, 4, 8)})  # ty: ignore[invalid-argument-type]
+    assert calls == [2, 4, 8]
 
 
 def test_threaded_benchmark_skipped_on_gil_build(monkeypatch):
@@ -293,8 +291,8 @@ def test_threaded_benchmark_runs_without_deadlock():
     getattr(sys, "_is_gil_enabled", lambda: True)(),
     reason="threaded mode requires a free-threaded interpreter",
 )
-def test_dense_thread_range_runs_requested_counts():
-    @mew.benchmark(dense_thread_range=(1, 5, 2), iterations=10)
+def test_thread_counts_run_each_requested_count():
+    @mew.benchmark(threads=[1, 3, 5], iterations=10)
     def bench_x(state):
         for _ in state:
             pass
