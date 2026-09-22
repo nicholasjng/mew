@@ -87,9 +87,13 @@ def write_json(path: Path, benches: list[dict], context: dict | None = None) -> 
 
 
 def write_jsonl(path: Path, benches: list[dict], context: dict | None = None) -> None:
-    """Write a JSONL result file with a leading context line (the channel shape)."""
-    lines = [json.dumps({"context": context or {}})]
-    lines += [json.dumps(b) for b in benches]
+    """Write a JSONL result file: one self-contained row per line.
+
+    ``context`` plays the role of the JSON document's file-level block: its
+    ``session`` / ``context`` keys are stamped onto rows that lack them.
+    """
+    stamp = {k: v for k, v in (context or {}).items() if k in ("session", "context")}
+    lines = [json.dumps({**stamp, **b}) for b in benches]
     path.write_text("\n".join(lines) + "\n")
 
 

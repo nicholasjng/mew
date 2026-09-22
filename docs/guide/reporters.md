@@ -26,23 +26,27 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
 
 ## Reading results back
 
-{func}`mew.compare.read_results` and {func}`mew.compare.read_sessions` accept
-JSON, JSONL, and gzip-compressed results.
+{func}`mew.compare.read_results` returns every stored row of a JSON, JSONL, or
+gzip-compressed result file, with a JSON document's file-level `session` and
+`context` copied onto rows that lack them. {func}`mew.compare.session_summaries`
+lists the sessions a file holds, newest first (what `mew sessions` prints).
 
 ```python
-from mew.compare import read_sessions
+from statistics import median
 
-for session in read_sessions("results.jsonl"):
-    print(session.tag or session.session_id[:8], session.provenance.get("engine"))
-    for name, sample in session.samples.items():
-        print(f"  {name}  {sample.value:.1f} {sample.time_unit}  cv={sample.cv:.3f}")
+from mew.compare import read_results, session_summaries
+
+newest = session_summaries("results.jsonl")[0]
+rows = [
+    r for r in read_results("results.jsonl")
+    if r["session"]["id"] == newest.id and not r["aggregate_name"] and not r["skipped"]
+]
+for name in sorted({r["benchmark"] for r in rows}):
+    print(name, median(r["real_time"] for r in rows if r["benchmark"] == name))
 ```
 
-`read_sessions` drops aggregate and skipped rows, canonicalizes case names, and
-reduces repetitions to {class}`~mew.compare.Sample` objects. Pass `metric=` for
-a measurement other than `real_time`.
-
-`read_results` returns every stored row without filtering.
+For anything beyond a few lines of Python, query the file directly; see the
+recipes below.
 
 ## Choosing a sink
 
@@ -79,8 +83,18 @@ class MetricsExporter:
         self._sink.flush()
 ```
 
-Base measurement keys are always present; `session`, `context`, `memory`, and
-`cpu_profile` are conditional.
+Base measurement keys are always present; `session`, `context`, `benchmark`,
+`memory`, and `cpu_profile` are conditional. `benchmark` is the benchmark as
+mew addresses it (`file.py::func[label]`, plus `/threads:N` for threaded runs),
+shared by all rows of one benchmark, so queries group on it without parsing
+`name`. Names never contain `[`, so `split_part(benchmark, '[', 1)` recovers
+the function:
+
+```sql
+SELECT benchmark, median(real_time) FROM 'results.jsonl' GROUP BY benchmark;
+SELECT split_part(benchmark, '[', 1) AS func, avg(real_time)
+FROM 'results.jsonl' GROUP BY func;
+```
 
 Pass it directly to {func}`mew.run`:
 
@@ -117,6 +131,18 @@ df = pd.read_json("results.jsonl.gz", lines=True)  # compression inferred
 import polars as pl
 
 df = pl.read_ndjson("results.jsonl")
+```
+
+Pull one session out of a large archive into a file `mew compare` reads
+directly. DuckDB infers `session.id` as a UUID and `session.date` as a
+timestamp, hence the casts:
+
+```sql
+COPY (SELECT * FROM 'results.jsonl.gz' WHERE session.tag = 'before')
+  TO 'before.jsonl' (FORMAT JSON);
+COPY (SELECT * FROM 'results.jsonl.gz'
+      WHERE starts_with(session.id::VARCHAR, '01a0c787'))
+  TO 'run.jsonl' (FORMAT JSON);
 ```
 
 Convert to Parquet after the fact, one file or many:

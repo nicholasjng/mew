@@ -40,8 +40,6 @@ $ mew compare --key func ducky.jsonl duckdb.jsonl
 
 If stripping the prefix makes two benchmarks in one file collide, `compare` exits with an error rather than guessing.
 
-With `--by`, the key defaults to `func`.
-
 Parametrized cases match by their human-readable IDs.
 Thread counts remain distinct (`/threads:1`, `/threads:2`, etc.). Other Google
 Benchmark option suffixes are ignored. Time measurements are converted to a
@@ -58,8 +56,10 @@ above 25%. Treat that delta as unreliable.
 (comparing-sessions-in-one-file)=
 ## Comparing sessions in one file
 
-Each `mew run` is one *session* (see [](context.md#session-identity)). For local
-experiments, append several sessions to one file and select them with `path@selector`:
+Each `mew run` is one *session* (see [](context.md#session-identity)). A file
+that holds several, because it was written with `--append`, contributes its
+newest session by default; `mew sessions FILE` lists them. To pick a different
+one, tag the runs and address them with `path@<tag>`:
 
 ```console
 $ mew run --session-tag before -o results.jsonl
@@ -68,51 +68,24 @@ $ mew run --session-tag after --append -o results.jsonl
 $ mew compare results.jsonl@after results.jsonl@before
 ```
 
-### What counts as one session
-
-Runs on one host that share a `session_tag` — or, absent one, the same
-`context.vcs.commit` — are **one session**, so repeated runs at one revision
-belong together: an interleaved A/B loop appending to one file reduces over
-every repetition rather than keeping only the last run.
-
-Record the commit from the suite:
-
-```python
-import mew
-
-mew.update_context(mew.vcs_context())
-```
-
-{func}`mew.vcs_context` shells out to jj or git and returns `{"vcs": {...}}`
-(backend, full commit, dirty flag, plus the jj change id or git branch), or `{}`
-outside a work tree. It is opt-in: not every run wants to pay for a subprocess.
-`--session-tag` overrides it, and is what you want when a comparison spans
-revisions.
+`path@latest` names the newest session explicitly. Every session carrying a
+tag is selected, so repeated runs under one tag pool as repetitions:
 
 ```console
 $ for i in 1 2 3 4 5; do
->   mew run bench_a.py --append -o results.jsonl
->   mew run bench_b.py --append -o results.jsonl
+>   mew run bench_a.py --session-tag a --append -o results.jsonl
+>   mew run bench_b.py --session-tag b --append -o results.jsonl
 > done
-$ mew compare results.jsonl --by context.engine
+$ mew compare --key func results.jsonl@b results.jsonl@a
 ```
 
-Interleaving decorrelates thermal and load drift from the axis you are comparing,
-and because both suites carry one tag, all five repetitions of each feed the
-statistic. Runs with *different* tags (or none) stay separate, one per run.
+Interleaving decorrelates thermal and load drift from the axis you are
+comparing, and all five repetitions of each side feed the statistic. Two
+files, one per side, work the same way without tags (see {doc}`ab-comparison`).
+Existing filenames that contain `@` are treated literally.
 
-A selector picks one session from a multi-session file:
-
-- `@latest` / `@earliest`: by recency.
-- `@~N`: N sessions back from the latest (`@~0` is latest, `@~1` the one before).
-- `@<tag>`: exact `session_tag` match (one per host, since a tag groups its runs).
-- `@<id-prefix>`: a `session_id` prefix, at least 4 characters.
-
-Selectors must resolve uniquely. Without one, `compare` uses the latest session
-per benchmark and warns when it discards older data. Existing filenames that
-contain `@` are treated literally.
-
-Selectors address sessions; use SQL or a dataframe tool for richer queries.
+For anything richer than "this session against that one", query the archive
+directly; see [](reporters.md#sql-and-dataframe-recipes).
 
 ## Gating CI
 
@@ -142,7 +115,8 @@ ignore = true
 reason = "Bubble sort is intentionally slow; skip the gate."
 ```
 
-Patterns use {func}`fnmatch.fnmatchcase` against the full benchmark name.
+Rules are read from the `pyproject.toml` that `[tool.mew]` configuration comes
+from. Patterns use {func}`fnmatch.fnmatchcase` against the full benchmark name.
 Each rule must include a `reason` so the allowlist stays explainable. A
 rule must either set `ignore=true` or `threshold=<float>`.
 
