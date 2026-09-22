@@ -65,15 +65,13 @@ class Entry:
 
 
 def case_names(entry: Entry) -> Iterator[tuple[int, str]]:
-    """Yield ``(case_index, addressable_name)`` for each case of a family.
+    """Yield ``(case_index, name[label])`` for each case of a family.
 
-    A ``-k`` regex matches against these. ``name/case:i`` addresses by index;
-    ``name[label]`` addresses by the human label and mirrors
-    ``reporter.canonical_name``, so one pattern selects the same set in
+    A ``-k`` regex matches against these; the form mirrors
+    :func:`mew.reporter.canonical_name`, so one pattern selects the same set in
     ``mew run`` and ``mew compare``.
     """
     for i, label in enumerate(entry.case_labels or ()):
-        yield i, f"{entry.name}/case:{i}"
         yield i, f"{entry.name}[{label}]"
 
 

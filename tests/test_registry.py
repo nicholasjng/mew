@@ -87,11 +87,6 @@ def test_narrow_by_human_label_selects_one_case():
     assert narrowed.cases == [2]
 
 
-def test_narrow_by_case_index_selects_one_case():
-    narrowed = _narrow(_family(), "case:1")
-    assert narrowed is not None and narrowed.cases == [1]
-
-
 def test_narrow_alternation_selects_multiple_cases():
     narrowed = _narrow(_family(), r"n=1\]|n=100\]")  # labels n=1 and n=100, not n=10
     assert narrowed is not None and narrowed.cases == [0, 2]
@@ -104,7 +99,7 @@ def test_narrow_no_case_matches_drops_family():
 def test_narrow_all_cases_match_collapses_to_whole_family():
     # A pattern matching every case needn't narrow — keep the dense path.
     e = _family()
-    narrowed = _narrow(e, r"case:\d")
+    narrowed = _narrow(e, r"n=\d+\]")
     assert narrowed is e  # same object, no replace
     assert narrowed.cases is None
 
@@ -115,7 +110,7 @@ def test_narrow_and_or_compose():
     narrowed = narrow_entry(
         e,
         any_of=[compile_name_filter(r"n=1\]"), compile_name_filter(r"n=100\]")],
-        all_of=compile_name_filter("case:2"),
+        all_of=compile_name_filter(r"n=100\]"),
     )
     assert narrowed is not None and narrowed.cases == [2]
 
