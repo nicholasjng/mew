@@ -39,8 +39,9 @@ JSONL rows carry both blocks directly.
 
 Every run gets a time-ordered UUIDv7 session ID, stored in JSON context and on each JSONL row.
 
-Set `session.tag` with `--session-tag` or `session_tag=`. Untagged runs can be
-grouped by `context.vcs.commit`. Benchmark selection tags (`-t`) are unrelated.
+Set `session.tag` with `--session-tag` or `session_tag=`; `mew compare` can
+select a session in a multi-session file by it (`results.jsonl@before`).
+Benchmark selection tags (`-t`) are unrelated.
 
 ## Applying context to every run
 

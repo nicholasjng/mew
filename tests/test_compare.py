@@ -15,17 +15,9 @@ from _helpers import (
     write_pair as _write_pair,
 )
 
-from mew._results import (
-    _aggregate_values,
-    _load,
-    _load_pivot_columns,
-    _load_sessions,
-    _resolve_session,
-    _select_latest,
-    _split_selector,
-)
+from mew._results import _aggregate_values, _load, _split_selector
 from mew._statistics import reduce_statistic, resolve_statistic
-from mew.compare import compare, read_results, read_sessions
+from mew.compare import compare, read_results
 
 
 def test_load_basic(tmp_path: Path) -> None:
@@ -254,10 +246,8 @@ def test_compare_stddev_column(tmp_path: Path) -> None:
     assert "2.00" in out
 
 
-def test_load_multi_session_keeps_latest(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # Simulate a concatenated archive by hand-building rows with per-row dates.
+def test_load_multi_session_keeps_latest(tmp_path: Path) -> None:
+    # An archive holding several sessions contributes its newest, silently.
     p = tmp_path / "agg.json"
     _write_json(
         p,
@@ -268,31 +258,30 @@ def test_load_multi_session_keeps_latest(
     )
     samples, _ = _load(p, "real_time")
     assert samples["b"].value == 20.0
-    err = capsys.readouterr().err
-    assert "2 sessions" in err
-    assert "2026-05-01" in err
 
 
 def test_load_jsonl(tmp_path: Path) -> None:
     p = tmp_path / "a.jsonl"
-    _write_jsonl(p, [_row("bench_x", 10.0)], context={"host_name": "h1"})
+    _write_jsonl(p, [_row("bench_x", 10.0)], context={"session": {"host": "h1"}})
     samples, ctx = _load(p, "real_time")
     assert samples["bench_x"].value == 10.0
-    assert ctx == {"host_name": "h1"}
+    assert ctx["session"] == {"host": "h1"}
 
 
 def test_load_jsonl_rejects_invalid_line(tmp_path: Path) -> None:
     # A clean CLI error naming the file and line, not a ValueError traceback.
     p = tmp_path / "a.jsonl"
-    p.write_text('{"context": {}}\nnot json\n')
+    p.write_text(json.dumps(_row("b", 1.0)) + "\nnot json\n")
     with pytest.raises(SystemExit, match="a.jsonl:2: invalid JSON"):
         _load(p, "real_time")
 
 
-def test_load_jsonl_rejects_non_object_line(tmp_path: Path) -> None:
+@pytest.mark.parametrize("line", ["[1, 2]", '{"context": {}}'])
+def test_load_jsonl_rejects_non_row_lines(tmp_path: Path, line: str) -> None:
+    # Pure NDJSON: no header lines, every line is a row with a name.
     p = tmp_path / "a.jsonl"
-    p.write_text('{"context": {}}\n[1, 2]\n')
-    with pytest.raises(SystemExit, match="a.jsonl:2: expected a JSON object"):
+    p.write_text(json.dumps(_row("b", 1.0)) + "\n" + line + "\n")
+    with pytest.raises(SystemExit, match="a.jsonl:2: expected a benchmark row"):
         _load(p, "real_time")
 
 
@@ -403,54 +392,8 @@ def test_split_selector_plain_path(tmp_path: Path) -> None:
 def test_split_selector_extracts_selector(tmp_path: Path) -> None:
     p = tmp_path / "results.json"
     assert _split_selector(f"{p}@before") == (p, "before")
-    assert _split_selector(f"{p}@~1") == (p, "~1")
+    assert _split_selector(f"{p}@latest") == (p, "latest")
     assert _split_selector(str(p)) == (p, None)
-
-
-def test_resolve_session_by_tag_and_keywords(tmp_path: Path) -> None:
-    sessions = _load_sessions(_two_session_file(tmp_path), "real_time")
-    assert _resolve_session(tmp_path, sessions, "before").session_tag == "before"
-    assert _resolve_session(tmp_path, sessions, "latest").session_tag == "after"
-    assert _resolve_session(tmp_path, sessions, "earliest").session_tag == "before"
-    assert _resolve_session(tmp_path, sessions, "~1").session_tag == "before"  # one back
-    assert _resolve_session(tmp_path, sessions, "~0").session_tag == "after"
-
-
-def test_resolve_session_by_id_prefix(tmp_path: Path) -> None:
-    sessions = _load_sessions(_two_session_file(tmp_path), "real_time")
-    assert _resolve_session(tmp_path, sessions, "0197aaaa").session_tag == "before"
-
-
-def test_resolve_session_errors(tmp_path: Path) -> None:
-    sessions = _load_sessions(_two_session_file(tmp_path), "real_time")
-    with pytest.raises(SystemExit, match="no session matching"):
-        _resolve_session(tmp_path, sessions, "nope")
-    with pytest.raises(SystemExit, match="out of range"):
-        _resolve_session(tmp_path, sessions, "~9")
-
-
-def test_runs_sharing_a_tag_aggregate_into_one_session(tmp_path: Path) -> None:
-    """Repeated runs at one revision share a tag, so they reduce together: this is
-    what lets an interleaved A/B loop keep every repetition instead of
-    `_select_latest` dropping all but the newest run."""
-    p = tmp_path / "r.json"
-    _write_json(
-        p,
-        [
-            _row("b", 10.0, date="2026-01-01T00:00:00", session_id="aaaa", session_tag="dup"),
-            _row("b", 20.0, date="2026-02-01T00:00:00", session_id="bbbb", session_tag="dup"),
-        ],
-    )
-    sessions = _load_sessions(p, "real_time")
-    assert len(sessions) == 1
-    session = sessions[0]
-    # The group takes its newest run's identity, so `@<id-prefix>` still resolves.
-    assert session.session_id == "bbbb"
-    assert session.session_tag == "dup"
-    # Median over both runs, not just the newest.
-    assert session.samples["b"].value == 15.0
-    assert session.samples["b"].values == (10.0, 20.0)
-    assert _resolve_session(p, sessions, "dup") is session
 
 
 def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
@@ -467,11 +410,116 @@ def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
     assert "session=after" in out
 
 
+def test_same_second_runs_stay_distinct_by_session_id(tmp_path: Path) -> None:
+    # Two runs in one wall-clock second on one host: the id keeps them apart.
+    p = tmp_path / "agg.json"
+    when = "2026-06-12T10:00:00"
+    _write_json(
+        p,
+        [
+            _row(
+                "b", 10.0, date=when, host_name="h1", session_id="0197-aaaa", session_tag="before"
+            ),
+            _row("b", 20.0, date=when, host_name="h1", session_id="0197-bbbb", session_tag="after"),
+        ],
+    )
+    assert _load(p, "real_time", selector="before")[0]["b"].value == 10.0
+    assert _load(p, "real_time", selector="after")[0]["b"].value == 20.0
+
+
 def test_load_with_selector(tmp_path: Path) -> None:
     p = _two_session_file(tmp_path)
     samples, ctx = _load(p, "real_time", selector="before")
     assert samples["b"].value == 100.0
     assert ctx["session"]["tag"] == "before"
+    latest, ctx = _load(p, "real_time", selector="latest")
+    assert latest["b"].value == 80.0
+    assert ctx["session"]["tag"] == "after"
+
+
+def test_tag_selector_pools_runs_sharing_the_tag(tmp_path: Path) -> None:
+    """Repeated runs under one tag reduce together, so an interleaved A/B loop
+    keeps every repetition. Without a selector only the newest run counts."""
+    p = tmp_path / "r.json"
+    _write_json(
+        p,
+        [
+            _row("b", 10.0, date="2026-01-01T00:00:00", session_id="aaaa", session_tag="ab"),
+            _row("b", 20.0, date="2026-02-01T00:00:00", session_id="bbbb", session_tag="ab"),
+            _row("b", 99.0, date="2026-03-01T00:00:00", session_id="cccc", session_tag="other"),
+        ],
+    )
+    pooled, ctx = _load(p, "real_time", selector="ab")
+    assert pooled["b"].values == (10.0, 20.0)
+    assert pooled["b"].value == 15.0
+    assert ctx["session"]["id"] == "bbbb"  # provenance from the newest pooled run
+    newest, _ = _load(p, "real_time")
+    assert newest["b"].value == 99.0
+
+
+def test_unknown_selector_lists_the_tags(tmp_path: Path) -> None:
+    p = _two_session_file(tmp_path)
+    with pytest.raises(
+        SystemExit, match=r"no session tagged 'nope' \(tags in file: after, before\)"
+    ):
+        _load(p, "real_time", selector="nope")
+    with pytest.raises(SystemExit, match="empty session selector"):
+        _load(p, "real_time", selector="")
+
+
+def test_unknown_selector_elides_a_long_tag_list(tmp_path: Path) -> None:
+    p = tmp_path / "r.json"
+    _write_json(p, [_row("b", 1.0, session_id=f"s{i}", session_tag=f"t{i:02d}") for i in range(9)])
+    with pytest.raises(SystemExit, match=r"t00, t01, t02, t03, t04 \(\+4 more\)"):
+        _load(p, "real_time", selector="nope")
+
+
+def test_session_summaries_newest_first(tmp_path: Path) -> None:
+    from mew.compare import session_summaries
+
+    p = tmp_path / "r.json"
+    new = dict(date="2026-02-01T00:00:00", session_id="new")
+    _write_json(
+        p,
+        [
+            _row("b", 1.0, date="2026-01-01T00:00:00", session_id="old", host_name="h"),
+            _row("b/case:0", 1.0, label="n=1", session_tag="t", **new),
+            _row("b/case:0", 2.0, label="n=1", session_tag="t", **new),
+            _row("b/case:0_mean", 1.5, aggregate_name="mean", session_tag="t", **new),
+        ],
+    )
+    newest, oldest = session_summaries(p)
+    assert (newest.id, newest.tag, newest.benchmarks, newest.rows) == ("new", "t", 1, 3)
+    assert (oldest.id, oldest.host, oldest.tag, oldest.benchmarks, oldest.rows) == (
+        "old",
+        "h",
+        None,
+        1,
+        1,
+    )
+
+
+def test_compare_parses_a_shared_file_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import mew.compare as compare_mod
+
+    p = _two_session_file(tmp_path)
+    calls: list[Path] = []
+    real = compare_mod._read_rows
+
+    def counting(path: Path):
+        calls.append(path)
+        return real(path)
+
+    monkeypatch.setattr(compare_mod, "_read_rows", counting)
+    assert compare([Path(f"{p}@after"), Path(f"{p}@before")], console=Console(width=200)) == 0
+    assert calls == [p]
+
+
+def test_load_without_measurements_errors(tmp_path: Path) -> None:
+    p = tmp_path / "r.json"
+    _write_json(p, [_row("b", 0.0, skipped=True)])
+    with pytest.raises(SystemExit, match="no measurements"):
+        _load(p, "real_time")
 
 
 def test_compare_prints_context_and_warns_on_skew(
@@ -573,81 +621,6 @@ def test_compare_aligns_files_run_with_different_min_time(tmp_path: Path) -> Non
     out = console.export_text()
     assert "a.py::bench_x[n=10]" in out
     assert "-20.00%" in out
-
-
-def _pivot_file(tmp_path: Path) -> Path:
-    """One result file holding two suites, tagged by `context.engine`."""
-    p = tmp_path / "engines.json"
-    _write_json(
-        p,
-        [
-            _row(
-                "bench.py::f",
-                100.0,
-                custom={"engine": "a"},
-                session_id="s1",
-                date="2026-01-01T00:00:00",
-            ),
-            _row(
-                "bench.py::f",
-                80.0,
-                custom={"engine": "b"},
-                session_id="s1",
-                date="2026-01-01T00:00:00",
-            ),
-        ],
-    )
-    return p
-
-
-def test_load_pivot_columns_pivots(tmp_path: Path) -> None:
-    cols = _load_pivot_columns(_pivot_file(tmp_path), "real_time", "name", "context.engine")
-    assert [v for v, _, _ in cols] == ["a", "b"]  # first-encounter order
-    by = {v: s for v, s, _ in cols}
-    assert by["a"]["bench.py::f"].value == 100.0
-    assert by["b"]["bench.py::f"].value == 80.0
-
-
-def test_compare_by_pivot(tmp_path: Path) -> None:
-    console = Console(width=200)
-    code = compare([_pivot_file(tmp_path)], by="context.engine", console=console)
-    assert code == 0
-    out = console.export_text()
-    assert "a (baseline)" in out
-    assert "-20.00%" in out  # b is 20% faster than a
-
-
-def test_compare_by_pivot_baseline(tmp_path: Path) -> None:
-    console = Console(width=200)
-    code = compare([_pivot_file(tmp_path)], by="context.engine", baseline="b", console=console)
-    assert code == 0
-    out = console.export_text()
-    assert "b (baseline)" in out
-    assert "+25.00%" in out  # a is 25% slower than b
-
-
-def test_compare_by_pivot_unknown_baseline(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit, match="not among context.engine values"):
-        compare([_pivot_file(tmp_path)], by="context.engine", baseline="zzz")
-
-
-def test_compare_by_pivot_requires_single_file(tmp_path: Path) -> None:
-    p = _pivot_file(tmp_path)
-    with pytest.raises(SystemExit, match="exactly one"):
-        compare([p, p], by="context.engine")
-
-
-def test_compare_by_pivot_no_pivot_data(tmp_path: Path) -> None:
-    p = tmp_path / "plain.json"
-    _write_json(p, [_row("bench.py::f", 1.0)])  # no context.engine field
-    with pytest.raises(SystemExit, match="no 'context.engine' data"):
-        compare([p], by="context.engine")
-
-
-def test_compare_by_dimension_absent_from_rows(tmp_path: Path) -> None:
-    """Any field is a legal pivot, so a typo surfaces as "no data", not "unknown"."""
-    with pytest.raises(SystemExit, match="no 'context.bogus' data"):
-        compare([_pivot_file(tmp_path)], by="context.bogus")
 
 
 def _mem_row(name: str, real_time: float, peak: int, allocs: int, *, iterations: int = 1) -> dict:
@@ -782,62 +755,6 @@ def test_compare_no_significance_marker_without_repetitions(tmp_path: Path) -> N
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
     assert "(signif.)" not in console.export_text()
-
-
-def test_load_sessions_keeps_all_sessions(tmp_path: Path) -> None:
-    # The load stage discards nothing; collapsing is the select stage's job.
-    p = tmp_path / "agg.json"
-    _write_json(
-        p,
-        [
-            _row("b", 10.0, date="2026-01-01T00:00:00", host_name="h1"),
-            _row("b", 20.0, date="2026-05-01T00:00:00", host_name="h2"),
-        ],
-    )
-    sessions = _load_sessions(p, "real_time")
-    assert [s.date for s in sessions] == ["2026-01-01T00:00:00", "2026-05-01T00:00:00"]
-    assert [s.samples["b"].value for s in sessions] == [10.0, 20.0]
-
-
-def test_load_sessions_distinguishes_same_second_runs_by_session_id(tmp_path: Path) -> None:
-    # The roadmap's collision case: two runs in the same wall-clock second on
-    # one host. session_id keeps them apart; (date, host) alone could not.
-    p = tmp_path / "agg.json"
-    when = "2026-06-12T10:00:00"
-    _write_json(
-        p,
-        [
-            _row(
-                "b", 10.0, date=when, host_name="h1", session_id="0197-aaaa", session_tag="before"
-            ),
-            _row("b", 20.0, date=when, host_name="h1", session_id="0197-bbbb", session_tag="after"),
-        ],
-    )
-    sessions = _load_sessions(p, "real_time")
-    assert [s.session_id for s in sessions] == ["0197-aaaa", "0197-bbbb"]
-    assert [s.session_tag for s in sessions] == ["before", "after"]
-    assert [s.samples["b"].value for s in sessions] == [10.0, 20.0]
-
-
-def test_select_latest_merges_per_name(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    # Latest wins per name; a benchmark only present in an older session survives.
-    p = tmp_path / "agg.json"
-    _write_json(
-        p,
-        [
-            _row("shared", 10.0, date="2026-01-01T00:00:00"),
-            _row("old_only", 1.0, date="2026-01-01T00:00:00"),
-            _row("shared", 20.0, date="2026-05-01T00:00:00"),
-        ],
-    )
-    samples, _ = _select_latest(p, _load_sessions(p, "real_time"))
-    assert samples["shared"].value == 20.0
-    assert samples["old_only"].value == 1.0
-    err = capsys.readouterr().err
-    assert "'shared' (2 sessions)" in err
-    assert "old_only" not in err
-    # One aggregated warning line, not one per benchmark.
-    assert err.count("warning:") == 1
 
 
 def test_load_selector_drops_aggregate_rows(tmp_path: Path) -> None:
@@ -997,118 +914,6 @@ def test_compare_jsonl_gz_roundtrip(tmp_path: Path) -> None:
     assert "×2.000" in out
 
 
-def test_runs_at_one_commit_aggregate_without_a_tag(tmp_path: Path) -> None:
-    """`context.vcs.commit` is the automatic grouping key, so a suite that records
-    provenance with `mew.update_context(mew.vcs_context())` gets the interleaved
-    A/B behaviour without anyone passing `--session-tag`."""
-    p = tmp_path / "r.json"
-    vcs = {"vcs": {"backend": "git", "commit": "a" * 40, "dirty": False}}
-    _write_json(
-        p,
-        [
-            _row("b", 10.0, custom=vcs, session_id="s1", date="2026-01-01T00:00:00"),
-            _row("b", 20.0, custom=vcs, session_id="s2", date="2026-02-01T00:00:00"),
-        ],
-    )
-    sessions = _load_sessions(p, "real_time")
-    assert len(sessions) == 1
-    assert sessions[0].samples["b"].values == (10.0, 20.0)
-
-
-def test_different_commits_stay_separate(tmp_path: Path) -> None:
-    """Before/after at two revisions must not be averaged together."""
-    p = tmp_path / "r.json"
-    _write_json(
-        p,
-        [
-            _row(
-                "b",
-                10.0,
-                custom={"vcs": {"commit": "a" * 40}},
-                session_id="s1",
-                date="2026-01-01T00:00:00",
-            ),
-            _row(
-                "b",
-                20.0,
-                custom={"vcs": {"commit": "b" * 40}},
-                session_id="s2",
-                date="2026-02-01T00:00:00",
-            ),
-        ],
-    )
-    assert len(_load_sessions(p, "real_time")) == 2
-
-
-def test_explicit_tag_wins_over_the_commit(tmp_path: Path) -> None:
-    """`--session-tag` is the override: it groups runs that span revisions."""
-    p = tmp_path / "r.json"
-    _write_json(
-        p,
-        [
-            _row(
-                "b",
-                10.0,
-                session_tag="ab",
-                custom={"vcs": {"commit": "a" * 40}},
-                session_id="s1",
-                date="2026-01-01T00:00:00",
-            ),
-            _row(
-                "b",
-                20.0,
-                session_tag="ab",
-                custom={"vcs": {"commit": "b" * 40}},
-                session_id="s2",
-                date="2026-02-01T00:00:00",
-            ),
-        ],
-    )
-    assert len(_load_sessions(p, "real_time")) == 1
-
-
-def test_tag_selector_is_ambiguous_across_hosts(tmp_path: Path) -> None:
-    """The group key is (host, tag), so one tag on two hosts is two sessions."""
-    p = tmp_path / "r.json"
-    _write_json(
-        p,
-        [
-            _row("b", 10.0, session_tag="before", host_name="ci-1", session_id="aaaa1111"),
-            _row("b", 20.0, session_tag="before", host_name="ci-2", session_id="bbbb2222"),
-        ],
-    )
-    sessions = _load_sessions(p, "real_time")
-    with pytest.raises(SystemExit, match="ambiguous"):
-        _resolve_session(p, sessions, "before")
-
-
-def test_pivot_on_a_session_defining_dimension_points_at_selectors(tmp_path: Path) -> None:
-    """`--by context.vcs.commit` cannot work: the pivot runs inside one session and
-    the commit is what separates sessions. Say so instead of rendering one column."""
-    p = tmp_path / "r.json"
-    _write_json(
-        p,
-        [
-            _row(
-                "b",
-                10.0,
-                custom={"vcs": {"commit": "a" * 40}},
-                session_id="s1",
-                date="2026-01-01T00:00:00",
-            ),
-            _row(
-                "b",
-                20.0,
-                custom={"vcs": {"commit": "b" * 40}},
-                session_id="s2",
-                date="2026-02-01T00:00:00",
-            ),
-        ],
-    )
-    with pytest.raises(SystemExit, match="addressed with selectors"):
-        compare([p], by="context.vcs.commit")
-
-
 def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
     """The raw view: nothing filtered, rows self-describing whatever the source."""
     p = tmp_path / "r.json"
@@ -1134,38 +939,6 @@ def test_read_results_backfills_from_the_file_block(tmp_path: Path) -> None:
         context={"session": {"id": "s1", "host": "h", "date": "2026-01-01T00:00:00"}},
     )
     assert read_results(p)[0]["session"]["id"] == "s1"
-
-
-def test_read_sessions_gives_comparable_samples(tmp_path: Path) -> None:
-    """The reduced view: aggregates dropped, repetitions grouped, names canonical."""
-    p = tmp_path / "r.json"
-    _write_json(
-        p,
-        [
-            _row("bench.py::f/case:0", 10.0, label="n=1", session_id="s1", host_name="h"),
-            _row("bench.py::f/case:0", 20.0, label="n=1", session_id="s1", host_name="h"),
-            _row(
-                "bench.py::f/case:0_mean",
-                15.0,
-                label="n=1",
-                aggregate_name="mean",
-                session_id="s1",
-                host_name="h",
-            ),
-        ],
-    )
-    (session,) = read_sessions(p)
-    assert list(session.samples) == ["bench.py::f[n=1]"]
-    sample = session.samples["bench.py::f[n=1]"]
-    assert sample.value == 15.0  # median of the two measurement rows
-    assert sample.values == (10.0, 20.0)  # the aggregate row is not one of them
-
-
-def test_read_sessions_rejects_an_unknown_metric(tmp_path: Path) -> None:
-    p = tmp_path / "r.json"
-    _write_json(p, [_row("b", 1.0)])
-    with pytest.raises(SystemExit, match="unknown metric"):
-        read_sessions(p, metric="nope")
 
 
 @pytest.mark.parametrize("family", [False, True])
@@ -1207,14 +980,14 @@ def test_grouped_sessions_normalize_units_before_reduction(
     if reverse:
         rows.reverse()
     _write_jsonl(path, rows)
-    sessions = read_sessions(path, metric=metric)
-    assert len(sessions) == 1
-    sample = sessions[0].samples["b"]
-    expected = 1 if reverse else 1000
-    assert sample.value == expected
+    samples, _ = _load(path, metric, selector="same")
+    sample = samples["b"]
+    # Pooled rows are ordered by session date, so the oldest run's unit wins
+    # regardless of file order.
+    assert sample.value == 1000
     assert sample.stddev == 0
-    assert sample.values == (expected, expected)
-    assert sample.time_unit == ("us" if reverse else "ns")
+    assert sample.values == (1000, 1000)
+    assert sample.time_unit == "ns"
 
 
 @pytest.mark.parametrize("show_stddev", [False, True])
@@ -1257,8 +1030,8 @@ def test_comparison_math_without_rendering(
 ):
     from mew.compare import Sample, _compare_samples
 
-    base = Sample("b", base_value, None, base_unit, None)
-    other = Sample("b", other_value, None, other_unit, None)
+    base = Sample("b", base_value, None, base_unit)
+    other = Sample("b", other_value, None, other_unit)
     result = _compare_samples(base, other, metric)
     assert result.delta == delta
     assert result.speedup == ratio

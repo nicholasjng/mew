@@ -9,27 +9,37 @@ from pathlib import Path
 import pytest
 from _helpers import row
 
-from mew.compare import Sample, SessionData, read_results, read_sessions
+from mew.compare import read_results, session_summaries
 
 
-@pytest.mark.parametrize("suffix", [".json", ".jsonl", ".jsonl.gz"])
-def test_row_metadata_overrides_header_and_missing_fields_inherit(tmp_path: Path, suffix: str):
-    path = tmp_path / ("results" + suffix)
+@pytest.mark.parametrize("compressed", [False, True])
+def test_jsonl_rows_are_self_contained(tmp_path: Path, compressed: bool):
+    path = tmp_path / ("sessions.jsonl.gz" if compressed else "sessions.jsonl")
+    rows = [
+        row("first", 2, session_id="first"),
+        row("second", 3, session_id="second", custom={"engine": "second"}),
+    ]
+    text = "\n".join(json.dumps(r) for r in rows) + "\n"
+    if compressed:
+        with gzip.open(path, "wt") as fh:
+            fh.write(text)
+    else:
+        path.write_text(text)
+    assert {s.id for s in session_summaries(path)} == {"first", "second"}
+    by_id = {r["session"]["id"]: r for r in read_results(path)}
+    assert "context" not in by_id["first"]
+    assert by_id["second"]["context"] == {"engine": "second"}
+
+
+def test_json_rows_inherit_the_document_context_unless_they_carry_their_own(tmp_path: Path):
+    path = tmp_path / "results.json"
     header = {"session": {"id": "header"}, "context": {"engine": "header"}}
     rows = [
         row("inherited", 1),
         row("own", 2, session_id="own", custom={"engine": "own"}),
         row("empty", 3, session={}, context={}),
     ]
-    if suffix == ".json":
-        text = json.dumps({"context": header, "benchmarks": rows})
-    else:
-        text = "\n".join(json.dumps(obj) for obj in [{"context": header}, *rows])
-    if suffix.endswith(".gz"):
-        with gzip.open(path, "wt") as fh:
-            fh.write(text)
-    else:
-        path.write_text(text)
+    path.write_text(json.dumps({"context": header, "benchmarks": rows}))
 
     inherited, own, empty = read_results(path)
     assert inherited["session"] == header["session"]
@@ -38,34 +48,4 @@ def test_row_metadata_overrides_header_and_missing_fields_inherit(tmp_path: Path
     assert own["context"] == {"engine": "own"}
     assert empty["session"] == {}
     assert empty["context"] == {}
-    sessions = read_sessions(path)
-    assert {s.session_id for s in sessions} == {None, "header", "own"}
-    assert all(isinstance(s, SessionData) for s in sessions)
-    assert all(isinstance(sample, Sample) for s in sessions for sample in s.samples.values())
-
-
-@pytest.mark.parametrize("compressed", [False, True])
-def test_jsonl_headers_only_apply_to_their_own_segment(tmp_path: Path, compressed: bool):
-    path = tmp_path / ("sessions.jsonl.gz" if compressed else "sessions.jsonl")
-    objects = [
-        row("before_headers", 1),
-        {"context": {"session": {"id": "first"}}},
-        row("first", 2),
-        {"context": {"session": {"id": "second"}, "context": {"engine": "second"}}},
-        row("second", 3),
-    ]
-    text = "\n".join(json.dumps(obj) for obj in objects)
-    if compressed:
-        with gzip.open(path, "wt") as fh:
-            fh.write(text)
-    else:
-        path.write_text(text)
-    rows = read_results(path)
-    assert "session" not in rows[0] and "context" not in rows[0]
-    assert rows[1]["session"] == {"id": "first"}
-    assert "context" not in rows[1]
-    assert rows[2]["context"] == {"engine": "second"}
-    sessions = {s.session_id: s for s in read_sessions(path)}
-    assert set(sessions) == {None, "first", "second"}
-    assert sessions["first"].provenance == {}
-    assert sessions["second"].provenance == {"engine": "second"}
+    assert {s.id for s in session_summaries(path)} == {None, "header", "own"}

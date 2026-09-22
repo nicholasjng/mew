@@ -1,13 +1,12 @@
-"""Decode result files, normalize metadata, and select comparable session samples."""
+"""Decode result files, normalize metadata, and select a session's comparable samples."""
 
 from __future__ import annotations
 
 import dataclasses
 import json
-import re
 import statistics
-import sys
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO, cast
 
@@ -58,8 +57,6 @@ class Sample:
         Sample stddev across repetitions; ``None`` for a single repetition.
     time_unit : str or None
         Unit ``value`` is expressed in; ``None`` for unitless metrics.
-    session_date : str or None
-        Date of the session this sample came from, for provenance display.
     values : tuple[float, ...]
         Raw per-repetition values (same unit as ``value``), feeding the
         Mann-Whitney significance marker. A single repetition has one value.
@@ -69,7 +66,6 @@ class Sample:
     value: float
     stddev: float | None
     time_unit: str | None
-    session_date: str | None
     values: tuple[float, ...] = ()
 
     @property
@@ -78,38 +74,6 @@ class Sample:
         if self.stddev is None or not self.value:
             return None
         return self.stddev / abs(self.value)
-
-
-@dataclass(frozen=True, slots=True)
-class SessionData:
-    """Measurements and context from one benchmark session."""
-
-    key: tuple[str, str, str]
-    context: dict[str, Any] = field(repr=False)
-    samples: dict[str, Sample] = field(repr=False)
-    session_tag: str | None = None
-
-    @property
-    def date(self) -> str | None:
-        return self.key[0] or None
-
-    @property
-    def host(self) -> str | None:
-        return self.key[1] or None
-
-    @property
-    def session_id(self) -> str | None:
-        return self.key[2] or None
-
-    @property
-    def tag(self) -> str | None:
-        """The session's label, if one was set with ``--session-tag``."""
-        return self.session_tag
-
-    @property
-    def provenance(self) -> dict[str, Any]:
-        """The session's ``context`` block: providers' values and the suite's own."""
-        return self.context.get("context") or {}
 
 
 def _is_aggregate_row(row: dict[str, Any]) -> bool:
@@ -124,10 +88,9 @@ def _is_measurement_row(row: dict[str, Any]) -> bool:
 
 
 def _inherit_metadata(row: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-    """Fill missing row stamps from the active file/segment header.
+    """Fill missing row stamps from a JSON document's ``context`` block.
 
-    A row's own fields win, including explicit empty values. Inheritance is
-    resolved during decoding so later JSONL headers cannot affect earlier rows.
+    A row's own fields win, including explicit empty values.
     """
     for key in _ROW_STAMP_FIELDS:
         if key not in row and context.get(key) is not None:
@@ -153,14 +116,8 @@ def _rows_from_json(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
 
 def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Read the JSONL sink (plain or gzip): one self-contained row per line.
-
-    A line without a ``name`` is a ``{"context": ...}`` header; rows after it
-    inherit its identity, and ``file_ctx`` is the last header seen.
-    """
+    """Read the JSONL sink (plain or gzip): one self-contained row per line."""
     rows: list[dict[str, Any]] = []
-    file_ctx: dict[str, Any] = {}
-    current: dict[str, Any] = {}
     if path.name.endswith(".gz"):
         import gzip
 
@@ -178,31 +135,19 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 obj = json.loads(line)
             except json.JSONDecodeError as e:
                 raise ValueError(f"{path}:{lineno}: invalid JSON: {e}") from e
-            if not isinstance(obj, dict):
-                raise ValueError(f"{path}:{lineno}: expected a JSON object per line")
-            if "name" in obj:
-                rows.append(_inherit_metadata(obj, current))
-            else:
-                current = obj.get("context", obj) or {}
-                file_ctx = current
-    return rows, file_ctx
+            if not isinstance(obj, dict) or "name" not in obj:
+                raise ValueError(
+                    f"{path}:{lineno}: expected a benchmark row (a JSON object with 'name')"
+                )
+            rows.append(obj)
+    return rows, {}
 
 
 def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[str, Any]:
-    """Combine file-level context with the row's own session and context stamps."""
+    """Combine a JSON document's file-level context with the row's own stamps."""
     ctx = {key: value for key, value in file_ctx.items() if key not in _ROW_STAMP_FIELDS}
     ctx.update({key: rep_row[key] for key in _ROW_STAMP_FIELDS if key in rep_row})
     return ctx
-
-
-def _pivot_value(row: dict[str, Any], dimension: str) -> Any:
-    """Read a dotted ``dimension`` from a row, such as ``context.vcs.commit``."""
-    node: Any = row
-    for part in dimension.split("."):
-        if not isinstance(node, dict):
-            return None
-        node = node.get(part)
-    return node
 
 
 def _session_key(row: dict[str, Any]) -> tuple[str, str, str]:
@@ -215,18 +160,6 @@ def _session_block(row: dict[str, Any]) -> dict[str, Any]:
     """The normalized row's session block."""
     block = row.get("session") or {}
     return block if isinstance(block, dict) else {}
-
-
-def _session_group(row: dict[str, Any]) -> tuple[str, str]:
-    """Group runs on one host by tag, VCS commit, or session identity."""
-    sess = _session_block(row)
-    host = str(sess.get("host") or "")
-    if tag := sess.get("tag"):
-        return (host, f"tag:{tag}")
-    commit = _pivot_value(row, "context.vcs.commit")
-    if commit:
-        return (host, f"commit:{commit}")
-    return (host, f"id:{sess.get('id') or sess.get('date') or ''}")
 
 
 def _metric_value(row: dict[str, Any], metric: str) -> Any:
@@ -317,7 +250,6 @@ def _read_rows(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 def _samples_from_groups(
     groups: dict[str, list[dict[str, Any]]],
     metric: str,
-    date: str | None,
     statistic: Statistic | None = None,
 ) -> dict[str, Sample]:
     """Aggregate per-name row groups into center/stddev :class:`Sample`s."""
@@ -337,7 +269,6 @@ def _samples_from_groups(
             value=center,
             stddev=stddev,
             time_unit=group[0].get("time_unit"),
-            session_date=date,
             values=tuple(values),
         )
     return samples
@@ -346,17 +277,15 @@ def _samples_from_groups(
 def _group_by_session(
     rows: list[dict[str, Any]],
 ) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
-    """Group successful measurement rows by session."""
-    buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    """Group successful measurement rows by session, oldest key first.
+
+    ISO-8601 dates lead the key, so it sorts chronologically.
+    """
+    buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for r in rows:
-        if not _is_measurement_row(r):
-            continue
-        buckets.setdefault(_session_group(r), []).append(r)
-    # A bucket may span several runs (same tag); it takes the identity of its
-    # newest one, so `path@<id-prefix>` and chronological order still work.
-    return {
-        max(_session_key(r) for r in bucket_rows): bucket_rows for bucket_rows in buckets.values()
-    }
+        if _is_measurement_row(r):
+            buckets.setdefault(_session_key(r), []).append(r)
+    return dict(sorted(buckets.items()))
 
 
 def _group_by_name(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -365,89 +294,6 @@ def _group_by_name(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]
     for r in rows:
         groups.setdefault(canonical_row_name(r), []).append(r)
     return groups
-
-
-def _load_sessions(
-    path: Path, metric: str, statistic: Statistic | None = None
-) -> list[SessionData]:
-    """Load all sessions in ascending date order."""
-    rows, file_ctx = _read_rows(path)
-
-    sessions: list[SessionData] = []
-    # ISO-8601 dates sort lexicographically in chronological order.
-    for skey, session_rows in sorted(_group_by_session(rows).items()):
-        groups = _group_by_name(session_rows)
-        samples = _samples_from_groups(groups, metric, skey[0] or None, statistic)
-        first_group = next(iter(groups.values()), [])
-        ctx = _session_context(first_group[0] if first_group else {}, file_ctx)
-        sessions.append(
-            SessionData(
-                key=skey,
-                context=ctx,
-                samples=samples,
-                session_tag=(ctx.get("session") or {}).get("tag"),
-            )
-        )
-    return sessions
-
-
-def _load_pivot_columns(
-    path: Path, metric: str, key: str, dimension: str, statistic: Statistic | None = None
-) -> list[tuple[str, dict[str, Sample], dict[str, Any]]]:
-    """Pivot the latest session into ``(value, samples, context)`` columns."""
-    rows, file_ctx = _read_rows(path)
-    by_session = _group_by_session(rows)
-    if not by_session:
-        return []
-
-    latest = max(by_session)  # date-leading key → most recent session
-    by_value: dict[Any, list[dict[str, Any]]] = {}
-    for r in by_session[latest]:
-        by_value.setdefault(_pivot_value(r, dimension), []).append(r)
-
-    columns: list[tuple[str, dict[str, Sample], dict[str, Any]]] = []
-    for value, value_rows in by_value.items():
-        if value is None:
-            continue  # rows without the dimension; nothing to pivot
-        groups = _group_by_name(value_rows)
-        samples = _samples_from_groups(groups, metric, latest[0] or None, statistic)
-        rep_row = next(iter(groups.values()))[0]
-        ctx = _session_context(rep_row, file_ctx)
-        samples = _normalize_samples(samples, key, f"{path}[{dimension}={value}]")
-        columns.append((str(value), samples, ctx))
-    return columns
-
-
-def _select_latest(
-    path: Path, sessions: list[SessionData]
-) -> tuple[dict[str, Sample], dict[str, Any]]:
-    """Select each benchmark's latest session, warning about discarded data."""
-    if not sessions:
-        return {}, {}
-    merged: dict[str, Sample] = {}
-    history: dict[str, list[SessionData]] = {}
-    for session in sessions:  # ascending date; later sessions overwrite
-        for name, sample in session.samples.items():
-            merged[name] = sample
-            history.setdefault(name, []).append(session)
-    # One aggregated line: a long-lived --append archive would otherwise print
-    # a near-identical warning per benchmark on every compare.
-    stale = {name: owners for name, owners in history.items() if len(owners) > 1}
-    if stale:
-        preview = ", ".join(f"{n!r} ({len(o)} sessions)" for n, o in list(stale.items())[:3])
-        extra = overflow(len(stale), 3)
-        chosen = next(iter(stale.values()))[-1]
-        print(
-            f"warning: {path}: {len(stale)} benchmark(s) appear in multiple sessions; "
-            f"keeping the latest per name, e.g. {preview}{extra} "
-            f"(latest: date={chosen.key[0]!r}, host={chosen.key[1]!r})",
-            file=sys.stderr,
-        )
-    return merged, sessions[-1].context
-
-
-_ORDINAL_RE = re.compile(r"~(\d+)")
-_MIN_ID_PREFIX = 4
 
 
 def _split_selector(raw: str) -> tuple[Path, str | None]:
@@ -460,53 +306,37 @@ def _split_selector(raw: str) -> tuple[Path, str | None]:
     return Path(base), selector
 
 
-def _resolve_session(path: Path, sessions: list[SessionData], selector: str) -> SessionData:
-    """Resolve a ``path@selector`` to one session.
+def _select_rows(
+    path: Path,
+    by_session: dict[tuple[str, str, str], list[dict[str, Any]]],
+    selector: str | None,
+) -> list[dict[str, Any]]:
+    """Pick the rows a ``path@selector`` names.
 
-    Order: keywords (``latest``/``earliest``), ordinal (``~N``, N back from
-    latest), exact ``session_tag``, then ``session_id`` prefix (≥4 chars).
-    Ambiguous matches and misses are errors; explicit selection must be
-    deterministic.
+    ``None`` and ``latest`` select the newest session. Any other selector is a
+    session tag; every session carrying it is selected, so repeated runs under
+    one tag pool as repetitions. ``mew sessions`` lists what a file holds.
     """
-    if not sessions:
-        raise SystemExit(f"{path}: no sessions in file")
+    if not by_session:
+        raise SystemExit(f"{path}: no measurements in file")
+    if selector is None or selector == "latest":
+        return by_session[max(by_session)]
     if not selector:
         raise SystemExit(f"{path}: empty session selector after '@'")
-    if selector == "latest":
-        return sessions[-1]
-    if selector == "earliest":
-        return sessions[0]
-    if m := _ORDINAL_RE.fullmatch(selector):
-        n = int(m.group(1))
-        if n >= len(sessions):
-            raise SystemExit(f"{path}: @~{n} out of range ({len(sessions)} session(s) in file)")
-        return sessions[-1 - n]  # ~0 == latest
-
-    # One match per host: the group key is (host, tag), so a tag spanning two
-    # hosts is two sessions and the selector cannot pick between them.
-    tagged = [s for s in sessions if s.session_tag == selector]
-    if len(tagged) == 1:
-        return tagged[0]
-    if len(tagged) > 1:
-        hosts = sorted({s.host or "?" for s in tagged})
-        raise SystemExit(
-            f"{path}: session tag {selector!r} is ambiguous ({len(tagged)} sessions "
-            f"on hosts {hosts}); select by session id instead"
+    tagged = [
+        rows for rows in by_session.values() if _session_block(rows[0]).get("tag") == selector
+    ]
+    if not tagged:
+        tags = sorted(
+            {t for rows in by_session.values() if (t := _session_block(rows[0]).get("tag"))}
         )
+        shown = ", ".join(tags[:5]) + overflow(len(tags), 5)
+        hint = f" (tags in file: {shown})" if tags else " (no tagged sessions in file)"
+        raise SystemExit(f"{path}: no session tagged {selector!r}{hint}; see `mew sessions {path}`")
+    return [r for rows in tagged for r in rows]
 
-    if len(selector) >= _MIN_ID_PREFIX:
-        pref = [s for s in sessions if s.session_id and s.session_id.startswith(selector)]
-        if len(pref) == 1:
-            return pref[0]
-        if len(pref) > 1:
-            raise SystemExit(
-                f"{path}: session id prefix {selector!r} is ambiguous ({len(pref)} matches)"
-            )
 
-    tags = sorted({s.session_tag for s in sessions if s.session_tag})
-    ids = [s.session_id[:12] for s in sessions if s.session_id]
-    hint = f" (tags: {tags}; ids: {ids})" if (tags or ids) else ""
-    raise SystemExit(f"{path}: no session matching {selector!r}{hint}")
+Reader = Callable[[Path], tuple[list[dict[str, Any]], dict[str, Any]]]
 
 
 def _load(
@@ -515,19 +345,58 @@ def _load(
     key: str = "name",
     selector: str | None = None,
     statistic: Statistic | None = None,
+    reader: Reader = _read_rows,
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
-    """Load a result file into one sample set: load → select → re-key.
+    """Load one comparison column from a result file: read, select a session, re-key.
 
-    Without a selector, sessions merge latest-wins per name (warning on discards).
-    A selector picks exactly one session, no merge.
+    ``reader`` lets a caller comparing several selectors of one file parse it once.
     """
-    sessions = _load_sessions(path, metric, statistic)
-    if selector is None:
-        samples, ctx = _select_latest(path, sessions)
-    else:
-        chosen = _resolve_session(path, sessions, selector)
-        samples, ctx = chosen.samples, chosen.context
+    rows, file_ctx = reader(path)
+    by_session = _group_by_session(rows)
+    selected = _select_rows(path, by_session, selector)
+    # The newest selected row speaks for the column's provenance.
+    rep_row = max(selected, key=_session_key)
+    samples = _samples_from_groups(_group_by_name(selected), metric, statistic)
+    ctx = _session_context(rep_row, file_ctx)
     return _normalize_samples(samples, key, str(path)), ctx
+
+
+@dataclass(frozen=True, slots=True)
+class SessionSummary:
+    """One session of a result file, as ``mew sessions`` lists it."""
+
+    id: str | None
+    date: str | None
+    host: str | None
+    tag: str | None
+    benchmarks: int
+    rows: int
+
+
+def session_summaries(path: str | Path) -> list[SessionSummary]:
+    """Summarize every session in a result file, newest first.
+
+    ``rows`` counts every stored row of the session; ``benchmarks`` counts
+    distinct measured benchmarks (aggregate and skipped rows excluded).
+    """
+    rows, _ = _read_rows(Path(path))
+    buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for r in rows:
+        buckets.setdefault(_session_key(r), []).append(r)
+    out: list[SessionSummary] = []
+    for (date, host, sid), session_rows in sorted(buckets.items(), reverse=True):
+        measured = {canonical_row_name(r) for r in session_rows if _is_measurement_row(r)}
+        out.append(
+            SessionSummary(
+                id=sid or None,
+                date=date or None,
+                host=host or None,
+                tag=_session_block(session_rows[0]).get("tag"),
+                benchmarks=len(measured),
+                rows=len(session_rows),
+            )
+        )
+    return out
 
 
 def read_results(path: str | Path) -> list[BenchmarkResult]:
@@ -548,31 +417,3 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
     """
     rows, _ = _read_rows(Path(path))
     return cast("list[BenchmarkResult]", rows)
-
-
-def read_sessions(
-    path: str | Path,
-    *,
-    metric: str = "real_time",
-    statistic: Statistic | None = None,
-) -> list[SessionData]:
-    """Read a result file into comparable per-session samples, oldest first.
-
-    Parameters
-    ----------
-    path : str or Path
-        Result file to read.
-    metric : str, default "real_time"
-        Which measurement ``Sample.value`` reduces. ``Sample`` is metric-specific,
-        so comparing two metrics means two calls.
-    statistic : callable, optional
-        Reducer over each benchmark's per-repetition values; defaults to the median.
-
-    Returns
-    -------
-    list[SessionData]
-        Sessions with aggregate and skipped rows removed and repetitions reduced.
-    """
-    if metric not in _METRICS:
-        raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
-    return _load_sessions(Path(path), metric, statistic)

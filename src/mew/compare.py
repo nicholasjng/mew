@@ -19,20 +19,20 @@ from mew._results import (
     _NS_PER_UNIT,
     _TIME_METRICS,
     Sample,
-    SessionData,
+    SessionSummary,
     _load,
-    _load_pivot_columns,
+    _read_rows,
     _split_selector,
     _to_ns,
     read_results,
-    read_sessions,
+    session_summaries,
 )
 from mew._significance import mannwhitney_p
 from mew._statistics import Statistic
 from mew.regressions import RegressionConfig, report
 from mew.reporter import _fmt_bytes
 
-__all__ = ["Sample", "SessionData", "compare", "read_results", "read_sessions"]
+__all__ = ["Sample", "SessionSummary", "compare", "read_results", "session_summaries"]
 
 _HIGHER_IS_BETTER = frozenset({"iterations"})
 _KEYS = frozenset({"name", "func"})
@@ -374,51 +374,14 @@ def _render(
     return 0
 
 
-def _pivot_columns(
-    path: Path,
-    metric: str,
-    key: str,
-    dimension: str,
-    baseline: str | None,
-    statistic: Statistic | None = None,
-) -> list[_Column]:
-    """Build comparison columns by pivoting one file on ``dimension``, baseline first."""
-    loaded = _load_pivot_columns(path, metric, key, dimension, statistic)
-    names = [v for v, _, _ in loaded]
-    if not names:
-        raise SystemExit(
-            f"{path}: no {dimension!r} data to pivot; set it per suite with "
-            f"mew.set_context() and write both suites to this file"
-        )
-    if len(names) == 1:
-        # The pivot runs inside one session, so a dimension that *defines* the
-        # session (a commit, say) has one value here however many the file holds.
-        raise SystemExit(
-            f"{path}: --by {dimension} found only {names[0]!r} in the latest session; "
-            f"a dimension that differs per session is addressed with selectors "
-            f"instead, e.g. `mew compare {path}@latest {path}@~1`"
-        )
-    if baseline is not None and baseline not in names:
-        raise SystemExit(f"{path}: --baseline {baseline!r} not among {dimension} values {names}")
-    base = baseline or names[0]
-    ordered = [base, *(n for n in names if n != base)]
-    by_name = {v: (s, c) for v, s, c in loaded}
-    return [
-        _Column(source=f"{path}[{v}]", label=v, samples=by_name[v][0], context=by_name[v][1])
-        for v in ordered
-    ]
-
-
 def compare(
     files: list[Path],
     *,
     metric: str = "real_time",
-    key: str | None = None,
+    key: str = "name",
     pattern: str | None = None,
     literal: bool = False,
     show_stddev: bool = False,
-    by: str | None = None,
-    baseline: str | None = None,
     statistic: Statistic | None = None,
     regressions: RegressionConfig | None = None,
     console: Terminal | None = None,
@@ -433,22 +396,19 @@ def compare(
     files : list[Path]
         Result files (JSON, JSONL, or JSONL.gz); the last is treated as the
         baseline (``mew compare head.json baseline.json`` reads like "compare
-        head against baseline"). A ``path@selector`` argument picks one session
-        from a multi-session file; see docs/guide/regressions.md for the
-        selector grammar.
+        head against baseline"). A file holding several sessions contributes
+        its newest; ``path@latest`` says so explicitly and ``path@<tag>``
+        selects the session(s) run with that ``--session-tag``.
     metric : str, default "real_time"
         Metric to compare.
         One of ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or (for files
         produced with ``--profile-memory``) ``"memory.peak_bytes"`` or
         ``"memory.allocations_per_iteration"`` (the per-call allocation count,
         comparable across engines regardless of speed).
-    key : str, optional
+    key : str, default "name"
         How benchmarks are matched across files: ``"name"`` uses the full
         registered name; ``"func"`` strips the ``file.py::`` prefix so suites
         in different files with matching function names line up (A/B suites).
-        Defaults to ``"func"`` when ``by`` is set (each column's rows keep
-        their own ``file.py::`` prefix, so the columns only line up on the
-        function name) and ``"name"`` otherwise.
     pattern : str, optional
         Regex (``re.search``) filter applied to benchmark names.
     literal : bool, default False
@@ -456,13 +416,6 @@ def compare(
         a ``name[label]``'s brackets literal).
     show_stddev : bool, default False
         Add per-file stddev columns when stddev data is present.
-    by : str, optional
-        Pivot dimension: compare values of one field *within* a single file, one
-        column each, instead of comparing files. Typically ``"context.<key>"``, read
-        from the per-suite values :func:`mew.set_context` records on every row.
-    baseline : str, optional
-        With ``by``, which value is the baseline column (default: the first one
-        written).
     statistic : Callable[[list[float]], float], optional
         Reducer over each benchmark's per-repetition values, used as the displayed
         center and the regression-gate value (stddev is unaffected). Receives a
@@ -481,9 +434,6 @@ def compare(
     """
     if metric not in _METRICS:
         raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
-    # Pivot columns share the file prefix, so they only align on the func name.
-    if key is None:
-        key = "func" if by else "name"
     if key not in _KEYS:
         raise SystemExit(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
     try:
@@ -491,33 +441,34 @@ def compare(
     except ValueError as e:
         raise SystemExit(str(e)) from e
 
-    if by is not None:
-        if len(files) != 1:
-            raise SystemExit(f"mew compare --by {by} takes exactly one result file")
-        columns = _pivot_columns(files[0], metric, key, by, baseline, statistic)
-    else:
-        if baseline is not None:
-            raise SystemExit("mew compare --baseline requires --by")
-        if len(files) < 2:
-            raise SystemExit("mew compare needs at least two result files")
-        parsed = [_split_selector(str(p)) for p in files]
-        paths = [p for p, _ in parsed]
-        # CLI convention: the last file is the baseline ("compare head against
-        # baseline"), while `_render` expects columns[0] to be the baseline.
-        ordered = [parsed[-1], *parsed[:-1]]
-        columns = []
-        for path, selector in ordered:
-            samples, ctx = _load(path, metric, key, selector, statistic)
-            base = _label(path, paths)
-            label = f"{base}@{selector}" if selector else base
-            columns.append(
-                _Column(
-                    source=f"{path}@{selector}" if selector else str(path),
-                    label=label,
-                    samples=samples,
-                    context=ctx,
-                )
+    if len(files) < 2:
+        raise SystemExit("mew compare needs at least two result files")
+    parsed = [_split_selector(str(p)) for p in files]
+    paths = [p for p, _ in parsed]
+    # CLI convention: the last file is the baseline ("compare head against
+    # baseline"), while `_render` expects columns[0] to be the baseline.
+    ordered = [parsed[-1], *parsed[:-1]]
+    # Two selectors on one archive must not parse it twice.
+    parsed_files: dict[Path, tuple[list[dict[str, Any]], dict[str, Any]]] = {}
+
+    def read_once(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        if path not in parsed_files:
+            parsed_files[path] = _read_rows(path)
+        return parsed_files[path]
+
+    columns = []
+    for path, selector in ordered:
+        samples, ctx = _load(path, metric, key, selector, statistic, reader=read_once)
+        base = _label(path, paths)
+        label = f"{base}@{selector}" if selector else base
+        columns.append(
+            _Column(
+                source=f"{path}@{selector}" if selector else str(path),
+                label=label,
+                samples=samples,
+                context=ctx,
             )
+        )
     return _render(
         columns,
         metric=metric,

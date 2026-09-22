@@ -126,7 +126,7 @@ threshold = 25.0
 reason = "noisy on shared runners"
 """
     )
-    cfg = load_config(default_threshold=5.0, path=py)
+    cfg = load_config(default_threshold=5.0, root=tmp_path)
     assert cfg.default_threshold == 7.5
     assert len(cfg.rules) == 2
     assert cfg.rules[0].ignore is True
@@ -143,7 +143,7 @@ ignore = true
 """
     )
     with pytest.raises(ValueError, match="reason"):
-        load_config(default_threshold=5.0, path=py)
+        load_config(default_threshold=5.0, root=tmp_path)
 
 
 def test_load_config_neither_ignore_nor_threshold(tmp_path: Path) -> None:
@@ -156,7 +156,7 @@ reason = "??"
 """
     )
     with pytest.raises(ValueError, match="exactly one of ignore=true or threshold"):
-        load_config(default_threshold=5.0, path=py)
+        load_config(default_threshold=5.0, root=tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -175,50 +175,20 @@ def test_load_config_rejects_invalid_rule_modes(tmp_path: Path, body: str) -> No
         f"""\n[[tool.mew.regressions.allow]]\npattern = "b*"\nreason = "invalid"\n{body}\n"""
     )
     with pytest.raises(ValueError):
-        load_config(default_threshold=5.0, path=py)
+        load_config(default_threshold=5.0, root=tmp_path)
 
 
 def test_load_config_rejects_non_array_allow_table(tmp_path: Path) -> None:
     py = tmp_path / "pyproject.toml"
     py.write_text('[tool.mew.regressions]\nallow = "b*"\n')
     with pytest.raises(ValueError, match="allow must be an array of tables"):
-        load_config(default_threshold=5.0, path=py)
+        load_config(default_threshold=5.0, root=tmp_path)
 
 
 @pytest.mark.parametrize("threshold", [-1, float("nan"), float("inf"), True])
 def test_regression_config_rejects_invalid_default_threshold(threshold) -> None:
     with pytest.raises(ValueError, match="default_threshold"):
         RegressionConfig(default_threshold=threshold)
-
-
-def test_load_config_explicit_missing_path_errors(tmp_path: Path) -> None:
-    # A typo'd --regressions-config must not silently gate with defaults.
-    with pytest.raises(SystemExit, match="regressions config not found"):
-        load_config(default_threshold=5.0, path=tmp_path / "regresions.toml")
-
-
-def test_load_config_walks_up_from_subdirectory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Mirrors [tool.mew] config discovery: allow rules apply no matter which
-    # subdirectory `mew compare` runs from.
-    (tmp_path / "pyproject.toml").write_text(
-        """
-[tool.mew.regressions]
-default_threshold = 7.5
-
-[[tool.mew.regressions.allow]]
-pattern = "bench_noisy*"
-reason = "known noisy"
-ignore = true
-"""
-    )
-    sub = tmp_path / "sub" / "dir"
-    sub.mkdir(parents=True)
-    monkeypatch.chdir(sub)
-    cfg = load_config(default_threshold=5.0)
-    assert cfg.default_threshold == 7.5
-    assert cfg.rules and cfg.rules[0].pattern == "bench_noisy*"
 
 
 def test_render_panel_exit_codes() -> None:
@@ -270,7 +240,7 @@ def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixtu
 def test_compare_config_allow_lifts_threshold(tmp_path: Path) -> None:
     # +20%:
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
-    py = tmp_path / "regressions.toml"
+    py = tmp_path / "pyproject.toml"
     py.write_text(
         """
 [[tool.mew.regressions.allow]]
@@ -279,7 +249,7 @@ threshold = 50.0
 reason = "noisy"
 """
     )
-    cfg = load_config(default_threshold=5.0, path=py)
+    cfg = load_config(default_threshold=5.0, root=tmp_path)
     code = compare([other, base], regressions=cfg, console=Console(width=200))
     # 20% > 5% default but the rule allows up to 50% — allowed_over → exit 0.
     assert code == 0
@@ -288,7 +258,7 @@ reason = "noisy"
 def test_compare_config_allow_ignore_skips_gating(tmp_path: Path) -> None:
     # +100%:
     other, base = _write_pair(tmp_path, other=[_row("b", 200.0)], base=[_row("b", 100.0)])
-    py = tmp_path / "regressions.toml"
+    py = tmp_path / "pyproject.toml"
     py.write_text(
         """
 [[tool.mew.regressions.allow]]
@@ -297,7 +267,7 @@ ignore = true
 reason = "known-flaky"
 """
     )
-    cfg = load_config(default_threshold=5.0, path=py)
+    cfg = load_config(default_threshold=5.0, root=tmp_path)
     code = compare([other, base], regressions=cfg, console=Console(width=200))
     assert code == 0
 

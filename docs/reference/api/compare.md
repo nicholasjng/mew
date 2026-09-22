@@ -2,20 +2,19 @@
 
 ## Reading results
 
-Two views of a result file. {func}`~mew.compare.read_results` gives the rows as stored;
-{func}`~mew.compare.read_sessions` gives comparable numbers, which is usually what a
-script wants.
+{func}`~mew.compare.read_results` gives a file's rows as stored;
+{func}`~mew.compare.session_summaries` lists the sessions it holds.
 
 ```{eval-rst}
 .. currentmodule:: mew.compare
 
 .. autofunction:: read_results
-.. autofunction:: read_sessions
+.. autofunction:: session_summaries
 
 .. autoclass:: Sample
    :members:
 
-.. autoclass:: SessionData
+.. autoclass:: SessionSummary
    :members:
 ```
 
@@ -24,5 +23,5 @@ script wants.
 ```{eval-rst}
 .. automodule:: mew.compare
    :members:
-   :exclude-members: Sample, SessionData, read_results, read_sessions
+   :exclude-members: Sample, SessionSummary, read_results, session_summaries
 ```

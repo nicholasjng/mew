@@ -13,6 +13,7 @@ import pytest
 
 import mew
 from mew._session import new_session_id
+from mew.compare import session_summaries
 from mew.reporter import JSONLReporter, JSONReporter
 from mew.vcs import vcs_context
 
@@ -189,8 +190,6 @@ def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
 
 
 def test_jsonl_append_makes_two_sessions(tmp_path: Path):
-    from mew._results import _load_sessions
-
     @mew.benchmark
     def bench_s(state):
         for _ in state:
@@ -208,19 +207,17 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path):
         session_tag="after",
     )
 
-    # Two rows, each carrying its own session identity; compare splits them
-    # into two sessions keyed by their distinct session ids.
-    sessions = _load_sessions(out, "real_time")
+    # Two rows, each carrying its own session identity, so the file holds two
+    # sessions with distinct ids.
+    sessions = session_summaries(out)
     assert len(sessions) == 2
-    assert {s.session_tag for s in sessions} == {"before", "after"}
-    assert len({s.session_id for s in sessions}) == 2
+    assert {s.tag for s in sessions} == {"before", "after"}
+    assert len({s.id for s in sessions}) == 2
 
 
 def test_jsonl_gz_append_concatenates_sessions(tmp_path: Path):
     # Gzip archive: each --append run writes a new gzip member; readers see
     # one stream, compare sees two sessions.
-    from mew._results import _load_sessions
-
     @mew.benchmark
     def bench_s(state):
         for _ in state:
@@ -238,9 +235,9 @@ def test_jsonl_gz_append_concatenates_sessions(tmp_path: Path):
         session_tag="after",
     )
 
-    sessions = _load_sessions(out, "real_time")
+    sessions = session_summaries(out)
     assert len(sessions) == 2
-    assert {s.session_tag for s in sessions} == {"before", "after"}
+    assert {s.tag for s in sessions} == {"before", "after"}
 
 
 def test_cli_append_rejected_for_json(tmp_path: Path):

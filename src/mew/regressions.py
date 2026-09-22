@@ -178,23 +178,17 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
         raise ValueError(f"{source}: allow rule {pattern!r}: {e}") from e
 
 
-def load_config(
-    *,
-    default_threshold: float,
-    path: Path | None = None,
-    root: Path | None = None,
-) -> RegressionConfig:
-    """Build a :class:`RegressionConfig`.
+def load_config(*, default_threshold: float, root: Path | None = None) -> RegressionConfig:
+    """Build a :class:`RegressionConfig` from ``[tool.mew.regressions]``.
 
     Parameters
     ----------
     default_threshold : float
-        Threshold used when configuration does not override it.
-    path : Path, optional
-        Explicit TOML file.
+        Threshold used when the configuration does not override it.
     root : Path, optional
-        Project root containing ``pyproject.toml``. When omitted, search upward
-        from the current directory.
+        Directory holding the project's ``pyproject.toml`` (see
+        :attr:`mew.config.Config.project_root`). ``None`` means no file:
+        the defaults apply with no allowlist.
 
     Returns
     -------
@@ -204,21 +198,9 @@ def load_config(
     rules: list[AllowRule] = []
     threshold = default_threshold
 
-    source: Path | None = path
-    if source is not None and not source.is_file():
-        # An explicit path that doesn't exist must not silently gate with
-        # defaults; only the implicit pyproject.toml probe may come up empty.
-        raise SystemExit(f"regressions config not found: {source}")
-    if source is None and root is not None:
-        candidate = root / "pyproject.toml"
-        source = candidate if candidate.is_file() else None
-    elif source is None:
-        cwd = Path.cwd().resolve()
-        for parent in [cwd, *cwd.parents]:
-            candidate = parent / "pyproject.toml"
-            if candidate.is_file():
-                source = candidate
-                break
+    source: Path | None = None
+    if root is not None and (candidate := root / "pyproject.toml").is_file():
+        source = candidate
 
     if source is not None:
         with source.open("rb") as fh:
