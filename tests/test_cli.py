@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from _helpers import row as _row, write_pair as _write_pair
+from _helpers import row as _row, write_json as _write_json, write_pair as _write_pair
 
 FIXTURE = """
     import mew
@@ -504,13 +504,6 @@ def test_compare_regression_threshold_must_be_non_negative_and_finite(mew_cli, t
     assert res.returncode == 2
 
 
-def test_compare_baseline_requires_by(mew_cli, tmp_path):
-    other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("b", 1.0)])
-    res = mew_cli("compare", str(other), str(base), "--baseline", "x", cwd=tmp_path)
-    assert res.returncode == 2
-    assert "--baseline requires --by" in res.stderr
-
-
 def test_compare_regression_threshold_alone_is_report_only(mew_cli, tmp_path):
     # A regression is detected and printed, but without --exit-non-zero-on-regression
     # the command still exits 0 — the panel is informational, not a gate.
@@ -538,7 +531,7 @@ def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path):
 
 
 def test_compare_exit_non_zero_on_regression_gates_alone(mew_cli, tmp_path):
-    # Without --regression-threshold / --regressions-config the gate flag
+    # Without --regression-threshold the gate flag
     # implies gating at the default threshold instead of silently no-opping.
     # +20%, over the 5% default:
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
@@ -550,13 +543,35 @@ def test_compare_exit_non_zero_on_regression_gates_alone(mew_cli, tmp_path):
 def test_compare_malformed_regressions_config_is_usage_error(mew_cli, tmp_path):
     # A broken allow rule is a CLI error, not a ValueError traceback.
     other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("b", 1.0)])
-    cfg = tmp_path / "regressions.toml"
-    cfg.write_text('[[tool.mew.regressions.allow]]\npattern = "b"\nignore = true\n')
-    res = mew_cli("compare", str(other), str(base), "--regressions-config", str(cfg), cwd=tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[[tool.mew.regressions.allow]]\npattern = "b"\nignore = true\n'
+    )
+    res = mew_cli("compare", str(other), str(base), "--regression-threshold", "5%", cwd=tmp_path)
     assert res.returncode == 2
     assert "invalid regressions config" in res.stderr
     assert "reason" in res.stderr
     assert "Traceback" not in res.stderr
+
+
+def test_sessions_lists_newest_first(mew_cli, tmp_path):
+    p = tmp_path / "r.json"
+    _write_json(
+        p,
+        [
+            _row(
+                "b", 1.0, date="2026-01-01T00:00:00", session_id="aaaaaaaa-1", session_tag="before"
+            ),
+            _row(
+                "b", 2.0, date="2026-02-01T00:00:00", session_id="bbbbbbbb-2", session_tag="after"
+            ),
+        ],
+    )
+    res = mew_cli("sessions", str(p), cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    lines = res.stdout.splitlines()
+    assert lines[0].startswith("Id")
+    assert lines[2].startswith("bbbbbbbb") and "after" in lines[2]
+    assert lines[3].startswith("aaaaaaaa") and "before" in lines[3]
 
 
 def test_run_memory_iterations_must_be_positive(mew_cli, tmp_path):

@@ -120,6 +120,19 @@ $ mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json 
 
 See [](regressions.md) for matching, metrics, the regression gate, and allowlist.
 
+## `mew sessions`
+
+List what a result file holds, newest session first, to pick a `@<tag>`
+selector for `mew compare`:
+
+```console
+$ mew sessions results.jsonl
+Id       │ Date                │ Host   │ Tag    │ Benchmarks │ Rows
+──────────────────────────────────────────────────────────────────────
+01a0c787 │ 2026-09-22T05:12:29 │ laptop │ after  │          7 │   63
+01a0c786 │ 2026-09-22T05:12:28 │ laptop │ before │          7 │   63
+```
+
 ## `mew completions`
 
 Print a shell-completion script for `bash`, `zsh`, or `fish` to

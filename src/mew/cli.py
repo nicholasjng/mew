@@ -354,21 +354,15 @@ def compare(
     files: list[Path],
     *,
     metric: str = "real_time",
-    key: str | None = None,
+    key: str = "name",
     pattern: str | None = None,
     literal: bool = False,
     stddev: bool = False,
-    by: str | None = None,
-    baseline: str | None = None,
     statistic: str | None = None,
     regression_threshold: float | None = None,
     exit_non_zero_on_regression: bool = False,
-    regressions_config: Path | None = None,
 ) -> None:
     """Compare benchmark result files; the last file is the baseline."""
-    if baseline is not None and by is None:
-        print("mew compare: --baseline requires --by", file=sys.stderr)
-        raise SystemExit(2)
     from mew._statistics import resolve_statistic
     from mew.compare import compare as _compare
 
@@ -380,17 +374,12 @@ def compare(
     # Any regression flag opts into gating, so the gate flag alone is not a
     # silent no-op; it gates at the default threshold.
     cfg = None
-    if (
-        regression_threshold is not None
-        or regressions_config is not None
-        or exit_non_zero_on_regression
-    ):
+    if regression_threshold is not None or exit_non_zero_on_regression:
         from mew.regressions import load_config
 
         try:
             cfg = load_config(
                 default_threshold=regression_threshold if regression_threshold is not None else 5.0,
-                path=regressions_config,
                 root=cfg_file.project_root,
             )
         except ValueError as e:
@@ -404,17 +393,41 @@ def compare(
         pattern=pattern,
         literal=literal,
         show_stddev=stddev,
-        by=by,
-        baseline=baseline,
         statistic=reduce,
         regressions=cfg,
     )
     # The regression panel is informational unless the caller opted into gating;
-    # a `no overlap` (1) or `--by` usage error still propagates as-is.
+    # a `no overlap` (1) exit still propagates as-is.
     if code == 2 and not exit_non_zero_on_regression:
         code = 0
     if code:
         raise SystemExit(code)
+
+
+def sessions(files: list[Path]) -> None:
+    """List the sessions stored in result files, newest first."""
+    from mew._console import Table, Terminal
+    from mew._results import session_summaries
+
+    term = Terminal()
+    for path in files:
+        table = Table(title=str(path) if len(files) > 1 else None)
+        table.add_column("Id")
+        table.add_column("Date")
+        table.add_column("Host", flex=True)
+        table.add_column("Tag")
+        table.add_column("Benchmarks", justify="right")
+        table.add_column("Rows", justify="right")
+        for s in session_summaries(path):
+            table.add_row(
+                (s.id or "-")[:8],
+                (s.date or "-")[:19],
+                s.host or "-",
+                s.tag or "-",
+                str(s.benchmarks),
+                str(s.rows),
+            )
+        term.print(table)
 
 
 class _CommandHelpFormatter(argparse.HelpFormatter):
@@ -699,7 +712,10 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument("-h", "--help", action="help", help="Show this help.")
     p.add_argument(
-        "files", nargs="+", type=Path, help="Compare result files against the last file."
+        "files",
+        nargs="+",
+        type=Path,
+        help="Compare result files against the last file (<file>@<tag> picks a session).",
     )
     p.add_argument(
         "-m",
@@ -709,17 +725,12 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--key",
+        default="name",
         metavar="<key>",
-        help="Match benchmarks by name or func (default name; func with --by).",
+        help="Match benchmarks by name or func (default name).",
     )
     _add_filter_args(p, pattern_help="Compare benchmarks whose name matches <regex>.")
     p.add_argument("--stddev", action="store_true", help="Show standard-deviation columns.")
-    p.add_argument(
-        "--by",
-        metavar="<field>",
-        help="Compare groups in one file, split by <field>.",
-    )
-    p.add_argument("--baseline", metavar="<value>", help="Use <value> as the --by baseline.")
     p.add_argument(
         "--statistic",
         metavar="<name>",
@@ -736,13 +747,19 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Exit with status 2 when a regression is found.",
     )
-    p.add_argument(
-        "--regressions-config",
-        type=Path,
-        metavar="<file>",
-        help="Read regression rules from <file> (default pyproject.toml).",
-    )
     p.set_defaults(_func=compare)
+
+
+def _add_sessions_cmd(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "sessions",
+        help="List the sessions stored in result files.",
+        formatter_class=_CommandHelpFormatter,
+        add_help=False,
+    )
+    p.add_argument("-h", "--help", action="help", help="Show this help.")
+    p.add_argument("files", nargs="+", type=Path, help="Result files to inspect.")
+    p.set_defaults(_func=sessions)
 
 
 def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
@@ -787,6 +804,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_list_cmd(sub)
     _add_run_cmd(sub)
     _add_compare_cmd(sub)
+    _add_sessions_cmd(sub)
     _add_completions_cmd(sub)
 
     return parser
