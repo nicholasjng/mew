@@ -23,6 +23,8 @@ def main() -> None:
             str(ROOT),
             "-B",
             str(BUILD_DIR),
+            "-G",
+            "Ninja",
             f"-DPython_EXECUTABLE={sys.executable}",
             f"-DFETCHCONTENT_BASE_DIR={ROOT / 'build' / '_deps'}",
             "-DMEW_SYNC_COMPILE_COMMANDS=ON",
