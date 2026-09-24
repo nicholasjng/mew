@@ -68,11 +68,12 @@ def test_json_reporter_can_be_reused(tmp_path):
     assert len(second["benchmarks"]) == 1
 
 
-def _fake_row(name: str, label: str = "") -> BenchmarkResult:
+def _fake_row(name: str, label: str = "", benchmark: str | None = None) -> BenchmarkResult:
     """A minimal BenchmarkResult dict, the shape reporters now consume directly."""
     return {
         "name": name,
         "run_name": name,
+        "benchmark": benchmark or name,
         "family_index": 0,
         "per_family_instance_index": 0,
         "run_type": "iteration",
@@ -111,7 +112,7 @@ def test_json_reporter_streams_forward_only(tmp_path):
     rep.report_runs([_fake_row("a::three")])
     rep.finalize()
     doc = json.loads(out.read_text())
-    assert doc["context"]["session"]["host"] == "h"
+    assert doc["session"]["host"] == "h"
     assert [b["name"] for b in doc["benchmarks"]] == ["a::one", "a::two", "a::three"]
 
 
@@ -290,9 +291,9 @@ def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
     assert "a_very_long_function_name_tha" in out  # left prefix of hottest frame
 
 
-def test_rich_reporter_renders_canonical_name():
-    """The live table shows the human `name[label]` form, not GB's raw
-    `/case:N/min_time:…` suffixes, so it reads the same as `mew compare`."""
+def test_rich_reporter_renders_the_benchmark_field():
+    """The live table shows the row's `benchmark` (the `name[label]` form), not
+    GB's raw `/case:N/min_time:…` name, so it reads the same as `mew compare`."""
     from mew._console import Terminal
 
     buf = io.StringIO()
@@ -300,7 +301,15 @@ def test_rich_reporter_renders_canonical_name():
     rep.report_context(
         {"session": {"host": "h"}, "context": {"num_cpus": 4, "cpu_scaling_enabled": False}}
     )
-    rep.report_runs([_fake_row("bench.py::bench_x/case:0/min_time:0.200", label="small")])
+    rep.report_runs(
+        [
+            _fake_row(
+                "bench.py::bench_x/case:0/min_time:0.200",
+                label="small",
+                benchmark="bench.py::bench_x[small]",
+            )
+        ]
+    )
     out = buf.getvalue()
     assert "bench.py::bench_x[small]" in out
     assert "case:0" not in out
@@ -408,34 +417,9 @@ def test_rows_carry_the_addressable_benchmark_name(tmp_path):
     assert canonical_row_name(mean) == f"{entry.name}[n=1]_mean"
 
 
-def test_canonical_row_name_prefers_the_stamp_and_falls_back_to_the_regex():
+def test_canonical_row_name_appends_the_aggregate_suffix():
     from mew.reporter import canonical_row_name
 
-    raw = {"name": "b.py::f/case:0/min_time:0.200/threads:2", "label": "n=10"}
-    assert canonical_row_name({**raw, "benchmark": "b.py::f[n=10]/threads:2"}) == (
-        "b.py::f[n=10]/threads:2"
-    )
-    assert (
-        canonical_row_name(
-            {**raw, "aggregate_name": "mean", "benchmark": "b.py::f[n=10]/threads:2"}
-        )
-        == "b.py::f[n=10]/threads:2_mean"
-    )
-    # No stamp (a pre-0.2 file): regex grammar.
-    assert canonical_row_name(raw) == "b.py::f[n=10]/threads:2"
-
-
-def test_canonical_name_keeps_the_aggregate_suffix():
-    """GB appends `_mean`/`_median`/... *after* the args part, so `/case:N` is not
-    at the end of an aggregate row's name. The label still swaps in, and the
-    suffix stays so aggregates remain distinct from the rows they summarize."""
-    from mew.reporter import canonical_name
-
-    assert canonical_name("b.py::f/case:0", "n=10") == "b.py::f[n=10]"
-    assert canonical_name("b.py::f/case:0_mean", "n=10") == "b.py::f[n=10]_mean"
-    assert canonical_name("b.py::f/case:12_stddev", "n=10") == "b.py::f[n=10]_stddev"
-    # Option suffixes still go entirely.
-    assert canonical_name("b.py::f/case:0/min_time:0.200", "n=10") == "b.py::f[n=10]"
-    # Unlabelled and non-family names are untouched.
-    assert canonical_name("b.py::f/case:0_mean", "") == "b.py::f/case:0_mean"
-    assert canonical_name("b.py::plain", "n=10") == "b.py::plain"
+    row = {"name": "b.py::f/case:0/threads:2", "benchmark": "b.py::f[n=10]/threads:2"}
+    assert canonical_row_name(row) == "b.py::f[n=10]/threads:2"
+    assert canonical_row_name({**row, "aggregate_name": "mean"}) == "b.py::f[n=10]/threads:2_mean"

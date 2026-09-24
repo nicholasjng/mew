@@ -48,7 +48,8 @@ native-profiler integrations have been removed.
   manager callback aborts the run. Reporter finalization now also runs for
   suites whose selected benchmarks were all skipped.
 - Session identity and provenance are stored in separate `session` and
-  `context` blocks. JSONL rows carry both blocks. A multi-session archive
+  `context` blocks on every row, in JSON and JSONL alike; the JSON document
+  lists both at its top level as well. A multi-session archive
   contributes its newest session to `mew compare` unless a `@<tag>` selector
   says otherwise; sessions sharing a tag pool as repetitions.
 - CPU and memory profiling are driven by Google Benchmark itself instead of
@@ -81,8 +82,6 @@ native-profiler integrations have been removed.
 - `thread_range` and `dense_thread_range`; pass the thread counts to `threads`.
 - `mew compare --regressions-config`; allow rules live in the project's
   `pyproject.toml` only.
-- Reading JSONL archives with 0.1.x `{"context": ...}` header lines. Every
-  JSONL row is self-contained; rewrite older archives with `read_results`.
 
 ### Fixed
 

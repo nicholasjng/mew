@@ -772,7 +772,7 @@ def test_setup_file_context_applies_to_a_single_file_run(mew_cli, tmp_path: Path
     res = mew_cli("run", "benchmarks/bench_b.py", "--min-time=1x", "-o", str(out), cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     doc = json.loads(out.read_text())
-    assert doc["context"]["context"]["team"] == "perf"
+    assert doc["context"]["team"] == "perf"
     assert [b["name"].rsplit("::", 1)[-1] for b in doc["benchmarks"]] == ["b"]
 
 

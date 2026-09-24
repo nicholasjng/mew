@@ -31,11 +31,12 @@ class BenchmarkResult(TypedDict):
 
     Attributes
     ----------
-    benchmark : str, optional
+    benchmark : str
         The benchmark as mew addresses it: the registered name, ``[label]`` for
         a family case, ``/threads:N`` when the benchmark set ``threads``. Shared
-        by all repetition and aggregate rows of one benchmark. Absent in files
-        written before 0.2.
+        by all repetition and aggregate rows of one benchmark, unlike ``name``,
+        which also carries Google Benchmark's option fragments and the
+        aggregate suffix.
     session : SessionInfo, optional
         Identity of the run that produced this result.
     context : dict, optional
@@ -54,6 +55,7 @@ class BenchmarkResult(TypedDict):
 
     name: str
     run_name: str
+    benchmark: str
     family_index: int
     per_family_instance_index: int
     run_type: str
@@ -71,7 +73,6 @@ class BenchmarkResult(TypedDict):
     skipped: bool
     skip_message: str
     counters: dict[str, float]
-    benchmark: NotRequired[str]
     session: NotRequired[SessionInfo]
     context: NotRequired[dict[str, Any]]
     memory: NotRequired[dict[str, Any]]

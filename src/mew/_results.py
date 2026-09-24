@@ -87,35 +87,28 @@ def _is_measurement_row(row: dict[str, Any]) -> bool:
     )
 
 
-def _inherit_metadata(row: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-    """Fill missing row stamps from a JSON document's ``context`` block.
-
-    A row's own fields win, including explicit empty values.
-    """
-    for key in _ROW_STAMP_FIELDS:
-        if key not in row and context.get(key) is not None:
-            row[key] = context[key]
-    return row
+def _check_row(obj: Any, where: str) -> None:
+    """Reject anything but a result row: an object with ``name`` and ``benchmark``."""
+    if not isinstance(obj, dict) or "name" not in obj or "benchmark" not in obj:
+        raise ValueError(
+            f"{where}: expected a mew result row (a JSON object with 'name' and 'benchmark')"
+        )
 
 
-def _rows_from_json(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _rows_from_json(path: Path) -> list[dict[str, Any]]:
     try:
         doc = json.loads(path.read_text())
     except json.JSONDecodeError as e:
         raise ValueError(f"{path}: invalid JSON: {e}") from e
-    benchmarks = doc.get("benchmarks") if isinstance(doc, dict) else None
-    if not isinstance(benchmarks, list):
+    rows = doc.get("benchmarks") if isinstance(doc, dict) else None
+    if not isinstance(rows, list):
         raise ValueError(f"{path}: missing 'benchmarks' array")
-    ctx = doc.get("context") or {}
-    rows: list[dict[str, Any]] = []
-    for i, row in enumerate(benchmarks):
-        if not isinstance(row, dict):
-            raise ValueError(f"{path}: benchmarks[{i}] is not a JSON object")
-        rows.append(_inherit_metadata(row, ctx))
-    return rows, ctx
+    for i, row in enumerate(rows):
+        _check_row(row, f"{path}: benchmarks[{i}]")
+    return rows
 
 
-def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _rows_from_jsonl(path: Path) -> list[dict[str, Any]]:
     """Read the JSONL sink (plain or gzip): one self-contained row per line."""
     rows: list[dict[str, Any]] = []
     if path.name.endswith(".gz"):
@@ -135,19 +128,9 @@ def _rows_from_jsonl(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 obj = json.loads(line)
             except json.JSONDecodeError as e:
                 raise ValueError(f"{path}:{lineno}: invalid JSON: {e}") from e
-            if not isinstance(obj, dict) or "name" not in obj:
-                raise ValueError(
-                    f"{path}:{lineno}: expected a benchmark row (a JSON object with 'name')"
-                )
+            _check_row(obj, f"{path}:{lineno}")
             rows.append(obj)
-    return rows, {}
-
-
-def _session_context(rep_row: dict[str, Any], file_ctx: dict[str, Any]) -> dict[str, Any]:
-    """Combine a JSON document's file-level context with the row's own stamps."""
-    ctx = {key: value for key, value in file_ctx.items() if key not in _ROW_STAMP_FIELDS}
-    ctx.update({key: rep_row[key] for key in _ROW_STAMP_FIELDS if key in rep_row})
-    return ctx
+    return rows
 
 
 def _session_key(row: dict[str, Any]) -> tuple[str, str, str]:
@@ -223,8 +206,8 @@ def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dic
     return renamed
 
 
-def _read_rows(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Dispatch on suffix to read ``(rows, file_ctx)`` from a result file.
+def _read_rows(path: Path) -> list[dict[str, Any]]:
+    """Dispatch on suffix to read a result file's rows.
 
     A missing or unparseable input is a CLI-level error, so read/parse failures
     surface as ``SystemExit`` with a one-line message, not a traceback.
@@ -336,7 +319,7 @@ def _select_rows(
     return [r for rows in tagged for r in rows]
 
 
-Reader = Callable[[Path], tuple[list[dict[str, Any]], dict[str, Any]]]
+Reader = Callable[[Path], list[dict[str, Any]]]
 
 
 def _load(
@@ -351,13 +334,12 @@ def _load(
 
     ``reader`` lets a caller comparing several selectors of one file parse it once.
     """
-    rows, file_ctx = reader(path)
-    by_session = _group_by_session(rows)
+    by_session = _group_by_session(reader(path))
     selected = _select_rows(path, by_session, selector)
     # The newest selected row speaks for the column's provenance.
     rep_row = max(selected, key=_session_key)
     samples = _samples_from_groups(_group_by_name(selected), metric, statistic)
-    ctx = _session_context(rep_row, file_ctx)
+    ctx = {key: rep_row[key] for key in _ROW_STAMP_FIELDS if key in rep_row}
     return _normalize_samples(samples, key, str(path)), ctx
 
 
@@ -379,9 +361,8 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
     ``rows`` counts every stored row of the session; ``benchmarks`` counts
     distinct measured benchmarks (aggregate and skipped rows excluded).
     """
-    rows, _ = _read_rows(Path(path))
     buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-    for r in rows:
+    for r in _read_rows(Path(path)):
         buckets.setdefault(_session_key(r), []).append(r)
     out: list[SessionSummary] = []
     for (date, host, sid), session_rows in sorted(buckets.items(), reverse=True):
@@ -400,10 +381,10 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
 
 
 def read_results(path: str | Path) -> list[BenchmarkResult]:
-    """Read result rows in file order with inherited metadata filled in.
+    """Read result rows in file order.
 
-    Accepts JSON, JSONL, and gzip-compressed results. File-level session and
-    context fields are copied onto each row.
+    Accepts JSON, JSONL, and gzip-compressed results; every row carries its own
+    ``session`` and ``context``.
 
     Parameters
     ----------
@@ -415,5 +396,4 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
     list[BenchmarkResult]
         Stored rows, including aggregate and skipped rows.
     """
-    rows, _ = _read_rows(Path(path))
-    return cast("list[BenchmarkResult]", rows)
+    return cast("list[BenchmarkResult]", _read_rows(Path(path)))

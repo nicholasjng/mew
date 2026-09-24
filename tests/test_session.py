@@ -151,9 +151,11 @@ def test_json_reporter_persists_session_identity(tmp_path: Path):
         reporter=JSONReporter(output=out),
         session_tag="before",
     )
-    ctx = json.loads(out.read_text())["context"]
-    assert uuid.UUID(ctx["session"]["id"]).version == 7
-    assert ctx["session"]["tag"] == "before"
+    doc = json.loads(out.read_text())
+    assert uuid.UUID(doc["session"]["id"]).version == 7
+    assert doc["session"]["tag"] == "before"
+    # Rows carry the same identity, so a document reads like a JSONL file.
+    assert all(row["session"] == doc["session"] for row in doc["benchmarks"])
 
 
 def test_jsonl_rows_are_self_contained(tmp_path: Path):
@@ -186,7 +188,7 @@ def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
     rep = JSONReporter(output=out)
     rep.report_context({"context": {"num_cpus": 4}})
     rep.finalize()
-    assert json.loads(out.read_text())["context"] == {"context": {"num_cpus": 4}}
+    assert json.loads(out.read_text())["context"] == {"num_cpus": 4}
 
 
 def test_jsonl_append_makes_two_sessions(tmp_path: Path):

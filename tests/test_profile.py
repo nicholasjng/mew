@@ -454,9 +454,9 @@ def test_to_dict_serializes_enums_as_plain_strings(tmp_path):
         assert bench["run_type"] in ("iteration", "aggregate")
 
 
-def test_context_is_written_once_per_document(tmp_path):
-    """Single-doc JSON has one context block, so rows stay bare. Only JSONL
-    stamps `session`/`context` per row, where each line must stand alone."""
+def test_json_rows_carry_the_document_header(tmp_path):
+    """JSON rows are the same self-contained objects JSONL writes; the header
+    repeats `session` / `context` for readers."""
     mew.set_context("build", "asan")
 
     @mew.benchmark
@@ -467,12 +467,12 @@ def test_context_is_written_once_per_document(tmp_path):
     out = tmp_path / "out.json"
     mew.run(min_time="1x", repetitions=2, reporter=JSONReporter(output=out))
     doc = json.loads(out.read_text())
-    assert doc["context"]["context"]["build"] == "asan"
-    assert doc["context"]["session"]["id"]
+    assert doc["context"]["build"] == "asan"
+    assert doc["session"]["id"]
     assert doc["benchmarks"]
     for bench in doc["benchmarks"]:
-        assert "context" not in bench
-        assert "session" not in bench
+        assert bench["context"] == doc["context"]
+        assert bench["session"] == doc["session"]
 
 
 def test_loop_scoped_captures_carry_no_stacks(tmp_path):

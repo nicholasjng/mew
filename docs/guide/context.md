@@ -16,28 +16,27 @@ mew.update_context(
 
 ```text
 {
+  "session": {
+    "id": "01975f2e-9c40-7b31-a1d4-8f0e2c5b7a90",
+    "date": "2026-05-19T10:00:00+00:00",
+    "host": "laptop"
+  },
   "context": {
-    "session": {
-      "id": "01975f2e-9c40-7b31-a1d4-8f0e2c5b7a90",
-      "date": "2026-05-19T10:00:00+00:00",
-      "host": "laptop"
-    },
-    "context": {
-      "num_cpus": 10,
-      "cpu_scaling_enabled": false,
-      "git_sha": "abc123",
-      "dataset": {"name": "uniform-1k", "size": 1000}
-    }
+    "num_cpus": 10,
+    "cpu_scaling_enabled": false,
+    "git_sha": "abc123",
+    "dataset": {"name": "uniform-1k", "size": 1000}
   },
   "benchmarks": [...]
 }
 ```
 
-JSONL rows carry both blocks directly.
+Every row, in JSON and JSONL alike, carries both blocks as well; the JSON
+header repeats them for readers.
 
 ## Session identity
 
-Every run gets a time-ordered UUIDv7 session ID, stored in JSON context and on each JSONL row.
+Every run gets a time-ordered UUIDv7 session ID, stored on each row.
 
 Set `session.tag` with `--session-tag` or `session_tag=`; `mew compare` can
 select a session in a multi-session file by it (`results.jsonl@before`).

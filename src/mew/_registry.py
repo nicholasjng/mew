@@ -67,9 +67,8 @@ class Entry:
 def case_names(entry: Entry) -> Iterator[tuple[int, str]]:
     """Yield ``(case_index, name[label])`` for each case of a family.
 
-    A ``-k`` regex matches against these; the form mirrors
-    :func:`mew.reporter.canonical_name`, so one pattern selects the same set in
-    ``mew run`` and ``mew compare``.
+    A ``-k`` regex matches against these; the form is the row's ``benchmark``
+    field, so one pattern selects the same set in ``mew run`` and ``mew compare``.
     """
     for i, label in enumerate(entry.case_labels or ()):
         yield i, f"{entry.name}[{label}]"

@@ -276,19 +276,19 @@ def test_load_jsonl_rejects_invalid_line(tmp_path: Path) -> None:
         _load(p, "real_time")
 
 
-@pytest.mark.parametrize("line", ["[1, 2]", '{"context": {}}'])
+@pytest.mark.parametrize("line", ["[1, 2]", '{"context": {}}', '{"name": "no benchmark"}'])
 def test_load_jsonl_rejects_non_row_lines(tmp_path: Path, line: str) -> None:
-    # Pure NDJSON: no header lines, every line is a row with a name.
+    # Pure NDJSON: every line is a row with `name` and `benchmark`.
     p = tmp_path / "a.jsonl"
     p.write_text(json.dumps(_row("b", 1.0)) + "\n" + line + "\n")
-    with pytest.raises(SystemExit, match="a.jsonl:2: expected a benchmark row"):
+    with pytest.raises(SystemExit, match="a.jsonl:2: expected a mew result row"):
         _load(p, "real_time")
 
 
 def test_load_rejects_json_with_non_object_rows(tmp_path: Path) -> None:
     p = tmp_path / "a.json"
     p.write_text('{"context": {}, "benchmarks": [1]}')
-    with pytest.raises(SystemExit, match=r"benchmarks\[0\] is not a JSON object"):
+    with pytest.raises(SystemExit, match=r"benchmarks\[0\]: expected a mew result row"):
         _load(p, "real_time")
 
 
@@ -483,9 +483,9 @@ def test_session_summaries_newest_first(tmp_path: Path) -> None:
         p,
         [
             _row("b", 1.0, date="2026-01-01T00:00:00", session_id="old", host_name="h"),
-            _row("b/case:0", 1.0, label="n=1", session_tag="t", **new),
-            _row("b/case:0", 2.0, label="n=1", session_tag="t", **new),
-            _row("b/case:0_mean", 1.5, aggregate_name="mean", session_tag="t", **new),
+            _row("b/case:0", 1.0, benchmark="b[n=1]", session_tag="t", **new),
+            _row("b/case:0", 2.0, benchmark="b[n=1]", session_tag="t", **new),
+            _row("b/case:0_mean", 1.5, benchmark="b[n=1]", aggregate_name="mean", **new),
         ],
     )
     newest, oldest = session_summaries(p)
@@ -572,49 +572,27 @@ def test_load_renders_case_rows_by_label(tmp_path: Path) -> None:
     _write_json(
         p,
         [
-            _row("bench.py::bench_udf/case:0/min_time:0.200", 10.0, label="n=100"),
-            _row("bench.py::bench_udf/case:1/min_time:0.200", 20.0, label="n=10000"),
+            _row(
+                "bench.py::bench_udf/case:0/min_time:0.200",
+                10.0,
+                benchmark="bench.py::bench_udf[n=100]",
+            ),
+            _row(
+                "bench.py::bench_udf/case:1/min_time:0.200",
+                20.0,
+                benchmark="bench.py::bench_udf[n=10000]",
+            ),
         ],
     )
     samples, _ = _load(p, "real_time")
     assert set(samples) == {"bench.py::bench_udf[n=100]", "bench.py::bench_udf[n=10000]"}
 
 
-def test_load_keeps_case_index_without_label(tmp_path: Path) -> None:
-    p = tmp_path / "a.json"
-    _write_json(p, [_row("bench.py::bench_udf/case:0", 10.0, label="")])
-    samples, _ = _load(p, "real_time")
-    assert set(samples) == {"bench.py::bench_udf/case:0"}
-
-
-def test_load_ignores_label_on_plain_benchmarks(tmp_path: Path) -> None:
-    # set_label() on a non-parametrized benchmark is informational, not identity.
-    p = tmp_path / "a.json"
-    _write_json(p, [_row("bench.py::bench_x", 10.0, label="some note")])
-    samples, _ = _load(p, "real_time")
-    assert set(samples) == {"bench.py::bench_x"}
-
-
-def test_load_strips_option_suffix_chains(tmp_path: Path) -> None:
-    p = tmp_path / "a.json"
-    _write_json(p, [_row("bench.py::bench_x/min_time:0.200/repeats:3/real_time", 10.0)])
-    samples, _ = _load(p, "real_time")
-    assert set(samples) == {"bench.py::bench_x"}
-
-
-def test_load_option_stripping_spares_path_segments(tmp_path: Path) -> None:
-    # `real_time` as a path segment in the registered name is not an option suffix.
-    p = tmp_path / "a.json"
-    _write_json(p, [_row("suites/real_time.py::bench_x", 10.0)])
-    samples, _ = _load(p, "real_time")
-    assert set(samples) == {"suites/real_time.py::bench_x"}
-
-
 def test_compare_aligns_files_run_with_different_min_time(tmp_path: Path) -> None:
     other, base = _write_pair(
         tmp_path,
-        other=[_row("a.py::bench_x/case:0/min_time:0.500", 80.0, label="n=10")],
-        base=[_row("a.py::bench_x/case:0/min_time:0.200", 100.0, label="n=10")],
+        other=[_row("a.py::bench_x/case:0/min_time:0.500", 80.0, benchmark="a.py::bench_x[n=10]")],
+        base=[_row("a.py::bench_x/case:0/min_time:0.200", 100.0, benchmark="a.py::bench_x[n=10]")],
     )
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
@@ -930,21 +908,11 @@ def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
     assert rows[0]["context"]["engine"] == "x"
 
 
-def test_read_results_backfills_from_the_file_block(tmp_path: Path) -> None:
-    """Single-document JSON keeps identity in one block; rows inherit it."""
-    p = tmp_path / "r.json"
-    _write_json(
-        p,
-        [{"name": "b", "real_time": 1.0, "cpu_time": 1.0, "iterations": 1, "aggregate_name": ""}],
-        context={"session": {"id": "s1", "host": "h", "date": "2026-01-01T00:00:00"}},
-    )
-    assert read_results(p)[0]["session"]["id"] == "s1"
-
-
 @pytest.mark.parametrize("family", [False, True])
 def test_thread_counts_remain_distinct_samples(tmp_path: Path, family: bool) -> None:
     path = tmp_path / "threads.json"
     prefix = "b/case:0" if family else "b"
+    base = "b[size=10]" if family else "b"
     _write_json(
         path,
         [
@@ -953,12 +921,12 @@ def test_thread_counts_remain_distinct_samples(tmp_path: Path, family: bool) -> 
                 value,
                 label="size=10" if family else "",
                 threads=n,
+                benchmark=f"{base}/threads:{n}",
             )
             for n, value in [(1, 100), (2, 200), (4, 400)]
         ],
     )
     samples, _ = _load(path, "real_time")
-    base = "b[size=10]" if family else "b"
     assert {name: sample.value for name, sample in samples.items()} == {
         f"{base}/threads:1": 100,
         f"{base}/threads:2": 200,

@@ -248,9 +248,6 @@ def test_product_needs_at_least_one_iterable():
         "a[b",  # case-addressing brackets
         "a]b",
         "a\nb",  # line-oriented list/stdin output
-        "f/min_time:0.5",  # stripped by canonical_name on read
-        "f/case:0",
-        "f/threads:4",
     ],
 )
 def test_benchmark_rejects_structurally_confusing_names(bad):

@@ -40,10 +40,10 @@ $ mew compare --key func ducky.jsonl duckdb.jsonl
 
 If stripping the prefix makes two benchmarks in one file collide, `compare` exits with an error rather than guessing.
 
-Parametrized cases match by their human-readable IDs.
-Thread counts remain distinct (`/threads:1`, `/threads:2`, etc.). Other Google
-Benchmark option suffixes are ignored. Time measurements are converted to a
-common unit before reducing repetitions, including grouped sessions.
+Rows match on their `benchmark` field: parametrized cases by their labels
+(`bench_sort[n=10]`), thread counts as a dimension (`/threads:2`). Per-benchmark
+options such as `min_time` do not affect matching. Time measurements are
+converted to a common unit before reducing repetitions.
 
 ## Context and noise
 

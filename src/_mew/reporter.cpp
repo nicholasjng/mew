@@ -64,7 +64,10 @@ nb::dict profile_block(const Run& r) {
 // Assembled from BenchmarkName's fields, never parsed from its rendering.
 std::string addressable_name(const Run& r) {
     std::string name = r.run_name.function_name;
-    if (r.run_name.args.rfind("case:", 0) == 0) name += "[" + r.report_label + "]";
+    if (r.run_name.args.rfind("case:", 0) == 0 && !r.report_label.empty())
+        name += "[" + r.report_label + "]";
+    else if (!r.run_name.args.empty())
+        name += "/" + r.run_name.args;
     if (!r.run_name.threads.empty()) name += "/" + r.run_name.threads;
     return name;
 }
