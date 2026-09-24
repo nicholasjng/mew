@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -42,66 +41,14 @@ def _fmt_bytes(n: int) -> str:
     return f"{n} B"
 
 
-# Per-benchmark option suffixes GB appends to the name, e.g. `/min_time:0.200`.
-# Anchored to the end (they always follow the function and args parts) so path
-# segments in the registered name can't false-match.
-_OPTION_SUFFIXES_RE = re.compile(
-    r"(?:/(?:min_time:[^/]+|min_warmup_time:[^/]+|iterations:\d+|repeats:\d+"
-    r"|manual_time|process_time|real_time|(?P<threads>threads:\d+)))+$"
-)
-# `/case:N` at the end of a name, or before Google Benchmark's aggregate suffix
-# (`_mean`, `_median`, ...), which it appends *after* the args part.
-_CASE_SUFFIX_RE = re.compile(r"/case:\d+(?=$|_)")
-
-
-def strip_reserved_suffixes(name: str) -> str:
-    """Drop the trailing Google Benchmark option/case suffixes from ``name``.
-
-    The half of :func:`canonical_name` that does not need a label, so
-    :mod:`mew.api` can reject a registered name that would be silently regrouped
-    when results are read back, without restating the grammar.
-    """
-    return _CASE_SUFFIX_RE.sub("", _OPTION_SUFFIXES_RE.sub("", name))
-
-
-def canonical_name(name: str, label: Any) -> str:
-    """Strip GB option suffixes and render a parametrize case by its human label.
-
-    ``bench.py::f/case:0/min_time:0.200`` with label ``n=10000`` becomes
-    ``bench.py::f[n=10000]``. The regex fallback behind :func:`canonical_row_name`
-    for rows without a ``benchmark`` stamp; the stored ``name`` stays the raw GB name.
-
-    An aggregate row's ``_mean``/``_median``/… suffix is preserved, so it stays
-    distinguishable from the per-repetition rows it summarizes:
-    ``bench.py::f/case:0_mean`` becomes ``bench.py::f[n=10000]_mean``.
-    """
-    # Thread count is a benchmark dimension, unlike timing configuration.
-    # Extract it before stripping options so cases remain addressable by label.
-    options = _OPTION_SUFFIXES_RE.search(name)
-    threads = options.group("threads") if options else None
-    thread_suffix = f"/{threads}" if threads else ""
-    if options:
-        name = name[: options.start()]
-    if label and isinstance(label, str) and (m := _CASE_SUFFIX_RE.search(name)):
-        # Rebuild rather than substitute: the label bracket replaces the case
-        # index in place, keeping any aggregate suffix trailing it.
-        return f"{name[: m.start()]}[{label}]{name[m.end() :]}{thread_suffix}"
-    return name + thread_suffix
-
-
 def canonical_row_name(row: Mapping[str, Any]) -> str:
-    """The display name of a stored row.
+    """The display name of a stored row: its ``benchmark`` plus any aggregate suffix."""
+    aggregate = row.get("aggregate_name")
+    return f"{row['benchmark']}_{aggregate}" if aggregate else row["benchmark"]
 
-    Rows written by mew 0.2+ carry ``benchmark``, the addressable name mew
-    stamped at run time; an aggregate row appends its ``_mean``/``_median``
-    suffix. Older rows fall back to parsing GB's rendered name.
-    """
-    benchmark = row.get("benchmark")
-    if isinstance(benchmark, str):
-        aggregate = row.get("aggregate_name")
-        return f"{benchmark}_{aggregate}" if aggregate else benchmark
-    return canonical_name(row["name"], row.get("label"))
 
+# Stamped onto every row so each one stands alone, in JSON and JSONL alike.
+_ROW_STAMP_FIELDS = ("session", "context")
 
 # Closing `]}` of the streamed doc, written once at finalize (GB-style).
 _JSON_CLOSER = "\n  ]\n}\n"
@@ -132,8 +79,10 @@ def _close_sink(fh: TextIO | None, owns_fh: bool) -> None:
 
 
 class JSONReporter:
-    """Stream one ``{"context": ..., "benchmarks": [...]}`` document.
+    """Stream one ``{"session": ..., "context": ..., "benchmarks": [...]}`` document.
 
+    Rows carry ``session`` and ``context`` themselves, exactly as
+    :class:`JSONLReporter` writes them; the header repeats them for readers.
     The document becomes valid JSON when :meth:`finalize` completes. Use
     :class:`JSONLReporter` for an interruption-safe stream.
 
@@ -149,14 +98,19 @@ class JSONReporter:
         self._fh: TextIO | None = None
         self._owns_fh = False
         self._first_row = True
+        self._stamp: dict[str, Any] = {}
 
     def report_context(self, context: dict[str, Any]) -> None:
         self._fh, self._owns_fh = _open_sink(self._output)
         # Reset comma state when the reporter is reused.
         self._first_row = True
+        self._stamp = {k: context[k] for k in _ROW_STAMP_FIELDS if k in context}
         # default=str: don't crash on Path/datetime; lossy by design.
-        ctx = _indent_block(json.dumps(context, indent=2, default=str), 2)
-        self._fh.write('{\n  "context": ' + ctx + ',\n  "benchmarks": [')
+        header = "".join(
+            f'  "{key}": {_indent_block(json.dumps(value, indent=2, default=str), 2)},\n'
+            for key, value in context.items()
+        )
+        self._fh.write("{\n" + header + '  "benchmarks": [')
         self._fh.flush()
 
     def report_runs(self, runs: list[BenchmarkResult]) -> None:
@@ -164,7 +118,7 @@ class JSONReporter:
         for row in runs:
             prefix = "" if self._first_row else ","
             self._first_row = False
-            rendered = _indent_block(json.dumps(row, indent=2, default=str), 4)
+            rendered = _indent_block(json.dumps({**self._stamp, **row}, indent=2, default=str), 4)
             self._fh.write(f"{prefix}\n    {rendered}")
         self._fh.flush()
 
@@ -177,16 +131,11 @@ class JSONReporter:
         self._owns_fh = False
 
 
-# Stamped onto every JSONL row so each line stands alone.
-_ROW_STAMP_FIELDS = ("session", "context")
-
-
 class JSONLReporter:
     """Stream one self-contained JSON object per Run, one per line, flushed as runs land.
 
-    Append-only, so it works on pipes and survives interruption. Every row carries
-    its own session identity, making the file plain NDJSON (see
-    docs/guide/reporters.md for querying it).
+    Append-only, so it works on pipes and survives interruption.
+    Plain NDJSON; see docs/guide/reporters.md for querying it.
 
     Parameters
     ----------

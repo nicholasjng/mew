@@ -68,6 +68,7 @@ def row(name: str, real_time: float, **extra: Any) -> dict:
     context = extra.pop("custom", None)
     out: dict[str, Any] = {
         "name": name,
+        "benchmark": name,  # pass benchmark= for family / threaded rows
         "real_time": real_time,
         "cpu_time": real_time,
         "iterations": 1000,
@@ -81,9 +82,19 @@ def row(name: str, real_time: float, **extra: Any) -> dict:
     return {**out, **extra}
 
 
+def _stamp(context: dict | None) -> dict:
+    return {k: v for k, v in (context or {}).items() if k in ("session", "context")}
+
+
 def write_json(path: Path, benches: list[dict], context: dict | None = None) -> None:
-    """Write a single-document JSON result file (the JSONReporter shape)."""
-    path.write_text(json.dumps({"context": context or {}, "benchmarks": benches}))
+    """Write a single-document JSON result file (the JSONReporter shape).
+
+    ``context`` plays the role of the run's ``session`` / ``context`` blocks:
+    they head the document and are stamped onto rows that lack them.
+    """
+    stamp = _stamp(context)
+    doc = {**stamp, "benchmarks": [{**stamp, **b} for b in benches]}
+    path.write_text(json.dumps(doc))
 
 
 def write_jsonl(path: Path, benches: list[dict], context: dict | None = None) -> None:
@@ -92,7 +103,7 @@ def write_jsonl(path: Path, benches: list[dict], context: dict | None = None) ->
     ``context`` plays the role of the JSON document's file-level block: its
     ``session`` / ``context`` keys are stamped onto rows that lack them.
     """
-    stamp = {k: v for k, v in (context or {}).items() if k in ("session", "context")}
+    stamp = _stamp(context)
     lines = [json.dumps({**stamp, **b}) for b in benches]
     path.write_text("\n".join(lines) + "\n")
 

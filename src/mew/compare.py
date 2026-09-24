@@ -449,9 +449,9 @@ def compare(
     # baseline"), while `_render` expects columns[0] to be the baseline.
     ordered = [parsed[-1], *parsed[:-1]]
     # Two selectors on one archive must not parse it twice.
-    parsed_files: dict[Path, tuple[list[dict[str, Any]], dict[str, Any]]] = {}
+    parsed_files: dict[Path, list[dict[str, Any]]] = {}
 
-    def read_once(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    def read_once(path: Path) -> list[dict[str, Any]]:
         if path not in parsed_files:
             parsed_files[path] = _read_rows(path)
         return parsed_files[path]

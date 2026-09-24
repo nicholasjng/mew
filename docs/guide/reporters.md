@@ -14,8 +14,9 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
   `--profile-memory` / `--sample`.
 
 {class}`~mew.JSONReporter`
-: Streams one `{"context": ..., "benchmarks": [...]}` document. It becomes
-  valid JSON at `finalize()`. Pass a path, text stream, or omit for stdout.
+: Streams one `{"session": ..., "context": ..., "benchmarks": [...]}` document
+  whose rows are the same self-contained objects JSONL writes. It becomes valid
+  JSON at `finalize()`. Pass a path, text stream, or omit for stdout.
 
 {class}`~mew.JSONLReporter`
 : Streams self-contained NDJSON rows. Use it for append-only or
@@ -27,8 +28,7 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
 ## Reading results back
 
 {func}`mew.compare.read_results` returns every stored row of a JSON, JSONL, or
-gzip-compressed result file, with a JSON document's file-level `session` and
-`context` copied onto rows that lack them. {func}`mew.compare.session_summaries`
+gzip-compressed result file. {func}`mew.compare.session_summaries`
 lists the sessions a file holds, newest first (what `mew sessions` prints).
 
 ```python

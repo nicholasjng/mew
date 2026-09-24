@@ -17,7 +17,6 @@ else:
 from mew._core import TimeUnit
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
-from mew.reporter import strip_reserved_suffixes
 
 _REGISTERED_ATTR = "__mew_registered__"
 
@@ -117,19 +116,6 @@ def _check_addressable(text: str, what: str) -> None:
             raise ValueError(f"{what} {text!r} must not contain {bad!r}; {why}")
 
 
-def _check_name(name: str) -> None:
-    _check_addressable(name, "benchmark name")
-    # canonical_name strips these when results are read back, so the benchmark
-    # would silently regroup under the stripped name in compare/display.
-    stripped = strip_reserved_suffixes(name)
-    if stripped != name:
-        raise ValueError(
-            f"benchmark name {name!r} ends in a Google Benchmark option/case "
-            f"suffix, which mew strips when reading results (regrouping it as "
-            f"{stripped!r}); pick a name without a reserved trailing suffix"
-        )
-
-
 def _normalize_tags(tags: Iterable[str] | str | None) -> frozenset[str]:
     if not tags:
         return frozenset()
@@ -202,8 +188,8 @@ def benchmark(
         immediately; omit to apply options first (``@benchmark(min_time=...)``).
     name : str, optional
         Override the auto-derived ``path/to/file.py::qualname`` registration name.
-        Must not contain ``::``, ``[``/``]``, or newlines, or end in a Google
-        Benchmark option suffix; these collide with how names are addressed.
+        Must not contain ``::``, ``[``/``]``, or newlines; these collide with
+        how names are addressed.
     tags : Iterable[str] or str, optional
         Labels used by ``mew run --tag <name>`` for filtering. A single string is one tag.
     **options
@@ -232,7 +218,7 @@ def benchmark(
     """
     norm_options = _normalize_options(options)
     if name is not None:
-        _check_name(name)
+        _check_addressable(name, "benchmark name")
     norm_tags = _normalize_tags(tags)
 
     def deco(target: BenchmarkFn) -> BenchmarkFn:
@@ -272,7 +258,7 @@ def _register_family(
     if not variants:
         raise ValueError("parametrize/product needs at least one case")
     if name is not None:
-        _check_name(name)
+        _check_addressable(name, "benchmark name")
 
     file = _source_file(target)
     base_name = name or _qualified_name(target, file)

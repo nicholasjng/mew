@@ -169,7 +169,7 @@ def test_json_reporter_emits_custom_context(tmp_path: Path):
         reporter=JSONReporter(output=out),
     )
     doc = json.loads(out.read_text())
-    assert doc["context"]["context"]["dataset"] == {"size": 1024}
+    assert doc["context"]["dataset"] == {"size": 1024}
 
 
 def test_json_reporter_handles_non_serializable_via_default(tmp_path: Path):
@@ -188,4 +188,4 @@ def test_json_reporter_handles_non_serializable_via_default(tmp_path: Path):
     doc = json.loads(out.read_text())
     # Path stringifies via default=str — lossy but doesn't crash.
     expected_val = "/tmp/something" if sys.platform != "win32" else "\\tmp\\something"
-    assert doc["context"]["context"]["path"] == expected_val
+    assert doc["context"]["path"] == expected_val
