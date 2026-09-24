@@ -38,7 +38,13 @@ def _caller_frame() -> Frame:
 
 @dataclass(frozen=True, slots=True)
 class _RootedRecord:
-    """A memray allocation record rooted at its benchmark frame."""
+    """A memray allocation record with the benchmark frame appended as its root.
+
+    memray records only frames entered after tracking started. Google Benchmark
+    starts the memory manager inside the benchmark body, so an allocation made
+    directly in the body has an empty stack; re-rooting puts the benchmark back
+    so a combined flame graph can tell captures apart.
+    """
 
     size: int
     n_allocations: int

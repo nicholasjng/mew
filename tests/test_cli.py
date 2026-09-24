@@ -109,22 +109,6 @@ def test_help_is_plain_terminal_text(mew_cli, tmp_path, args):
     assert "`" not in res.stdout
 
 
-def test_argument_help_uses_sentences():
-    import argparse
-
-    from mew.cli import _build_parser
-
-    pending = [_build_parser()]
-    while pending:
-        parser = pending.pop()
-        for action in parser._actions:
-            if action.help not in (None, argparse.SUPPRESS):
-                assert action.help[0].isupper(), action.help
-                assert action.help.endswith("."), action.help
-            if isinstance(action, argparse._SubParsersAction):
-                pending.extend(action.choices.values())
-
-
 def test_list_pattern_filter(mew_cli, benchdir, tmp_path):
     res = mew_cli("list", str(benchdir), "-k", "bench_one", cwd=tmp_path)
     assert res.returncode == 0

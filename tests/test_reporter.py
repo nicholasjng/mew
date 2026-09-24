@@ -423,3 +423,40 @@ def test_canonical_row_name_appends_the_aggregate_suffix():
     row = {"name": "b.py::f/case:0/threads:2", "benchmark": "b.py::f[n=10]/threads:2"}
     assert canonical_row_name(row) == "b.py::f[n=10]/threads:2"
     assert canonical_row_name({**row, "aggregate_name": "mean"}) == "b.py::f[n=10]/threads:2_mean"
+
+
+def test_to_dict_serializes_enums_as_plain_strings(tmp_path):
+    """BenchmarkResult carries strings, not bound enums: a leaked `Run.time_unit` would be
+    archived as "TimeUnit.ns"."""
+
+    @mew.benchmark(unit="us")
+    def bench_units(state):
+        for _ in state:
+            pass
+
+    out = tmp_path / "out.json"
+    mew.run(min_time="1x", repetitions=2, reporter=JSONReporter(output=out))
+    for bench in json.loads(out.read_text())["benchmarks"]:
+        assert bench["time_unit"] == "us"
+        assert bench["run_type"] in ("iteration", "aggregate")
+
+
+def test_json_rows_carry_the_document_header(tmp_path):
+    """JSON rows are the same self-contained objects JSONL writes; the header
+    repeats `session` / `context` for readers."""
+    mew.set_context("build", "asan")
+
+    @mew.benchmark
+    def bench_ctx(state):
+        for _ in state:
+            pass
+
+    out = tmp_path / "out.json"
+    mew.run(min_time="1x", repetitions=2, reporter=JSONReporter(output=out))
+    doc = json.loads(out.read_text())
+    assert doc["context"]["build"] == "asan"
+    assert doc["session"]["id"]
+    assert doc["benchmarks"]
+    for bench in doc["benchmarks"]:
+        assert bench["context"] == doc["context"]
+        assert bench["session"] == doc["session"]

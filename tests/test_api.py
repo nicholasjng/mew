@@ -366,47 +366,24 @@ def test_product_signature_covers_all_benchmark_options():
     assert _OptionKeys <= params
 
 
-def test_benchmark_tags_propagate():
-    @mew.benchmark(tags=("io", "slow"))
-    def bench_x(state):
+@pytest.mark.parametrize(
+    ("decorate", "tags", "expected"),
+    [
+        (mew.benchmark, ("io", "slow"), frozenset({"io", "slow"})),
+        (mew.benchmark, "io", frozenset({"io"})),
+        (mew.benchmark, None, frozenset()),
+        (lambda **kw: mew.parametrize([{"n": 1}, {"n": 2}], **kw), ("sort",), frozenset({"sort"})),
+        (
+            lambda **kw: mew.product(n=[1, 2], algo=["a", "b"], **kw),
+            ("sort", "heavy"),
+            frozenset({"sort", "heavy"}),
+        ),
+    ],
+)
+def test_tags_normalize_to_a_frozenset_on_every_decorator(decorate, tags, expected):
+    @decorate(**({} if tags is None else {"tags": tags}))
+    def bench_x(state, **_):
         for _ in state:
             pass
 
-    entry = REGISTRY.all()[0]
-    assert entry.tags == frozenset({"io", "slow"})
-
-
-def test_benchmark_tags_accepts_single_string():
-    @mew.benchmark(tags="io")
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    assert REGISTRY.all()[0].tags == frozenset({"io"})
-
-
-def test_parametrize_tags_apply_to_all_variants():
-    @mew.parametrize([{"n": 1}, {"n": 2}], tags=("sort",))
-    def bench_x(state, n):
-        for _ in state:
-            pass
-
-    assert all(e.tags == frozenset({"sort"}) for e in REGISTRY.all())
-
-
-def test_product_tags_apply_to_all_variants():
-    @mew.product(n=[1, 2], algo=["a", "b"], tags=("sort", "heavy"))
-    def bench_x(state, n, algo):
-        for _ in state:
-            pass
-
-    assert all(e.tags == frozenset({"sort", "heavy"}) for e in REGISTRY.all())
-
-
-def test_empty_tags_normalize_to_empty_frozenset():
-    @mew.benchmark
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    assert REGISTRY.all()[0].tags == frozenset()
+    assert all(e.tags == expected for e in REGISTRY.all())
