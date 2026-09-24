@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import shutil
 import subprocess
@@ -10,10 +11,11 @@ import uuid
 from pathlib import Path
 
 import pytest
+from _helpers import row
 
 import mew
 from mew._session import new_session_id
-from mew.compare import session_summaries
+from mew.compare import read_results, session_summaries
 from mew.reporter import JSONLReporter, JSONReporter
 from mew.vcs import vcs_context
 
@@ -179,6 +181,25 @@ def test_jsonl_rows_are_self_contained(tmp_path: Path):
     assert row["session"]["host"] and row["session"]["date"]
 
 
+@pytest.mark.parametrize("compressed", [False, True])
+def test_jsonl_rows_read_back_without_a_header(tmp_path: Path, compressed: bool):
+    path = tmp_path / ("sessions.jsonl.gz" if compressed else "sessions.jsonl")
+    rows = [
+        row("first", 2, session_id="first"),
+        row("second", 3, session_id="second", custom={"engine": "second"}),
+    ]
+    text = "\n".join(json.dumps(r) for r in rows) + "\n"
+    if compressed:
+        with gzip.open(path, "wt") as fh:
+            fh.write(text)
+    else:
+        path.write_text(text)
+    assert {s.id for s in session_summaries(path)} == {"first", "second"}
+    by_id = {r["session"]["id"]: r for r in read_results(path)}
+    assert "context" not in by_id["first"]
+    assert by_id["second"]["context"] == {"engine": "second"}
+
+
 def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
     """A reporter driven without mew.run has no identity: the block is passed
     through untouched, so nothing invents a session."""
@@ -191,13 +212,15 @@ def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
     assert json.loads(out.read_text())["context"] == {"num_cpus": 4}
 
 
-def test_jsonl_append_makes_two_sessions(tmp_path: Path):
+# A gzip archive gains a new member per --append; readers see one stream.
+@pytest.mark.parametrize("suffix", [".jsonl", ".jsonl.gz"])
+def test_jsonl_append_makes_two_sessions(tmp_path: Path, suffix: str):
     @mew.benchmark
     def bench_s(state):
         for _ in state:
             pass
 
-    out = tmp_path / "acc.jsonl"
+    out = tmp_path / f"acc{suffix}"
     mew.run(
         min_time="1x",
         reporter=JSONLReporter(output=out),
@@ -215,31 +238,6 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path):
     assert len(sessions) == 2
     assert {s.tag for s in sessions} == {"before", "after"}
     assert len({s.id for s in sessions}) == 2
-
-
-def test_jsonl_gz_append_concatenates_sessions(tmp_path: Path):
-    # Gzip archive: each --append run writes a new gzip member; readers see
-    # one stream, compare sees two sessions.
-    @mew.benchmark
-    def bench_s(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "acc.jsonl.gz"
-    mew.run(
-        min_time="1x",
-        reporter=JSONLReporter(output=out),
-        session_tag="before",
-    )
-    mew.run(
-        min_time="1x",
-        reporter=JSONLReporter(output=out, append=True),
-        session_tag="after",
-    )
-
-    sessions = session_summaries(out)
-    assert len(sessions) == 2
-    assert {s.tag for s in sessions} == {"before", "after"}
 
 
 def test_cli_append_rejected_for_json(tmp_path: Path):

@@ -17,86 +17,42 @@ from mew.regressions import (
     render_panel,
 )
 
-
-def test_evaluate_within_threshold() -> None:
-    cfg = RegressionConfig(default_threshold=5.0)
-    v = cfg.evaluate("b", 3.0)
-    assert v.verdict is Verdict.OK
-    assert v.rule is None
+_NOISY = AllowRule(pattern="b*", reason="noisy", threshold=20.0)
+_TIGHT = AllowRule(pattern="b*", reason="hot path", threshold=2.0)
+_IGNORE = AllowRule(pattern="b*", reason="flaky", ignore=True)
 
 
-def test_evaluate_regressed() -> None:
-    cfg = RegressionConfig(default_threshold=5.0)
-    assert cfg.evaluate("b", 10.0).verdict is Verdict.REGRESSED
-
-
-def test_evaluate_ignored_rule() -> None:
-    rule = AllowRule(pattern="b*", reason="flaky", ignore=True)
-    cfg = RegressionConfig(default_threshold=5.0, rules=(rule,))
-    v = cfg.evaluate("bench_x", 50.0)
-    assert v.verdict is Verdict.IGNORED
+@pytest.mark.parametrize(
+    ("rule", "delta_pct", "higher_is_better", "verdict"),
+    [
+        # No rule: the 5% default gates on strict `>`.
+        (None, 3.0, False, Verdict.OK),
+        (None, 5.0, False, Verdict.OK),
+        (None, 5.001, False, Verdict.REGRESSED),
+        (None, 10.0, False, Verdict.REGRESSED),
+        # A rule raising the bar to 20%: over the default but within the rule warns,
+        # over the rule fails; the allowance is not an unlimited escape hatch.
+        (_NOISY, 3.0, False, Verdict.OK),
+        (_NOISY, 5.0, False, Verdict.OK),
+        (_NOISY, 15.0, False, Verdict.ALLOWED_OVER),
+        (_NOISY, 20.0, False, Verdict.ALLOWED_OVER),
+        (_NOISY, 20.001, False, Verdict.REGRESSED),
+        (_NOISY, 25.0, False, Verdict.REGRESSED),
+        # A rule may tighten below the default.
+        (_TIGHT, 1.0, False, Verdict.OK),
+        (_TIGHT, 3.0, False, Verdict.REGRESSED),
+        # An ignore rule takes the benchmark out of scope however far it moved.
+        (_IGNORE, 50.0, False, Verdict.IGNORED),
+        # Higher-is-better metrics invert the direction.
+        (None, -10.0, True, Verdict.REGRESSED),
+        (None, 10.0, True, Verdict.OK),
+    ],
+)
+def test_evaluate_verdicts(rule, delta_pct, higher_is_better, verdict) -> None:
+    cfg = RegressionConfig(default_threshold=5.0, rules=(rule,) if rule else ())
+    v = cfg.evaluate("bench_x", delta_pct, higher_is_better=higher_is_better)
+    assert v.verdict is verdict
     assert v.rule is rule
-
-
-def test_evaluate_per_rule_threshold_under() -> None:
-    rule = AllowRule(pattern="b*", reason="noisy", threshold=20.0)
-    cfg = RegressionConfig(default_threshold=5.0, rules=(rule,))
-    # Under the rule's raised threshold but over the default: soft warning.
-    v = cfg.evaluate("bench_x", 15.0)
-    assert v.verdict is Verdict.ALLOWED_OVER
-    assert v.rule is rule
-    # Under both thresholds: plain OK.
-    assert cfg.evaluate("bench_x", 3.0).verdict is Verdict.OK
-
-
-def test_evaluate_per_rule_threshold_over() -> None:
-    rule = AllowRule(pattern="b*", reason="noisy", threshold=20.0)
-    cfg = RegressionConfig(default_threshold=5.0, rules=(rule,))
-    # Over even the rule's raised threshold: the allowance is exhausted, so the
-    # gate must fail — a raised threshold is not an unlimited escape hatch.
-    v = cfg.evaluate("bench_x", 25.0)
-    assert v.verdict is Verdict.REGRESSED
-    assert v.rule is rule
-
-
-def test_evaluate_tightened_rule_threshold() -> None:
-    # A rule may also tighten the threshold below the default.
-    rule = AllowRule(pattern="b*", reason="hot path", threshold=2.0)
-    cfg = RegressionConfig(default_threshold=5.0, rules=(rule,))
-    assert cfg.evaluate("bench_x", 3.0).verdict is Verdict.REGRESSED
-    assert cfg.evaluate("bench_x", 1.0).verdict is Verdict.OK
-
-
-def test_evaluate_at_default_threshold_boundary_is_ok() -> None:
-    # `evaluate` gates on strict `>`, so sitting exactly on the threshold must
-    # still be OK; only crossing it regresses.
-    cfg = RegressionConfig(default_threshold=5.0)
-    assert cfg.evaluate("b", 5.0).verdict is Verdict.OK
-    assert cfg.evaluate("b", 5.001).verdict is Verdict.REGRESSED
-
-
-def test_evaluate_at_rule_threshold_boundary_is_allowed_over_not_regressed() -> None:
-    rule = AllowRule(pattern="b*", reason="noisy", threshold=20.0)
-    cfg = RegressionConfig(default_threshold=5.0, rules=(rule,))
-    # Exactly at the rule's raised threshold: the allowance still covers it.
-    v = cfg.evaluate("bench_x", 20.0)
-    assert v.verdict is Verdict.ALLOWED_OVER
-    # One step over: allowance exhausted.
-    assert cfg.evaluate("bench_x", 20.001).verdict is Verdict.REGRESSED
-
-
-def test_evaluate_at_default_threshold_boundary_with_rule_is_ok() -> None:
-    # The ALLOWED_OVER branch itself gates on `magnitude > default_threshold`;
-    # sitting exactly on the default with a raised rule threshold must stay OK.
-    rule = AllowRule(pattern="b*", reason="noisy", threshold=20.0)
-    cfg = RegressionConfig(default_threshold=5.0, rules=(rule,))
-    assert cfg.evaluate("bench_x", 5.0).verdict is Verdict.OK
-
-
-def test_evaluate_iterations_higher_is_better() -> None:
-    cfg = RegressionConfig(default_threshold=5.0)
-    assert cfg.evaluate("b", -10.0, higher_is_better=True).verdict is Verdict.REGRESSED
-    assert cfg.evaluate("b", +10.0, higher_is_better=True).verdict is Verdict.OK
 
 
 def test_first_matching_rule_wins() -> None:

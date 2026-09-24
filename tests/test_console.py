@@ -1,43 +1,31 @@
-"""Tests for `mew._console`'s truncation helpers and `Table` rendering.
-
-These are the primitives behind the "reporter: properly truncate rows" fix
-(commit df346b6); they had no direct test coverage before this file.
-"""
+"""Tests for `mew._console`'s truncation helpers and `Table` rendering."""
 
 from __future__ import annotations
+
+import pytest
 
 from mew._console import Table, Terminal, _truncate_left, _truncate_right
 
 
-def test_truncate_left_no_op_when_text_fits() -> None:
-    assert _truncate_left("short", 10) == "short"
-    assert _truncate_left("exact", 5) == "exact"
-
-
-def test_truncate_left_keeps_suffix_with_ellipsis_prefix() -> None:
-    assert _truncate_left("bench_the_actual_function", 10) == "…_function"
-    assert len(_truncate_left("bench_the_actual_function", 10)) == 10
-
-
-def test_truncate_left_width_one_or_less_has_no_room_for_ellipsis() -> None:
-    # Too narrow to fit an ellipsis at all: fall back to a bare slice.
-    assert _truncate_left("abcdef", 1) == "a"
-    assert _truncate_left("abcdef", 0) == ""
-
-
-def test_truncate_right_no_op_when_text_fits() -> None:
-    assert _truncate_right("short", 10) == "short"
-    assert _truncate_right("exact", 5) == "exact"
-
-
-def test_truncate_right_keeps_prefix_with_ellipsis_suffix() -> None:
-    assert _truncate_right("some-long-variant-name", 10) == "some-long…"
-    assert len(_truncate_right("some-long-variant-name", 10)) == 10
-
-
-def test_truncate_right_width_one_or_less_has_no_room_for_ellipsis() -> None:
-    assert _truncate_right("abcdef", 1) == "a"
-    assert _truncate_right("abcdef", 0) == ""
+@pytest.mark.parametrize(
+    ("truncate", "text", "width", "expected"),
+    [
+        (_truncate_left, "short", 10, "short"),
+        (_truncate_left, "exact", 5, "exact"),
+        (_truncate_left, "bench_the_actual_function", 10, "…_function"),
+        # Too narrow for an ellipsis: a bare slice.
+        (_truncate_left, "abcdef", 1, "a"),
+        (_truncate_left, "abcdef", 0, ""),
+        (_truncate_right, "short", 10, "short"),
+        (_truncate_right, "exact", 5, "exact"),
+        (_truncate_right, "some-long-case-label", 10, "some-long…"),
+        (_truncate_right, "abcdef", 1, "a"),
+        (_truncate_right, "abcdef", 0, ""),
+    ],
+)
+def test_truncate(truncate, text, width, expected) -> None:
+    assert truncate(text, width) == expected
+    assert len(truncate(text, width)) <= max(width, 0)
 
 
 def test_table_flex_column_left_ellipsizes_when_width_forces_narrowing() -> None:

@@ -7,6 +7,7 @@ both consume it.
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
 from pathlib import Path
@@ -16,11 +17,7 @@ from mew._console import Terminal
 
 
 class Console(Terminal):
-    """A capture terminal: renders into a buffer, color off.
-
-    Mirrors the ``export_text()`` shape of rich's recording console, which
-    these tests were originally written against.
-    """
+    """A capture terminal: renders into a buffer, color off."""
 
     def __init__(self, *, width: int = 80) -> None:
         self._buf = io.StringIO()
@@ -104,8 +101,12 @@ def write_jsonl(path: Path, benches: list[dict], context: dict | None = None) ->
     ``session`` / ``context`` keys are stamped onto rows that lack them.
     """
     stamp = _stamp(context)
-    lines = [json.dumps({**stamp, **b}) for b in benches]
-    path.write_text("\n".join(lines) + "\n")
+    text = "".join(json.dumps({**stamp, **b}) + "\n" for b in benches)
+    if path.name.endswith(".gz"):
+        with gzip.open(path, "wt") as fh:
+            fh.write(text)
+    else:
+        path.write_text(text)
 
 
 def write_pair(
@@ -122,7 +123,7 @@ def write_pair(
     Returned in ``compare([other, base])`` argument order (the CLI convention:
     baseline last), so call sites read ``other, base = write_pair(...)``.
     """
-    writer = write_jsonl if suffix.endswith(".jsonl") else write_json
+    writer = write_jsonl if suffix.startswith(".jsonl") else write_json
     other_path = tmp_path / f"other{suffix}"
     base_path = tmp_path / f"base{suffix}"
     writer(other_path, other, context=other_context)

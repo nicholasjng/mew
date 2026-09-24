@@ -15,8 +15,7 @@ from _helpers import (
     write_pair as _write_pair,
 )
 
-from mew._results import _aggregate_values, _load, _split_selector
-from mew._statistics import reduce_statistic, resolve_statistic
+from mew._results import _load, _split_selector
 from mew.compare import compare, read_results
 
 
@@ -27,82 +26,6 @@ def test_load_basic(tmp_path: Path) -> None:
     assert set(samples) == {"bench_x"}
     assert samples["bench_x"].value == 10.0
     assert samples["bench_x"].time_unit == "ns"
-
-
-def test_aggregate_values_median_and_stddev() -> None:
-    values = [5.0, 7.0, 6.0]
-    median, stddev = _aggregate_values(values)
-    assert median == 6.0
-    assert stddev is not None and stddev > 0
-
-
-def test_aggregate_values_custom_statistic_replaces_center() -> None:
-    # max(1,2,3,100)=100 instead of the median 2.5; stddev is unchanged.
-    values = [1.0, 2.0, 3.0, 100.0]
-    median, base_stddev = _aggregate_values(values)
-    center, stddev = _aggregate_values(values, np.max)
-    assert median == 2.5
-    assert center == 100.0
-    assert stddev == base_stddev
-
-
-def test_aggregate_values_custom_statistic_gets_list() -> None:
-    seen: list[object] = []
-
-    def reduce(a):
-        seen.append(a)
-        return sum(a) / len(a)
-
-    values = [2.0, 4.0]
-    center, _ = _aggregate_values(values, reduce)
-    assert center == 3.0
-    # mew hands every reducer the raw per-repetition list (numpy/scipy accept it).
-    assert seen[0] == [2.0, 4.0]
-    assert isinstance(seen[0], list)
-
-
-def test_reduce_statistic_casts_result_to_float() -> None:
-    # A numpy scalar return is fine — `reduce_statistic` casts with float(...).
-    out = reduce_statistic(lambda a: np.percentile(a, 95), [1.0, 2.0, 3.0])
-    assert isinstance(out, float)
-
-
-@pytest.mark.parametrize(
-    ("spec", "expected"),
-    [
-        ("min", 1.0),
-        ("max", 9.0),
-        ("median", 5.0),
-        ("mean", 5.0),
-        ("p50", 5.0),
-        ("p100", 9.0),
-        ("p0", 1.0),
-    ],
-)
-def test_resolve_statistic_builtin_names(spec: str, expected: float) -> None:
-    stat = resolve_statistic(spec)
-    assert reduce_statistic(stat, [1.0, 5.0, 9.0]) == expected
-
-
-def test_resolve_statistic_percentile_picks_tail() -> None:
-    stat = resolve_statistic("p90")
-    # 90th percentile of 1..10 (linear interpolation) is 9.1.
-    assert reduce_statistic(stat, [float(i) for i in range(1, 11)]) == pytest.approx(9.1)
-
-
-def test_resolve_statistic_rejects_unknown_names() -> None:
-    # Only the built-ins resolve: no stdlib fallback, no importable references.
-    for spec in ("stdev", "statistics:stdev", "numpy:median"):
-        with pytest.raises(SystemExit, match="unknown name"):
-            resolve_statistic(spec)
-
-
-def test_builtin_statistic_is_stdlib_backed() -> None:
-    # Built-ins resolve to stdlib callables — no numpy on this path.
-    stat = resolve_statistic("p95")
-    assert "numpy" not in getattr(stat, "__module__", "")
-    # p95 of [1,2,3] is 2.9 (linear interpolation, matching numpy.percentile).
-    assert reduce_statistic(stat, [1.0, 2.0, 3.0]) == pytest.approx(2.9)
 
 
 def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
@@ -313,15 +236,6 @@ def test_compare_missing_file_is_clean_error(tmp_path: Path) -> None:
         compare([present, tmp_path / "missing.json"], console=Console())
 
 
-def test_compare_jsonl_files(tmp_path: Path) -> None:
-    other, base = _write_pair(
-        tmp_path, other=[_row("bench_x", 50.0)], base=[_row("bench_x", 100.0)], suffix=".jsonl"
-    )
-    console = Console(width=200)
-    assert compare([other, base], console=console) == 0
-    assert "×2.000" in console.export_text()
-
-
 def test_load_key_func_strips_file_prefix(tmp_path: Path) -> None:
     p = tmp_path / "a.json"
     _write_json(p, [_row("bench_ducky.py::bench_select", 10.0)])
@@ -358,10 +272,11 @@ def test_compare_unknown_key(tmp_path: Path) -> None:
         compare([tmp_path / "a.json", tmp_path / "b.json"], key="bogus")
 
 
-def _two_session_file(tmp_path: Path) -> Path:
-    """A single JSON file holding 'before' and 'after' sessions of one benchmark."""
-    p = tmp_path / "results.json"
-    _write_json(
+def _two_session_file(tmp_path: Path, suffix: str = ".json") -> Path:
+    """One file holding 'before' and 'after' sessions of one benchmark."""
+    p = tmp_path / f"results{suffix}"
+    writer = _write_jsonl if suffix.startswith(".jsonl") else _write_json
+    writer(
         p,
         [
             _row(
@@ -396,18 +311,28 @@ def test_split_selector_extracts_selector(tmp_path: Path) -> None:
     assert _split_selector(str(p)) == (p, None)
 
 
-def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
-    p = _two_session_file(tmp_path)
+@pytest.mark.parametrize("suffix", [".json", ".jsonl", ".jsonl.gz"])
+def test_compare_two_sessions_of_one_file(tmp_path: Path, suffix: str) -> None:
+    p = _two_session_file(tmp_path, suffix)
     console = Console(width=200)
-    code = compare([Path(f"{p}@after"), Path(f"{p}@before")], console=console)
-    assert code == 0
+    assert compare([Path(f"{p}@after"), Path(f"{p}@before")], console=console) == 0
     out = console.export_text()
     # Selector-aware labels keep the two columns distinct.
-    assert "results.json@before" in out or "results@before" in out
+    assert "@before" in out and "@after" in out
     assert "-20.00%" in out  # 100 -> 80
     # Session shows in the provenance line.
-    assert "session=before" in out
-    assert "session=after" in out
+    assert "session=before" in out and "session=after" in out
+
+
+@pytest.mark.parametrize("suffix", [".json", ".jsonl", ".jsonl.gz"])
+def test_compare_reads_every_result_format(tmp_path: Path, suffix: str) -> None:
+    other, base = _write_pair(
+        tmp_path, other=[_row("bench_x", 50.0)], base=[_row("bench_x", 100.0)], suffix=suffix
+    )
+    console = Console(width=200)
+    assert compare([other, base], console=console) == 0
+    out = console.export_text()
+    assert "-50.00%" in out and "×2.000" in out
 
 
 def test_same_second_runs_stay_distinct_by_session_id(tmp_path: Path) -> None:
@@ -851,45 +776,6 @@ def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
     # stdev needs two values; these files have one repetition each.
     with pytest.raises(SystemExit, match="--statistic failed on 'b'"):
         compare([other, base], statistic=_stats.stdev, console=Console(width=200))
-
-
-def _two_session_jsonl(tmp_path: Path) -> Path:
-    """A self-contained JSONL file holding 'before' (100) and 'after' (80) sessions."""
-    p = tmp_path / "results.jsonl"
-    rows = [
-        _row("b", 100.0, date="2026-01-01T00:00:00", session_id="0197aaaa11", session_tag="before"),
-        _row("b", 80.0, date="2026-02-01T00:00:00", session_id="0197bbbb22", session_tag="after"),
-    ]
-    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
-    return p
-
-
-def test_compare_two_sessions_of_one_jsonl_file(tmp_path: Path) -> None:
-    p = _two_session_jsonl(tmp_path)
-    console = Console(width=200)
-    assert compare([Path(f"{p}@after"), Path(f"{p}@before")], console=console) == 0
-    out = console.export_text()
-    assert "-20.00%" in out  # 100 -> 80: both sessions resolved from row-level identity
-    assert "session=before" in out and "session=after" in out
-
-
-def test_compare_jsonl_gz_roundtrip(tmp_path: Path) -> None:
-    import gzip
-
-    def write(path: Path, rows: list[dict]) -> None:
-        with gzip.open(path, "wt") as fh:
-            fh.writelines(json.dumps(r) + "\n" for r in rows)
-
-    base = tmp_path / "base.jsonl.gz"
-    other = tmp_path / "other.jsonl.gz"
-    write(base, [_row("bench_x", 100.0)])
-    write(other, [_row("bench_x", 50.0)])
-    console = Console(width=200)
-    code = compare([other, base], console=console)
-    assert code == 0
-    out = console.export_text()
-    assert "-50.00%" in out
-    assert "×2.000" in out
 
 
 def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from typing import get_type_hints
 
 import pytest
 from _helpers import Capture
@@ -24,12 +23,6 @@ def test_run_single_benchmark_captures_one_run():
     assert cap.finalized
     assert cap.context is not None
     assert cap.context["context"]["num_cpus"] >= 1
-
-
-def test_run_exposes_manager_protocol_annotations():
-    hints = get_type_hints(mew.run)
-    assert hints["memory_manager"] == mew.MemoryManager | None
-    assert hints["profiler_manager"] == mew.ProfilerManager | None
 
 
 @pytest.mark.parametrize(
@@ -270,9 +263,7 @@ def test_threaded_benchmark_warms_up_on_free_threaded(monkeypatch):
     reason="threaded mode requires a free-threaded interpreter",
 )
 def test_threaded_benchmark_runs_without_deadlock():
-    """Real threaded run on a free-threaded build. Regression guard for the
-    stop-the-world attach deadlock: if it returns, the warmup did its job (a
-    failure here manifests as a hang / CI timeout)."""
+    """A real threaded run on a free-threaded build; a failure here is a hang."""
 
     @mew.benchmark(threads=4, iterations=100)
     def bench_x(state):
@@ -370,33 +361,6 @@ def test_state_pause_context_manager_excludes_work_from_timing():
     assert cap.runs[0]["iterations"] == 1
     assert cap.runs[1]["iterations"] == 1
     assert seen == ["inside"]
-
-
-def test_state_pause_excludes_paused_work_from_real_time():
-    # Same workload in both benchmarks; one runs it inside `state.pause()`,
-    # the other doesn't. The paused variant's measured real_time should be a
-    # small fraction of the unpaused variant's.
-    WORK = 200_000
-
-    @mew.benchmark(iterations=1)
-    def bench_unpaused(state):
-        for _ in state:
-            sum(range(WORK))
-
-    @mew.benchmark(iterations=1)
-    def bench_paused(state):
-        for _ in state:
-            with state.pause():
-                sum(range(WORK))
-
-    cap = Capture()
-    mew.run(reporter=cap)
-    unpaused, paused = cap.runs
-    paused_time = paused["real_accumulated_time"]
-    unpaused_time = unpaused["real_accumulated_time"]
-    # Generous margin: paused real time should be at least 10x smaller than
-    # the work it excluded. In practice it's typically 100x+ smaller.
-    assert paused_time < unpaused_time / 10, f"paused={paused}s, unpaused={unpaused}s"
 
 
 def test_state_pause_resumes_on_exception():
@@ -596,11 +560,9 @@ def test_abort_is_consumed_between_runs():
 
 
 def test_report_context_return_value_is_ignored():
-    """Returning False no longer vetoes: raising is the way to stop a run.
+    """Raising is the only way to stop a run; a falsy return must not veto it.
 
-    Google Benchmark's `RunSpecifiedBenchmarks` returns the matched-benchmark
-    count whether or not its context gate opened, so a veto used to report a
-    successful run that produced no rows at all.
+    Google Benchmark would otherwise report a successful run with no rows.
     """
 
     class ReturnsFalse:

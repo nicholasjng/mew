@@ -13,51 +13,30 @@ import mew
 from mew.reporter import JSONReporter
 
 
-def test_set_flat_key():
-    mew.set_context("commit", "abc123")
-    assert mew.get_context() == {"commit": "abc123"}
+@pytest.mark.parametrize(
+    ("calls", "expected"),
+    [
+        ([("commit", "abc123")], {"commit": "abc123"}),
+        ([("dataset.size", 1024)], {"dataset": {"size": 1024}}),
+        ([("a.b.c.d", 42)], {"a": {"b": {"c": {"d": 42}}}}),
+        (
+            [("dataset.size", 1024), ("dataset.name", "synthetic")],
+            {"dataset": {"size": 1024, "name": "synthetic"}},
+        ),
+        ([("k", 1), ("k", 2)], {"k": 2}),
+        ([("dataset.size", 1024), ("dataset", "scalar")], {"dataset": "scalar"}),
+    ],
+)
+def test_set_context_builds_nested_dicts(calls, expected):
+    for key, value in calls:
+        mew.set_context(key, value)
+    assert mew.get_context() == expected
 
 
-def test_set_dotted_key_creates_nested_dict():
-    mew.set_context("dataset.size", 1024)
-    assert mew.get_context() == {"dataset": {"size": 1024}}
-
-
-def test_set_deeply_nested_key():
-    mew.set_context("a.b.c.d", 42)
-    assert mew.get_context() == {"a": {"b": {"c": {"d": 42}}}}
-
-
-def test_dotted_keys_merge_into_existing_dict():
-    mew.set_context("dataset.size", 1024)
-    mew.set_context("dataset.name", "synthetic")
-    assert mew.get_context() == {
-        "dataset": {"size": 1024, "name": "synthetic"},
-    }
-
-
-def test_overwriting_a_leaf_replaces_value():
-    mew.set_context("k", 1)
-    mew.set_context("k", 2)
-    assert mew.get_context() == {"k": 2}
-
-
-def test_overwriting_a_dict_with_a_leaf_replaces():
-    mew.set_context("dataset.size", 1024)
-    mew.set_context("dataset", "scalar")
-    assert mew.get_context() == {"dataset": "scalar"}
-
-
-def test_nesting_under_existing_leaf_raises():
-    mew.set_context("dataset", "scalar")
-    with pytest.raises(ValueError, match="is not a dict"):
-        mew.set_context("dataset.size", 1024)
-
-
-def test_nesting_under_explicit_none_leaf_raises():
-    # None is a stored value like any other, not "absent": traversing through
-    # it must raise, not silently replace it with a subtree.
-    mew.set_context("dataset", None)
+# None is a stored value like any other, not "absent": traversing through it raises.
+@pytest.mark.parametrize("leaf", ["scalar", None])
+def test_nesting_under_a_leaf_raises(leaf):
+    mew.set_context("dataset", leaf)
     with pytest.raises(ValueError, match="is not a dict"):
         mew.set_context("dataset.size", 1024)
 
