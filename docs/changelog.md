@@ -4,7 +4,9 @@ All notable changes to `mew` are documented here. Versions follow
 [semantic versioning](https://semver.org/); until 1.0 the public API may still
 change between minor releases.
 
-## Version 0.2.0 (unreleased)
+## Version 0.2.1 (unreleased)
+
+## Version 0.2.0 (September 24, 2026)
 
 This release focuses mew on benchmark execution, reporting, and comparison.
 Profiling uses Google Benchmark's manager interfaces; variant orchestration and
