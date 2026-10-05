@@ -1,0 +1,32 @@
+diff --git a/src/benchmark.cc b/src/benchmark.cc
+index 4a6789f..c6818aa 100644
+--- a/src/benchmark.cc
++++ b/src/benchmark.cc
+@@ -314,7 +314,10 @@ void State::StartKeepRunning() {
+ }
+ 
+ void State::FinishKeepRunning() {
+-  BM_CHECK(started_ && (!finished_ || skipped()));
++  BM_CHECK(started_);
++  // Asking for iterations after the loop ended (e.g. a second loop over the
++  // same State) must not stop the timer or the profiler again.
++  if (finished_) return;
+   if (!skipped()) {
+     PauseTiming();
+   }
+diff --git a/src/benchmark_api_internal.cc b/src/benchmark_api_internal.cc
+index f9c4990..8e91a88 100644
+--- a/src/benchmark_api_internal.cc
++++ b/src/benchmark_api_internal.cc
+@@ -97,6 +97,11 @@ State BenchmarkInstance::Run(
+   State st(name_.function_name, iters, args_, thread_id, threads_, timer,
+            manager, perf_counters_measurement, profiler_manager);
+   benchmark_.Run(st);
++  // A body that leaves the loop early (break, return) never reaches
++  // FinishKeepRunning(), so pair the profiler's start hook here.
++  if (st.started_ && !st.finished_ && st.profiler_manager_ != nullptr) {
++    st.profiler_manager_->BeforeTeardownStopWithState(st);
++  }
+   return st;
+ }
+ 

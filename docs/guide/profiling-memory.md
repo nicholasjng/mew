@@ -3,7 +3,7 @@
 `--profile-memory` measures each benchmark with
 [memray](https://bloomberg.github.io/memray/) in a separate, untimed pass.
 Tracking covers the timing loop, not fixture setup.
-The pass runs `min(--memory-iterations, iterations)` calls, 16 by default.
+The pass runs `min(--memory-iterations, iterations)` calls per thread, 16 by default.
 
 Use `allocations_per_iteration` for comparisons. `total_allocations` depends on
 the memory-pass iteration count; `peak_bytes` is comparable as-is. Raise

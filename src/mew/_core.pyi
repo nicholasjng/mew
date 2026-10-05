@@ -5,9 +5,9 @@ import types
 from collections.abc import Callable, Sequence
 from typing import Self
 
-BENCHMARK_COMMIT: str = "a8460680f0df91fd26205e0931708a26c3b4094d"
+BENCHMARK_COMMIT: str = "a5fdacc8b23baccb84c7c93052c05268c9579de4"
 
-BENCHMARK_VERSION: str = "v1.9.5-74-ga8460680-dirty"
+BENCHMARK_VERSION: str = "v1.9.5-136-ga5fdacc8-dirty"
 
 def warmup_free_threading() -> None:
     """Attach one native thread to initialize free-threaded CPython state."""

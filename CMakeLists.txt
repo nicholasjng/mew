@@ -76,22 +76,45 @@ find_package(nanobind CONFIG REQUIRED)
 # --- Google Benchmark ---------------------------------------------------------
 include(FetchContent)
 
-set(MEW_BENCHMARK_COMMIT
-    "a8460680f0df91fd26205e0931708a26c3b4094d"
-    CACHE STRING "Google Benchmark commit SHA to fetch")
+set(_mew_benchmark_default_commit "a5fdacc8b23baccb84c7c93052c05268c9579de4")
+
+# A plain CACHE default would keep an existing build tree on the old pin after
+# a bump. Follow the default unless the cached value was overridden, i.e. it
+# differs from the default this tree was last configured with.
+if(NOT DEFINED MEW_BENCHMARK_COMMIT
+   OR MEW_BENCHMARK_COMMIT STREQUAL "${_MEW_BENCHMARK_LAST_DEFAULT_COMMIT}")
+    set(MEW_BENCHMARK_COMMIT "${_mew_benchmark_default_commit}"
+        CACHE STRING "Google Benchmark commit SHA to fetch" FORCE)
+endif()
+set(_MEW_BENCHMARK_LAST_DEFAULT_COMMIT "${_mew_benchmark_default_commit}"
+    CACHE INTERNAL "")
 
 set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 
-# Apply these patches in order to the pinned Google Benchmark tree.
+# Apply these patches in order to the pinned Google Benchmark tree. 0005 is
+# google/benchmark#2319; drop it once a pin includes that change.
 set(MEW_BENCHMARK_PATCHES
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profilermanager-result.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-threaded-manager-passes.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-memory-iterations-flag.patch")
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profiler-stop-on-early-exit.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-profilermanager-result.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-threaded-manager-passes.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0004-memory-iterations-flag.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-state-in-timing-loop.patch")
 
 string(JOIN "|" _mew_patches_arg ${MEW_BENCHMARK_PATCHES})
+
+# FetchContent re-runs the patch step only when its command changes, so put a
+# hash of the patch contents into the command. Editing a patch also has to
+# re-run configure to recompute the hash.
+set(_mew_patches_hash "")
+foreach(patch IN LISTS MEW_BENCHMARK_PATCHES)
+    file(SHA256 "${patch}" _mew_patch_sha)
+    string(APPEND _mew_patches_hash "${_mew_patch_sha}")
+endforeach()
+string(SHA256 _mew_patches_hash "${_mew_patches_hash}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MEW_BENCHMARK_PATCHES})
 
 # Needed by PATCH_COMMAND below, so it must resolve *before* the Declare (the
 # built-commit probe further down reuses it).
@@ -100,6 +123,43 @@ if(NOT Git_FOUND)
     message(FATAL_ERROR
         "git is required to apply mew's Google Benchmark patches "
         "(see MEW_BENCHMARK_PATCHES).")
+endif()
+
+# UPDATE_DISCONNECTED (below) only checks out a pin the existing clone already
+# has, and git's update step would carry the patched files across the checkout.
+# On a pin change, reset the clone and fetch the new commit into it first; the
+# patch step re-runs after the update and applies the series to the new tree.
+set(_mew_benchmark_src "${FETCHCONTENT_BASE_DIR}/googlebenchmark-src")
+if(NOT FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK
+   AND IS_DIRECTORY "${_mew_benchmark_src}/.git")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${_mew_benchmark_src}" rev-parse HEAD
+        OUTPUT_VARIABLE _mew_benchmark_head
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if(NOT _mew_benchmark_head STREQUAL MEW_BENCHMARK_COMMIT)
+        message(STATUS "Google Benchmark pin changed; resetting ${_mew_benchmark_src}")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${_mew_benchmark_src}" reset --hard --quiet)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${_mew_benchmark_src}" clean -fd --quiet)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${_mew_benchmark_src}"
+                cat-file -e "${MEW_BENCHMARK_COMMIT}^{commit}"
+            RESULT_VARIABLE _mew_benchmark_have_commit
+            ERROR_QUIET)
+        if(NOT _mew_benchmark_have_commit EQUAL 0 AND NOT FETCHCONTENT_FULLY_DISCONNECTED)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" -C "${_mew_benchmark_src}"
+                    fetch --quiet origin "${MEW_BENCHMARK_COMMIT}"
+                RESULT_VARIABLE _mew_benchmark_fetch_status)
+            if(NOT _mew_benchmark_fetch_status EQUAL 0)
+                message(WARNING
+                    "Could not fetch Google Benchmark ${MEW_BENCHMARK_COMMIT} into "
+                    "${_mew_benchmark_src}; delete that directory to re-clone.")
+            endif()
+        endif()
+    endif()
 endif()
 
 FetchContent_Declare(
@@ -118,6 +178,7 @@ FetchContent_Declare(
         "-DGIT=${GIT_EXECUTABLE}"
         "-DSRC=<SOURCE_DIR>"
         "-DPATCHES=${_mew_patches_arg}"
+        "-DPATCHES_SHA256=${_mew_patches_hash}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_patches.cmake"
     # Without this, a reconfigure re-runs the git update step, which resets the
     # tree and drops the patch before PATCH_COMMAND gets a chance to re-run.

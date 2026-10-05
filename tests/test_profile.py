@@ -398,6 +398,50 @@ def test_manager_passes_run_with_the_configured_thread_count(tmp_path):
     assert seen.count(0) >= 2 and seen.count(1) >= 2
 
 
+@pytest.mark.skipif(
+    getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="threaded mode requires a free-threaded interpreter",
+)
+def test_threaded_memory_pass_counts_every_threads_iterations(tmp_path):
+    @mew.benchmark(threads=2, iterations=10)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    out = tmp_path / "out.json"
+    mew.run(
+        reporter=JSONReporter(output=out),
+        memory_manager=FakeMemoryManager(total_allocations=8),
+        memory_iterations=4,
+    )
+    mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
+    # 4 iterations on each of 2 threads, like the timed row's iteration count.
+    assert mem["iterations"] == 8
+    assert mem["allocations_per_iteration"] == 1.0
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+def test_manager_is_stopped_when_the_body_leaves_the_loop_early(tmp_path):
+    @mew.benchmark(iterations=4)
+    def bench_raises(state):
+        for _ in state:
+            raise ValueError("boom")
+
+    @mew.benchmark(iterations=4)
+    def bench_ok(state):
+        for _ in state:
+            pass
+
+    mem, prof = FakeMemoryManager(), FakeProfilerManager()
+    out = tmp_path / "out.json"
+    mew.run(reporter=JSONReporter(output=out), memory_manager=mem, profiler_manager=prof)
+    assert (mem.starts, mem.stops) == (2, 2)
+    assert (prof.starts, prof.stops) == (2, 2)
+    raises, ok = json.loads(out.read_text())["benchmarks"]
+    assert "memory" not in raises and "cpu_profile" not in raises
+    assert "memory" in ok and "cpu_profile" in ok
+
+
 def test_pyinstrument_is_rejected_before_import_on_free_threaded(monkeypatch):
     from mew import cpu as _cpu
 

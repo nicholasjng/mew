@@ -49,7 +49,9 @@ def bench_shuffle_then_sort(state):
         sorted(data)
 ```
 
-The context manager resumes timing when its body raises.
+The context manager resumes timing when its body raises. It is only valid inside
+the benchmark loop: setup before the loop is never timed, so pausing there (or
+after the loop) raises `RuntimeError` and the run is reported as skipped.
 
 ## Repetitions vs iterations
 

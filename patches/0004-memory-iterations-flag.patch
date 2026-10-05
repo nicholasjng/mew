@@ -1,20 +1,18 @@
 diff --git a/src/benchmark.cc b/src/benchmark.cc
-index 2281785..5c3c427 100644
+index c6818aa..4317d85 100644
 --- a/src/benchmark.cc
 +++ b/src/benchmark.cc
-@@ -103,6 +103,11 @@ BM_DEFINE_double(benchmark_min_warmup_time, 0.0);
+@@ -106,6 +106,9 @@ BM_DEFINE_double(benchmark_min_warmup_time, 0.0);
  // standard deviation of the runs will be reported.
  BM_DEFINE_int32(benchmark_repetitions, 1);
  
-+// Upper bound on the iterations run under a registered MemoryManager. The
-+// memory pass runs min(this, iterations) iterations, so one-time allocations
-+// in an unmanaged fixture are amortized over at most this many calls.
++// Maximum iterations per thread of the memory pass (upstream hard-codes 16).
 +BM_DEFINE_int32(benchmark_memory_iterations, 16);
 +
  // If enabled, forces each benchmark to execute exactly one iteration and one
  // repetition, bypassing any configured
  // MinTime()/MinWarmUpTime()/Iterations()/Repetitions()
-@@ -771,6 +776,8 @@ void ParseCommandLineFlags(int* argc, char** argv) {
+@@ -745,6 +748,8 @@ void ParseCommandLineFlags(int* argc, char** argv) {
                          &FLAGS_benchmark_min_warmup_time) ||
          ParseInt32Flag(argv[i], "benchmark_repetitions",
                         &FLAGS_benchmark_repetitions) ||
@@ -23,7 +21,7 @@ index 2281785..5c3c427 100644
          ParseBoolFlag(argv[i], "benchmark_dry_run", &FLAGS_benchmark_dry_run) ||
          ParseBoolFlag(argv[i], "benchmark_enable_random_interleaving",
                        &FLAGS_benchmark_enable_random_interleaving) ||
-@@ -888,6 +895,7 @@ void PrintDefaultHelp() {
+@@ -948,6 +953,7 @@ void PrintDefaultHelp() {
            "          [--benchmark_min_time=`<integer>x` OR `<float>s` ]\n"
            "          [--benchmark_min_warmup_time=<min_warmup_time>]\n"
            "          [--benchmark_repetitions=<num_repetitions>]\n"
@@ -32,7 +30,7 @@ index 2281785..5c3c427 100644
            "          [--benchmark_enable_random_interleaving={true|false}]\n"
            "          [--benchmark_report_aggregates_only={true|false}]\n"
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index 5feb7a9..11e59cb 100644
+index 071fd05..f0c4fd2 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
 @@ -67,6 +67,7 @@ BM_DECLARE_bool(benchmark_dry_run);
@@ -43,7 +41,7 @@ index 5feb7a9..11e59cb 100644
  BM_DECLARE_bool(benchmark_report_aggregates_only);
  BM_DECLARE_bool(benchmark_display_aggregates_only);
  BM_DECLARE_string(benchmark_perf_counters);
-@@ -595,7 +596,8 @@ void BenchmarkRunner::DoOneRepetition() {
+@@ -580,7 +581,8 @@ void BenchmarkRunner::DoOneRepetition() {
    if (memory_manager != nullptr) {
      // Only run a few iterations to reduce the impact of one-time
      // allocations in benchmarks that are not properly managed.
