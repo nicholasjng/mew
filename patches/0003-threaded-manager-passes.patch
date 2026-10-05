@@ -1,0 +1,66 @@
+diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
+index cd19f7b..071fd05 100644
+--- a/src/benchmark_runner.cc
++++ b/src/benchmark_runner.cc
+@@ -138,10 +138,11 @@ BenchmarkReporter::Run CreateRunReport(
+ 
+     if (memory_iterations > 0) {
+       report.memory_result = memory_result;
++      // The result's count covers all threads; the argument is per thread.
+       report.allocs_per_iter =
+-          memory_iterations != 0
++          memory_result.memory_iterations != 0
+               ? static_cast<double>(memory_result.num_allocs) /
+-                    static_cast<double>(memory_iterations)
++                    static_cast<double>(memory_result.memory_iterations)
+               : 0;
+     }
+ 
+@@ -478,13 +479,20 @@ void BenchmarkRunner::RunWarmUp() {
+ }
+ 
+ // Runs one memory or profiler pass and returns whether its loop completed.
+-bool BenchmarkRunner::RunManagerPass(IterationCount iters, ProfilerManager* pm,
++// The pass uses the benchmark's thread count, so threaded bodies behave as in
++// the timed run; only thread 0 calls the hooks, once per pass.
++bool BenchmarkRunner::RunManagerPass(IterationCount iters_per_thread,
++                                     ProfilerManager* pm,
+                                      PerfCountersMeasurement* pcm) {
+   std::unique_ptr<internal::ThreadManager> manager;
+-  manager.reset(new internal::ThreadManager(1));
++  manager.reset(new internal::ThreadManager(b.threads()));
+   b.Setup();
+-  RunInThread(&b, iters, 0, manager.get(), pcm, pm);
+-  // RunInThread() also marks a body that left the loop early as skipped.
++  thread_runner->RunThreads([&](int thread_idx) {
++    RunInThread(&b, iters_per_thread, thread_idx, manager.get(), pcm,
++                thread_idx == 0 ? pm : nullptr);
++  });
++  // RunInThread() also marks a body that left the loop early, on any thread,
++  // as skipped.
+   bool completed;
+   {
+     MutexLock l(manager->GetBenchmarkMutex());
+@@ -503,7 +511,8 @@ MemoryManager::Result BenchmarkRunner::RunMemoryManager(
+                       perf_counters_measurement_ptr)) {
+     return MemoryManager::Result();
+   }
+-  scope.result.memory_iterations = memory_iterations;
++  // Count every thread's iterations, as the timed run's report does.
++  scope.result.memory_iterations = memory_iterations * b.threads();
+   return scope.result;
+ }
+ 
+diff --git a/src/benchmark_runner.h b/src/benchmark_runner.h
+index 474f08d..8c965a0 100644
+--- a/src/benchmark_runner.h
++++ b/src/benchmark_runner.h
+@@ -105,7 +105,7 @@ class BenchmarkRunner {
+   };
+   IterationResults DoNIterations();
+ 
+-  bool RunManagerPass(IterationCount iters, ProfilerManager* pm,
++  bool RunManagerPass(IterationCount iters_per_thread, ProfilerManager* pm,
+                       PerfCountersMeasurement* pcm);
+ 
+   MemoryManager::Result RunMemoryManager(IterationCount memory_iterations);

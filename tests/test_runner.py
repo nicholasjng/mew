@@ -380,6 +380,65 @@ def test_state_pause_resumes_on_exception():
     assert cap.runs[0]["iterations"] == 1
 
 
+# mew reports the body's exception as unraisable after skipping the run.
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+@pytest.mark.parametrize("where", ["before", "after"])
+def test_state_pause_outside_the_loop_skips_with_error(where):
+    # Unchecked, this stops a timer that never ran and reports the raw clock.
+    @mew.benchmark(iterations=1)
+    def bench_x(state):
+        if where == "before":
+            with state.pause():
+                pass
+        for _ in state:
+            pass
+        if where == "after":
+            with state.pause():
+                pass
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    assert cap.runs[0]["skipped"] is True
+    assert "only valid inside the benchmark loop" in cap.runs[0]["skip_message"]
+
+
+def test_state_skip_inside_pause_does_not_resume_timing():
+    @mew.benchmark(iterations=1)
+    def bench_x(state):
+        for _ in state:
+            with state.pause():
+                state.skip_with_message("unmet precondition")
+
+    @mew.benchmark(iterations=1)
+    def bench_y(state):
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    assert cap.runs[0]["skipped"] is True
+    assert cap.runs[0]["skip_message"] == "unmet precondition"
+    assert cap.runs[1]["skipped"] is False
+
+
+def test_second_loop_over_a_finished_state_adds_no_time():
+    import time
+
+    @mew.benchmark(iterations=5)
+    def bench_x(state):
+        for _ in state:
+            pass
+        time.sleep(0.2)  # untimed, unless the second loop stops the timer again
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    row = cap.runs[0]
+    assert row["time_unit"] == "ns"
+    assert row["real_time"] * row["iterations"] < 0.1e9
+
+
 def test_run_with_no_entries_returns_zero():
     cap = Capture()
     assert mew.run(min_time="1x", reporter=cap) == 0

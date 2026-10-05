@@ -6,6 +6,34 @@ change between minor releases.
 
 ## Version 0.2.1 (unreleased)
 
+### Changed
+
+- Google Benchmark is pinned to `a5fdacc` (v1.9.5-136). The bundled patches
+  are rebased onto upstream's non-pure `ProfilerManager` hooks; the memory pass
+  keeps measuring only the timing loop, which is narrower than upstream's new
+  `RunInThread()` window. A new patch carries `State::in_timing_loop()` until
+  google/benchmark#2319 is merged.
+- The Google Benchmark pin now follows the default in existing build trees, and
+  a pin change fetches the new commit into the cached checkout instead of
+  failing the configure. An explicit `-DMEW_BENCHMARK_COMMIT` still wins.
+  Editing a patch re-applies the series on the next build.
+
+### Fixed
+
+- `state.pause()` outside the benchmark loop raises `RuntimeError`, skipping the
+  run. It previously added a raw clock reading to the reported time in release
+  builds, and aborted the interpreter on an assertion in debug builds.
+- Skipping a benchmark inside `state.pause()` no longer resumes the stopped
+  timer on exit, which also aborted debug builds.
+- Threaded benchmarks no longer over-report `allocations_per_iteration` by
+  their thread count. The memory block's `iterations` now counts every thread's
+  iterations, like the timed row; `--memory-iterations` caps each thread.
+- A body that leaves the benchmark loop early (for example by raising) no
+  longer leaves a profiler manager started without a matching
+  `before_teardown_stop()`; the incomplete pass reports no profile.
+- A second `for _ in state:` loop after the first has finished no longer adds
+  the time since the loop started to the result. It yields nothing, as before.
+
 ## Version 0.2.0 (September 24, 2026)
 
 This release focuses mew on benchmark execution, reporting, and comparison.

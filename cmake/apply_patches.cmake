@@ -3,11 +3,13 @@
 # Driven as a `cmake -P` script from FetchContent's PATCH_COMMAND, which has no
 # shell. Expects -DGIT=, -DSRC= and -DPATCHES= (a |-separated list: a ;-list
 # would be split into separate arguments on the PATCH_COMMAND line).
+# PATCHES_SHA256 is unused here: it only changes the command line when a patch
+# changes, which is what makes FetchContent re-run this script.
 #
-# Idempotent through a stamp file recording the applied series. Patches build
-# on each other, so a per-patch "already applied" probe cannot work; instead a
-# stale or missing stamp resets the tree to the pinned commit and re-applies
-# the whole series in order.
+# Idempotent through a stamp file recording the base commit and the applied
+# series. Patches build on each other, so a per-patch "already applied" probe
+# cannot work; instead a stale or missing stamp resets the tree to the pinned
+# commit and re-applies the whole series in order.
 
 if(NOT GIT OR NOT SRC OR NOT PATCHES)
     message(FATAL_ERROR "apply_patches.cmake: GIT, SRC and PATCHES are all required")
@@ -15,7 +17,13 @@ endif()
 string(REPLACE "|" ";" PATCHES "${PATCHES}")
 
 set(_stamp "${SRC}/.mew-patches-applied")
-set(_series "")
+# `git apply` leaves HEAD alone, so this is the pinned commit even when patched.
+execute_process(
+    COMMAND "${GIT}" -C "${SRC}" rev-parse HEAD
+    OUTPUT_VARIABLE _base
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+set(_series "base ${_base}\n")
 foreach(patch IN LISTS PATCHES)
     if(NOT EXISTS "${patch}")
         message(FATAL_ERROR "apply_patches.cmake: no such patch: ${patch}")
