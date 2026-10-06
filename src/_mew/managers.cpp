@@ -104,6 +104,17 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
                 "memory manager stop() must return a dict with integer values, or None");
         }
     }
+
+    void OnPassComplete(bool completed) override {
+        nb::gil_scoped_acquire gil;
+        try {
+            if (nb::hasattr(py_, "on_pass_complete")) {
+                py_.attr("on_pass_complete")(completed && !mew_abort_pending());
+            }
+        } catch (...) {
+            mew_set_pending_abort(std::current_exception());
+        }
+    }
 };
 
 class PyProfilerManager final : public benchmark::ProfilerManager, public PyManager {
@@ -210,6 +221,7 @@ void register_managers(nb::module_& m) {
         "manager"_a,
         "Register `manager` as Google Benchmark's memory manager.\n"
         "Requires `start()` and `stop()`; `stop()` returns memory metrics or None.\n"
+        "Optional `on_pass_complete(completed)` accepts or discards a closed capture.\n"
         "Pair with `unregister_memory_manager`.");
     m.def("unregister_memory_manager", [] {
         benchmark::RegisterMemoryManager(nullptr);

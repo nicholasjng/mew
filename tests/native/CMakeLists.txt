@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.21)
+project(mew_patch_tests LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory("${BENCHMARK_SOURCE}" benchmark)
+
+add_executable(manager_pass_test manager_pass_test.cc)
+target_link_libraries(manager_pass_test PRIVATE benchmark::benchmark)
+add_executable(loop_completion_test loop_completion_test.cc)
+target_link_libraries(loop_completion_test PRIVATE benchmark::benchmark)
+enable_testing()
+add_test(NAME manager_pass_test COMMAND manager_pass_test
+    --benchmark_memory_iterations=4)
+set_tests_properties(manager_pass_test PROPERTIES TIMEOUT 60)
+add_test(NAME loop_completion_test COMMAND loop_completion_test)
+set_tests_properties(loop_completion_test PROPERTIES TIMEOUT 60)

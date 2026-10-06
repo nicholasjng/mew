@@ -12,9 +12,13 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 namespace {
+// Each benchmark State and its timer belong to one worker thread. Nested
+// scopes on that thread must pause and resume the timer only once.
+thread_local int pause_depth = 0;
+
 struct PauseScope {
     benchmark::State* state;
-    bool paused;
+    int depth;
 };
 
 struct BatchIter {
@@ -56,15 +60,17 @@ void register_state(nb::module_& m) {
         .def(
             "__enter__",
             [](PauseScope& self) -> PauseScope& {
-                if (self.paused) return self;
                 if (!self.state->in_timing_loop()) {
                     throw std::runtime_error(
                         "state.pause() is only valid inside the benchmark loop");
                 }
-                self.state->PauseTiming();
-                self.paused = true;
-                // Match CPU sampling to the timed region.
-                mew_profiler_pause();
+                if (pause_depth == 0) {
+                    self.state->PauseTiming();
+                    // Match CPU sampling to the timed region.
+                    mew_profiler_pause();
+                }
+                ++pause_depth;
+                ++self.depth;
                 return self;
             },
             nb::rv_policy::reference_internal, nb::sig("def __enter__(self) -> typing.Self"))
@@ -72,8 +78,9 @@ void register_state(nb::module_& m) {
             "__exit__",
             [](PauseScope& self, nb::object, nb::object, nb::object) {
                 // Ignore an unmatched direct __exit__ call.
-                if (!self.paused) return;
-                self.paused = false;
+                if (self.depth == 0) return;
+                --self.depth;
+                if (--pause_depth != 0) return;
                 mew_profiler_resume();
                 // As in ScopedPauseTiming: a skip inside the block ends the loop, and
                 // its timer must stay stopped.
@@ -110,9 +117,10 @@ void register_state(nb::module_& m) {
             "Iterate in batches of `n`, reducing dispatch overhead for fast bodies.\n"
             "The final batch may exceed the iteration budget.")
         .def(
-            "pause", [](benchmark::State& self) { return PauseScope{&self, false}; },
+            "pause", [](benchmark::State& self) { return PauseScope{&self, 0}; },
             nb::keep_alive<0, 1>(),
-            "Return a context manager that pauses timing for the duration of the `with` block.")
+            "Return a context manager that pauses timing for the duration of the `with` block.\n"
+            "Nested scopes resume timing only when the outermost scope exits.")
         .def("skip_with_error", &benchmark::State::SkipWithError, "msg"_a,
              "Abort this benchmark and mark it failed; the row reports as skipped.")
         .def("skip_with_message", &benchmark::State::SkipWithMessage, "msg"_a,

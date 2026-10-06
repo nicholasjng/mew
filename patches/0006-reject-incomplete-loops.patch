@@ -1,0 +1,13 @@
+diff --git a/src/benchmark_api_internal.cc b/src/benchmark_api_internal.cc
+--- a/src/benchmark_api_internal.cc
++++ b/src/benchmark_api_internal.cc
+@@ -97,6 +97,9 @@
+   State st(name_.function_name, iters, args_, thread_id, threads_, timer,
+            manager, perf_counters_measurement, profiler_manager);
+   benchmark_.Run(st);
++  if (st.started_ && !st.finished_ && !st.skipped()) {
++    st.SkipWithError("The benchmark did not complete its loop.");
++  }
+   st.FinishBenchmarkBody();
+   return st;
+ }

@@ -52,6 +52,8 @@ of the profiling report.
 ## Reading the report
 
 `cpu.html` is a self-contained pyinstrument page with a call tree per benchmark.
+Skipped or incomplete profiling passes are excluded from both row summaries
+and the HTML report.
 Because sampling sees Python frames only, a body that bottoms out in C — `sorted`,
 a NumPy call, a compiled extension — collapses into one wide frame with no
 detail beneath it. That flat frame is the signal to switch to

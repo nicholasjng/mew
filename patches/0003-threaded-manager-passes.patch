@@ -1,8 +1,82 @@
+diff --git a/include/benchmark/state.h b/include/benchmark/state.h
+index 828c644..091fbf2 100644
+--- a/include/benchmark/state.h
++++ b/include/benchmark/state.h
+@@ -198,6 +198,7 @@
+   ProfilerManager* const profiler_manager_;
+ 
+   bool profiler_active_ = false;
++  bool manager_pass_finished_ = false;
+ 
+   friend class Fixture;
+   friend class internal::BenchmarkInstance;
+diff --git a/src/benchmark.cc b/src/benchmark.cc
+index 4f2f175..704c08e 100644
+--- a/src/benchmark.cc
++++ b/src/benchmark.cc
+@@ -304,11 +304,20 @@
+   BM_CHECK(!started_ && !finished_);
+   started_ = true;
+   total_iterations_ = skipped() ? 0 : max_iterations;
++  if (manager_->IsManagerPass()) {
++    // Wait for every worker to finish its pre-loop setup before starting.
++    manager_->ManagerPassBarrier();
++  }
+   if (BENCHMARK_BUILTIN_EXPECT(profiler_manager_ != nullptr, false)) {
+     profiler_active_ = true;
+     profiler_manager_->AfterSetupStartWithState(*this);
+   }
+-  manager_->StartStopBarrier();
++  if (manager_->IsManagerPass()) {
++    // Hold workers until thread 0 has finished the start hook.
++    manager_->ManagerPassBarrier();
++  } else {
++    manager_->StartStopBarrier();
++  }
+   if (!skipped()) {
+     ResumeTiming();
+   }
+@@ -324,14 +333,34 @@
+   // Total iterations has now wrapped around past 0. Fix this.
+   total_iterations_ = 0;
+   finished_ = true;
+-  manager_->StartStopBarrier();
++  if (!manager_->IsManagerPass()) manager_->StartStopBarrier();
+   FinishBenchmarkBody();
+ }
+ 
+ void State::FinishBenchmarkBody() {
++  const bool manager_pass = manager_ != nullptr && manager_->IsManagerPass();
++  if (manager_pass) {
++    if (manager_pass_finished_) return;
++    manager_pass_finished_ = true;
++    if (!finished_ && !skipped()) {
++      // Cleanup must not turn a partial loop into a successful measurement.
++      SkipWithError("The benchmark did not complete its manager-pass loop.");
++    }
++    if (!started_) {
++      // A body that returned before the loop still participates in entry.
++      manager_->ManagerPassBarrier();
++      manager_->ManagerPassBarrier();
++    }
++    // Every body reaches this path before fixture teardown, even on a skip.
++    manager_->ManagerPassBarrier();
++  }
+   if (profiler_active_) {
+     profiler_active_ = false;
+     profiler_manager_->BeforeTeardownStopWithState(*this);
++  }
++  if (manager_pass) {
++    // No worker may run post-loop code or teardown until measurement stops.
++    manager_->ManagerPassBarrier();
+   }
+ }
+ 
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index cd19f7b..071fd05 100644
+index cd19f7b..5913c01 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
-@@ -138,10 +138,11 @@ BenchmarkReporter::Run CreateRunReport(
+@@ -138,10 +138,11 @@
  
      if (memory_iterations > 0) {
        report.memory_result = memory_result;
@@ -16,51 +90,127 @@ index cd19f7b..071fd05 100644
                : 0;
      }
  
-@@ -478,13 +479,20 @@ void BenchmarkRunner::RunWarmUp() {
+@@ -477,33 +478,40 @@
+   }
  }
  
- // Runs one memory or profiler pass and returns whether its loop completed.
+-// Runs one memory or profiler pass and returns whether its loop completed.
 -bool BenchmarkRunner::RunManagerPass(IterationCount iters, ProfilerManager* pm,
-+// The pass uses the benchmark's thread count, so threaded bodies behave as in
-+// the timed run; only thread 0 calls the hooks, once per pass.
-+bool BenchmarkRunner::RunManagerPass(IterationCount iters_per_thread,
-+                                     ProfilerManager* pm,
-                                      PerfCountersMeasurement* pcm) {
+-                                     PerfCountersMeasurement* pcm) {
++// Uses the timed run's thread count; only thread 0 calls the manager hooks.
++BenchmarkRunner::ManagerPassResult BenchmarkRunner::RunManagerPass(
++    IterationCount iters_per_thread, ProfilerManager* pm,
++    PerfCountersMeasurement* pcm) {
    std::unique_ptr<internal::ThreadManager> manager;
 -  manager.reset(new internal::ThreadManager(1));
-+  manager.reset(new internal::ThreadManager(b.threads()));
++  manager.reset(new internal::ThreadManager(b.threads(), /*manager_pass=*/true));
    b.Setup();
 -  RunInThread(&b, iters, 0, manager.get(), pcm, pm);
 -  // RunInThread() also marks a body that left the loop early as skipped.
+-  bool completed;
 +  thread_runner->RunThreads([&](int thread_idx) {
 +    RunInThread(&b, iters_per_thread, thread_idx, manager.get(), pcm,
 +                thread_idx == 0 ? pm : nullptr);
 +  });
-+  // RunInThread() also marks a body that left the loop early, on any thread,
-+  // as skipped.
-   bool completed;
++  // FinishBenchmarkBody() marks partial loops as skipped before cleanup.
++  ManagerPassResult result;
    {
      MutexLock l(manager->GetBenchmarkMutex());
-@@ -503,7 +511,8 @@ MemoryManager::Result BenchmarkRunner::RunMemoryManager(
-                       perf_counters_measurement_ptr)) {
+-    completed = manager->results.skipped_ == internal::NotSkipped;
++    result.completed = manager->results.skipped_ == internal::NotSkipped;
++    result.iterations = manager->results.iterations;
+   }
+   manager.reset();
+   b.Teardown();
+-  return completed;
++  return result;
+ }
+ 
+ MemoryManager::Result BenchmarkRunner::RunMemoryManager(
+     IterationCount memory_iterations) {
+   MemoryLoopScope scope(memory_manager);
+   // No complete loop, no figures: memory_iterations == 0 means "not measured".
+-  if (!RunManagerPass(memory_iterations, &scope,
+-                      perf_counters_measurement_ptr)) {
++  const ManagerPassResult pass = RunManagerPass(
++      memory_iterations, &scope, perf_counters_measurement_ptr);
++  if (!pass.completed) {
      return MemoryManager::Result();
    }
 -  scope.result.memory_iterations = memory_iterations;
-+  // Count every thread's iterations, as the timed run's report does.
-+  scope.result.memory_iterations = memory_iterations * b.threads();
++  // Includes every worker and any overshoot from KeepRunningBatch().
++  scope.result.memory_iterations = pass.iterations;
    return scope.result;
  }
  
+@@ -511,7 +519,8 @@
+     IterationCount profile_iterations) {
+   ProfilerManager::Result profile_result;
+   // Like a partial memory measurement, a partial profile is not reported.
+-  if (RunManagerPass(profile_iterations, profiler_manager, /*pcm=*/nullptr)) {
++  if (RunManagerPass(profile_iterations, profiler_manager, /*pcm=*/nullptr)
++          .completed) {
+     profiler_manager->GetResult(profile_result);
+   }
+   return profile_result;
 diff --git a/src/benchmark_runner.h b/src/benchmark_runner.h
-index 474f08d..8c965a0 100644
+index 474f08d..949918f 100644
 --- a/src/benchmark_runner.h
 +++ b/src/benchmark_runner.h
-@@ -105,7 +105,7 @@ class BenchmarkRunner {
+@@ -105,8 +105,13 @@
    };
    IterationResults DoNIterations();
  
 -  bool RunManagerPass(IterationCount iters, ProfilerManager* pm,
-+  bool RunManagerPass(IterationCount iters_per_thread, ProfilerManager* pm,
-                       PerfCountersMeasurement* pcm);
+-                      PerfCountersMeasurement* pcm);
++  struct ManagerPassResult {
++    bool completed;
++    IterationCount iterations;
++  };
++  ManagerPassResult RunManagerPass(IterationCount iters_per_thread,
++                                   ProfilerManager* pm,
++                                   PerfCountersMeasurement* pcm);
  
    MemoryManager::Result RunMemoryManager(IterationCount memory_iterations);
+ 
+diff --git a/src/thread_manager.h b/src/thread_manager.h
+index 80252b6..80215c7 100644
+--- a/src/thread_manager.h
++++ b/src/thread_manager.h
+@@ -2,6 +2,7 @@
+ #define BENCHMARK_THREAD_MANAGER_H
+ 
+ #include <atomic>
++#include <memory>
+ 
+ #include "benchmark/counter.h"
+ #include "benchmark/statistics.h"
+@@ -13,13 +14,19 @@
+ 
+ class ThreadManager {
+  public:
+-  explicit ThreadManager(int num_threads) : start_stop_barrier_(num_threads) {}
++  explicit ThreadManager(int num_threads, bool manager_pass = false)
++      : start_stop_barrier_(num_threads),
++        manager_pass_barrier_(manager_pass ? new Barrier(num_threads) : nullptr) {}
+ 
+   Mutex& GetBenchmarkMutex() const RETURN_CAPABILITY(benchmark_mutex_) {
+     return benchmark_mutex_;
+   }
+ 
+   bool StartStopBarrier() { return start_stop_barrier_.wait(); }
++
++  bool IsManagerPass() const { return manager_pass_barrier_ != nullptr; }
++  // Fixed participants: even bodies that never enter a loop rendezvous here.
++  void ManagerPassBarrier() { manager_pass_barrier_->wait(); }
+ 
+   void NotifyThreadComplete() { start_stop_barrier_.removeThread(); }
+ 
+@@ -39,6 +46,7 @@
+  private:
+   mutable Mutex benchmark_mutex_;
+   Barrier start_stop_barrier_;
++  std::unique_ptr<Barrier> manager_pass_barrier_;
+ };
+ 
+ }  // namespace internal

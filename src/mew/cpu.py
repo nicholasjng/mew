@@ -52,7 +52,7 @@ class PyinstrumentManager:
     Attributes
     ----------
     sessions : list[Session]
-        Every session captured, kept only so :func:`write_html` can render one
+        Every accepted session, kept only so :func:`write_html` can render one
         combined report; the per-row summaries ride on the ``Run``.
 
     Raises
@@ -86,8 +86,6 @@ class PyinstrumentManager:
         self._prof.stop()
         self._session = self._prof.last_session
         self._prof = None
-        if self._session is not None:
-            self.sessions.append(self._session)
 
     def pause(self) -> None:
         """Suspend sampling for a ``state.pause()`` region.
@@ -111,6 +109,9 @@ class PyinstrumentManager:
         ``<no samples>`` hottest frame on every row.
         """
         session = self._session
+        # The runner requests a result only after every worker completed.
+        if session is not None and (not self.sessions or self.sessions[-1] is not session):
+            self.sessions.append(session)
         if session is None or session.sample_count == 0:
             return None
         root = session.root_frame()

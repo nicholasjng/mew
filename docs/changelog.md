@@ -20,6 +20,12 @@ change between minor releases.
 
 ### Fixed
 
+- Rejected memory and CPU profiling passes no longer contribute captures to
+  flame graphs or CPU HTML reports. Profilers still stop and release resources.
+- Returning or breaking during the final iteration reports an incomplete-loop
+  error instead of zero elapsed time in release builds or an abort in debug builds.
+- Nested `state.pause()` scopes keep timing and CPU sampling paused until the
+  outermost scope exits, including when reusing the same context manager.
 - `state.pause()` outside the benchmark loop raises `RuntimeError`, skipping the
   run. It previously added a raw clock reading to the reported time in release
   builds, and aborted the interpreter on an assertion in debug builds.
@@ -28,6 +34,12 @@ change between minor releases.
 - Threaded benchmarks no longer over-report `allocations_per_iteration` by
   their thread count. The memory block's `iterations` now counts every thread's
   iterations, like the timed row; `--memory-iterations` caps each thread.
+- Memory-pass iteration counts include batch overshoot, keeping
+  `allocations_per_iteration` correct for `state.batches()`.
+- Threaded manager passes wait for every worker's setup before starting
+  measurement and stop before any worker runs post-loop code or fixture teardown.
+- Early exits from C++ fixtures stop managers before fixture teardown. Partial
+  manager passes are discarded even when a body returns on its final iteration.
 - A body that leaves the benchmark loop early (for example by raising) no
   longer leaves a profiler manager started without a matching
   `before_teardown_stop()`; the incomplete pass reports no profile.
