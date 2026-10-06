@@ -127,7 +127,12 @@ ProfilerSummary: TypeAlias = dict[str, str | float]
 
 @runtime_checkable
 class MemoryManager(Protocol):
-    """Memory-measurement callbacks accepted by :func:`mew.run`."""
+    """Memory-measurement callbacks accepted by :func:`mew.run`.
+
+    Managers retaining captures may also implement ``on_pass_complete(completed)``.
+    This optional hook runs after all workers return, with ``False`` for a
+    skipped or incomplete pass. ``stop()`` must still release tracking resources.
+    """
 
     def start(self) -> None: ...
     def stop(self) -> MemoryMetrics | None: ...

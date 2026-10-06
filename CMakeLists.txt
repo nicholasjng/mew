@@ -101,7 +101,9 @@ set(MEW_BENCHMARK_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-profilermanager-result.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-threaded-manager-passes.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0004-memory-iterations-flag.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-state-in-timing-loop.patch")
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-state-in-timing-loop.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-reject-incomplete-loops.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-memory-pass-completion.patch")
 
 string(JOIN "|" _mew_patches_arg ${MEW_BENCHMARK_PATCHES})
 

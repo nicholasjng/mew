@@ -114,6 +114,7 @@ class State:
     def pause(self) -> PauseScope:
         """
         Return a context manager that pauses timing for the duration of the `with` block.
+        Nested scopes resume timing only when the outermost scope exits.
         """
 
     def skip_with_error(self, msg: str) -> None:
@@ -261,6 +262,7 @@ def register_memory_manager(manager: object) -> None:
     """
     Register `manager` as Google Benchmark's memory manager.
     Requires `start()` and `stop()`; `stop()` returns memory metrics or None.
+    Optional `on_pass_complete(completed)` accepts or discards a closed capture.
     Pair with `unregister_memory_manager`.
     """
 

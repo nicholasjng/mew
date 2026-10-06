@@ -380,6 +380,80 @@ def test_state_pause_resumes_on_exception():
     assert cap.runs[0]["iterations"] == 1
 
 
+@pytest.mark.parametrize("reuse_scope", [False, True])
+def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
+    import time
+
+    @mew.benchmark(iterations=1)
+    def bench_nested(state):
+        for _ in state:
+            outer = state.pause()
+            with outer:
+                with outer if reuse_scope else state.pause():
+                    pass
+                # Exiting the inner scope must not resume timing yet.
+                time.sleep(0.2)
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    row = cap.runs[0]
+    assert not row["skipped"]
+    assert row["real_time"] < 0.1e9
+
+
+def test_nested_state_pause_unwinds_after_an_exception():
+    @mew.benchmark(iterations=2)
+    def bench_nested(state):
+        for _ in state:
+            with state.pause():
+                try:
+                    with state.pause():
+                        raise ValueError("inner pause")
+                except ValueError:
+                    pass
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    assert not cap.runs[0]["skipped"]
+    assert cap.runs[0]["iterations"] == 2
+
+
+@pytest.mark.skipif(
+    getattr(sys, "_is_gil_enabled", lambda: True)(), reason="requires free-threaded Python"
+)
+def test_nested_state_pauses_are_independent_between_workers():
+    from threading import Barrier
+
+    barrier = Barrier(2)
+
+    @mew.benchmark(iterations=1, threads=2)
+    def bench_nested(state):
+        for _ in state:
+            with state.pause(), state.pause():
+                barrier.wait(timeout=5)
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    assert not cap.runs[0]["skipped"]
+    assert cap.runs[0]["iterations"] == 2
+
+
+@pytest.mark.parametrize("batch", [1, 7])
+@pytest.mark.parametrize("exit_kind", ["break", "return"])
+def test_leaving_the_last_iteration_marks_the_run_as_incomplete(batch, exit_kind):
+    @mew.benchmark(iterations=1)
+    def bench_incomplete(state):
+        for _ in state.batches(batch):
+            if exit_kind == "return":
+                return
+            break
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    assert cap.runs[0]["skipped"]
+    assert cap.runs[0]["skip_message"] == "The benchmark did not complete its loop."
+
+
 # mew reports the body's exception as unraisable after skipping the run.
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 @pytest.mark.parametrize("where", ["before", "after"])

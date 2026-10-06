@@ -3,7 +3,9 @@
 `--profile-memory` measures each benchmark with
 [memray](https://bloomberg.github.io/memray/) in a separate, untimed pass.
 Tracking covers the timing loop, not fixture setup.
-The pass runs `min(--memory-iterations, iterations)` calls per thread, 16 by default.
+The pass requests `min(--memory-iterations, iterations)` iterations per thread,
+16 by default. Batched loops can exceed that budget; the memory result records
+the actual iteration count across all threads.
 
 Use `allocations_per_iteration` for comparisons. `total_allocations` depends on
 the memory-pass iteration count; `peak_bytes` is comparable as-is. Raise
@@ -38,6 +40,8 @@ $ mew run --flamegraph alloc.html
 
 This implies `--profile-memory`. The self-contained HTML report combines the
 captures from the selected benchmarks.
+Skipped or incomplete memory passes contribute neither row metrics nor captures
+to the flame graph.
 
 ## Caveats
 

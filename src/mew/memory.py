@@ -72,9 +72,10 @@ def require_memray() -> None:
 class MemrayManager:
     """Google Benchmark memory manager backed by memray.
 
-    One capture per (benchmark, repetition): Google Benchmark calls
-    :meth:`start`, runs the body for a small fixed iteration count outside the
-    timing loop, then calls :meth:`stop`.
+    One capture per (benchmark, repetition), scoped to the benchmark loop in
+    a separate, untimed pass. :meth:`start` opens the tracker and :meth:`stop`
+    closes it. :meth:`on_pass_complete` keeps the capture only if every worker
+    completed the pass.
 
     Parameters
     ----------
@@ -84,9 +85,9 @@ class MemrayManager:
 
     Notes
     -----
-    The memory pass runs ``min(memory_iterations, iterations)`` calls (16 by
-    default; see :func:`mew.run`), so ``allocations_per_iteration`` amortizes
-    one-time allocations over at most that many calls.
+    The memory pass requests ``min(memory_iterations, iterations)`` iterations
+    per thread (16 by default; see :func:`mew.run`). Batched loops can exceed
+    this budget; ``allocations_per_iteration`` uses the actual total count.
     """
 
     def __init__(self, tmpdir: Path) -> None:
@@ -95,13 +96,15 @@ class MemrayManager:
         self._dest: Path | None = None
         self._tracker: Tracker | None = None
         self._root: Frame = ("<benchmark>", "?", 0)
-        #: Completed captures as ``(path, root_frame)``, one per (benchmark,
+        self._pending_capture: tuple[Path, Frame] | None = None
+        #: Accepted captures as ``(path, root_frame)``, one per (benchmark,
         #: repetition), in run order. :func:`write_flamegraph` renders them.
         self.captures: list[tuple[Path, Frame]] = []
 
     def start(self) -> None:
         import memray
 
+        self._pending_capture = None
         self._dest = self._dir / f"capture-{self._i}.bin"
         self._i += 1
         # Before entering the tracker: see _caller_frame.
@@ -117,18 +120,22 @@ class MemrayManager:
             return None
         tracker.__exit__(None, None, None)
         self._tracker = None
-        # Only after a clean close, so a half-written capture never reaches the
-        # flame graph.
-        self.captures.append((dest, self._root))
         # Metadata avoids scanning every allocation, which can take minutes for
         # an allocation-heavy body, so the optional cumulative `total_bytes`
         # metric stays unset.
         with memray.FileReader(dest) as reader:
             meta = reader.metadata
+        self._pending_capture = (dest, self._root)
         return {
             "peak_bytes": meta.peak_memory,
             "total_allocations": meta.total_allocations,
         }
+
+    def on_pass_complete(self, completed: bool) -> None:
+        """Publish a closed capture only after the runner accepts the pass."""
+        capture, self._pending_capture = self._pending_capture, None
+        if completed and capture is not None:
+            self.captures.append(capture)
 
 
 def manager(stack: ExitStack) -> MemrayManager:
