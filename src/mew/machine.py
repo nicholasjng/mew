@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -23,7 +23,7 @@ def _gil_enabled() -> bool:
 
 
 @contextmanager
-def _silence_native_stderr() -> Iterator[None]:
+def _silence_native_stderr() -> Generator[None]:
     """Redirect OS-level fd 2 to /dev/null within the scope.
 
     Google Benchmark's lazy system-info probes write platform diagnostics straight
