@@ -9,7 +9,7 @@ import importlib.util
 import os
 import re
 import sys
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -152,7 +152,7 @@ def import_file(path: Path) -> None:
 
 
 @contextmanager
-def discovered() -> Iterator[None]:
+def discovered() -> Generator[None]:
     """Remove benchmark modules and paths added within the context on exit."""
     mod_mark = len(_loaded_modules)
     path_mark = len(_inserted_paths)
