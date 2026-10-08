@@ -82,12 +82,21 @@ nb::dict run_to_dict(const Run& r) {
     d["per_family_instance_index"] = r.per_family_instance_index;
     d["run_type"] = r.run_type == Run::RT_Aggregate ? "aggregate" : "iteration";
     d["aggregate_name"] = r.aggregate_name;
+    // As in GB's JSON output: only aggregates carry a unit, "time" or "percentage".
+    if (r.run_type == Run::RT_Aggregate)
+        d["aggregate_unit"] = r.aggregate_unit == benchmark::kPercentage ? "percentage" : "time";
     d["repetitions"] = r.repetitions;
     d["repetition_index"] = r.repetition_index;
     d["threads"] = r.threads;
     d["iterations"] = r.iterations;
-    d["real_time"] = r.GetAdjustedRealTime();
-    d["cpu_time"] = r.GetAdjustedCPUTime();
+    if (r.run_type == Run::RT_Aggregate && r.aggregate_unit == benchmark::kPercentage) {
+        // A ratio such as `cv`: not a time, so no unit scaling or per-iteration split.
+        d["real_time"] = r.real_accumulated_time;
+        d["cpu_time"] = r.cpu_accumulated_time;
+    } else {
+        d["real_time"] = r.GetAdjustedRealTime();
+        d["cpu_time"] = r.GetAdjustedCPUTime();
+    }
     d["real_accumulated_time"] = r.real_accumulated_time;
     d["cpu_accumulated_time"] = r.cpu_accumulated_time;
     d["time_unit"] = time_unit_name(r.time_unit);
@@ -136,6 +145,9 @@ class PyReporter : public BenchmarkReporter {
     }
 
     void ReportRuns(const std::vector<Run>& runs) override {
+        // The run is being torn down: later benchmarks only report placeholder
+        // "aborted" rows, which must not reach result files.
+        if (mew_abort_pending()) return;
         nb::gil_scoped_acquire gil;
         try {
             nb::list rows;

@@ -1,0 +1,38 @@
+diff --git a/include/benchmark/state.h b/include/benchmark/state.h
+index 9e6237c..8724e85 100644
+--- a/include/benchmark/state.h
++++ b/include/benchmark/state.h
+@@ -79,6 +79,9 @@ class BENCHMARK_EXPORT BENCHMARK_INTERNAL_CACHELINE_ALIGNED State {
+ 
+   bool in_timing_loop() const { return started_ && !finished_ && !skipped(); }
+ 
++  // False while timing is paused, e.g. between PauseTiming() and ResumeTiming().
++  bool timer_running() const;
++
+   bool error_occurred() const { return internal::SkippedWithError == skipped_; }
+ 
+   void SetIterationTime(double seconds);
+diff --git a/src/benchmark.cc b/src/benchmark.cc
+index 264397e..7644fc6 100644
+--- a/src/benchmark.cc
++++ b/src/benchmark.cc
+@@ -294,6 +294,8 @@ void State::SkipWithError(const std::string& msg) {
+   }
+ }
+ 
++bool State::timer_running() const { return timer_->running(); }
++
+ void State::SetIterationTime(double seconds) {
+   timer_->SetIterationTime(seconds);
+ }
+@@ -330,7 +332,9 @@ void State::FinishKeepRunning() {
+   BM_CHECK(started_);
+   // A second request for iterations must not stop timing or profiling again.
+   if (finished_) return;
+-  if (!skipped()) {
++  // The loop may end inside a paused region; stopping the timer again would
++  // fail its check, or count the paused time twice without one.
++  if (!skipped() && timer_->running()) {
+     PauseTiming();
+   }
+   // Total iterations has now wrapped around past 0. Fix this.

@@ -12,13 +12,11 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 namespace {
-// Each benchmark State and its timer belong to one worker thread. Nested
-// scopes on that thread must pause and resume the timer only once.
-thread_local int pause_depth = 0;
-
+// The scope that stops the timer owns the pause; scopes nested inside it find
+// the timer stopped and do nothing. `depth` counts re-entries of the owner.
 struct PauseScope {
     benchmark::State* state;
-    int depth;
+    unsigned depth;
 };
 
 struct BatchIter {
@@ -64,24 +62,24 @@ void register_state(nb::module_& m) {
                     throw std::runtime_error(
                         "state.pause() is only valid inside the benchmark loop");
                 }
-                if (pause_depth == 0) {
+                if (self.depth > 0) {
+                    ++self.depth;
+                } else if (self.state->timer_running()) {
                     self.state->PauseTiming();
-                    // Match CPU sampling to the timed region.
-                    mew_profiler_pause();
+                    // Match CPU sampling to the timed region. Only thread 0
+                    // runs the profiler pass.
+                    if (self.state->thread_index() == 0) mew_profiler_pause();
+                    self.depth = 1;
                 }
-                ++pause_depth;
-                ++self.depth;
                 return self;
             },
             nb::rv_policy::reference_internal, nb::sig("def __enter__(self) -> typing.Self"))
         .def(
             "__exit__",
             [](PauseScope& self, nb::object, nb::object, nb::object) {
-                // Ignore an unmatched direct __exit__ call.
-                if (self.depth == 0) return;
-                --self.depth;
-                if (--pause_depth != 0) return;
-                mew_profiler_resume();
+                // Ignore a nested scope, or an unmatched direct __exit__ call.
+                if (self.depth == 0 || --self.depth != 0) return;
+                if (self.state->thread_index() == 0) mew_profiler_resume();
                 // As in ScopedPauseTiming: a skip inside the block ends the loop, and
                 // its timer must stay stopped.
                 if (self.state->in_timing_loop()) self.state->ResumeTiming();

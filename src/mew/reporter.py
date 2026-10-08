@@ -306,10 +306,15 @@ class RichReporter:
         if self._show_label:
             label = _truncate_right(label, w["label"])
             cells.append(label.ljust(w["label"]))
+        if row.get("aggregate_unit") == "percentage":
+            # A ratio such as `cv`, shown as a percentage like GB's console.
+            real, cpu = f"{row['real_time']:.2%}", f"{row['cpu_time']:.2%}"
+        else:
+            real, cpu = f"{row['real_time']:.2f} {unit}", f"{row['cpu_time']:.2f} {unit}"
         cells += [
             f"{row['iterations']:,}".rjust(w["iters"]),
-            f"{row['real_time']:.2f} {unit}".rjust(w["real"]),
-            f"{row['cpu_time']:.2f} {unit}".rjust(w["cpu"]),
+            real.rjust(w["real"]),
+            cpu.rjust(w["cpu"]),
         ]
         if self._show_memory:
             mem = row.get("memory")
