@@ -37,6 +37,10 @@ class BenchmarkResult(TypedDict):
         by all repetition and aggregate rows of one benchmark, unlike ``name``,
         which also carries Google Benchmark's option fragments and the
         aggregate suffix.
+    aggregate_unit : {"time", "percentage"}, optional
+        Present on aggregate rows only. ``"percentage"`` (e.g. ``cv``) means
+        ``real_time`` and ``cpu_time`` are plain ratios, not durations in
+        ``time_unit``.
     session : SessionInfo, optional
         Identity of the run that produced this result.
     context : dict, optional
@@ -60,6 +64,7 @@ class BenchmarkResult(TypedDict):
     per_family_instance_index: int
     run_type: str
     aggregate_name: str
+    aggregate_unit: NotRequired[Literal["time", "percentage"]]
     repetitions: int
     repetition_index: int
     threads: int
@@ -155,7 +160,12 @@ class ProfilerResultProvider(Protocol):
 
 @runtime_checkable
 class PausableProfiler(Protocol):
-    """Optional profiler capability that suspends across ``state.pause()``."""
+    """Optional profiler capability that suspends across ``state.pause()``.
+
+    Calls come from the profiling thread only. A ``pause()`` may go unmatched
+    when a body leaves a pause scope open at the end of its loop; the next
+    ``before_teardown_stop()`` then arrives while paused.
+    """
 
     def pause(self) -> None: ...
     def resume(self) -> None: ...

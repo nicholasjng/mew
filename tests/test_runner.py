@@ -495,6 +495,62 @@ def test_state_skip_inside_pause_does_not_resume_timing():
     assert cap.runs[1]["skipped"] is False
 
 
+@pytest.mark.parametrize("loop", ["iter", "batches", "keep_running_batch"])
+def test_pause_scope_open_at_loop_end_stays_untimed_and_does_not_leak(loop):
+    """The loop may end inside a pause scope: GB must not stop the stopped timer
+    again, and the next benchmark's scopes must still pause."""
+    import time
+
+    @mew.benchmark(iterations=2)
+    def bench_open(state):
+        def body():
+            state.pause().__enter__()  # never exited
+            time.sleep(0.02)
+
+        if loop == "iter":
+            for _ in state:
+                body()
+        elif loop == "batches":
+            for _ in state.batches(1):
+                body()
+        else:
+            while state.keep_running_batch(1):
+                body()
+
+    @mew.benchmark(iterations=2)
+    def bench_next(state):
+        for _ in state:
+            with state.pause():
+                time.sleep(0.05)
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    for row in cap.runs:
+        assert row["skipped"] is False
+        assert row["real_time"] < 0.01e9  # ns; the sleeps were paused
+
+
+def test_pause_scope_left_open_after_a_break_does_not_leak():
+    import time
+
+    @mew.benchmark(iterations=2)
+    def bench_breaks(state):
+        for _ in state:
+            state.pause().__enter__()
+            break
+
+    @mew.benchmark(iterations=2)
+    def bench_next(state):
+        for _ in state:
+            with state.pause():
+                time.sleep(0.05)
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    assert cap.runs[0]["skip_message"] == "The benchmark did not complete its loop."
+    assert cap.runs[1]["real_time"] < 0.01e9
+
+
 def test_second_loop_over_a_finished_state_adds_no_time():
     import time
 
@@ -593,6 +649,8 @@ def test_keyboard_interrupt_stops_run_and_propagates():
     with pytest.raises(KeyboardInterrupt):
         mew.run(min_time="1x", reporter=cap)
     assert bodies == ["a"]
+    # Benchmarks skipped by the abort must not reach result files as rows.
+    assert all(r["skip_message"] != "aborted" for r in cap.runs)
 
     # The interrupt is consumed: a follow-up run starts clean and completes.
     @mew.benchmark(iterations=1)

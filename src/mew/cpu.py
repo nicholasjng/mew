@@ -83,7 +83,10 @@ class PyinstrumentManager:
     def before_teardown_stop(self) -> None:
         if self._prof is None:
             return
-        self._prof.stop()
+        # A pause scope left open at the end of the loop already stopped it.
+        if self._depth == 0:
+            self._prof.stop()
+        self._depth = 0
         self._session = self._prof.last_session
         self._prof = None
 

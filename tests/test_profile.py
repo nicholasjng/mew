@@ -775,3 +775,57 @@ def test_pause_only_reaches_the_profiler_during_its_own_pass(tmp_path):
     )
     assert calls, "the profiler pass must still see its pauses"
     assert set(calls) == {"sampling"}
+
+
+def test_pyinstrument_tolerates_a_pause_scope_open_at_loop_end(tmp_path):
+    pytest.importorskip("pyinstrument")
+    if not getattr(sys, "_is_gil_enabled", lambda: True)():
+        pytest.skip("pyinstrument does not support free-threaded Python")
+    from mew.cpu import PyinstrumentManager
+
+    @mew.benchmark(iterations=2)
+    def bench_open(state):
+        for _ in state:
+            state.pause().__enter__()  # never exited
+
+    @mew.benchmark(iterations=2)
+    def bench_next(state):
+        for _ in state:
+            with state.pause():
+                pass
+
+    out = tmp_path / "o.json"
+    mgr = PyinstrumentManager()
+    mew.run(reporter=JSONReporter(output=out), profiler_manager=mgr)
+    rows = json.loads(out.read_text())["benchmarks"]
+    assert [r["skipped"] for r in rows] == [False, False]
+    assert len(mgr.sessions) == 2
+
+
+@pytest.mark.skipif(
+    getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="threaded mode requires a free-threaded interpreter",
+)
+def test_only_the_profiling_thread_pauses_the_profiler(tmp_path):
+    """The profiler pass hands the manager to thread 0 only; other workers'
+    pauses must not toggle it from under that thread."""
+    import threading
+
+    callers: set[int] = set()
+
+    class Recording(FakeProfilerManager):
+        def pause(self) -> None:
+            callers.add(threading.get_ident())
+            super().pause()
+
+    mgr = Recording()
+
+    @mew.benchmark(threads=2, iterations=3)
+    def bench_x(state):
+        for _ in state:
+            with state.pause():
+                pass
+
+    mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
+    assert len(callers) == 1
+    assert mgr.pauses == mgr.resumes == 3

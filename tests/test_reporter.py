@@ -441,6 +441,37 @@ def test_to_dict_serializes_enums_as_plain_strings(tmp_path):
         assert bench["run_type"] in ("iteration", "aggregate")
 
 
+def test_cv_aggregate_is_reported_as_a_ratio(tmp_path):
+    """GB's `cv` aggregate is a ratio: scaling it by the time unit and dividing
+    by the repetition count, as for time aggregates, reports garbage."""
+
+    @mew.benchmark(unit="us", iterations=100)
+    def bench_cv(state):
+        for _ in state:
+            sum(range(50))
+
+    out = tmp_path / "out.json"
+    mew.run(repetitions=4, reporter=JSONReporter(output=out))
+    rows = json.loads(out.read_text())["benchmarks"]
+    aggregates = {r["aggregate_name"]: r for r in rows if r["aggregate_name"]}
+    assert all("aggregate_unit" not in r for r in rows if not r["aggregate_name"])
+    assert aggregates["mean"]["aggregate_unit"] == "time"
+    cv = aggregates["cv"]
+    assert cv["aggregate_unit"] == "percentage"
+    stddev, mean = aggregates["stddev"], aggregates["mean"]
+    assert cv["real_time"] == pytest.approx(stddev["real_time"] / mean["real_time"])
+
+    from mew._console import Terminal
+
+    buf = io.StringIO()
+    rep = RichReporter(terminal=Terminal(file=buf, width=200, color=False))
+    rep.report_context({"session": {"host": "h"}, "context": {}})
+    rep.report_runs([cv])
+    line = buf.getvalue().splitlines()[-1]
+    assert f"{cv['real_time']:.2%}" in line
+    assert " us" not in line
+
+
 def test_json_rows_carry_the_document_header(tmp_path):
     """JSON rows are the same self-contained objects JSONL writes; the header
     repeats `session` / `context` for readers."""
