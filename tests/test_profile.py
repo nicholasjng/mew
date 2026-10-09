@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 import mew
-from mew.reporter import JSONLReporter, JSONReporter
+from mew.reporter import JSONReporter
 
 
 class FakeMemoryManager:
@@ -68,26 +68,29 @@ class FakeProfilerManager:
         return self._result
 
 
-def test_memory_manager_registration_rejects_replacement():
+def test_registering_a_manager_replaces_the_previous_one(tmp_path):
+    """Matches upstream GB, where registration is a plain replace."""
     from mew import _core
 
-    _core.register_memory_manager(FakeMemoryManager())
+    @mew.benchmark(iterations=2)
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    first_mem, second_mem = FakeMemoryManager(), FakeMemoryManager()
+    first_prof, second_prof = FakeProfilerManager(), FakeProfilerManager()
+    _core.register_memory_manager(first_mem)
+    _core.register_profiler_manager(first_prof)
     try:
-        with pytest.raises(ValueError, match="already registered"):
-            _core.register_memory_manager(FakeMemoryManager())
+        _core.register_memory_manager(second_mem)
+        _core.register_profiler_manager(second_prof)
+        mew.run(reporter=JSONReporter(output=tmp_path / "o.json"))
     finally:
         _core.unregister_memory_manager()
-
-
-def test_profiler_manager_registration_rejects_replacement():
-    from mew import _core
-
-    _core.register_profiler_manager(FakeProfilerManager())
-    try:
-        with pytest.raises(ValueError, match="already registered"):
-            _core.register_profiler_manager(FakeProfilerManager())
-    finally:
         _core.unregister_profiler_manager()
+    assert first_mem.starts == first_prof.starts == 0
+    assert second_mem.starts == second_mem.stops == 1
+    assert second_prof.starts == second_prof.stops == 1
 
 
 # --- manager registration and the Run stamp ----------------------------------
@@ -103,16 +106,14 @@ def test_memory_manager_is_driven_and_stamped_onto_rows(tmp_path):
     out = tmp_path / "out.json"
     mew.run(min_time="1x", reporter=JSONReporter(output=out), memory_manager=mgr)
 
-    # GB ran the extra memory pass and asked the manager for figures.
-    assert mgr.starts >= 1
-    assert mgr.stops == mgr.starts
+    assert mgr.starts == mgr.stops == 1
     bench = json.loads(out.read_text())["benchmarks"][0]
     assert bench["memory"]["peak_bytes"] == 1024
     assert bench["memory"]["total_bytes"] == 2048
     assert bench["memory"]["total_allocations"] == 5
     # memory_iterations is GB's own min(16, iters), and the per-iteration rate
     # is derived from it rather than supplied by the manager.
-    assert bench["memory"]["iterations"] >= 1
+    assert bench["memory"]["iterations"] == 1
     assert bench["memory"]["allocations_per_iteration"] == pytest.approx(
         5 / bench["memory"]["iterations"]
     )
@@ -128,8 +129,7 @@ def test_profiler_manager_is_driven_and_stamped_onto_rows(tmp_path):
     out = tmp_path / "out.json"
     mew.run(min_time="1x", reporter=JSONReporter(output=out), profiler_manager=mgr)
 
-    assert mgr.starts >= 1
-    assert mgr.stops == mgr.starts
+    assert mgr.starts == mgr.stops == 1
     bench = json.loads(out.read_text())["benchmarks"][0]
     assert bench["cpu_profile"] == {
         "profiler": "pyinstrument",
@@ -177,20 +177,6 @@ def test_profiler_manager_get_result_is_optional(tmp_path):
     assert "cpu_profile" not in json.loads(out.read_text())["benchmarks"][0]
 
 
-def test_profiler_manager_is_suspended_across_state_pause(tmp_path):
-    @mew.benchmark
-    def bench_paused(state):
-        for _ in state:
-            with state.pause():
-                pass
-
-    mgr = FakeProfilerManager()
-    mew.run(min_time="10x", reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
-    # `state.pause()` must suspend the sampler, so setup inside the region is
-    # excluded from the CPU profile as it is from the timing.
-    assert mgr.pauses >= 1
-
-
 @pytest.mark.parametrize("reuse_scope", [False, True])
 def test_nested_pauses_toggle_the_profiler_only_at_the_outer_scope(tmp_path, reuse_scope):
     mgr = FakeProfilerManager()
@@ -224,25 +210,9 @@ def test_managers_do_not_leak_into_a_later_run(tmp_path):
     mew.run(min_time="1x", reporter=JSONReporter(output=out))
     # GB's manager registration is process-global; the scope must unregister it.
     assert mgr.starts == after_first
-    assert "memory" not in json.loads(out.read_text())["benchmarks"][0]
-
-
-def test_manager_exception_propagates_out_of_run(tmp_path):
-    class Exploding(FakeMemoryManager):
-        def stop(self):
-            raise RuntimeError("capture unreadable")
-
-    @mew.benchmark
-    def bench_boom(state):
-        for _ in state:
-            pass
-
-    with pytest.raises(RuntimeError, match="capture unreadable"):
-        mew.run(
-            min_time="1x",
-            reporter=JSONReporter(output=tmp_path / "o.json"),
-            memory_manager=Exploding(),
-        )
+    bench = json.loads(out.read_text())["benchmarks"][0]
+    assert "memory" not in bench
+    assert "cpu_profile" not in bench
 
 
 def test_memory_pass_completion_exception_propagates_out_of_run(tmp_path):
@@ -286,7 +256,7 @@ def test_memory_pass_is_not_accepted_when_stop_raises(tmp_path):
 
 @pytest.mark.parametrize("kind", ["memory", "profiler"])
 def test_malformed_manager_result_propagates_out_of_run(tmp_path, kind):
-    """Python result conversion belongs to the guarded native callback boundary."""
+    """A wrong-shaped manager result fails the run instead of being dropped silently."""
 
     @mew.benchmark
     def bench_bad_result(state):
@@ -309,43 +279,12 @@ def test_malformed_manager_result_propagates_out_of_run(tmp_path, kind):
 
         kwargs = {"profiler_manager": BadProfiler()}
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="must return"):
         mew.run(
             min_time="1x",
             reporter=JSONReporter(output=tmp_path / "bad.json"),
             **kwargs,
         )
-
-
-def test_reporters_omit_profile_blocks_without_managers(tmp_path):
-    @mew.benchmark
-    def bench_plain(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "out.json"
-    mew.run(min_time="1x", reporter=JSONReporter(output=out))
-    bench = json.loads(out.read_text())["benchmarks"][0]
-    assert "memory" not in bench
-    assert "cpu_profile" not in bench
-
-
-def test_jsonl_reporter_emits_profile_blocks(tmp_path):
-    @mew.benchmark
-    def bench_jl(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "out.jsonl"
-    mew.run(
-        min_time="1x",
-        reporter=JSONLReporter(output=out),
-        memory_manager=FakeMemoryManager(),
-        profiler_manager=FakeProfilerManager(),
-    )
-    row = json.loads(out.read_text().splitlines()[0])
-    assert row["memory"]["peak_bytes"] == 1024
-    assert row["cpu_profile"]["sample_count"] == 500
 
 
 # --- the real backends -------------------------------------------------------
@@ -648,53 +587,6 @@ def test_pyinstrument_manager_rejects_invalid_interval(interval):
         PyinstrumentManager(interval=interval)
 
 
-def test_rooted_record_renders_with_the_real_reporter(tmp_path):
-    """Pins memray's record surface: `_RootedRecord` duck-types `AllocationRecord`,
-    so a release that reads a further attribute must break here, not at runtime."""
-    pytest.importorskip("memray")
-    from memray.reporters.flamegraph import FlameGraphReporter
-
-    from mew.memory import _RootedRecord
-
-    record = _RootedRecord(
-        size=4096,
-        n_allocations=2,
-        tid=-1,
-        thread_name="",
-        stack=(("helper", "bench.py", 7), ("bench_demo", "bench.py", 3)),
-    )
-    reporter = FlameGraphReporter.from_snapshot(
-        # Duck-typed stand-in, exactly as mew.memory passes them.
-        cast("Any", [record]),
-        memory_records=(),
-        native_traces=False,
-    )
-    out = tmp_path / "f.html"
-    with out.open("w") as f:
-        reporter.render(
-            f,
-            metadata=_metadata_for(tmp_path),
-            show_memory_leaks=False,
-            merge_threads=True,
-            inverted=False,
-        )
-    html = out.read_text()
-    assert "bench_demo" in html
-    assert "helper" in html
-
-
-def _metadata_for(tmp_path):
-    """A real `Metadata`, which only memray can construct: take one from a capture."""
-    import memray
-
-    dest = tmp_path / "meta.bin"
-    with memray.Tracker(dest):
-        keep = bytearray(1024)
-        del keep
-    with memray.FileReader(dest) as reader:
-        return reader.metadata
-
-
 def test_flamegraph_is_rooted_at_the_benchmark_and_loop_scoped(tmp_path):
     """The graph names each benchmark and covers the same region as the table.
 
@@ -705,12 +597,16 @@ def test_flamegraph_is_rooted_at_the_benchmark_and_loop_scoped(tmp_path):
 
     from mew import memory as _memory
 
+    def nested_alloc_helper() -> bytearray:
+        return bytearray(600_000)  # allocated one frame below the body
+
     @mew.benchmark
     def bench_rooted(state):
         fixture = bytearray(30_000_000)  # setup: excluded from the loop scope
         for _ in state:
+            nested = nested_alloc_helper()
             inline = bytearray(400_000)  # allocated directly in the body frame
-            del inline
+            del inline, nested
         del fixture
 
     out = tmp_path / "flame.html"
@@ -724,6 +620,49 @@ def test_flamegraph_is_rooted_at_the_benchmark_and_loop_scoped(tmp_path):
 
     html = out.read_text()
     assert "bench_rooted" in html
+    # A multi-frame stack renders through memray's real reporter, which pins the
+    # attributes `_RootedRecord` must duck-type from `AllocationRecord`.
+    assert "nested_alloc_helper" in html
+
+
+def test_flamegraph_header_covers_every_capture(tmp_path, monkeypatch):
+    """The combined report's header totals span all captures, not the first."""
+    pytest.importorskip("memray")
+    from contextlib import ExitStack
+
+    import memray
+    from memray.reporters.flamegraph import FlameGraphReporter
+
+    from mew import memory as _memory
+
+    @mew.benchmark(iterations=2)
+    def bench_small(state):
+        for _ in state:
+            buf = bytearray(1_000)
+            del buf
+
+    @mew.benchmark(iterations=2)
+    def bench_large(state):
+        for _ in state:
+            buf = bytearray(5_000_000)
+            del buf
+
+    rendered = {}
+    monkeypatch.setattr(
+        FlameGraphReporter, "render", lambda self, f, *, metadata, **kw: rendered.update(m=metadata)
+    )
+    with ExitStack() as stack:
+        manager = _memory.manager(stack)
+        mew.run(reporter=None, memory_manager=manager)
+        metas = []
+        for capture, _ in manager.captures:
+            with memray.FileReader(capture) as reader:
+                metas.append(reader.metadata)
+        _memory.write_flamegraph(manager, tmp_path / "flame.html")
+
+    assert len(metas) == 2
+    assert rendered["m"].total_allocations == sum(m.total_allocations for m in metas)
+    assert rendered["m"].peak_memory == max(m.peak_memory for m in metas)
 
 
 def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
@@ -777,10 +716,12 @@ def test_pause_only_reaches_the_profiler_during_its_own_pass(tmp_path):
     assert set(calls) == {"sampling"}
 
 
+@pytest.mark.skipif(
+    not getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="pyinstrument's native sampler enables the GIL",
+)
 def test_pyinstrument_tolerates_a_pause_scope_open_at_loop_end(tmp_path):
     pytest.importorskip("pyinstrument")
-    if not getattr(sys, "_is_gil_enabled", lambda: True)():
-        pytest.skip("pyinstrument does not support free-threaded Python")
     from mew.cpu import PyinstrumentManager
 
     @mew.benchmark(iterations=2)

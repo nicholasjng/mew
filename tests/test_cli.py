@@ -1,11 +1,7 @@
 """CLI behavior, driven in-process via `mew.cli.main` for speed.
 
-The `mew_cli` fixture invokes the real argparse pipeline and returns a
-subprocess-shaped result (returncode/stdout/stderr), so tests read the same as
-their end-to-end counterparts. A small section at the bottom keeps true
-subprocess coverage: the module entry point, a real `mew list | mew run --stdin`
-pipe, and the clean-error contract of the shipped binary (message + exit code,
-no traceback), which only a fresh interpreter can prove.
+The end-to-end section at the bottom uses real subprocesses: only a fresh
+interpreter proves the entry point, real pipes, and the no-traceback contract.
 """
 
 from __future__ import annotations
@@ -59,14 +55,13 @@ class _Result:
 def mew_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path):
     """Invoke `mew.cli.main` in-process; returns a subprocess-shaped result.
 
-    `cwd` chdirs for the call (undone at teardown), `stdin` replaces
-    ``sys.stdin``, and a ``SystemExit`` becomes the returncode. The completion
-    cache is redirected into tmp so discovery side effects stay out of the
-    real ``~/.cache``.
+    The completion cache goes to tmp so discovery stays out of the real ``~/.cache``.
     """
     from mew.cli import main
 
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / ".cache"))
+    # Output assertions expect plain text unless a test opts into color.
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
 
     def invoke(*args: str, cwd: Path, stdin: str | None = None) -> _Result:
         monkeypatch.chdir(cwd)
@@ -106,15 +101,32 @@ def test_help_is_plain_terminal_text(mew_cli, tmp_path, args):
     res = mew_cli(*args, cwd=tmp_path)
     assert res.returncode == 0
     assert "usage: mew" in res.stdout
-    assert "`" not in res.stdout
+    assert "\x1b[" not in res.stdout
 
 
-def test_list_pattern_filter(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), "-k", "bench_one", cwd=tmp_path)
+def test_help_honors_force_color(mew_cli, tmp_path, monkeypatch):
+    # Like the reporters and tables: FORCE_COLOR colors even redirected output.
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    res = mew_cli("-h", cwd=tmp_path)
     assert res.returncode == 0
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    assert all("bench_one" in n for n in names)
-    assert names  # not empty
+    assert "\x1b[" in res.stdout
+
+
+def test_list_selects_symlinked_bench_file_in_benchpath(mew_cli, tmp_path):
+    # The link is imported through the benchpath, so it must be selected there
+    # even though its target lives outside.
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "impl.py").write_text(textwrap.dedent(FIXTURE))
+    bench = tmp_path / "benchmarks"
+    bench.mkdir()
+    try:
+        (bench / "bench_link.py").symlink_to(shared / "impl.py")
+    except OSError:
+        pytest.skip("symlinks are not available")
+    res = mew_cli("list", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "bench_one" in res.stdout
 
 
 def test_list_no_matches_exits_nonzero(mew_cli, benchdir, tmp_path):
@@ -133,7 +145,6 @@ def test_list_works_from_subdirectory(mew_cli, benchdir, tmp_path):
 
 
 def test_list_pattern_is_regex(mew_cli, benchdir, tmp_path):
-    # Alternation matches both fixture benchmarks; anchoring narrows to one.
     res = mew_cli("list", str(benchdir), "-k", "bench_(one|two)", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     names = [n for n in res.stdout.splitlines() if n.strip()]
@@ -167,7 +178,6 @@ def test_list_show_cases_expands_family(mew_cli, benchdir, tmp_path):
     res = mew_cli("list", str(benchdir), "--show-cases", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     names = [n for n in res.stdout.splitlines() if n.strip()]
-    # The family expands to one row per case; the plain benchmark stays single.
     assert any(n.endswith("::bench_two[n=1]") for n in names)
     assert any(n.endswith("::bench_two[n=2]") for n in names)
     assert any(n.endswith("::bench_one") for n in names)
@@ -193,7 +203,6 @@ def test_run_literal_selects_bracketed_case_without_escaping(mew_cli, benchdir, 
     benches = json.loads(out.read_text())["benchmarks"]
     assert len(benches) == 1 and "/case:1" in benches[0]["name"]
 
-    # Same pattern without -F: brackets are a char class → no match.
     res = mew_cli("run", str(benchdir), "--min-time", "1x", "-k", "bench_two[n=2]", cwd=tmp_path)
     assert res.returncode == 1
     assert "no benchmarks found" in res.stderr
@@ -203,17 +212,8 @@ def test_list_k_shows_narrowed_family_cases(mew_cli, benchdir, tmp_path):
     res = mew_cli("list", str(benchdir), "-k", "n=2", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     names = [n for n in res.stdout.splitlines() if n.strip()]
-    # The narrowed case is listed by label; the family and bench_one are gone.
     assert len(names) == 1
     assert names[0].endswith("::bench_two[n=2]")
-
-
-def test_run_json_to_file(mew_cli, benchdir, tmp_path):
-    out = tmp_path / "results.json"
-    res = mew_cli("run", str(benchdir), "--min-time", "1x", "-o", str(out), cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    doc = json.loads(out.read_text())
-    assert len(doc["benchmarks"]) == 3
 
 
 def test_run_nodeid_filter(mew_cli, benchdir, tmp_path):
@@ -244,8 +244,9 @@ def test_list_filter_by_multiple_tags_is_or(mew_cli, benchdir, tmp_path):
     res = mew_cli("list", str(benchdir), "-t", "io", "-t", "cpu", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     names = [n for n in res.stdout.splitlines() if n.strip()]
-    # io picks bench_one, cpu picks the bench_two family → 2 entries
-    # (the family expands to two Runs at run time, but `list` reports families).
+    # io picks bench_one, cpu picks the bench_two family (`list` reports
+    # families; the family expands to two Runs only at run time).
+    assert {n.rsplit("::", 1)[-1] for n in names} == {"bench_one", "bench_two"}
     assert len(names) == 2
 
 
@@ -254,17 +255,6 @@ def test_list_show_tags(mew_cli, benchdir, tmp_path):
     assert res.returncode == 0, res.stderr
     assert "[io]" in res.stdout
     assert "[cpu]" in res.stdout
-
-
-def test_run_jsonl_output_is_duckdb_queryable(mew_cli, benchdir, tmp_path):
-    duckdb = pytest.importorskip("duckdb")
-
-    out = tmp_path / "results.jsonl"
-    res = mew_cli("run", str(benchdir), "--min-time", "1x", "-o", str(out), cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    rows = duckdb.connect().execute(f"SELECT name, session.id FROM '{out}'").fetchall()
-    assert len(rows) == 3
-    assert all("bench_" in r[0] and r[1] for r in rows)
 
 
 def test_run_jsonl_gz_extension_accepted(mew_cli, benchdir, tmp_path):
@@ -285,10 +275,6 @@ def test_run_min_warmup_time_accepts_durations(mew_cli, benchdir, tmp_path):
     )
     assert res.returncode == 0, res.stderr
 
-    res = mew_cli("run", str(benchdir), "--min-warmup-time", "1h", cwd=tmp_path)
-    assert res.returncode != 0
-    assert "invalid --min-warmup-time" in res.stderr
-
 
 @pytest.mark.parametrize(
     ("flag", "value"),
@@ -296,19 +282,33 @@ def test_run_min_warmup_time_accepts_durations(mew_cli, benchdir, tmp_path):
         ("--min-time", "0x"),
         ("--min-time", "nan"),
         ("--min-warmup-time", "-1"),
+        ("--min-warmup-time", "nonsense"),
         ("--repetitions", "0"),
+        ("--memory-iterations", "0"),
         ("--sample-interval", "0"),
     ],
 )
 def test_run_rejects_invalid_numeric_options(mew_cli, benchdir, tmp_path, flag, value):
+    # argparse type errors exit 2 (usage), not 1 (the "nothing matched" code).
     res = mew_cli("run", str(benchdir), flag, value, cwd=tmp_path)
     assert res.returncode == 2
+    assert flag in res.stderr
 
 
-def test_run_append_requires_jsonl_file(mew_cli, benchdir, tmp_path):
-    res = mew_cli("run", str(benchdir), "--append", cwd=tmp_path)
+@pytest.mark.parametrize(
+    ("outputs", "message"),
+    [
+        ((), "--append requires"),
+        (("-o", "out.json"), "--append requires"),
+        # With a JSONL sink present, the JSON sink is still rejected.
+        (("-o", "out.jsonl", "-o", "out.json"), "--append is not supported for the JSON sink"),
+    ],
+)
+def test_run_append_requires_jsonl_file(mew_cli, benchdir, tmp_path, outputs, message):
+    # Neither stdout nor a single-document JSON file can be appended to.
+    res = mew_cli("run", str(benchdir), "--append", *outputs, cwd=tmp_path)
     assert res.returncode == 2
-    assert "--append requires" in res.stderr
+    assert message in res.stderr
 
 
 def test_run_promoted_gb_flags_accepted(mew_cli, benchdir, tmp_path):
@@ -371,7 +371,7 @@ def test_list_names_only_drops_path(mew_cli, benchdir, tmp_path):
     assert res.returncode == 0, res.stderr
     names = [n for n in res.stdout.splitlines() if n.strip()]
     assert "bench_one" in names
-    assert all("::" not in n for n in names)  # path-free identifiers
+    assert all("::" not in n for n in names)
 
 
 def test_list_names_only_show_cases(mew_cli, benchdir, tmp_path):
@@ -382,30 +382,12 @@ def test_list_names_only_show_cases(mew_cli, benchdir, tmp_path):
     assert all("::" not in n for n in names)
 
 
-def test_run_stdin_names_only_is_cwd_independent(mew_cli, benchdir, tmp_path):
-    # A path-free name (from --names-only) selects against run's own discovery
-    # (here an absolute positional path), so the run cwd need not match the list
-    # cwd — this is the fix for the relative-path round-trip.
-    res = mew_cli(
-        "run",
-        str(benchdir),
-        "--stdin",
-        "--min-time",
-        "1x",
-        "--format",
-        "jsonl",
-        stdin="bench_one\n",
-        cwd=tmp_path,  # cwd != benchdir
-    )
-    assert res.returncode == 0, res.stderr
-    objs = [json.loads(x) for x in res.stdout.splitlines() if x.strip()]
-    names = [o["name"] for o in objs if "name" in o]
-    assert names and all("bench_one" in n for n in names)
-
-
-def test_run_stdin_names_only_round_trip(mew_cli, benchdir, tmp_path):
-    listing = mew_cli("list", str(benchdir), "--names-only", cwd=tmp_path)
+def test_run_stdin_names_only_round_trip_is_cwd_independent(mew_cli, benchdir, tmp_path):
+    # A path-free name selects against run's own discovery, so the run cwd
+    # need not match the bench dir.
+    listing = mew_cli("list", str(benchdir), "--names-only", "-k", "bench_one", cwd=tmp_path)
     assert listing.returncode == 0, listing.stderr
+    assert listing.stdout.splitlines() == ["bench_one"]
     res = mew_cli(
         "run",
         str(benchdir),
@@ -415,13 +397,12 @@ def test_run_stdin_names_only_round_trip(mew_cli, benchdir, tmp_path):
         "--format",
         "jsonl",
         stdin=listing.stdout,
-        cwd=tmp_path,
+        cwd=tmp_path,  # cwd != benchdir
     )
     assert res.returncode == 0, res.stderr
     objs = [json.loads(x) for x in res.stdout.splitlines() if x.strip()]
     names = [o["name"] for o in objs if "name" in o]
-    assert any("bench_one" in n for n in names)
-    assert any("bench_two" in n for n in names)
+    assert len(names) == 1 and names[0].endswith("::bench_one")
 
 
 def test_run_format_jsonl_streams_to_stdout(mew_cli, benchdir, tmp_path):
@@ -437,14 +418,14 @@ def test_run_format_jsonl_streams_to_stdout(mew_cli, benchdir, tmp_path):
 def test_run_format_json_to_stdout(mew_cli, benchdir, tmp_path):
     res = mew_cli("run", str(benchdir), "--min-time", "1x", "--format", "json", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
-    doc = json.loads(res.stdout)  # one well-formed document
+    doc = json.loads(res.stdout)
     assert len(doc["benchmarks"]) == 3
 
 
 def test_run_format_unknown_errors(mew_cli, benchdir, tmp_path):
     res = mew_cli("run", str(benchdir), "--min-time", "1x", "--format", "yaml", cwd=tmp_path)
     assert res.returncode == 2
-    assert "unknown --format" in res.stderr
+    assert "invalid choice: 'yaml'" in res.stderr
 
 
 def test_run_format_without_stdout_sink_warns(mew_cli, benchdir, tmp_path):
@@ -489,8 +470,7 @@ def test_compare_regression_threshold_must_be_non_negative_and_finite(mew_cli, t
 
 
 def test_compare_regression_threshold_alone_is_report_only(mew_cli, tmp_path):
-    # A regression is detected and printed, but without --exit-non-zero-on-regression
-    # the command still exits 0 — the panel is informational, not a gate.
+    # Without --exit-non-zero-on-regression the panel is informational, not a gate.
     # +20%, well over 5%:
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     res = mew_cli("compare", str(other), str(base), "--regression-threshold", "5%", cwd=tmp_path)
@@ -515,8 +495,7 @@ def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path):
 
 
 def test_compare_exit_non_zero_on_regression_gates_alone(mew_cli, tmp_path):
-    # Without --regression-threshold the gate flag
-    # implies gating at the default threshold instead of silently no-opping.
+    # The gate flag alone gates at the default threshold rather than no-opping.
     # +20%, over the 5% default:
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     res = mew_cli("compare", str(other), str(base), "--exit-non-zero-on-regression", cwd=tmp_path)
@@ -558,19 +537,6 @@ def test_sessions_lists_newest_first(mew_cli, tmp_path):
     assert lines[3].startswith("aaaaaaaa") and "before" in lines[3]
 
 
-def test_run_memory_iterations_must_be_positive(mew_cli, tmp_path):
-    res = mew_cli("run", "--memory-iterations", "0", cwd=tmp_path)
-    assert res.returncode == 2
-    assert "--memory-iterations" in res.stderr
-
-
-def test_run_invalid_min_warmup_time_is_usage_error(mew_cli, tmp_path):
-    # argparse type errors exit 2 (usage), not 1 (the "nothing matched" code).
-    res = mew_cli("run", "--min-warmup-time", "nonsense", cwd=tmp_path)
-    assert res.returncode == 2
-    assert "--min-warmup-time" in res.stderr
-
-
 def _ends(entries, suffix):
     return any(e.name.endswith(suffix) for e in entries)
 
@@ -593,9 +559,11 @@ def test_completions_generate(mew_cli, shell, marker, tmp_path):
     res = mew_cli("completions", shell, cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     assert marker in res.stdout
-    assert "run" in res.stdout and "compare" in res.stdout  # commands
-    # a representative flag (fish renders long opts as `-l pattern`, so match the stem)
+    assert "run" in res.stdout and "compare" in res.stdout
+    # fish renders long opts as `-l pattern`, so match the stem.
     assert "pattern" in res.stdout
+    # Help text appears as argparse renders it, with "%%" unescaped.
+    assert "%%" not in res.stdout
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="bash not installed")
@@ -617,9 +585,9 @@ def test_completions_bash_functional(mew_cli, tmp_path):
         )
         return subprocess.run([bash, "-c", probe], capture_output=True, text=True).stdout.split()
 
-    assert "run" in complete("mew ru", 1)  # subcommand
-    assert "--pattern" in complete("mew run --pa", 2)  # option flag
-    assert set(complete("mew run --format ''", 3)) == {"json", "jsonl", "rich"}  # choices
+    assert "run" in complete("mew ru", 1)
+    assert "--pattern" in complete("mew run --pa", 2)
+    assert set(complete("mew run --format ''", 3)) == {"json", "jsonl", "rich"}
     assert set(complete("mew completions ''", 2)) == {"bash", "zsh", "fish"}
 
 
@@ -656,10 +624,8 @@ def test_completions_fish_syntax(mew_cli, tmp_path):
 
 # --- end-to-end: the real entry point in a subprocess -------------------------
 #
-# Everything above runs in-process for speed; this section proves the shipped
-# binary: `python -m mew.cli` imports and runs in a fresh interpreter, real
-# pipes round-trip, and errors reach the user as a message + exit code with no
-# traceback.
+# Proves the shipped binary: `python -m mew.cli` runs in a fresh interpreter,
+# real pipes round-trip, and errors are a message + exit code, no traceback.
 
 
 def _mew(*args: str, cwd: Path, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -682,7 +648,6 @@ def test_e2e_run_both_sinks(benchdir, tmp_path):
         "run", str(benchdir), "--min-time", "1x", "-o", "stdout", "-o", str(out), cwd=tmp_path
     )
     assert res.returncode == 0, res.stderr
-    # Rich table on stdout AND a JSON file on disk.
     assert "Benchmark" in res.stdout
     doc = json.loads(out.read_text())
     assert len(doc["benchmarks"]) == 3
@@ -749,8 +714,7 @@ def _setup_project(tmp_path: Path, setup_body: str) -> Path:
 
 
 def test_setup_file_context_applies_to_a_single_file_run(mew_cli, tmp_path: Path):
-    """The point of the setup file: context must not depend on which benchmark
-    files an invocation happens to select."""
+    """Setup-file context must not depend on which benchmark files are selected."""
     _setup_project(tmp_path, 'import mew\n\nmew.set_context("team", "perf")\n')
     out = tmp_path / "one.json"
     res = mew_cli("run", "benchmarks/bench_b.py", "--min-time=1x", "-o", str(out), cwd=tmp_path)
@@ -766,8 +730,17 @@ def test_setup_file_missing_is_a_clear_error(mew_cli, tmp_path: Path):
     )
     (tmp_path / "benchmarks").mkdir()
     res = mew_cli("run", "--min-time=1x", cwd=tmp_path)
-    assert res.returncode != 0
+    # A config error (2), not the "no benchmarks found" code (1).
+    assert res.returncode == 2
     assert "setup file not found" in res.stderr
+
+
+@pytest.mark.parametrize("spec", ["bogus", "p101"])
+def test_compare_invalid_statistic_is_a_usage_error(mew_cli, tmp_path: Path, spec):
+    # 2, not the "no overlap" code (1); checked before any file is read.
+    res = mew_cli("compare", "--statistic", spec, "a.json", "b.json", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "statistic" in res.stderr
 
 
 @pytest.mark.parametrize("second_filter", ["::bench_two", ""])

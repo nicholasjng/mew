@@ -27,16 +27,17 @@ def _write(path: Path, body: str) -> None:
     path.write_text(textwrap.dedent(body))
 
 
-def test_parse_plain_path():
-    s = discovery.parse("benchmarks/bench_sort.py")
+@pytest.mark.parametrize(
+    ("raw", "expected_filter"),
+    [
+        ("benchmarks/bench_sort.py", None),
+        ("benchmarks/bench_sort.py::quicksort", "quicksort"),
+    ],
+)
+def test_parse(raw, expected_filter):
+    s = discovery.parse(raw)
     assert s.path == Path("benchmarks/bench_sort.py")
-    assert s.filter is None
-
-
-def test_parse_nodeid():
-    s = discovery.parse("benchmarks/bench_sort.py::quicksort")
-    assert s.path == Path("benchmarks/bench_sort.py")
-    assert s.filter == "quicksort"
+    assert s.filter == expected_filter
 
 
 def test_collect_files_globs_directory(tmp_path):
@@ -58,25 +59,6 @@ def test_collect_files_accepts_single_file(tmp_path):
         file_patterns=["bench_*.py"],
     )
     assert files == [f.resolve()]
-
-
-def test_import_file_populates_registry(tmp_path):
-    bench = tmp_path / "bench_demo.py"
-    _write(
-        bench,
-        """
-        import mew
-
-        @mew.benchmark
-        def bench_x(state):
-            for _ in state:
-                pass
-    """,
-    )
-    discovery.import_file(bench)
-    names = [e.name for e in REGISTRY.all()]
-    assert len(names) == 1
-    assert "bench_x" in names[0]
 
 
 def test_import_file_allows_sibling_imports(tmp_path, _restore_sys_path):
@@ -122,19 +104,16 @@ def test_discovered_unloads_only_what_it_added(tmp_path, _restore_sys_path):
         before = set(sys.modules)
         discovery.import_file(bench)
         entry = next(e for e in REGISTRY.all() if "bench_x" in e.name)
-        # Exactly one synthetic bench module appears while the block is open.
         added = {m for m in set(sys.modules) - before if m.startswith("mew._bench_")}
         assert len(added) == 1
         mod_name = added.pop()
         assert parent in sys.path
 
-    # Boundary cleanup: our synthetic module and path insert are gone...
     assert mod_name not in sys.modules
     assert parent not in sys.path
-    # ...but the sibling module is left untouched (no risky sys.modules pruning).
+    # Sibling modules stay: pruning sys.modules wholesale is risky.
     assert "_bench_fixtures" in sys.modules
-    # ...and the registered function still works: its module namespace survives
-    # via __globals__ even though sys.modules no longer holds the module.
+    # The registered function keeps its namespace via __globals__.
     assert entry.fn.__globals__["VALUE"] == 7
 
 

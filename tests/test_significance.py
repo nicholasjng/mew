@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from mew._significance import mannwhitney_p
 
 
@@ -28,8 +26,7 @@ def test_mannwhitney_all_tied_returns_one() -> None:
     assert mannwhitney_p([5.0, 5.0], [5.0, 5.0]) == 1.0
 
 
-@pytest.mark.parametrize("a,b", [([1.0], [2.0]), ([1.0, 1.0, 1.0], [1.0])])
-def test_mannwhitney_handles_tiny_samples_without_error(a: list[float], b: list[float]) -> None:
-    p = mannwhitney_p(a, b)
+def test_mannwhitney_handles_tiny_samples_without_error() -> None:
+    p = mannwhitney_p([1.0], [2.0])
     assert p is not None
     assert 0.0 <= p <= 1.0

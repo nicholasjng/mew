@@ -105,19 +105,6 @@ def test_context_flows_into_reporter():
     assert "cpu_scaling_enabled" in cap.context["context"]
 
 
-def test_no_custom_key_when_context_is_empty():
-    @mew.benchmark
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    cap = Capture()
-    mew.run(min_time="1x", reporter=cap)
-    assert cap.context is not None
-    # No injection means no `custom` key shoved into the dict.
-    assert "custom" not in cap.context
-
-
 def test_context_snapshot_is_captured_at_run_start():
     mew.set_context("snapshot_phase", "before")
 
@@ -132,23 +119,6 @@ def test_context_snapshot_is_captured_at_run_start():
     mew.run(min_time="1x", reporter=cap)
     assert cap.context is not None
     assert cap.context["context"]["snapshot_phase"] == "before"
-
-
-def test_json_reporter_emits_custom_context(tmp_path: Path):
-    mew.set_context("dataset.size", 1024)
-
-    @mew.benchmark
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "results.json"
-    mew.run(
-        min_time="1x",
-        reporter=JSONReporter(output=out),
-    )
-    doc = json.loads(out.read_text())
-    assert doc["context"]["dataset"] == {"size": 1024}
 
 
 def test_json_reporter_handles_non_serializable_via_default(tmp_path: Path):

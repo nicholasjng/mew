@@ -1,8 +1,6 @@
 """Shared test helpers: result-file builders, a capture terminal, a capture reporter.
 
-The row/write_* builders encode the on-disk result-file contract (the shape
-mew's JSON/JSONL sinks write) in one place; the compare and regressions tests
-both consume it.
+The row/write_* builders keep the on-disk result-file shape in one place.
 """
 
 from __future__ import annotations
@@ -28,12 +26,7 @@ class Console(Terminal):
 
 
 class Capture:
-    """Minimal Reporter that stashes context, rows, and the finalize call.
-
-    The canonical fake for tests that only observe what a reporter receives;
-    scenario-shaped fakes (a raising callback, a missing ``finalize``, ...) stay
-    local to their test.
-    """
+    """Minimal reporter that records context, rows, and the finalize call."""
 
     def __init__(self) -> None:
         self.context: dict[str, Any] | None = None
