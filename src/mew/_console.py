@@ -110,9 +110,7 @@ def _truncate_left(text: str, width: int) -> str:
 
 
 def _truncate_right(text: str, width: int) -> str:
-    """Keep the left side, appending an ellipsis. Shared with `RichReporter`'s
-    non-flex columns (variant/label/hottest-frame) so both renderers guard
-    narrow widths the same way."""
+    """Keep the left side, appending an ellipsis. Also used by `RichReporter`."""
     if len(text) <= width:
         return text
     if width <= 1:
@@ -160,7 +158,6 @@ class Table:
             for i, cell in enumerate(row):
                 widths[i] = max(widths[i], _visible_len(cell))
 
-        # At most one flex column (the benchmark name); it absorbs leftover width.
         flex = next((i for i, f in enumerate(self._flex) if f), None)
         if flex is not None:
             overhead = (len(self._headers) - 1) * len(_COL_SEP)

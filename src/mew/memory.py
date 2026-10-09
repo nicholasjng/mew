@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 import tempfile
 from contextlib import ExitStack
-from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -36,14 +36,12 @@ def _caller_frame() -> Frame:
     return (frame.f_code.co_name, frame.f_code.co_filename, frame.f_lineno)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _RootedRecord:
     """A memray allocation record with the benchmark frame appended as its root.
 
-    memray records only frames entered after tracking started. Google Benchmark
-    starts the memory manager inside the benchmark body, so an allocation made
-    directly in the body has an empty stack; re-rooting puts the benchmark back
-    so a combined flame graph can tell captures apart.
+    Tracking starts inside the benchmark body, so memray never sees the body's
+    own frame; the root lets a combined flame graph tell captures apart.
     """
 
     size: int
@@ -120,9 +118,8 @@ class MemrayManager:
             return None
         tracker.__exit__(None, None, None)
         self._tracker = None
-        # Metadata avoids scanning every allocation, which can take minutes for
-        # an allocation-heavy body, so the optional cumulative `total_bytes`
-        # metric stays unset.
+        # Metadata avoids scanning every allocation (minutes for heavy bodies),
+        # so the optional `total_bytes` metric stays unset.
         with memray.FileReader(dest) as reader:
             meta = reader.metadata
         self._pending_capture = (dest, self._root)
@@ -166,10 +163,6 @@ def write_flamegraph(manager: MemrayManager, path: Path) -> None:
     path : Path
         Destination HTML file.
     """
-    require_memray()
-    import memray
-    from memray.reporters.flamegraph import FlameGraphReporter
-
     if not manager.captures:
         print(
             "warning: no memory captures recorded; skipping flame graph "
@@ -178,14 +171,14 @@ def write_flamegraph(manager: MemrayManager, path: Path) -> None:
         )
         return
 
-    # Header metadata for the report. Every capture comes from this process, so
-    # the first one speaks for all of them.
-    with memray.FileReader(manager.captures[0][0]) as first:
-        metadata = first.metadata
+    import memray
+    from memray.reporters.flamegraph import FlameGraphReporter
 
+    metas = []
     records: list[_RootedRecord] = []
     for capture, root in manager.captures:
         with memray.FileReader(capture) as reader:
+            metas.append(reader.metadata)
             for rec in reader.get_high_watermark_allocation_records(merge_threads=True):
                 records.append(
                     _RootedRecord(
@@ -197,6 +190,14 @@ def write_flamegraph(manager: MemrayManager, path: Path) -> None:
                     )
                 )
 
+    # Process fields are shared; the figures must cover every capture.
+    metadata = dataclasses.replace(
+        metas[0],
+        start_time=min(m.start_time for m in metas),
+        end_time=max(m.end_time for m in metas),
+        total_allocations=sum(m.total_allocations for m in metas),
+        peak_memory=max(m.peak_memory for m in metas),
+    )
     reporter = FlameGraphReporter.from_snapshot(
         # Duck-typed stand-ins for AllocationRecord; see _RootedRecord.
         cast("Any", records),

@@ -38,7 +38,7 @@ from mew.vcs import vcs_context
 
 __version__ = "0.2.0"
 
-# Clear Google Benchmark registrations at interpreter shutdown.
+# Registrations hold Python callables; release them while the interpreter is alive.
 atexit.register(_clear_registered_benchmarks)
 del _clear_registered_benchmarks
 

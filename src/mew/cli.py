@@ -9,7 +9,6 @@ import re
 import sys
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Any
 
 import mew.config as _config
 from mew import (
@@ -49,8 +48,7 @@ def _benchpath_selectors(cfg: _config.Config) -> list[_discovery.Selector]:
     selectors: list[_discovery.Selector] = []
     for p in cfg.benchpaths:
         sel = _discovery.parse(p)
-        if not sel.path.is_absolute():
-            sel.path = root / sel.path
+        sel.path = root / sel.path  # an absolute path replaces root
         selectors.append(sel)
     return selectors
 
@@ -64,12 +62,10 @@ def _import_setup(cfg: _config.Config) -> None:
     """
     if not cfg.setup:
         return
-    root = cfg.project_root or Path.cwd()
-    path = Path(cfg.setup)
-    if not path.is_absolute():
-        path = root / path
+    path = (cfg.project_root or Path.cwd()) / cfg.setup  # an absolute setup replaces root
     if not path.is_file():
-        raise SystemExit(f"mew: [tool.mew] setup file not found: {path}")
+        print(f"mew: invalid [tool.mew] config: setup file not found: {path}", file=sys.stderr)
+        raise SystemExit(2)
     _discovery.import_file(path)
 
 
@@ -78,18 +74,16 @@ def _collect(
     *,
     cfg: _config.Config,
     pattern: str | None,
-    tags: list[str] | None = None,
+    tags: list[str],
     literal: bool = False,
     stdin: bool = False,
 ) -> list[Entry]:
     """Resolve CLI path args into a filtered list of registered entries.
 
-    Each selector is paired with whether its ``::filter`` is literal. Positional
-    args follow ``--literal``. Stdin lines (``--stdin``) are always literal: a
-    line with ``::`` is a ``path::filter`` selector (imports that path); a
-    path-less line (``mew list --names-only`` output) is a name *filter* matched
-    against benchmarks discovered the normal way (positional paths / benchpaths),
-    so it round-trips regardless of cwd.
+    Exits ``1`` (the shared "nothing matched" code) if nothing is selected.
+
+    Stdin lines are always literal. A path-less line (``mew list --names-only``
+    output) filters names over the normal discovery, so it round-trips from any cwd.
     """
     pairs: list[tuple[_discovery.Selector, bool]] = [(_discovery.parse(p), literal) for p in paths]
     name_filters: list[str] = []
@@ -116,7 +110,6 @@ def _collect(
         raise SystemExit(2) from e
 
     REGISTRY.clear()
-    # Before the benchmark files: a provider it registers must apply to them all.
     _import_setup(cfg)
     for f in files:
         _discovery.import_file(f)
@@ -131,16 +124,14 @@ def _collect(
         print(e, file=sys.stderr)
         raise SystemExit(2) from e
     candidates = [
-        (entry, Path(entry.file).resolve() if entry.file else None) for entry in REGISTRY.all()
+        # abspath, not resolve(): a symlinked bench file inside a benchpath was
+        # imported through the link and must stay inside that benchpath.
+        (entry, Path(os.path.abspath(entry.file)) if entry.file else None)
+        for entry in REGISTRY.all()
     ]
-    return _discovery.select_entries(
-        candidates, selectors, names=names, pattern=pattern_re, tags=tags or ()
+    entries = _discovery.select_entries(
+        candidates, selectors, names=names, pattern=pattern_re, tags=tags
     )
-
-
-def _collect_or_exit(paths: list[str], **kwargs: Any) -> list[Entry]:
-    """:func:`_collect`, but exit ``1`` (the shared "nothing matched" code) if empty."""
-    entries = _collect(paths, **kwargs)
     if not entries:
         print("no benchmarks found", file=sys.stderr)
         raise SystemExit(1)
@@ -162,8 +153,8 @@ def list_(
 ) -> None:
     """List discovered benchmarks without running them."""
     with _discovery.discovered():
-        entries = _collect_or_exit(
-            paths, cfg=_load_config_or_exit(), pattern=pattern, tags=tag or None, literal=literal
+        entries = _collect(
+            paths, cfg=_load_config_or_exit(), pattern=pattern, tags=tag or [], literal=literal
         )
         for e in entries:
             tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
@@ -180,7 +171,6 @@ def list_(
 
 
 _STDOUT_SENTINELS = frozenset({"-", "stdout"})
-_STDOUT_FORMATS = frozenset({"rich", "json", "jsonl"})
 
 
 def _build_reporters(
@@ -192,14 +182,9 @@ def _build_reporters(
     show_label: bool = False,
     append: bool = False,
 ) -> list[Reporter]:
-    """Resolve ``-o`` sinks into a list of reporters.
+    """Resolve ``-o`` sinks into reporters; file format follows the extension.
 
-    ``-``/``stdout`` map to a stdout reporter in ``stdout_format`` (``rich`` /
-    ``json`` / ``jsonl``); ``*.json``/``*.jsonl``/``*.jsonl.gz`` to file
-    reporters (format by extension; ``.gz`` writes a gzip archive). Defaults to
-    one stdout reporter when no ``-o`` is given. ``append`` adds the run as a
-    new session to existing ``.jsonl[.gz]`` sinks (rejected for ``.json``, a
-    single streamed document).
+    ``append`` is rejected for ``.json``, which is a single streamed document.
     """
 
     def _stdout() -> Reporter:
@@ -288,25 +273,20 @@ def run(
     sample_html: Path | None = None,
 ) -> None:
     """Discover and run benchmarks."""
-    tag = tag or []
     output = output or []
-    if format not in _STDOUT_FORMATS:
-        print(
-            f"unknown --format {format!r}; choose from {sorted(_STDOUT_FORMATS)}", file=sys.stderr
-        )
-        raise SystemExit(2)
+    profile_memory = profile_memory or flamegraph is not None
+    sample = sample or sample_html is not None
     cfg = _load_config_or_exit()
-    # discovered(): bench modules stay live for the run, cleaned up at exit.
     with _discovery.discovered():
-        entries = _collect_or_exit(
-            paths, cfg=cfg, pattern=pattern, tags=tag or None, literal=literal, stdin=stdin
+        entries = _collect(
+            paths, cfg=cfg, pattern=pattern, tags=tag or [], literal=literal, stdin=stdin
         )
 
         reporters = _build_reporters(
             output,
             stdout_format=format,
-            show_memory=profile_memory or flamegraph is not None,
-            show_cpu=sample or sample_html is not None,
+            show_memory=profile_memory,
+            show_cpu=sample,
             # Label column distinguishes family case rows from the truncated name.
             show_label=any(e.case_labels for e in entries),
             append=append,
@@ -315,11 +295,11 @@ def run(
         with ExitStack() as stack:
             memory_manager = None
             profiler_manager = None
-            if profile_memory or flamegraph is not None:
+            if profile_memory:
                 from mew import memory as _memory
 
                 memory_manager = _memory.manager(stack)
-            if sample or sample_html is not None:
+            if sample:
                 from mew import cpu as _cpu
 
                 profiler_manager = _cpu.PyinstrumentManager(interval=sample_interval)
@@ -341,12 +321,8 @@ def run(
             # Both artifacts render from what the run already captured, so
             # neither re-executes the suite.
             if profiler_manager is not None and sample_html is not None:
-                from mew import cpu as _cpu
-
                 _cpu.write_html(profiler_manager.sessions, sample_html)
             if memory_manager is not None and flamegraph is not None:
-                from mew import memory as _memory
-
                 _memory.write_flamegraph(memory_manager, flamegraph)
 
 
@@ -369,7 +345,11 @@ def compare(
     cfg_file = _load_config_or_exit()
     # --statistic wins; else fall back to [tool.mew] statistic; else stdlib median.
     spec = statistic if statistic is not None else cfg_file.statistic
-    reduce = resolve_statistic(spec) if spec is not None else None
+    try:
+        reduce = resolve_statistic(spec) if spec is not None else None
+    except ValueError as e:
+        print(f"mew compare: {e}", file=sys.stderr)
+        raise SystemExit(2) from e
 
     # Any regression flag opts into gating, so the gate flag alone is not a
     # silent no-op; it gates at the default threshold.
@@ -378,10 +358,7 @@ def compare(
         from mew.regressions import load_config
 
         try:
-            cfg = load_config(
-                default_threshold=regression_threshold if regression_threshold is not None else 5.0,
-                root=cfg_file.project_root,
-            )
+            cfg = load_config(default_threshold=regression_threshold, root=cfg_file.project_root)
         except ValueError as e:
             print(f"mew compare: invalid regressions config: {e}", file=sys.stderr)
             raise SystemExit(2) from e
@@ -450,10 +427,11 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
 
     def format_help(self) -> str:
         text = super().format_help()
+        from mew._console import color_enabled, sgr
+
         # Captured help and redirected output remain plain text.
-        if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        if not color_enabled(sys.stdout):
             return text
-        from mew._console import sgr
 
         # Style headings, flags, and metavariables after layout.
         for pattern, style in (
@@ -544,7 +522,6 @@ def _add_filter_args(
     p: argparse.ArgumentParser,
     *,
     pattern_help: str,
-    literal_help: str = "Treat -k as a literal string.",
 ) -> None:
     """Add the coupled ``-k/--pattern`` + ``-F/--literal`` pair.
 
@@ -552,7 +529,7 @@ def _add_filter_args(
     together; only the help text differs per command.
     """
     p.add_argument("-k", "--pattern", metavar="<regex>", help=pattern_help)
-    p.add_argument("-F", "--literal", action="store_true", help=literal_help)
+    p.add_argument("-F", "--literal", action="store_true", help="Treat -k as a literal string.")
 
 
 def _add_tag_arg(p: argparse.ArgumentParser) -> None:
@@ -576,11 +553,7 @@ def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument("-h", "--help", action="help", help="Show this help.")
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
-    _add_filter_args(
-        p,
-        pattern_help="List benchmarks whose name matches <regex>.",
-        literal_help="Treat -k as a literal string.",
-    )
+    _add_filter_args(p, pattern_help="List benchmarks whose name matches <regex>.")
     _add_tag_arg(p)
     p.add_argument("--show-tags", action="store_true", help="Show tags alongside benchmark names.")
     p.add_argument(
@@ -627,6 +600,7 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--format",
         default="rich",
+        choices=("rich", "json", "jsonl"),
         metavar="<format>",
         help="Set standard-output format to rich, json, or jsonl.",
     )
@@ -788,17 +762,14 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Microbenchmarking for Python via Google Benchmark.",
         formatter_class=_CommandHelpFormatter,
         add_help=False,
-        # git-style: global options up front, then `<command> [<args>]`, instead
-        # of argparse's default `{list,ls,run,…} ...` enumeration.
+        # git-style, instead of argparse's `{list,ls,run,…} ...` enumeration.
         usage="mew [-h] [--version] <command> [<args>]",
     )
     parser.add_argument("-h", "--help", action="help", help="Show this help.")
     parser.add_argument(
         "--version", action="version", version=_VERSION, help="Show version information."
     )
-    # metavar `<command>` keeps the command list out of curly braces; prog="mew"
-    # so each subcommand's own usage reads `mew run …` (not the parent's usage
-    # string, which argparse would otherwise splice in).
+    # prog="mew": otherwise argparse splices the parent's usage into `mew run …`.
     sub = parser.add_subparsers(dest="_command", title="commands", metavar="<command>", prog="mew")
 
     _add_list_cmd(sub)

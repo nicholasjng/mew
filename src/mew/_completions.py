@@ -1,11 +1,7 @@
 """Generate static shell-completion scripts from the argparse parser.
 
-Introspect the parser (subcommands, their options, and each value's completion kind:
-file / fixed choices / none) and emit a completion script per shell.
-``mew completions <shell>`` prints it for ``eval`` or install.
-
 Deliberately dependency-free and static: command and option names, file completion
-for path arguments, and fixed choices (``--format``, the shell list).
+for path arguments, and fixed choices. Nothing that would require importing the suite.
 """
 
 from __future__ import annotations
@@ -23,7 +19,7 @@ class _Opt:
     flags: list[str]
     help: str
     takes_value: bool
-    # "file", a list of choices, or None (freeform / no value).
+    # "file", "selector", a list of choices, or None (freeform / no value).
     value: str | list[str] | None
     repeat: bool = False  # action="append": may be given more than once
 
@@ -37,14 +33,10 @@ class _Cmd:
 
 
 def _value_kind(action: argparse.Action) -> str | list[str] | None:
-    """Completion kind for an action's value: a choices list, ``"file"``, or None."""
+    """Completion kind for an action's value: choices, ``"file"``, ``"selector"``, or None."""
     if action.choices:
         return [str(c) for c in action.choices]
     dest = action.dest
-    if dest == "format":
-        from mew.cli import _STDOUT_FORMATS  # source of truth, avoids drift
-
-        return sorted(_STDOUT_FORMATS)
     if getattr(action, "type", None) is Path:
         return "file"
     if not action.option_strings:  # positional
@@ -56,9 +48,7 @@ def _value_kind(action: argparse.Action) -> str | list[str] | None:
 
 
 def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
-    sub = next((a for a in parser._actions if isinstance(a, argparse._SubParsersAction)), None)
-    if sub is None:
-        return []
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
     help_by_name = {ca.dest: (ca.help or "") for ca in sub._choices_actions}
     # Group by parser identity: argparse stores aliases as extra keys → same parser.
     grouped: dict[int, _Cmd] = {}
@@ -76,7 +66,8 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
                     grouped[key].opts.append(
                         _Opt(
                             list(a.option_strings),
-                            a.help or "",
+                            # Raw help keeps argparse's %-escapes.
+                            (a.help or "").replace("%%", "%"),
                             a.nargs != 0,
                             _value_kind(a),
                             repeat=isinstance(a, argparse._AppendAction),
@@ -88,16 +79,14 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
     return [grouped[k] for k in order]
 
 
-def _global_flags(parser: argparse.ArgumentParser) -> list[str]:
-    return [f for a in parser._actions if a.option_strings for f in a.option_strings]
-
-
 # --- bash ---------------------------------------------------------------------
 
 
 def _bash(parser: argparse.ArgumentParser) -> str:
     cmds = _commands(parser)
-    top = [n for c in cmds for n in c.names] + _global_flags(parser)
+    top = [n for c in cmds for n in c.names] + [
+        f for a in parser._actions if a.option_strings for f in a.option_strings
+    ]
     out = [
         "_mew() {",
         "    local cur prev cmd i w",
@@ -135,8 +124,7 @@ def _bash(parser: argparse.ArgumentParser) -> str:
         out.append("            return")
         out.append("        fi")
         if c.positional in ("file", "selector"):
-            # Selectors are `path[::filter]`: file completion covers the path
-            # part, the shell's static script can't complete the filter names.
+            # Only the path half of `path::filter` is completable statically.
             out.append('        COMPREPLY=( $(compgen -f -- "$cur") )')
         elif isinstance(c.positional, list):
             out.append(f'        COMPREPLY=( $(compgen -W "{" ".join(c.positional)}" -- "$cur") )')
@@ -163,10 +151,8 @@ def _zsh_spec(o: _Opt) -> str:
             body += f":value:({' '.join(o.value)})"
         else:
             body += ":value:"
-    # Repeatable options get the `*` prefix and no exclusion list (excluding an
-    # option against itself stops zsh from offering it a second time). Brace
-    # alternatives must sit *outside* the quotes for zsh to expand them into
-    # one spec per flag.
+    # Repeatable options get `*` and no exclusion list, else zsh offers them only
+    # once. Brace alternatives must sit outside the quotes for zsh to expand them.
     if o.repeat:
         prefix = "'*'" if len(o.flags) > 1 else "*"
     else:
@@ -199,8 +185,7 @@ def _zsh(parser: argparse.ArgumentParser) -> str:
         if c.positional == "file":
             specs.append("'*:path:_files'")
         elif c.positional == "selector":
-            # `file.py::name` selectors: complete the path half, which is the
-            # part a shell can know without importing the suite.
+            # Only the path half of `path::filter` is completable statically.
             specs.append("'*:selector:_files'")
         elif isinstance(c.positional, list):
             specs.append(f"'*:value:({' '.join(c.positional)})'")

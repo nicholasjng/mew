@@ -38,25 +38,12 @@ class Config:
     project_root: Path | None = None
 
 
-def _snake_keys(obj: Any) -> Any:
-    """Recursively rewrite dict keys ``kebab-case`` -> ``snake_case``.
-
-    Config keys are written with dashes (TOML idiom) but map straight onto the
-    snake_case :class:`Config` fields, so coerce once after the read.
-    """
-    if isinstance(obj, dict):
-        return {k.replace("-", "_"): _snake_keys(v) for k, v in obj.items()}
-    return obj
-
-
-def _parse_str_list(raw: Any, key: str, default: list[str]) -> list[str]:
+def _parse_str_list(raw: Any, key: str) -> list[str]:
     """Validate a string-list config field; a bare string means one entry.
 
     `list("benchmarks")` would silently split into characters, so the string
     case must be handled before the list case.
     """
-    if raw is None:
-        return list(default)
     if isinstance(raw, str):
         return [raw]
     if isinstance(raw, list) and all(isinstance(x, str) for x in raw):
@@ -91,20 +78,18 @@ def load(start: Path | None = None) -> Config:
             continue
         with candidate.open("rb") as fh:
             data = tomllib.load(fh)
-        tool = _snake_keys(data.get("tool", {}).get("mew", {}))
+        # Keys are written with dashes (TOML idiom) but map onto snake_case fields.
+        tool = {k.replace("-", "_"): v for k, v in data.get("tool", {}).get("mew", {}).items()}
         statistic = tool.get("statistic")
         if statistic is not None and not isinstance(statistic, str):
             raise ValueError("[tool.mew] statistic must be a string")
         setup = tool.get("setup")
         if setup is not None and not isinstance(setup, str):
             raise ValueError("[tool.mew] setup must be a string")
-        return Config(
-            benchpaths=_parse_str_list(tool.get("benchpaths"), "benchpaths", ["benchmarks"]),
-            python_files=_parse_str_list(
-                tool.get("python_files"), "python-files", ["bench_*.py", "*_bench.py"]
-            ),
-            setup=setup,
-            statistic=statistic,
-            project_root=parent,
-        )
+        cfg = Config(setup=setup, statistic=statistic, project_root=parent)
+        if (raw := tool.get("benchpaths")) is not None:
+            cfg.benchpaths = _parse_str_list(raw, "benchpaths")
+        if (raw := tool.get("python_files")) is not None:
+            cfg.python_files = _parse_str_list(raw, "python-files")
+        return cfg
     return Config()

@@ -178,13 +178,16 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
         raise ValueError(f"{source}: allow rule {pattern!r}: {e}") from e
 
 
-def load_config(*, default_threshold: float, root: Path | None = None) -> RegressionConfig:
+def load_config(
+    *, default_threshold: float | None = None, root: Path | None = None
+) -> RegressionConfig:
     """Build a :class:`RegressionConfig` from ``[tool.mew.regressions]``.
 
     Parameters
     ----------
-    default_threshold : float
-        Threshold used when the configuration does not override it.
+    default_threshold : float, optional
+        Threshold in percent, e.g. from ``--regression-threshold``. Overrides
+        ``[tool.mew.regressions] default_threshold``; without either, 5.0.
     root : Path, optional
         Directory holding the project's ``pyproject.toml`` (see
         :attr:`mew.config.Config.project_root`). ``None`` means no file:
@@ -196,7 +199,7 @@ def load_config(*, default_threshold: float, root: Path | None = None) -> Regres
         Parsed threshold and ordered allowlist rules.
     """
     rules: list[AllowRule] = []
-    threshold = default_threshold
+    threshold = default_threshold if default_threshold is not None else 5.0
 
     source: Path | None = None
     if root is not None and (candidate := root / "pyproject.toml").is_file():
@@ -206,7 +209,8 @@ def load_config(*, default_threshold: float, root: Path | None = None) -> Regres
         with source.open("rb") as fh:
             doc = tomllib.load(fh)
         table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
-        threshold = table.get("default_threshold", default_threshold)
+        if default_threshold is None:
+            threshold = table.get("default_threshold", threshold)
         allow = table.get("allow", [])
         if not isinstance(allow, list) or not all(isinstance(r, dict) for r in allow):
             raise ValueError(f"{source}: [tool.mew.regressions] allow must be an array of tables")

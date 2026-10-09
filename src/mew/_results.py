@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, TextIO, cast
 
 from mew._console import overflow
-from mew._statistics import Statistic, reduce_statistic
+from mew._statistics import Statistic
 from mew._typing import BenchmarkResult
 from mew.reporter import _ROW_STAMP_FIELDS, canonical_row_name
 
@@ -22,18 +22,14 @@ _TIME_METRICS = frozenset({"real_time", "cpu_time"})
 def _to_ns(value: float, unit: str | None) -> float:
     """Normalize a ``(value, unit)`` pair to nanoseconds.
 
-    Google Benchmark reports every value in one declared unit (``ns`` unless
-    the benchmark calls ``SetTimeUnit``); two files being compared can declare
-    different units (e.g. one produced with ``--benchmark_time_unit=us``), so
-    delta/speedup math must go through this, not raw ``sample.value``.
+    Compared files can declare different units (e.g. ``--benchmark_time_unit=us``),
+    so delta/speedup math must go through this, not raw ``sample.value``.
     """
     return value * _NS_PER_UNIT.get(unit or "ns", 1.0)
 
 
-# `memory.total_bytes` and `memory.total_allocations` may stay in stored files
-# but are not compare metrics: total allocated bytes describes cumulative work,
-# and total allocations is not comparable across differing iteration counts
-# (`allocations_per_iteration` is the comparable form).
+# Totals scale with the iteration count, so only peak and per-iteration memory
+# are comparable.
 _MEMORY_METRICS = frozenset(
     {
         "memory.peak_bytes",
@@ -76,14 +72,12 @@ class Sample:
         return self.stddev / abs(self.value)
 
 
-def _is_aggregate_row(row: dict[str, Any]) -> bool:
-    return bool(row.get("aggregate_name"))
-
-
 def _is_measurement_row(row: dict[str, Any]) -> bool:
     """Return whether a row is a successful, non-aggregate measurement."""
     return (
-        isinstance(row.get("name"), str) and not _is_aggregate_row(row) and not row.get("skipped")
+        isinstance(row.get("name"), str)
+        and not row.get("aggregate_name")
+        and not row.get("skipped")
     )
 
 
@@ -118,8 +112,7 @@ def _rows_from_jsonl(path: Path) -> list[dict[str, Any]]:
             return gzip.open(p, "rt")
     else:
         _open = Path.open
-    # Stream line-by-line: a growing --append archive can be large, and
-    # read_text() would hold the whole file in memory on top of the parsed rows.
+    # Stream: a growing --append archive can be large.
     with _open(path) as fh:
         for lineno, line in enumerate(fh, start=1):
             if not line.strip():
@@ -160,8 +153,7 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
 
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
     """Per-repetition values in the first row's unit, dropping absent metrics."""
-    # Reduce in the first row's unit, preserving the public Sample unit while
-    # making appended sessions with different declared units comparable.
+    # Appended sessions may declare different units.
     unit_scale = _NS_PER_UNIT.get(rows[0].get("time_unit") or "ns", 1.0) if rows else 1.0
     return [
         _to_ns(float(v), r.get("time_unit")) / unit_scale if metric in _TIME_METRICS else float(v)
@@ -174,28 +166,23 @@ def _aggregate_values(
     values: list[float], statistic: Statistic | None = None
 ) -> tuple[float, float | None]:
     """Return the selected center and sample standard deviation of measurements."""
-    center = (
-        reduce_statistic(statistic, values) if statistic is not None else statistics.median(values)
-    )
+    # A user reducer may return e.g. a numpy scalar.
+    center = float((statistic or statistics.median)(values))
     stddev = statistics.stdev(values) if len(values) > 1 else None
     return center, stddev
 
 
-def _normalize_name(name: str, key: str) -> str:
-    """``key="func"`` strips the ``file.py::`` prefix from a registered name."""
-    if key == "func":
-        return name.rsplit("::", 1)[-1]
-    return name
-
-
 def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dict[str, Sample]:
-    """Re-key samples for the requested match key, erroring on collisions."""
+    """Re-key samples for the requested match key, erroring on collisions.
+
+    ``key="func"`` strips the ``file.py::`` prefix from each registered name.
+    """
     if key == "name":
         return samples
     renamed: dict[str, Sample] = {}
     origin: dict[str, str] = {}
     for full, sample in samples.items():
-        short = _normalize_name(full, key)
+        short = full.rsplit("::", 1)[-1]
         if short in renamed:
             raise SystemExit(
                 f"{source}: --key {key} maps both {origin[short]!r} and {full!r} "
@@ -207,11 +194,7 @@ def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dic
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
-    """Dispatch on suffix to read a result file's rows.
-
-    A missing or unparseable input is a CLI-level error, so read/parse failures
-    surface as ``SystemExit`` with a one-line message, not a traceback.
-    """
+    """Read a result file's rows, raising a one-line ``SystemExit`` on failure."""
     name = path.name.lower()
     if name.endswith(".json"):
         reader = _rows_from_json
@@ -244,8 +227,7 @@ def _samples_from_groups(
         try:
             center, stddev = _aggregate_values(values, statistic)
         except statistics.StatisticsError as e:
-            # A reducer can reject its input (e.g. gmean with zero timings).
-            # Report that failure instead of dropping the benchmark.
+            # E.g. gmean with zero timings; fail rather than drop the benchmark.
             raise SystemExit(f"--statistic failed on {name!r}: {e}") from e
         samples[name] = Sample(
             name=name,
@@ -319,16 +301,13 @@ def _select_rows(
     return [r for rows in tagged for r in rows]
 
 
-Reader = Callable[[Path], list[dict[str, Any]]]
-
-
 def _load(
     path: Path,
     metric: str,
     key: str = "name",
     selector: str | None = None,
     statistic: Statistic | None = None,
-    reader: Reader = _read_rows,
+    reader: Callable[[Path], list[dict[str, Any]]] = _read_rows,
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
     """Load one comparison column from a result file: read, select a session, re-key.
 
@@ -339,7 +318,7 @@ def _load(
     # The newest selected row speaks for the column's provenance.
     rep_row = max(selected, key=_session_key)
     samples = _samples_from_groups(_group_by_name(selected), metric, statistic)
-    ctx = {key: rep_row[key] for key in _ROW_STAMP_FIELDS if key in rep_row}
+    ctx = {k: rep_row[k] for k in _ROW_STAMP_FIELDS if k in rep_row}
     return _normalize_samples(samples, key, str(path)), ctx
 
 

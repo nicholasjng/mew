@@ -18,7 +18,7 @@ from mew._session import new_session_id
 from mew._typing import MemoryManager, ProfilerManager
 from mew.context import get_context
 from mew.machine import _gil_enabled, _silence_native_stderr, machine_context
-from mew.reporter import Reporter
+from mew.reporter import Fanout, Reporter
 
 if TYPE_CHECKING:
     from mew._typing import BenchmarkOptions, BenchmarkResult
@@ -64,26 +64,6 @@ def _skipped_row(name: str, threads: int, message: str) -> BenchmarkResult:
     }
 
 
-_FT_WARMED_UP = False
-
-
-def _warmup_free_threading() -> None:
-    """Force CPython's single→multi-thread transition on the main thread.
-
-    On a free-threaded interpreter the first second-thread creation runs a
-    stop-the-world immortalization pass. Google Benchmark spawns N raw worker
-    threads that all ``PyGILState_Ensure`` at once; if that pass fires while
-    they're mid-attach they deadlock. Driving it here, on a clean main thread
-    before GB spawns anything, makes it a no-op by attach time. A no-op after the
-    first call.
-    """
-    global _FT_WARMED_UP
-    if _FT_WARMED_UP:
-        return
-    _FT_WARMED_UP = True
-    _core.warmup_free_threading()
-
-
 def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> None:
     if (v := opts.get("min_time")) is not None:
         handle.min_time(float(v))
@@ -94,8 +74,7 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
     if (v := opts.get("repetitions")) is not None:
         handle.repetitions(int(v))
     if v := opts.get("unit"):
-        # Normalize the bare "ns"/"us"/... string (or a TimeUnit) to the enum;
-        # the C++ binding takes a TimeUnit. TimeUnit(...) is idempotent on members.
+        # The binding takes the enum; TimeUnit(...) also accepts a member as-is.
         handle.unit(_core.TimeUnit(v))
     if opts.get("use_real_time"):
         handle.use_real_time()
@@ -108,7 +87,7 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
     if opts.get("threads") is not None:
         # GB accumulates: one Threads() call per count runs the benchmark once each.
         for n in _thread_counts(opts):
-            handle.threads(int(n))
+            handle.threads(n)
 
 
 _DEFAULT_MIN_TIME = "0.5s"
@@ -148,7 +127,7 @@ def _validate_run_options(
     min_time: str | float | None,
     min_warmup_time: float | None,
     repetitions: int | None,
-    memory_iterations: int | None = None,
+    memory_iterations: int | None,
 ) -> None:
     """Reject invalid global run options before the run has any side effects."""
     _check_positive_int(repetitions, "repetitions")
@@ -238,8 +217,6 @@ def run(
     if not selected:
         return 0
 
-    # Threaded mode can't run on a GIL build (it would deadlock on GB's start
-    # barrier): warn and skip by default, raise under `strict`.
     skipped_rows: list[BenchmarkResult] = []
     threaded = [e for e in selected if _is_threaded(e.options)]
     if threaded and _gil_enabled():
@@ -279,8 +256,8 @@ def run(
         }
         if session_tag:
             session["tag"] = session_tag
-        # The machine provider is applied first so a suite can override it.
         extra_context["session"] = session
+        # Machine context first so a suite's providers can override it.
         extra_context["context"] = {**machine_context(), **get_context()}
 
     if not selected:
@@ -292,9 +269,8 @@ def run(
                 if skipped_rows:
                     rep.report_runs(skipped_rows)
             finally:
-                # Match Google Benchmark's normal reporter lifecycle: once
-                # reporting starts, finalize even when a callback raises. This
-                # closes owned sinks and terminates streamed JSON documents.
+                # As in GB's lifecycle, finalize even if a callback raised, so
+                # owned sinks close and streamed JSON documents are terminated.
                 if fn := getattr(rep, "finalize", None):
                     fn()
         return 0
@@ -311,17 +287,16 @@ def run(
             if entry.cases is None:
                 handle.dense_range(0, len(entry.case_labels) - 1)
             else:
-                # A name filter narrowed the family: register only those case
-                # indices. The arg is the case index the trampoline reads via
-                # state.range(0), so the right kwargs/label still bind.
+                # A name filter narrowed the family; each arg is a case index
+                # the trampoline reads via state.range(0).
                 for i in entry.cases:
                     handle.arg(i)
             handle.arg_name("case")
 
-    # Only reached on a free-threaded build (threaded entries are skipped above
-    # under the GIL), where the warmup avoids the attach deadlock.
+    # On free-threaded builds the first second-thread creation runs a
+    # stop-the-world pass that deadlocks GB's attaching workers; trigger it here.
     if threaded:
-        _warmup_free_threading()
+        _core.warmup_free_threading()
     # Trigger GB's noisy system-info probes with fd 2 silenced, then run with
     # stderr live so user output and GB run-time diagnostics get through.
     with _silence_native_stderr():
@@ -348,8 +323,6 @@ def _to_single_reporter(
     # Anything with the reporter callbacks is a single reporter, even if iterable.
     if isinstance(reporter, Reporter):
         return reporter
-    from mew.reporter import Fanout
-
     reps = list(reporter)
     if not reps:
         return None
