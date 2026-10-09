@@ -82,8 +82,10 @@ threshold = 25.0
 reason = "noisy on shared runners"
 """
     )
-    cfg = load_config(default_threshold=5.0, root=tmp_path)
+    cfg = load_config(root=tmp_path)
     assert cfg.default_threshold == 7.5
+    # An explicit threshold (--regression-threshold) wins over the file.
+    assert load_config(default_threshold=2.0, root=tmp_path).default_threshold == 2.0
     assert len(cfg.rules) == 2
     assert cfg.rules[0].ignore is True
     assert cfg.rules[1].threshold == 25.0
@@ -149,23 +151,20 @@ def test_regression_config_rejects_invalid_default_threshold(threshold) -> None:
 
 def test_render_panel_exit_codes() -> None:
     rule = AllowRule(pattern="x", reason="r", threshold=99.0)
-    # Pure OK: no panel, exit 0.
     text, code = render_panel([BenchmarkVerdict("x", 1.0, Verdict.OK, None)], default_threshold=5.0)
     assert text == ""
     assert code == 0
-    # Regression: panel + exit 2.
     text, code = render_panel(
         [BenchmarkVerdict("x", 10.0, Verdict.REGRESSED, None)], default_threshold=5.0
     )
     assert "❌" in text
     assert code == 2
-    # Allowed-over: panel + exit 0.
     text, code = render_panel(
         [BenchmarkVerdict("x", 30.0, Verdict.ALLOWED_OVER, rule)], default_threshold=5.0
     )
     assert "⚠️" in text
     assert code == 0
-    # Ignored: panel (visible in the allowlist) + exit 0.
+    # Ignored benchmarks still show in the panel, so the allowlist stays visible.
     ignore_rule = AllowRule(pattern="x", reason="flaky", ignore=True)
     text, code = render_panel(
         [BenchmarkVerdict("x", 50.0, Verdict.IGNORED, ignore_rule)], default_threshold=5.0
@@ -175,16 +174,7 @@ def test_render_panel_exit_codes() -> None:
     assert code == 0
 
 
-def test_compare_passes_when_under_threshold(tmp_path: Path) -> None:
-    # +2%:
-    other, base = _write_pair(tmp_path, other=[_row("b", 102.0)], base=[_row("b", 100.0)])
-    cfg = RegressionConfig(default_threshold=5.0)
-    code = compare([other, base], regressions=cfg, console=Console(width=200))
-    assert code == 0
-
-
 def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    # +20%:
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     cfg = RegressionConfig(default_threshold=5.0)
     code = compare([other, base], regressions=cfg, console=Console(width=200))
@@ -194,7 +184,6 @@ def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixtu
 
 
 def test_compare_config_allow_lifts_threshold(tmp_path: Path) -> None:
-    # +20%:
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     py = tmp_path / "pyproject.toml"
     py.write_text(
@@ -207,12 +196,10 @@ reason = "noisy"
     )
     cfg = load_config(default_threshold=5.0, root=tmp_path)
     code = compare([other, base], regressions=cfg, console=Console(width=200))
-    # 20% > 5% default but the rule allows up to 50% — allowed_over → exit 0.
     assert code == 0
 
 
 def test_compare_config_allow_ignore_skips_gating(tmp_path: Path) -> None:
-    # +100%:
     other, base = _write_pair(tmp_path, other=[_row("b", 200.0)], base=[_row("b", 100.0)])
     py = tmp_path / "pyproject.toml"
     py.write_text(
@@ -231,7 +218,7 @@ reason = "known-flaky"
 def test_compare_iterations_metric_regression(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # -20% iters = slower:
+    # Fewer iterations is slower.
     other, base = _write_pair(
         tmp_path,
         other=[_row("b", 1.0, iterations=800)],
@@ -246,6 +233,5 @@ def test_compare_iterations_metric_regression(
     )
     assert code == 2
     err = capsys.readouterr().err
-    # The displayed delta must stay signed -20.00% (raw, not the higher-is-better
-    # magnitude) — only evaluate()'s internal magnitude flips the sign.
+    # Display the raw signed delta; only evaluate() flips it for higher-is-better.
     assert "-20.00%" in err

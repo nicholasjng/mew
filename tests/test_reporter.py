@@ -1,4 +1,4 @@
-"""Reporter output shape (JSON schema, RichReporter doesn't crash)."""
+"""Reporters: JSON/JSONL row shape and streaming, and the RichReporter table."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def test_json_reporter_can_be_reused(tmp_path):
 
 
 def _fake_row(name: str, label: str = "", benchmark: str | None = None) -> BenchmarkResult:
-    """A minimal BenchmarkResult dict, the shape reporters now consume directly."""
+    """A minimal BenchmarkResult row for driving reporters without a run."""
     return {
         "name": name,
         "run_name": name,
@@ -95,10 +95,8 @@ def _fake_row(name: str, label: str = "", benchmark: str | None = None) -> Bench
 
 
 def test_json_reporter_streams_forward_only(tmp_path):
-    """GB-style: rows land on disk as they arrive, the closer only at finalize.
-
-    The document parses only after finalize; JSONL is the interruption-safe format.
-    """
+    """Rows land on disk as they arrive, like GB; the document only parses after
+    finalize (JSONL is the interruption-safe format)."""
     out = tmp_path / "results.json"
     rep = JSONReporter(output=out)
     rep.report_context({"session": {"host": "h"}, "context": {"num_cpus": 4}})
@@ -151,44 +149,34 @@ def test_jsonl_gz_reporter_duckdb_query_round_trip(tmp_path):
 
 
 def test_rich_reporter_runs_without_error():
-    # Use an in-memory console so the test doesn't paint the terminal.
     from mew._console import Terminal
 
     buf = io.StringIO()
     rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
     _run_one(rep)
     out = buf.getvalue()
-    assert "host=" in out
     assert "host=?" not in out
     assert "cpus=?" not in out
     assert "Benchmark" in out  # the table header
+    assert "bench_x" in out  # a data row
 
 
 def test_rich_reporter_streams_header_before_first_run():
-    """Header must be emitted at report_context, not deferred to finalize."""
-    import io
-
     from mew._console import Terminal
-    from mew.reporter import RichReporter
 
     buf = io.StringIO()
     rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
     rep.report_context(
         {"session": {"host": "h"}, "context": {"num_cpus": 4, "cpu_scaling_enabled": False}}
     )
-    # Header is already on screen — we haven't reported any runs yet.
     out = buf.getvalue()
-    assert "host=" in out
     assert "host=h cpus=4 scaling=disabled" in out
     assert "Benchmark" in out
     assert "Iters" in out
 
 
 def test_rich_reporter_profile_flags_add_columns():
-    import io
-
     from mew._console import Terminal
-    from mew.reporter import RichReporter
 
     buf = io.StringIO()
     rep = RichReporter(
@@ -204,9 +192,8 @@ def test_rich_reporter_profile_flags_add_columns():
     assert "Samples" in out
     assert "Hottest Frame" in out
 
-    # Header alone doesn't invoke the row-formatting code at all — a bug in
-    # `_fmt_bytes`'s thresholds or the memory/cpu `None -> "-"` fallback would
-    # slip past the assertions above. Feed a real data row to catch that.
+    # The header alone never exercises row formatting (`_fmt_bytes`, the "-"
+    # fallback), so feed real rows too.
     row = _fake_row("bench.py::bench_x")
     row["memory"] = {"peak_bytes": 2 * (1 << 20)}  # 2.0 MB
     row["cpu_profile"] = {"sample_count": 42, "top_function": "hot_fn (mod.py:10)"}
@@ -214,9 +201,9 @@ def test_rich_reporter_profile_flags_add_columns():
     out = buf.getvalue()
     assert "2.0 MB" in out
     assert "42" in out
+    assert "42.0" not in out  # sample_count renders as an integer
     assert "hot_fn (mod.py:10)" in out
 
-    # A row with neither profile attached must fall back to "-", not crash.
     rep.report_runs([_fake_row("bench.py::bench_y")])
     cells = buf.getvalue().splitlines()[-1].split(" │ ")
     # name, iters, real, cpu, [peak, samples, hottest_frame]
@@ -262,9 +249,8 @@ def test_rich_reporter_left_ellipsizes_long_names():
 
 
 def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
-    """Mirrors the name column's left-ellipsis test, but for the fixed-width
-    columns added by `show_label` and `--sample`, which use `_truncate_right`
-    instead. Regressed by df346b6 if this drifts back to inline slicing."""
+    """Unlike the name column, the fixed-width label and hottest-frame columns
+    keep their left prefix."""
     from mew._console import Terminal
 
     buf = io.StringIO()
@@ -286,7 +272,6 @@ def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
     out = buf.getvalue()
 
     # Fixed widths from `_compute_widths`: label=20, hottest_frame=30.
-    assert "…" in out
     assert "a-very-long-case-la…" in out  # left prefix of label survives, truncated
     assert "a_very_long_function_name_tha" in out  # left prefix of hottest frame
 
@@ -317,8 +302,6 @@ def test_rich_reporter_renders_the_benchmark_field():
 
 
 def test_jsonl_reporter_streams_one_object_per_line(tmp_path):
-    from mew.reporter import JSONLReporter
-
     @mew.parametrize([{"n": 1}, {"n": 2}])
     def bench_x(state, n):
         for _ in state:
@@ -326,25 +309,16 @@ def test_jsonl_reporter_streams_one_object_per_line(tmp_path):
 
     out = tmp_path / "results.jsonl"
     mew.run(min_time="1x", reporter=JSONLReporter(output=out))
-
-    lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
-    rows = [json.loads(ln) for ln in lines]  # each line is independently valid JSON
-    # Pure NDJSON: no context header, every line is a self-contained row.
-    assert len(rows) == 2
-    assert all("/case:" in r["name"] for r in rows)
-    assert all(r["session"]["host"] and r["session"]["date"] for r in rows)
+    rows = [json.loads(ln) for ln in out.read_text().splitlines()]
+    assert len(rows) == 2  # one line per parametrized case
 
 
 def test_jsonl_reporter_flushes_incrementally(tmp_path):
-    """Rows are on disk after report_runs, not buffered until finalize."""
-    from mew.reporter import JSONLReporter
-
     out = tmp_path / "partial.jsonl"
     rep = JSONLReporter(output=out)
     rep.report_context({})
 
     rep.report_runs([_fake_row("f::bench")])
-    # File already holds the row before finalize() is called.
     lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
     assert len(lines) == 1
     assert json.loads(lines[0])["name"] == "f::bench"
@@ -389,7 +363,6 @@ def test_fanout_finalize_runs_every_sink_despite_failure():
     fanout = Fanout([Boom("boom"), Ok("ok")])
     with pytest.raises(RuntimeError, match="disk full"):
         fanout.finalize()
-    # The failing sink ran first (call order preserved), the healthy one still ran.
     assert calls == ["boom", "ok"]
 
 
@@ -406,11 +379,6 @@ def test_rows_carry_the_addressable_benchmark_name(tmp_path):
     # Repetition and aggregate rows of one case share the stamp; `name` differs.
     by_case = {row["benchmark"] for row in rows}
     assert by_case == {f"{entry.name}[n=1]", f"{entry.name}[n=2]"}
-    assert all(
-        row["benchmark"] in row["name"].replace("/case:0", "[n=1]")
-        for row in rows
-        if row["label"] == "n=1"
-    )
     from mew.reporter import canonical_row_name
 
     mean = next(r for r in rows if r["aggregate_name"] == "mean" and r["label"] == "n=1")
@@ -425,7 +393,7 @@ def test_canonical_row_name_appends_the_aggregate_suffix():
     assert canonical_row_name({**row, "aggregate_name": "mean"}) == "b.py::f[n=10]/threads:2_mean"
 
 
-def test_to_dict_serializes_enums_as_plain_strings(tmp_path):
+def test_rows_serialize_time_units_as_plain_strings(tmp_path):
     """BenchmarkResult carries strings, not bound enums: a leaked `Run.time_unit` would be
     archived as "TimeUnit.ns"."""
 

@@ -25,15 +25,24 @@ def test_bare_decorator_registers_one_entry():
 
 
 def test_called_decorator_captures_options():
-    @mew.benchmark(min_time=0.5, unit="us", iterations=10)
+    @mew.benchmark(min_time=0.5, unit="us", repetitions=10)
     def bench_x(state):
         for _ in state:
             pass
 
-    entry = REGISTRY.all()[0]
+    # A parametrized family is one entry; its options apply to every case.
+    @mew.parametrize([{"n": 1}, {"n": 2}], min_time=0.25, unit="us")
+    def bench_family(state, n):
+        for _ in state:
+            pass
+
+    entry, family = REGISTRY.all()
     assert entry.options["min_time"] == 0.5
     assert entry.options["unit"] == "us"
-    assert entry.options["iterations"] == 10
+    assert entry.options["repetitions"] == 10
+    assert family.case_labels == ["n=1", "n=2"]
+    assert family.options["min_time"] == 0.25
+    assert family.options["unit"] == "us"
 
 
 def test_unknown_option_raises():
@@ -54,17 +63,6 @@ def test_custom_name_override():
     assert REGISTRY.all()[0].name == "my/custom/name"
 
 
-def test_parametrize_registers_one_family_entry():
-    @mew.parametrize([{"n": 1}, {"n": 10}, {"n": 100}])
-    def bench_x(state, n):
-        for _ in state:
-            assert n in (1, 10, 100)
-
-    entries = REGISTRY.all()
-    assert len(entries) == 1
-    assert entries[0].case_labels == ["n=1", "n=10", "n=100"]
-
-
 def test_parametrize_multi_kwarg_dict():
     @mew.parametrize(
         [
@@ -79,27 +77,6 @@ def test_parametrize_multi_kwarg_dict():
     entries = REGISTRY.all()
     assert len(entries) == 1
     assert entries[0].case_labels == ["n=1-algo=a", "n=10-algo=b"]
-
-
-def test_parametrize_options_apply_to_all_variants():
-    @mew.parametrize([{"n": 1}, {"n": 2}], min_time=0.25, unit="us")
-    def bench_x(state, n):
-        for _ in state:
-            pass
-
-    assert all(e.options["min_time"] == 0.25 for e in REGISTRY.all())
-    assert all(e.options["unit"] == "us" for e in REGISTRY.all())
-
-
-def test_parametrize_custom_ids():
-    @mew.parametrize([{"n": 10}, {"n": 1000}], ids=["small", "big"])
-    def bench_x(state, n):
-        for _ in state:
-            pass
-
-    entries = REGISTRY.all()
-    assert len(entries) == 1
-    assert entries[0].case_labels == ["small", "big"]
 
 
 def test_parametrize_ids_length_mismatch():
@@ -123,6 +100,30 @@ def test_failed_parametrize_can_be_corrected():
     assert REGISTRY.all()[0].case_labels == ["first", "second"]
 
 
+def test_rejected_name_can_be_corrected():
+    def bench_a(state):
+        for _ in state:
+            pass
+
+    def bench_b(state):
+        for _ in state:
+            pass
+
+    mew.benchmark(name="x")(bench_a)
+    with pytest.raises(ValueError, match="already registered"):
+        mew.benchmark(name="x")(bench_b)
+    mew.benchmark(name="y")(bench_b)
+
+    def bench_c(state, n):
+        for _ in state:
+            pass
+
+    with pytest.raises(ValueError, match="already registered"):
+        mew.parametrize([{"n": 1}], name="y")(bench_c)
+    mew.parametrize([{"n": 1}], name="z")(bench_c)
+    assert [e.name for e in REGISTRY.all()] == ["x", "y", "z"]
+
+
 def test_parametrize_accepts_generator():
     @mew.parametrize({"n": n} for n in range(3))
     def bench_x(state, n):
@@ -132,32 +133,6 @@ def test_parametrize_accepts_generator():
     entries = REGISTRY.all()
     assert len(entries) == 1
     assert entries[0].case_labels == ["n=0", "n=1", "n=2"]
-
-
-def test_trampoline_dispatches_by_state_range():
-    seen = []
-    labels_set = []
-
-    @mew.parametrize([{"n": 7}, {"n": 9}])
-    def bench_capture(state, n):
-        seen.append(n)
-
-    class DummyState:
-        def __init__(self, idx):
-            self._idx = idx
-
-        def range(self, _pos):
-            return self._idx
-
-        def set_label(self, label):
-            labels_set.append(label)
-
-    (entry,) = REGISTRY.all()
-    assert entry.case_labels is not None
-    for i in range(len(entry.case_labels)):
-        entry.fn(DummyState(i))  # ty: ignore[invalid-argument-type]
-    assert seen == [7, 9]
-    assert labels_set == ["n=7", "n=9"]
 
 
 def test_product_cartesian():
@@ -186,16 +161,6 @@ def test_product_pulls_options_out_of_kwargs():
     assert entry.case_labels == ["n=1", "n=2"]  # min_time/unit are options
     assert entry.options["min_time"] == 0.05
     assert entry.options["unit"] == "us"
-
-
-def test_threads_option_accepted_on_benchmark():
-    @mew.benchmark(threads=4)
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    (entry,) = REGISTRY.all()
-    assert entry.options["threads"] == (4,)
 
 
 def test_threads_accepts_a_sequence_of_counts():
@@ -303,7 +268,9 @@ def test_parametrize_rejects_structurally_confusing_derived_labels():
         {"repetitions": -1},
         {"threads": 0},
         {"min_time": 0.0},
+        {"min_time": float("nan")},
         {"min_warmup_time": -0.1},
+        {"min_warmup_time": float("nan")},
     ],
 )
 def test_decorators_reject_out_of_range_options(options):
@@ -319,6 +286,23 @@ def test_decorators_reject_out_of_range_options(options):
     assert REGISTRY.all() == []  # nothing half-registered
 
 
+@pytest.mark.parametrize(
+    "options",
+    [{"iterations": 5, "min_time": 0.1}, {"iterations": 5, "min_warmup_time": 0.1}],
+)
+def test_decorators_reject_iterations_with_a_time_budget(options):
+    # GB checks this combination only in debug builds and otherwise ignores
+    # the time budget.
+    with pytest.raises(TypeError, match="iterations cannot be combined with min_"):
+
+        @mew.benchmark(**options)
+        def _bench(state):
+            for _ in state:
+                pass
+
+    assert REGISTRY.all() == []
+
+
 def test_double_registration_raises():
     with pytest.raises(RuntimeError, match="already registered"):
 
@@ -328,15 +312,13 @@ def test_double_registration_raises():
             for _ in state:
                 pass
 
-    # The failed outer decorator must not have added a second entry: the
-    # registry still holds exactly the @parametrize registration.
+    # The failed outer decorator must not add a second entry.
     (entry,) = REGISTRY.all()
     assert entry.case_labels == ["n=1"]
 
 
 def test_parametrize_rejects_duplicate_case_labels():
-    # Two list-valued cases both collapse to `data=list`, making `name[label]`
-    # addressing ambiguous; registration must reject this, pointing at ids=.
+    # Both cases collapse to `data=list`, making `name[label]` addressing ambiguous.
     with pytest.raises(ValueError, match="duplicate case label"):
 
         @mew.parametrize([{"data": [1, 2]}, {"data": [3, 4]}])
@@ -347,21 +329,9 @@ def test_parametrize_rejects_duplicate_case_labels():
     assert REGISTRY.all() == []  # nothing half-registered
 
 
-def test_parametrize_duplicate_labels_ok_with_explicit_ids():
-    @mew.parametrize([{"data": [1, 2]}, {"data": [3, 4]}], ids=["small", "large"])
-    def _bench(state, data):
-        for _ in state:
-            pass
-
-    (entry,) = REGISTRY.all()
-    assert entry.case_labels == ["small", "large"]
-
-
 def test_product_signature_covers_all_benchmark_options():
-    # product() can't use **options: Unpack[BenchmarkOptions] like benchmark()/
-    # parametrize() (its **kwargs slot is taken by **iterables), so each
-    # BenchmarkOptions field must be listed by hand as a keyword-only param.
-    # This guards against a field being added there but forgotten here.
+    # product()'s **kwargs are the iterables, so each BenchmarkOptions field is
+    # listed by hand; catch a new field that was forgotten there.
     params = set(inspect.signature(mew.product).parameters)
     assert _OptionKeys <= params
 
@@ -372,7 +342,11 @@ def test_product_signature_covers_all_benchmark_options():
         (mew.benchmark, ("io", "slow"), frozenset({"io", "slow"})),
         (mew.benchmark, "io", frozenset({"io"})),
         (mew.benchmark, None, frozenset()),
-        (lambda **kw: mew.parametrize([{"n": 1}, {"n": 2}], **kw), ("sort",), frozenset({"sort"})),
+        (
+            lambda **kw: mew.parametrize([{"n": 1}, {"n": 2}], **kw),
+            ("sort",),
+            frozenset({"sort"}),
+        ),
         (
             lambda **kw: mew.product(n=[1, 2], algo=["a", "b"], **kw),
             ("sort", "heavy"),

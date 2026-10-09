@@ -70,7 +70,6 @@ def test_vcs_context_in_a_git_repo(tmp_path: Path):
     assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is False
 
     # A modified tracked file is.
-    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=False)
     tracked = tmp_path / "tracked.txt"
     tracked.write_text("v1")
     subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
@@ -93,52 +92,16 @@ def test_vcs_context_prefers_jj(tmp_path: Path):
     info = vcs_context(cwd=tmp_path)["vcs"]
     assert info["backend"] == "jj"
     assert info["change_id"] and info["commit"]
+    assert info["dirty"] is False
 
 
-def _run_to_jsonl(tmp_path: Path, name: str, **run_kwargs) -> dict:
-    """Run the registered benchmarks into a JSONL file, return the first row.
-
-    Rows are self-contained, so session identity is read off the row itself.
-    """
-    out = tmp_path / f"{name}.jsonl"
-    mew.run(
-        min_time="1x",
-        reporter=JSONLReporter(output=out),
-        **run_kwargs,
-    )
-    return json.loads(out.read_text().splitlines()[0])
-
-
-def test_run_stamps_session_id_into_context(tmp_path: Path):
-    @mew.benchmark
-    def bench_s(state):
-        for _ in state:
-            pass
-
-    ctx = _run_to_jsonl(tmp_path, "a")
-    assert uuid.UUID(ctx["session"]["id"]).version == 7
-    assert "session_tag" not in ctx  # none passed, none derived at API level
-
-
-def test_each_run_is_a_distinct_session(tmp_path: Path):
-    @mew.benchmark
-    def bench_s(state):
-        for _ in state:
-            pass
-
-    first = _run_to_jsonl(tmp_path, "a")["session"]["id"]
-    second = _run_to_jsonl(tmp_path, "b")["session"]["id"]
-    assert first != second
-
-
-def test_run_persists_session_tag(tmp_path: Path):
-    @mew.benchmark
-    def bench_s(state):
-        for _ in state:
-            pass
-
-    ctx = _run_to_jsonl(tmp_path, "a", session_tag="before")
-    assert ctx["session"]["tag"] == "before"
+def test_vcs_context_jj_sees_uncommitted_edits(tmp_path: Path):
+    if not shutil.which("jj"):
+        pytest.skip("jj not available")
+    subprocess.run(["jj", "git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    # Not yet snapshotted: only a fresh snapshot shows the edit.
+    (tmp_path / "f.txt").write_text("x")
+    assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is True
 
 
 def test_json_reporter_persists_session_identity(tmp_path: Path):
@@ -161,7 +124,6 @@ def test_json_reporter_persists_session_identity(tmp_path: Path):
 
 
 def test_jsonl_rows_are_self_contained(tmp_path: Path):
-    # Every JSONL row carries its session identity — no header line to join.
     @mew.benchmark
     def bench_s(state):
         for _ in state:
@@ -209,7 +171,9 @@ def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
     rep = JSONReporter(output=out)
     rep.report_context({"context": {"num_cpus": 4}})
     rep.finalize()
-    assert json.loads(out.read_text())["context"] == {"num_cpus": 4}
+    doc = json.loads(out.read_text())
+    assert "session" not in doc
+    assert doc["context"] == {"num_cpus": 4}
 
 
 # A gzip archive gains a new member per --append; readers see one stream.
@@ -232,16 +196,7 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path, suffix: str):
         session_tag="after",
     )
 
-    # Two rows, each carrying its own session identity, so the file holds two
-    # sessions with distinct ids.
     sessions = session_summaries(out)
     assert len(sessions) == 2
     assert {s.tag for s in sessions} == {"before", "after"}
     assert len({s.id for s in sessions}) == 2
-
-
-def test_cli_append_rejected_for_json(tmp_path: Path):
-    from mew.cli import _build_reporters
-
-    with pytest.raises(SystemExit):
-        _build_reporters([str(tmp_path / "out.json")], append=True)

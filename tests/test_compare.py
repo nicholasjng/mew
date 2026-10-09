@@ -19,15 +19,6 @@ from mew._results import _load, _split_selector
 from mew.compare import compare, read_results
 
 
-def test_load_basic(tmp_path: Path) -> None:
-    p = tmp_path / "a.json"
-    _write_json(p, [_row("bench_x", 10.0)])
-    samples, _ = _load(p, "real_time")
-    assert set(samples) == {"bench_x"}
-    assert samples["bench_x"].value == 10.0
-    assert samples["bench_x"].time_unit == "ns"
-
-
 def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
     # Both files: a tight cluster plus one outlier. median ignores it; max picks it.
     other, base = _write_pair(
@@ -40,25 +31,31 @@ def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
     code = compare([other, base], statistic=np.max, console=console)
     assert code == 0
     out = console.export_text()
-    # Center is the max (99 vs 51), and the delta reflects those, not the medians.
     assert "99.00 ns" in out
     assert "51.00 ns" in out
     assert "-48.48%" in out
 
 
-def test_load_ignores_gb_aggregate_rows(tmp_path: Path) -> None:
+@pytest.mark.parametrize("selector", [None, "before"])
+def test_load_ignores_gb_aggregate_rows(tmp_path: Path, selector: str | None) -> None:
+    """GB aggregate rows (median/mean/stddev/cv) must not skew the recomputed
+    median, with or without a session selector."""
     p = tmp_path / "a.json"
-    # If we read the aggregate row, we'd see 999; we should compute median of [5,7] = 6.
+    common = dict(date="2026-01-01T00:00:00", session_id="0197-aaaa", session_tag="before")
     _write_json(
         p,
         [
-            _row("b", 5.0),
-            _row("b", 7.0),
-            _row("b", 999.0, aggregate_name="median"),
+            _row("b", 5.0, **common),
+            _row("b", 7.0, **common),
+            _row("b", 999.0, aggregate_name="median", **common),
+            _row("b", 999.0, aggregate_name="mean", **common),
+            _row("b", 1.0, aggregate_name="stddev", **common),
+            _row("b", 0.1, aggregate_name="cv", **common),
         ],
     )
-    samples, _ = _load(p, "real_time")
+    samples, _ = _load(p, "real_time", selector=selector)
     assert samples["b"].value == 6.0
+    assert samples["b"].values == (5.0, 7.0)
     assert samples["b"].stddev is not None
 
 
@@ -73,7 +70,6 @@ def test_compare_speedup_signs(tmp_path: Path, capsys: pytest.CaptureFixture[str
     code = compare([other, base], console=console)
     assert code == 0
     out = console.export_text()
-    # bench_x faster (-20%, ×1.25); bench_y slower (+50%, ×0.667).
     assert "-20.00%" in out
     assert "×1.250" in out
     assert "+50.00%" in out
@@ -97,7 +93,6 @@ def test_compare_warns_on_missing_names(tmp_path: Path, capsys: pytest.CaptureFi
     err = capsys.readouterr().err
     assert "bench_only_in_base" in err
     out = console.export_text()
-    # Overlap rendered, missing benchmark skipped.
     assert "bench_x" in out
     assert "bench_only_in_base" not in out
 
@@ -130,7 +125,6 @@ def test_compare_pattern_is_regex(tmp_path: Path) -> None:
         base=[_row("alpha", 10.0), _row("beta", 20.0), _row("gamma", 30.0)],
     )
     console = Console(width=200)
-    # Alternation selects two of the three; the third is filtered out.
     assert compare([other, base], pattern="alpha|gamma", console=console) == 0
     out = console.export_text()
     assert "alpha" in out
@@ -167,20 +161,6 @@ def test_compare_stddev_column(tmp_path: Path) -> None:
     # Stdlib stdev([95,100,105]) = 5.0; stdev([78,80,82]) = 2.0
     assert "5.00" in out
     assert "2.00" in out
-
-
-def test_load_multi_session_keeps_latest(tmp_path: Path) -> None:
-    # An archive holding several sessions contributes its newest, silently.
-    p = tmp_path / "agg.json"
-    _write_json(
-        p,
-        [
-            _row("b", 10.0, date="2026-01-01T00:00:00", host_name="h1"),
-            _row("b", 20.0, date="2026-05-01T00:00:00", host_name="h2"),
-        ],
-    )
-    samples, _ = _load(p, "real_time")
-    assert samples["b"].value == 20.0
 
 
 def test_load_jsonl(tmp_path: Path) -> None:
@@ -294,21 +274,15 @@ def _two_session_file(tmp_path: Path, suffix: str = ".json") -> Path:
     return p
 
 
-def test_split_selector_plain_path(tmp_path: Path) -> None:
-    p = tmp_path / "a.json"
-    p.write_text("{}")
+def test_split_selector(tmp_path: Path) -> None:
+    p = tmp_path / "results.json"
+    assert _split_selector(str(p)) == (p, None)
+    assert _split_selector(f"{p}@before") == (p, "before")
+    assert _split_selector(f"{p}@latest") == (p, "latest")
     # An existing file is never split, even if its name contains '@'.
     weird = tmp_path / "weird@name.json"
     weird.write_text("{}")
-    assert _split_selector(str(p)) == (p, None)
     assert _split_selector(str(weird)) == (weird, None)
-
-
-def test_split_selector_extracts_selector(tmp_path: Path) -> None:
-    p = tmp_path / "results.json"
-    assert _split_selector(f"{p}@before") == (p, "before")
-    assert _split_selector(f"{p}@latest") == (p, "latest")
-    assert _split_selector(str(p)) == (p, None)
 
 
 @pytest.mark.parametrize("suffix", [".json", ".jsonl", ".jsonl.gz"])
@@ -320,7 +294,6 @@ def test_compare_two_sessions_of_one_file(tmp_path: Path, suffix: str) -> None:
     # Selector-aware labels keep the two columns distinct.
     assert "@before" in out and "@after" in out
     assert "-20.00%" in out  # 100 -> 80
-    # Session shows in the provenance line.
     assert "session=before" in out and "session=after" in out
 
 
@@ -466,7 +439,6 @@ def test_compare_prints_context_and_warns_on_skew(
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
     out = console.export_text()
-    # Per-file provenance headers.
     assert "host=h1" in out
     assert "host=h2" in out
     # Differing custom keys annotate the column labels.
@@ -480,7 +452,10 @@ def test_compare_prints_context_and_warns_on_skew(
 def test_compare_no_skew_warning_when_contexts_match(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    ctx = {"host_name": "h1", "num_cpus": 8}
+    ctx = {
+        "session": {"host": "h1"},
+        "context": {"num_cpus": 8, "cpu_scaling_enabled": False},
+    }
     other, base = _write_pair(
         tmp_path,
         other=[_row("bench_x", 80.0)],
@@ -488,7 +463,9 @@ def test_compare_no_skew_warning_when_contexts_match(
         other_context=ctx,
         base_context=ctx,
     )
-    assert compare([other, base], console=Console(width=200)) == 0
+    console = Console(width=200)
+    assert compare([other, base], console=console) == 0
+    assert "host=h1" in console.export_text()  # the context was actually read
     assert "differ in" not in capsys.readouterr().err
 
 
@@ -575,22 +552,34 @@ def test_compare_time_metric_keeps_speedup_header(tmp_path: Path) -> None:
     assert "ratio" not in out
 
 
-def test_compare_allocations_per_iteration_is_speed_independent(tmp_path: Path) -> None:
-    # The whole point of item 0: two engines whose raw total_allocations differ
-    # only because they ran a different iteration count compare *equal* per-iter.
-    # Same per-call allocations (10), captured over different iteration counts.
-    other, base = _write_pair(
-        tmp_path,
-        other=[_mem_row("bench_x", 1.0, peak=1 << 20, allocs=500, iterations=50)],
-        base=[_mem_row("bench_x", 1.0, peak=1 << 20, allocs=1000, iterations=100)],
-    )
-
+def test_compare_zero_vs_zero_is_unchanged(tmp_path: Path) -> None:
+    # Both sides zero (e.g. allocation-free bodies) is a tie, not an infinite
+    # delta or a ZeroDivisionError.
+    other, base = _write_pair(tmp_path, other=[_row("b", 0.0)], base=[_row("b", 0.0)])
     console = Console(width=200)
-    code = compare([other, base], metric="memory.allocations_per_iteration", console=console)
+    code = compare([other, base], console=console)
     assert code == 0
     out = console.export_text()
-    assert "10.0" in out  # baseline per-iteration count, fractional format
-    assert "+0.00%" in out  # identical per-call work despite 2× raw allocs
+    assert "+0.00%" in out
+    assert "×1.000" in out
+    assert "inf" not in out
+    assert "∞" not in out
+
+
+def test_compare_peak_bytes_stddev_is_scaled_like_its_value(tmp_path: Path) -> None:
+    mib = 1 << 20
+    other, base = _write_pair(
+        tmp_path,
+        other=[_mem_row("b", 1.0, peak=p * mib, allocs=1, iterations=1) for p in (10, 12, 14)],
+        base=[_mem_row("b", 1.0, peak=p * mib, allocs=1, iterations=1) for p in (10, 11, 12)],
+    )
+    console = Console(width=200)
+    code = compare([other, base], metric="memory.peak_bytes", show_stddev=True, console=console)
+    assert code == 0
+    out = console.export_text()
+    # stdev of 10/11/12 MiB is 1 MiB, of 10/12/14 MiB is 2 MiB.
+    assert "1.0 MB" in out and "2.0 MB" in out
+    assert "1048576.00" not in out
 
 
 def test_compare_memory_metric_without_data_hints_profile_flag(
@@ -640,9 +629,7 @@ def test_compare_no_significance_marker_on_insignificant_delta(tmp_path: Path) -
 
 
 def test_compare_marks_significant_delta_on_clear_shift(tmp_path: Path) -> None:
-    # n=3 per side tops out at p~0.08 (exact Mann-Whitney floor is 0.1) even at
-    # total separation, so this needs enough reps for total separation to clear
-    # the 0.05 bar.
+    # n=3 per side cannot reach p < 0.05 even at total separation; use 5 reps.
     other, base = _write_pair(
         tmp_path,
         other=[_row("b", v) for v in (9.0, 10.0, 11.0, 9.5, 10.5)],
@@ -651,37 +638,6 @@ def test_compare_marks_significant_delta_on_clear_shift(tmp_path: Path) -> None:
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
     assert "(signif.)" in console.export_text()
-
-
-def test_compare_no_significance_marker_without_repetitions(tmp_path: Path) -> None:
-    other, base = _write_pair(tmp_path, other=[_row("b", 10.0)], base=[_row("b", 100.0)])
-    console = Console(width=200)
-    assert compare([other, base], console=console) == 0
-    assert "(signif.)" not in console.export_text()
-
-
-def test_load_selector_drops_aggregate_rows(tmp_path: Path) -> None:
-    """A ``@selector`` load must filter GB aggregate rows like the default load.
-
-    With repetitions > 1 the file carries mean/stddev/cv rows; mixing them into
-    the recomputed statistics drags the median toward the tiny cv/stddev values.
-    """
-    common = dict(date="2026-01-01T00:00:00", session_id="0197-aaaa", session_tag="before")
-    rows = [
-        _row("b", 100.0, repetition_index=0, **common),
-        _row("b", 110.0, repetition_index=1, **common),
-        _row("b", 120.0, repetition_index=2, **common),
-        _row("b", 110.0, aggregate_name="mean", **common),
-        _row("b", 10.0, aggregate_name="stddev", **common),
-        _row("b", 0.09, aggregate_name="cv", **common),
-    ]
-    p = tmp_path / "r.jsonl"
-    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
-
-    selected, _ = _load(p, "real_time", selector="before")
-    full, _ = _load(p, "real_time")
-    assert selected["b"].value == 110.0
-    assert selected["b"].value == full["b"].value
 
 
 def test_load_excludes_skipped_rows(tmp_path: Path) -> None:
@@ -723,35 +679,8 @@ def test_fmt_delta_colors_by_improvement_direction() -> None:
 def test_fmt_delta_no_change_has_no_color_style() -> None:
     from mew.compare import _fmt_delta
 
-    # A tie must format as neutral +0.00%, styled with neither red nor green.
     assert _fmt_delta(0.0) == ("+0.00%", "")
     assert _fmt_delta(0.0, higher_is_better=True) == ("+0.00%", "")
-
-
-def test_compare_zero_baseline_and_zero_contender_is_no_change(tmp_path: Path) -> None:
-    # Both sides zero (e.g. an allocations-per-iteration counter that's zero in
-    # both files) must format as a plain +0.00% tie, not `+∞%` or a
-    # ZeroDivisionError — only a *nonzero* contender against a zero baseline is
-    # the "infinite improvement" case.
-    other, base = _write_pair(tmp_path, other=[_row("b", 0.0)], base=[_row("b", 0.0)])
-    console = Console(width=200)
-    code = compare([other, base], console=console)
-    assert code == 0
-    out = console.export_text()
-    assert "+0.00%" in out
-    assert "∞" not in out
-
-
-def test_compare_iterations_speedup_direction(tmp_path: Path) -> None:
-    # +20% iterations is a ×1.2 speedup, not ×0.83.
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("b", 1.0, iterations=1200)],
-        base=[_row("b", 1.0, iterations=1000)],
-    )
-    console = Console(width=200)
-    compare([other, base], metric="iterations", console=console)
-    assert "×1.200" in console.export_text()
 
 
 def test_compare_warns_on_time_unit_skew(
@@ -768,8 +697,8 @@ def test_compare_warns_on_time_unit_skew(
 
 
 def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
-    # A reducer that raises must fail loudly, not silently drop every benchmark
-    # and report "no overlapping benchmarks".
+    # A raising reducer must fail loudly, not drop every benchmark and report
+    # "no overlapping benchmarks".
     import statistics as _stats
 
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])

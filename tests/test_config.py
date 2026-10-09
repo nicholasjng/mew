@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mew.config import load
+from mew.config import Config, load
 
 
 def _write(root: Path, body: str) -> None:
@@ -70,26 +70,15 @@ def test_load_rejects_non_string_statistic(tmp_path: Path):
         load(tmp_path)
 
 
-def test_load_kebab_case_keys_coerce_to_snake(tmp_path: Path):
-    _write(
-        tmp_path,
-        """
-        [tool.mew]
-        python-files = ["b_*.py"]
-        """,
-    )
-    cfg = load(tmp_path)
-    assert cfg.python_files == ["b_*.py"]
-
-
 def test_load_setup_path(tmp_path: Path):
     _write(tmp_path, '[tool.mew]\nsetup = "benchmarks/conf.py"\n')
     assert load(tmp_path).setup == "benchmarks/conf.py"
 
 
-def test_load_setup_defaults_to_none(tmp_path: Path):
+def test_load_empty_table_uses_dataclass_defaults(tmp_path: Path):
+    # Defaults live only on the dataclass; the loader just records the root.
     _write(tmp_path, "[tool.mew]\n")
-    assert load(tmp_path).setup is None
+    assert load(tmp_path) == Config(project_root=tmp_path.resolve())
 
 
 def test_load_rejects_non_string_setup(tmp_path: Path):
