@@ -17,11 +17,9 @@ from mew._typing import BenchmarkFn, BenchmarkOptions
 def compile_name_filter(pattern: str, *, literal: bool = False) -> re.Pattern[str]:
     """Compile a benchmark-name filter into an unanchored regex.
 
-    Matched with ``re.search`` (like Google Benchmark's own ``--benchmark_filter``),
-    so a plain literal like ``bench_sort`` works as a substring while
-    ``bench_(sort|search)`` also works. With ``literal=True`` the pattern is
-    :func:`re.escape`-d first, so a displayed ``name[label]`` matches without
-    escaping its brackets. Raises :class:`ValueError` on a malformed pattern.
+    Matched with ``re.search``, like GB's ``--benchmark_filter``. ``literal=True``
+    escapes the pattern so a displayed ``name[label]`` matches as-is. Raises
+    :class:`ValueError` on a malformed pattern.
     """
     try:
         return re.compile(re.escape(pattern) if literal else pattern)
@@ -58,9 +56,7 @@ class Entry:
     tags: frozenset[str] = field(default_factory=frozenset)
     # Set on parametrized families: `fn` is a trampoline keyed by state.range(0).
     case_labels: list[str] | None = None
-    # Case indices a name filter narrowed the family to. ``None`` runs every case
-    # (the only value the registry stores); a subset is a transient view from
-    # :func:`narrow_entry`, never registered.
+    # ``None`` runs every case; a subset only exists on views from narrow_entry().
     cases: list[int] | None = None
 
 
@@ -134,11 +130,9 @@ def narrow_entry(
 ) -> Entry | None:
     """Apply name filters to an entry, returning a (possibly case-narrowed) view or ``None``.
 
-    ``any_of`` is an OR group (the per-path ``file.py::filter`` selectors); ``all_of`` is an
-    additional AND constraint (the global ``-k``). A family whose own name matches keeps all
-    its cases; otherwise the regexes select individual cases via :func:`case_names`. Returns
-    ``None`` when nothing matches, the entry unchanged when all cases survive, or a
-    ``dataclasses.replace`` copy with ``cases`` set for a strict subset.
+    ``any_of`` is an OR group (per-path ``file.py::filter`` selectors); ``all_of`` is
+    an extra AND constraint (the global ``-k``). A family whose own name matches keeps
+    all its cases. The registered entry is never mutated; a strict subset is a copy.
     """
     match = _CaseMatch.all()
     any_of = list(any_of)

@@ -8,8 +8,7 @@ suite records what it was built from::
     mew.update_context(mew.vcs_context())
 
 The provider shells out to jj or git and returns nothing outside a work tree.
-Results store it under ``context.vcs``; ``mew compare`` uses the commit to group
-untagged runs.
+Results store it under ``context.vcs``.
 """
 
 from __future__ import annotations
@@ -22,11 +21,9 @@ __all__ = ["vcs_context"]
 
 def _run(cwd: Path | None, program: str, *args: str) -> str | None:
     """Stripped stdout of ``program args``, or None on failure/empty."""
-    import shutil
     import subprocess
 
-    if shutil.which(program) is None:
-        return None
+    # A missing program raises FileNotFoundError, an OSError.
     try:
         proc = subprocess.run(
             [program, *args], capture_output=True, text=True, timeout=5, cwd=cwd, check=False
@@ -38,14 +35,13 @@ def _run(cwd: Path | None, program: str, *args: str) -> str | None:
 
 
 def _jj(cwd: Path | None) -> dict[str, Any] | None:
-    # One template, one process: change id, commit id, and whether the working
-    # copy differs from its parent. --ignore-working-copy reads without snapshotting.
+    # One process for all fields. Lets jj snapshot the working copy first, so
+    # uncommitted edits show up as dirty.
     out = _run(
         cwd,
         "jj",
         "log",
         "--no-graph",
-        "--ignore-working-copy",
         "-r",
         "@",
         "-T",
@@ -65,8 +61,8 @@ def _git(cwd: Path | None) -> dict[str, Any] | None:
     if commit is None:
         return None
     info: dict[str, Any] = {"backend": "git", "commit": commit}
-    # Tracked changes only: an untracked results file or build artifact sitting in
-    # the tree does not change what was benchmarked. `_run` maps empty output to None.
+    # Tracked changes only: untracked results or build artifacts don't change what
+    # was benchmarked. Empty output (clean) comes back as None.
     info["dirty"] = _run(cwd, "git", "status", "--porcelain", "--untracked-files=no") is not None
     branch = _run(cwd, "git", "rev-parse", "--abbrev-ref", "HEAD")
     # Detached HEAD reports the literal "HEAD", which names nothing.

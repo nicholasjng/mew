@@ -95,6 +95,8 @@ $ mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json 
 
 The `%` suffix is required. A threshold prints the panel;
 `--exit-non-zero-on-regression` additionally returns exit code 2 on regression.
+`--regression-threshold` overrides `default_threshold` from `pyproject.toml`
+(see below); without either, the threshold is 5%.
 
 ## Allowlist
 

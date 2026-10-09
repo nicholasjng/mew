@@ -43,7 +43,7 @@ def mannwhitney_p(a: list[float], b: list[float]) -> float | None:
     u1 = sum(ranks[:n1]) - n1 * (n1 + 1) / 2
     n = n1 + n2
     mu = n1 * n2 / 2
-    sigma2 = (n1 * n2 / 12) * ((n + 1) - tie_term / (n * (n - 1))) if n > 1 else 0.0
+    sigma2 = (n1 * n2 / 12) * ((n + 1) - tie_term / (n * (n - 1)))  # n >= 2 here
     if sigma2 <= 0:
         # No spread across combined ranks: no evidence of a difference, i.e. p=1.0.
         return 1.0

@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import itertools
 import sys
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Unpack, cast, overload
@@ -63,16 +64,21 @@ def _check_options(options: Mapping[str, Any]) -> None:
     extra = set(options) - _OptionKeys
     if extra:
         raise TypeError(f"unknown option(s): {sorted(extra)}")
-    # Validate at decoration time, where the mistake is on screen. GB guards
-    # these values with asserts compiled out of release builds, so bad values
-    # would otherwise misbehave silently.
+    # GB guards these with asserts compiled out of release builds, so bad values
+    # would misbehave silently; fail at decoration time instead.
     for key in ("iterations", "repetitions"):
         if (v := options.get(key)) is not None and int(v) < 1:
             raise TypeError(f"{key} must be >= 1, got {v!r}")
-    if (v := options.get("min_time")) is not None and float(v) <= 0:
+    # Negated so NaN fails too.
+    if (v := options.get("min_time")) is not None and not float(v) > 0:
         raise TypeError(f"min_time must be positive, got {v!r}")
-    if (v := options.get("min_warmup_time")) is not None and float(v) < 0:
+    if (v := options.get("min_warmup_time")) is not None and not float(v) >= 0:
         raise TypeError(f"min_warmup_time must be >= 0, got {v!r}")
+    # GB's Iterations() and MinTime()/MinWarmUpTime() reject each other.
+    if options.get("iterations") is not None:
+        for key in ("min_time", "min_warmup_time"):
+            if options.get(key) is not None:
+                raise TypeError(f"iterations cannot be combined with {key}")
 
 
 def _normalize_threads(value: Any) -> tuple[int, ...]:
@@ -124,27 +130,20 @@ def _normalize_tags(tags: Iterable[str] | str | None) -> frozenset[str]:
     return frozenset(tags)
 
 
-def _mark_registered(fn: BenchmarkFn) -> None:
+def _check_unregistered(fn: BenchmarkFn) -> None:
     if getattr(fn, _REGISTERED_ATTR, False):
         raise RuntimeError(
             f"{fn.__qualname__} is already registered; apply only one of "
             "@benchmark / @parametrize / @product."
         )
-    setattr(fn, _REGISTERED_ATTR, True)
 
 
 def _make_family_trampoline(
     fn: BenchmarkFn,
     cases: list[dict[str, Any]],
     labels: list[str],
-    *,
-    name: str,
-    qualname: str,
 ) -> BenchmarkFn:
-    """Wrap ``fn`` as a Google Benchmark family driven by an index axis.
-
-    The trampoline reads ``state.range(0)`` to look up variant kwargs and label, then dispatches.
-    """
+    """Wrap ``fn`` as a Google Benchmark family driven by an index axis (``state.range(0)``)."""
 
     def trampoline(state, _fn=fn, _cases=cases, _labels=labels):
         idx = state.range(0)
@@ -153,8 +152,8 @@ def _make_family_trampoline(
 
     trampoline.__module__ = fn.__module__
     trampoline.__doc__ = fn.__doc__
-    trampoline.__name__ = name
-    trampoline.__qualname__ = qualname
+    trampoline.__name__ = fn.__name__
+    trampoline.__qualname__ = fn.__qualname__
     return trampoline
 
 
@@ -224,7 +223,7 @@ def benchmark(
     def deco(target: BenchmarkFn) -> BenchmarkFn:
         # Guard before adding: a failed double-registration must not leave a
         # second entry in the registry.
-        _mark_registered(target)
+        _check_unregistered(target)
         file = _source_file(target)
         REGISTRY.add(
             Entry(
@@ -235,6 +234,9 @@ def benchmark(
                 tags=norm_tags,
             )
         )
+        # Marked only once added: a rejected name must leave the function
+        # available for a corrected attempt.
+        setattr(target, _REGISTERED_ATTR, True)
         return target
 
     if fn is not None:
@@ -251,72 +253,43 @@ def _register_family(
     options: BenchmarkOptions,
     tags: frozenset[str],
 ) -> BenchmarkFn:
-    if ids is not None:
-        ids = list(ids)
-        if len(ids) != len(variants):
-            raise ValueError(f"ids has {len(ids)} entries but parameters has {len(variants)}")
-    if not variants:
+    cases = [dict(kw) for kw in variants]
+    labels = list(ids) if ids is not None else [_default_id(kw) for kw in cases]
+    if len(labels) != len(cases):
+        raise ValueError(f"ids has {len(labels)} entries but parameters has {len(cases)}")
+    if not cases:
         raise ValueError("parametrize/product needs at least one case")
     if name is not None:
         _check_addressable(name, "benchmark name")
 
     file = _source_file(target)
     base_name = name or _qualified_name(target, file)
-    cases = [dict(kw) for kw in variants]
-    labels = list(ids) if ids is not None else [_default_id(kw) for kw in cases]
-    # Labels are spliced into `name[label]` addressing, so they carry the same
-    # structural constraints as names; ids= overrides a derived label.
+    # Labels are spliced into `name[label]`, so they share the name constraints.
     for label in labels:
         _check_addressable(label, "case label")
     if len(set(labels)) != len(labels):
-        from collections import Counter
-
         dupes = sorted(label for label, n in Counter(labels).items() if n > 1)
-        # Ambiguous labels break `name[label]` addressing (-k filters, compare
-        # merging). Non-scalar values collapse to their type name, so two list
-        # cases both label as `data=list` unless ids disambiguate.
+        # Ambiguous labels break `name[label]` addressing (-k filters, compare merging).
         raise ValueError(
             f"duplicate case label(s) {dupes}; pass explicit ids= to disambiguate "
             "(non-scalar parameter values collapse to their type name)"
         )
 
-    # Mark only after validation: a rejected decorator must leave the function
-    # available for a corrected registration attempt.
-    _mark_registered(target)
-    trampoline = _make_family_trampoline(
-        target,
-        cases,
-        labels,
-        name=target.__name__,
-        qualname=target.__qualname__,
-    )
+    _check_unregistered(target)
     REGISTRY.add(
         Entry(
             name=base_name,
-            fn=trampoline,
+            fn=_make_family_trampoline(target, cases, labels),
             file=file,
             options=options,
             tags=tags,
             case_labels=labels,
         )
     )
+    # Marked only once added: a rejected decorator must leave the function
+    # available for a corrected attempt.
+    setattr(target, _REGISTERED_ATTR, True)
     return target
-
-
-def _make_family_decorator(
-    variants: Sequence[dict[str, Any]],
-    *,
-    name: str | None,
-    ids: Sequence[str] | None,
-    options: BenchmarkOptions,
-    tags: frozenset[str],
-) -> Callable[[BenchmarkFn], BenchmarkFn]:
-    """The decorator parametrize/product return: register ``target`` as a family."""
-
-    def deco(target: BenchmarkFn) -> BenchmarkFn:
-        return _register_family(target, variants, name=name, ids=ids, options=options, tags=tags)
-
-    return deco
 
 
 def parametrize(
@@ -375,8 +348,8 @@ def parametrize(
     norm_options = _normalize_options(options)
     norm_tags = _normalize_tags(tags)
     variants = [dict(p) for p in parameters]  # snapshot, allow generators
-    return _make_family_decorator(
-        variants, name=name, ids=ids, options=norm_options, tags=norm_tags
+    return lambda target: _register_family(
+        target, variants, name=name, ids=ids, options=norm_options, tags=norm_tags
     )
 
 
@@ -412,7 +385,8 @@ def product(
     min_time, min_warmup_time : float, optional
         Per-variant Google Benchmark timing options.
     iterations, repetitions : int, optional
-        Per-variant Google Benchmark iteration controls.
+        Per-variant Google Benchmark iteration controls. ``iterations`` cannot
+        be combined with ``min_time`` or ``min_warmup_time``.
     unit : str or TimeUnit, optional
         Override Google Benchmark's reported time unit.
     use_real_time, use_manual_time, measure_process_cpu_time : bool
@@ -470,4 +444,6 @@ def product(
     keys = list(iterables.keys())
     value_lists = [list(v) for v in iterables.values()]
     variants = [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*value_lists)]
-    return _make_family_decorator(variants, name=name, ids=ids, options=options, tags=norm_tags)
+    return lambda target: _register_family(
+        target, variants, name=name, ids=ids, options=options, tags=norm_tags
+    )

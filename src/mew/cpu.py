@@ -133,12 +133,9 @@ class PyinstrumentManager:
 def _hottest_frame(root: Frame) -> tuple[str, float]:
     """Return ``("func (file.py:12)", self_seconds)`` for the hottest user call site.
 
-    Summed per call site, not per frame: pyinstrument records one frame per
-    *call*, so a helper invoked N times holds 1/N of the time in each of N
-    siblings while the calling loop accumulates in one. Picking the largest
-    single frame would name the loop, and flip between runs with sample
-    coalescing. ``[self]`` frames are synthetic leaves already summed into their
-    parent's ``total_self_time``, so they are skipped to avoid double counting.
+    Summed per call site: pyinstrument records one frame per *call*, so the
+    largest single frame would name the calling loop instead of a helper it calls
+    N times. Synthetic ``[self]`` frames are skipped; their parent already counts them.
     """
     totals: dict[tuple[str, str, int | None], float] = {}
     stack = [root]

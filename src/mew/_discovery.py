@@ -87,10 +87,8 @@ def select_entries(
 
 
 def parse(arg: str) -> Selector:
-    if "::" in arg:
-        path, _, flt = arg.partition("::")
-        return Selector(Path(path), flt or None)
-    return Selector(Path(arg))
+    path, _, flt = arg.partition("::")
+    return Selector(Path(path), flt or None)
 
 
 def collect_files(
@@ -128,7 +126,7 @@ def collect_files(
 
 def import_file(path: Path) -> None:
     """Import a benchmark file, allowing imports from its parent directory."""
-    # Use a stable, collision-resistant module name.
+    # Name by path hash so same-named files in different directories don't collide.
     resolved = path.resolve()
     digest = hashlib.sha1(str(resolved).encode()).hexdigest()[:16]
     mod_name = f"mew._bench_{digest}"

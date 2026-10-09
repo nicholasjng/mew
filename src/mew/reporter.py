@@ -219,9 +219,6 @@ class RichReporter:
         for row in runs:
             self._print_row(row)
 
-    def finalize(self) -> None:
-        pass
-
     def _print_banner(self) -> None:
         session = self._context.get("session", {})
         context = self._context.get("context", {})
@@ -288,14 +285,12 @@ class RichReporter:
         w = self._widths
         unit = row["time_unit"]
         label = row["label"]
-        # Canonical `file.py::f[label]` form (no `/case:N/min_time:…` noise), so
-        # the live table reads the same as `mew compare`.
+        # Canonical `file.py::f[label]` form, matching `mew compare`.
         name = canonical_row_name(row)
-        # Left-ellipsize: keep the disambiguating function suffix / case:N tail.
+        # Left-ellipsize to keep the disambiguating tail.
         name = _truncate_left(name, w["name"])
 
-        # Skipped rows carry no timing; render the reason in place of the
-        # numeric columns and dim the whole line so it reads as "didn't run".
+        # Skipped rows carry no timing, so show the dimmed reason instead.
         if row["skipped"]:
             reason = row["skip_message"] or "skipped"
             line = f"{name.ljust(w['name'])}{_COL_SEP}{reason}"
@@ -321,8 +316,7 @@ class RichReporter:
             cells.append((_fmt_bytes(mem["peak_bytes"]) if mem else "-").rjust(w["peak"]))
         if self._show_cpu:
             cpu = row.get("cpu_profile")
-            # Numeric profile values cross the binding as doubles; a sample
-            # count is conceptually an integer, so render it as one.
+            # Numeric profile values cross the binding as doubles.
             cells.append((f"{int(cpu['sample_count']):,}" if cpu else "-").rjust(w["samples"]))
             top = cpu["top_function"] if cpu else "-"
             top = _truncate_right(top, w["hottest_frame"])

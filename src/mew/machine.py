@@ -1,7 +1,7 @@
 """Machine context: what the benchmarks ran on.
 
 Unlike :func:`mew.vcs_context`, :func:`mew.run` applies this provider by default,
-so ``cpu_scaling_enabled`` is always recorded.
+so ``cpu_scaling_enabled`` is part of every reporter's context.
 """
 
 from __future__ import annotations
@@ -24,12 +24,9 @@ def _gil_enabled() -> bool:
 
 @contextmanager
 def _silence_native_stderr() -> Generator[None]:
-    """Redirect OS-level fd 2 to /dev/null within the scope.
+    """Redirect OS-level fd 2 to /dev/null, for GB probes that bypass ``sys.stderr``.
 
-    Google Benchmark's lazy system-info probes write platform diagnostics straight
-    to fd 2, bypassing ``sys.stderr``. Scope this narrowly, never around the
-    benchmark run itself: user output and GB's run-time diagnostics must stay
-    visible.
+    Never wrap the run itself: user output and GB run-time diagnostics must stay visible.
     """
     sys.stderr.flush()
     devnull = os.open(os.devnull, os.O_WRONLY)

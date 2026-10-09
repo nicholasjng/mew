@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager
-from typing import Any, Literal, NotRequired, Protocol, TypeAlias, TypedDict, runtime_checkable
+from typing import (
+    Any,
+    Literal,
+    NotRequired,
+    Protocol,
+    TypeAlias,
+    TypedDict,
+    runtime_checkable,
+)
 
 from mew._core import CounterFlags, CounterOneK, TimeUnit
 
@@ -88,6 +96,8 @@ class BenchmarkOptions(TypedDict, total=False):
     """Per-benchmark Google Benchmark options accepted by the decorators.
 
     All keys are optional; omit one to fall back to Google Benchmark's default.
+    ``iterations`` fixes the iteration count, so it cannot be combined with
+    ``min_time`` or ``min_warmup_time``.
 
     ``threads`` requires a free-threaded interpreter. On a GIL build,
     :func:`mew.run` skips threaded benchmarks unless ``strict=True``. An

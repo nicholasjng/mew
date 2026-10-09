@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 import re
@@ -87,9 +88,7 @@ def _ctx_summary(ctx: dict[str, Any], *, exclude: Iterable[str] = ()) -> str:
 def _warn_context_skew(columns: list[_Column]) -> None:
     """Warn when machine-level context differs across columns (deltas then compare
     environments, not just code)."""
-    # `host` lives in the session block (grouping and ordering key on it), the
-    # rest in provenance -- but a mismatch in any of them makes the comparison
-    # suspect, so they warn the same way.
+    # `host` lives in the session block, the rest in provenance; all warn alike.
     for block, fld in (("session", "host"), *(("context", f) for f in _CTX_SKEW_FIELDS)):
         values = {c.label: (c.context.get(block) or {}).get(fld) for c in columns if c.context}
         if len({v for v in values.values() if v is not None}) > 1:
@@ -136,10 +135,11 @@ def _fmt_value(sample: Sample, metric: str) -> str:
 
 
 def _fmt_stddev(sample: Sample, metric: str) -> str:
-    """Stddev cell, scaled by the same unit as its paired value cell so the two
-    stay comparable at a glance instead of showing raw ns next to human-scaled s."""
+    """Stddev cell, scaled to the same unit as its paired value cell."""
     if sample.stddev is None:
         return "-"
+    if metric == "memory.peak_bytes":
+        return _fmt_bytes(int(sample.stddev))
     if metric not in _TIME_METRICS:
         return f"{sample.stddev:.2f}"
     _, unit = _scale_time(sample.value, sample.time_unit)
@@ -154,8 +154,7 @@ _SIGNIFICANCE_ALPHA = 0.05
 def _significance_p(base: Sample, other: Sample, *, is_time_metric: bool) -> float | None:
     """Mann-Whitney two-sided p-value between two samples' raw repetitions.
 
-    ``None`` when either side has fewer than 2 repetitions (nothing to rank);
-    no marker is shown then, same gating as the CV marker.
+    ``None`` when either side has fewer than 2 repetitions (nothing to rank).
     """
     if len(base.values) < 2 or len(other.values) < 2:
         return None
@@ -189,7 +188,8 @@ def _compare_samples(base: Sample, other: Sample, metric: str) -> _Comparison:
     )
     return _Comparison(
         delta=delta,
-        speedup=num / den if den else float("inf"),
+        # 0 vs 0 (e.g. allocation-free bodies) is unchanged, not infinitely faster.
+        speedup=num / den if den else (1.0 if not num else math.inf),
         p_value=_significance_p(base, other, is_time_metric=is_time),
     )
 
@@ -201,16 +201,6 @@ def _fmt_delta(delta: float, *, higher_is_better: bool = False) -> tuple[str, st
     worse = -delta if higher_is_better else delta
     style = "green" if worse < 0 else "red" if worse > 0 else ""
     return text, style
-
-
-def _fmt_speedup(speedup: float) -> str:
-    return f"×{speedup:.3f}"
-
-
-def _ratio_header(metric: str) -> str:
-    """Header for the baseline/candidate ratio column ("speedup" for time, "ratio"
-    for memory, where less isn't "faster")."""
-    return "ratio" if metric in _MEMORY_METRICS else "speedup"
 
 
 def _value_cell(sample: Sample, metric: str) -> str | list[Span]:
@@ -255,8 +245,8 @@ def _render(
     if pattern is not None:
         all_names = {n for n in all_names if pattern.search(n)}
 
-    # Informational columns must not remove candidate/baseline measurements
-    # from the gate. Render absent historical values as dashes below.
+    # Only baseline and candidate must share a benchmark when gating; extra
+    # columns render missing values as dashes.
     required = columns[:2] if regressions is not None else columns
     shared = all_names.intersection(*(c.samples.keys() for c in required))
     if not shared:
@@ -281,9 +271,8 @@ def _render(
             )
 
     _warn_context_skew(columns)
-    # Custom-context keys that differ (e.g. engine=...) annotate the per-column
-    # context line, so an apples-vs-oranges comparison documents itself without
-    # stealing table-header width.
+    # Differing custom-context keys (e.g. engine=...) go on the context line, not
+    # the table header, to save width.
     diffs = _custom_diffs([c.context for c in columns])
     annotated_labels = [
         f"{c.label} ({', '.join(f'{k}={v}' for k, v in diff.items())})" if diff else c.label
@@ -305,7 +294,8 @@ def _render(
     for lbl in labels[1:]:
         table.add_column(lbl, justify="right")
         table.add_column("Δ%", justify="right")
-        table.add_column(_ratio_header(metric), justify="right")
+        # Memory: less isn't "faster".
+        table.add_column("ratio" if metric in _MEMORY_METRICS else "speedup", justify="right")
         if show_stddev:
             table.add_column("± stddev", justify="right")
 
@@ -352,7 +342,7 @@ def _render(
                 delta_cell = [*spans, (" (signif.)", "bold")]
             row.append(_value_cell(s, metric))
             row.append(delta_cell)
-            row.append(_fmt_speedup(result.speedup))
+            row.append(f"×{result.speedup:.3f}")
             if show_stddev:
                 row.append(_fmt_stddev(s, metric))
         table.add_row(*row)
@@ -449,12 +439,7 @@ def compare(
     # baseline"), while `_render` expects columns[0] to be the baseline.
     ordered = [parsed[-1], *parsed[:-1]]
     # Two selectors on one archive must not parse it twice.
-    parsed_files: dict[Path, list[dict[str, Any]]] = {}
-
-    def read_once(path: Path) -> list[dict[str, Any]]:
-        if path not in parsed_files:
-            parsed_files[path] = _read_rows(path)
-        return parsed_files[path]
+    read_once = functools.cache(_read_rows)
 
     columns = []
     for path, selector in ordered:
