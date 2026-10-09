@@ -8,43 +8,50 @@ change between minor releases.
 
 ### Changed
 
-- Google Benchmark is pinned to `a5fdacc` (v1.9.5-136). The bundled patches
-  are rebased onto upstream's non-pure `ProfilerManager` hooks; the memory pass
-  keeps measuring only the timing loop, which is narrower than upstream's new
-  `RunInThread()` window. A new patch carries `State::in_timing_loop()` until
-  google/benchmark#2319 is merged.
-- The Google Benchmark pin now follows the default in existing build trees, and
-  a pin change fetches the new commit into the cached checkout instead of
-  failing the configure. An explicit `-DMEW_BENCHMARK_COMMIT` still wins.
-  Editing a patch re-applies the series on the next build.
+- Google Benchmark is pinned to `e662de9` (v1.9.5-144).
+- `mew --version` and `mew.BENCHMARK_VERSION` report Google Benchmark as
+  `v1.9.5-144-ge662de9a+mew` instead of with a `-dirty` suffix caused by
+  mew's own patches.
+- `iterations` can no longer be combined with `min_time` or `min_warmup_time`.
+  Google Benchmark ignored the time budget in that case.
+- Registering a memory or profiler manager through `mew._core` replaces the
+  registered one, as in Google Benchmark, instead of raising `ValueError`.
+- `vcs_context()` lets jj snapshot the working copy, so uncommitted edits mark a
+  jj checkout as dirty.
 
 ### Fixed
 
-- Rejected memory and CPU profiling passes no longer contribute captures to
-  flame graphs or CPU HTML reports. Profilers still stop and release resources.
-- Returning or breaking during the final iteration reports an incomplete-loop
-  error instead of zero elapsed time in release builds or an abort in debug builds.
+- Aggregate `cv` rows report the coefficient of variation as a ratio, marked by
+  a new `aggregate_unit` field, instead of a meaningless time. The console shows
+  it as a percentage.
+- After a `KeyboardInterrupt` or a failing reporter, benchmarks that did not run
+  no longer reach result files as `aborted` rows.
+- Returning or breaking out of the benchmark loop, including in the final
+  iteration, reports an incomplete-loop error instead of near-zero time.
+- `state.pause()` outside the benchmark loop raises `RuntimeError` instead of
+  adding a raw clock reading to the result.
 - Nested `state.pause()` scopes keep timing and CPU sampling paused until the
-  outermost scope exits, including when reusing the same context manager.
-- `state.pause()` outside the benchmark loop raises `RuntimeError`, skipping the
-  run. It previously added a raw clock reading to the reported time in release
-  builds, and aborted the interpreter on an assertion in debug builds.
-- Skipping a benchmark inside `state.pause()` no longer resumes the stopped
-  timer on exit, which also aborted debug builds.
-- Threaded benchmarks no longer over-report `allocations_per_iteration` by
-  their thread count. The memory block's `iterations` now counts every thread's
-  iterations, like the timed row; `--memory-iterations` caps each thread.
-- Memory-pass iteration counts include batch overshoot, keeping
-  `allocations_per_iteration` correct for `state.batches()`.
-- Threaded manager passes wait for every worker's setup before starting
-  measurement and stop before any worker runs post-loop code or fixture teardown.
-- Early exits from C++ fixtures stop managers before fixture teardown. Partial
-  manager passes are discarded even when a body returns on its final iteration.
-- A body that leaves the benchmark loop early (for example by raising) no
-  longer leaves a profiler manager started without a matching
-  `before_teardown_stop()`; the incomplete pass reports no profile.
+  outermost scope exits. A scope left open no longer disables pausing in later
+  benchmarks, and a loop may end while paused.
+- Incomplete memory and CPU profiling passes report no figures and add nothing to
+  flame graphs or CPU HTML reports; profilers are still stopped.
+- Memory figures for threaded and batched benchmarks: `allocations_per_iteration`
+  is no longer inflated by the thread count, `iterations` counts every thread and
+  any batch overshoot, and worker setup and post-loop code are not measured.
 - A second `for _ in state:` loop after the first has finished no longer adds
-  the time since the loop started to the result. It yields nothing, as before.
+  time to the result.
+- `--regression-threshold` overrides `[tool.mew.regressions] default_threshold`
+  instead of being silently replaced by it.
+- `mew compare` shows `×1.000` instead of `×inf` when both sides are zero, and
+  scales the `memory.peak_bytes` stddev column like its values.
+- The memory flame graph's header totals cover every benchmark, not the first.
+- Benchmark files symlinked into a benchpath are selected by `mew list` and
+  `mew run`.
+- An invalid `--statistic` or a missing `[tool.mew] setup` file exits with the
+  usage error code 2, not 1 ("nothing matched").
+- A decorator rejected for a duplicate `name=` leaves the function free for a
+  corrected registration, and `min_time` / `min_warmup_time` reject NaN.
+- `--help` honors `FORCE_COLOR`, and shell completions no longer show `%%`.
 
 ## Version 0.2.0 (September 24, 2026)
 
