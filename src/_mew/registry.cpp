@@ -55,7 +55,7 @@ void register_registry(nb::module_& m) {
     m.def(
         "register_benchmark",
         [](const std::string& name, nb::callable fn) -> benchmark::Benchmark* {
-            // Google Benchmark stores a copyable std::function.
+            // GB stores a copyable std::function, so share the callable.
             auto holder = std::make_shared<nb::callable>(std::move(fn));
             return benchmark::RegisterBenchmark(name, [holder](benchmark::State& s) {
                 // Avoid Python calls while an abort is pending.
@@ -66,18 +66,23 @@ void register_registry(nb::module_& m) {
                 nb::gil_scoped_acquire gil;
                 try {
                     (*holder)(nb::cast(&s, nb::rv_policy::reference));
+                    // A return or break in the final iteration leaves the timer
+                    // running with a complete iteration count, which GB would
+                    // report as a near-zero time.
+                    if (s.in_timed_section()) {
+                        s.SkipWithError("The benchmark did not complete its loop.");
+                    }
                 } catch (nb::python_error& e) {
-                    if (!e.matches(PyExc_Exception)) {
+                    // The skip message carries the formatted traceback.
+                    s.SkipWithError(e.what());
+                    if (e.matches(PyExc_Exception)) {
+                        // Also show it while the run continues.
+                        e.discard_as_unraisable(*holder);
+                    } else {
                         // BaseException-only (KeyboardInterrupt, SystemExit) must
                         // stop the whole run, not skip one benchmark.
-                        s.SkipWithError(e.what());
                         mew_set_pending_abort(std::current_exception());
-                        return;
                     }
-                    // SkipWithError captures the traceback; discard the Python
-                    // error so it doesn't leak into the next benchmark.
-                    s.SkipWithError(e.what());
-                    e.discard_as_unraisable(*holder);
                 } catch (std::exception& e) {
                     s.SkipWithError(e.what());
                 }

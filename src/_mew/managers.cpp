@@ -10,6 +10,7 @@
 #include <exception>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "abort.h"
 
@@ -18,15 +19,12 @@ using namespace nb::literals;
 
 namespace {
 
-void set_manager_result_type_error(const char* message) {
-    try {
-        throw nb::type_error(message);
-    } catch (...) {
-        mew_set_pending_abort(std::current_exception());
-    }
+void abort_with_type_error(const char* message) {
+    mew_set_pending_abort(std::make_exception_ptr(nb::type_error(message)));
 }
 
-// Calls the Python manager without unwinding through Google Benchmark.
+// Calls the Python manager without unwinding through Google Benchmark: a failing
+// hook aborts the run instead. The caller holds the GIL.
 class PyManager {
    public:
     explicit PyManager(nb::object obj) : py_(std::move(obj)) {}
@@ -41,10 +39,10 @@ class PyManager {
     }
 
    protected:
-    // The caller holds the GIL for the returned object's lifetime.
-    nb::object call(const char* name) {
+    template <typename... Args>
+    nb::object call(const char* name, Args&&... args) {
         try {
-            return py_.attr(name)();
+            return py_.attr(name)(std::forward<Args>(args)...);
         } catch (...) {
             mew_set_pending_abort(std::current_exception());
             return nb::none();
@@ -100,45 +98,22 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
         nb::object r = call("stop");
         if (r.is_none()) return;
         if (!nb::isinstance<nb::dict>(r) || !fill_memory_result(nb::borrow<nb::dict>(r), out)) {
-            set_manager_result_type_error(
+            abort_with_type_error(
                 "memory manager stop() must return a dict with integer values, or None");
         }
     }
 
     void OnPassComplete(bool completed) override {
         nb::gil_scoped_acquire gil;
-        try {
-            if (nb::hasattr(py_, "on_pass_complete")) {
-                py_.attr("on_pass_complete")(completed && !mew_abort_pending());
-            }
-        } catch (...) {
-            mew_set_pending_abort(std::current_exception());
+        if (nb::hasattr(py_, "on_pass_complete")) {
+            call("on_pass_complete", completed && !mew_abort_pending());
         }
     }
 };
 
 class PyProfilerManager final : public benchmark::ProfilerManager, public PyManager {
    public:
-    explicit PyProfilerManager(nb::object obj) : PyManager(std::move(obj)) {
-        // Cache optional hooks used inside benchmark loops.
-        nb::gil_scoped_acquire gil;
-        if (nb::hasattr(py_, "pause")) pause_ = py_.attr("pause");
-        if (nb::hasattr(py_, "resume")) resume_ = py_.attr("resume");
-        if (nb::hasattr(py_, "get_result")) get_result_ = py_.attr("get_result");
-    }
-
-    ~PyProfilerManager() override {
-        if (!Py_IsInitialized()) {
-            pause_.release();
-            resume_.release();
-            get_result_.release();
-            return;
-        }
-        nb::gil_scoped_acquire gil;
-        pause_.reset();
-        resume_.reset();
-        get_result_.reset();
-    }
+    using PyManager::PyManager;
 
     void AfterSetupStart() override {
         nb::gil_scoped_acquire gil;
@@ -151,48 +126,34 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
         call("before_teardown_stop");
     }
 
-    // Only forward pauses during the profiler pass.
+    // Only forward pauses during the profiler pass, where the timer is
+    // already stopped.
     void Pause() {
-        if (active_) invoke(pause_);
+        if (!active_) return;
+        nb::gil_scoped_acquire gil;
+        if (nb::hasattr(py_, "pause")) call("pause");
     }
     void Resume() {
-        if (active_) invoke(resume_);
+        if (!active_) return;
+        nb::gil_scoped_acquire gil;
+        if (nb::hasattr(py_, "resume")) call("resume");
     }
 
     void GetResult(Result& out) override {
-        if (!get_result_.is_valid()) return;
         nb::gil_scoped_acquire gil;
-        nb::object r;
-        try {
-            r = get_result_();
-        } catch (...) {
-            mew_set_pending_abort(std::current_exception());
-            return;
-        }
+        if (!nb::hasattr(py_, "get_result")) return;
+        nb::object r = call("get_result");
         if (r.is_none()) return;
         if (!nb::isinstance<nb::dict>(r) || !fill_profile_result(nb::borrow<nb::dict>(r), out)) {
-            set_manager_result_type_error(
+            abort_with_type_error(
                 "profiler manager get_result() must return a flat dict with string keys and "
                 "string or numeric values, or None");
         }
     }
 
    private:
-    void invoke(const nb::object& fn) {
-        if (!fn.is_valid()) return;
-        nb::gil_scoped_acquire gil;
-        try {
-            fn();
-        } catch (...) {
-            mew_set_pending_abort(std::current_exception());
-        }
-    }
-
     // Written by the profiler pass and read by timed-run worker threads.
     std::atomic<bool> active_{false};
-    nb::object pause_;
-    nb::object resume_;
-    nb::object get_result_;
 };
 
 // GB holds raw pointers to these for the length of the run.
@@ -213,13 +174,14 @@ void register_managers(nb::module_& m) {
     m.def(
         "register_memory_manager",
         [](nb::object obj) {
-            if (g_memory) throw nb::value_error("a memory manager is already registered");
             auto manager = std::make_unique<PyMemoryManager>(std::move(obj));
+            // Replaces any registered manager, as upstream does; ours is
+            // released only after GB stops pointing at it.
             benchmark::RegisterMemoryManager(manager.get());
             g_memory = std::move(manager);
         },
         "manager"_a,
-        "Register `manager` as Google Benchmark's memory manager.\n"
+        "Register `manager` as Google Benchmark's memory manager, replacing any other.\n"
         "Requires `start()` and `stop()`; `stop()` returns memory metrics or None.\n"
         "Optional `on_pass_complete(completed)` accepts or discards a closed capture.\n"
         "Pair with `unregister_memory_manager`.");
@@ -231,13 +193,14 @@ void register_managers(nb::module_& m) {
     m.def(
         "register_profiler_manager",
         [](nb::object obj) {
-            if (g_profiler) throw nb::value_error("a profiler manager is already registered");
             auto manager = std::make_unique<PyProfilerManager>(std::move(obj));
+            // GB's BM_CHECK forbids overwriting a registered profiler manager.
+            benchmark::RegisterProfilerManager(nullptr);
             benchmark::RegisterProfilerManager(manager.get());
             g_profiler = std::move(manager);
         },
         "manager"_a,
-        "Register `manager` as Google Benchmark's profiler manager.\n"
+        "Register `manager` as Google Benchmark's profiler manager, replacing any other.\n"
         "Requires `after_setup_start()` and `before_teardown_stop()`; supports optional\n"
         "`get_result()`, `pause()`, and `resume()` hooks.\n"
         "Pair with `unregister_profiler_manager`.");

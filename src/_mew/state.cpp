@@ -58,7 +58,7 @@ void register_state(nb::module_& m) {
         .def(
             "__enter__",
             [](PauseScope& self) -> PauseScope& {
-                if (!self.state->in_timing_loop()) {
+                if (!self.state->in_timed_section()) {
                     throw std::runtime_error(
                         "state.pause() is only valid inside the benchmark loop");
                 }
@@ -82,7 +82,7 @@ void register_state(nb::module_& m) {
                 if (self.state->thread_index() == 0) mew_profiler_resume();
                 // As in ScopedPauseTiming: a skip inside the block ends the loop, and
                 // its timer must stay stopped.
-                if (self.state->in_timing_loop()) self.state->ResumeTiming();
+                if (self.state->in_timed_section()) self.state->ResumeTiming();
             },
             "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none(),
             nb::sig("def __exit__(self, exc_type: type[BaseException] | None, exc_value: "
@@ -173,7 +173,6 @@ void register_state(nb::module_& m) {
         .def_prop_ro("error_occurred", &benchmark::State::error_occurred,
                      "Whether the skip came from `skip_with_error` rather than "
                      "`skip_with_message`.")
-        .def_prop_ro(
-            "max_iterations", [](const benchmark::State& s) { return s.max_iterations; },
-            "Iteration count Google Benchmark budgeted for this run.");
+        .def_ro("max_iterations", &benchmark::State::max_iterations,
+                "Iteration count Google Benchmark budgeted for this run.");
 }

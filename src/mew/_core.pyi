@@ -5,9 +5,9 @@ import types
 from collections.abc import Callable, Sequence
 from typing import Self
 
-BENCHMARK_COMMIT: str = "a5fdacc8b23baccb84c7c93052c05268c9579de4"
+BENCHMARK_COMMIT: str = "e662de9aab8e705ecf4fa4bd41a207e5a0acfd0c"
 
-BENCHMARK_VERSION: str = "v1.9.5-136-ga5fdacc8-dirty"
+BENCHMARK_VERSION: str = "v1.9.5-144-ge662de9a+mew"
 
 def warmup_free_threading() -> None:
     """Attach one native thread to initialize free-threaded CPython state."""
@@ -260,7 +260,7 @@ def clear_registered_benchmarks() -> None:
 
 def register_memory_manager(manager: object) -> None:
     """
-    Register `manager` as Google Benchmark's memory manager.
+    Register `manager` as Google Benchmark's memory manager, replacing any other.
     Requires `start()` and `stop()`; `stop()` returns memory metrics or None.
     Optional `on_pass_complete(completed)` accepts or discards a closed capture.
     Pair with `unregister_memory_manager`.
@@ -269,7 +269,7 @@ def register_memory_manager(manager: object) -> None:
 def unregister_memory_manager() -> None: ...
 def register_profiler_manager(manager: object) -> None:
     """
-    Register `manager` as Google Benchmark's profiler manager.
+    Register `manager` as Google Benchmark's profiler manager, replacing any other.
     Requires `after_setup_start()` and `before_teardown_stop()`; supports optional
     `get_result()`, `pause()`, and `resume()` hooks.
     Pair with `unregister_profiler_manager`.

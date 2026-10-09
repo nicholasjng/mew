@@ -5,9 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Generate a compilation database for each build tree. Developer builds can
-# copy theirs to the repository root without letting isolated package builds
-# replace it with paths from a temporary environment.
+# Copying to the source root is opt-in so isolated package builds don't replace
+# it with paths from a temporary environment.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
 option(MEW_SYNC_COMPILE_COMMANDS
     "Copy compile_commands.json to the source root" OFF)
@@ -37,8 +36,8 @@ if(MEW_ASAN)
     add_link_options(-fsanitize=address)
 endif()
 
-# ThreadSanitizer build, driven by -DMEW_TSAN=ON or MEW_TSAN=1 in the env.
-# Mutually exclusive with ASAN — the two runtimes can't co-load.
+# ThreadSanitizer, enabled with -DMEW_TSAN=ON or MEW_TSAN=1. Mutually exclusive
+# with ASAN: the two runtimes can't co-load.
 option(MEW_TSAN "Build with ThreadSanitizer" OFF)
 if(NOT MEW_TSAN AND DEFINED ENV{MEW_TSAN} AND "$ENV{MEW_TSAN}")
     set(MEW_TSAN ON)
@@ -52,9 +51,8 @@ if(MEW_TSAN)
 endif()
 
 # --- Python + nanobind --------------------------------------------------------
-# Optional, not required: a missing SABI module must degrade to a version-specific
-# build rather than fail the configure, and this also works outside scikit-build-core,
-# where SKBUILD_SABI_COMPONENT is undefined.
+# SABI is optional so a missing module degrades to a version-specific build, also
+# outside scikit-build-core where SKBUILD_SABI_COMPONENT is undefined.
 find_package(Python 3.11
     REQUIRED COMPONENTS Interpreter Development.Module
     OPTIONAL_COMPONENTS Development.SABIModule)
@@ -76,7 +74,7 @@ find_package(nanobind CONFIG REQUIRED)
 # --- Google Benchmark ---------------------------------------------------------
 include(FetchContent)
 
-set(_mew_benchmark_default_commit "a5fdacc8b23baccb84c7c93052c05268c9579de4")
+set(_mew_benchmark_default_commit "e662de9aab8e705ecf4fa4bd41a207e5a0acfd0c")
 
 # A plain CACHE default would keep an existing build tree on the old pin after
 # a bump. Follow the default unless the cached value was overridden, i.e. it
@@ -94,23 +92,19 @@ set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 
-# Apply these patches in order to the pinned Google Benchmark tree. 0005 is
-# google/benchmark#2319; drop it once a pin includes that change.
+# Applied in order; later patches build on earlier ones.
 set(MEW_BENCHMARK_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profiler-stop-on-early-exit.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-profilermanager-result.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-threaded-manager-passes.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0004-memory-iterations-flag.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-state-in-timing-loop.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-reject-incomplete-loops.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-memory-pass-completion.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0008-pause-ownership.patch")
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-memory-pass-completion.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-pause-ownership.patch")
 
 string(JOIN "|" _mew_patches_arg ${MEW_BENCHMARK_PATCHES})
 
-# FetchContent re-runs the patch step only when its command changes, so put a
-# hash of the patch contents into the command. Editing a patch also has to
-# re-run configure to recompute the hash.
+# FetchContent re-runs the patch step only when its command changes, so the
+# command carries a hash of the patches (recomputed on configure).
 set(_mew_patches_hash "")
 foreach(patch IN LISTS MEW_BENCHMARK_PATCHES)
     file(SHA256 "${patch}" _mew_patch_sha)
@@ -119,8 +113,7 @@ endforeach()
 string(SHA256 _mew_patches_hash "${_mew_patches_hash}")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MEW_BENCHMARK_PATCHES})
 
-# Needed by PATCH_COMMAND below, so it must resolve *before* the Declare (the
-# built-commit probe further down reuses it).
+# PATCH_COMMAND needs git, so resolve it before the Declare.
 find_package(Git QUIET)
 if(NOT Git_FOUND)
     message(FATAL_ERROR
@@ -128,10 +121,9 @@ if(NOT Git_FOUND)
         "(see MEW_BENCHMARK_PATCHES).")
 endif()
 
-# UPDATE_DISCONNECTED (below) only checks out a pin the existing clone already
-# has, and git's update step would carry the patched files across the checkout.
-# On a pin change, reset the clone and fetch the new commit into it first; the
-# patch step re-runs after the update and applies the series to the new tree.
+# UPDATE_DISCONNECTED only checks out a pin the clone already has, and the update
+# step would carry patched files across the checkout. On a pin change, reset the
+# clone and fetch the new commit first; the patch step then re-applies.
 set(_mew_benchmark_src "${FETCHCONTENT_BASE_DIR}/googlebenchmark-src")
 if(NOT FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK
    AND IS_DIRECTORY "${_mew_benchmark_src}/.git")
@@ -169,14 +161,11 @@ FetchContent_Declare(
     googlebenchmark
     GIT_REPOSITORY https://github.com/google/benchmark.git
     GIT_TAG ${MEW_BENCHMARK_COMMIT}
-    # Keep the fetched tree LF on every platform. A Windows runner's global
-    # `core.autocrlf=true` would otherwise check this clone out as CRLF while
-    # `.gitattributes` holds the patches at LF, and the mismatch makes every
-    # hunk fail with "patch does not apply".
+    # Force LF: a global `core.autocrlf=true` (Windows) would check out CRLF while
+    # `.gitattributes` keeps the patches LF, and every hunk would fail to apply.
     GIT_CONFIG core.autocrlf=false core.eol=lf
-    # PATCH_COMMAND runs without a shell; the -P script carries the
-    # already-applied guard and the failure message. The patch list is
-    # |-joined: a ;-list would be split into separate arguments here.
+    # PATCH_COMMAND runs without a shell. The patch list is |-joined because a
+    # ;-list would be split into separate arguments here.
     PATCH_COMMAND ${CMAKE_COMMAND}
         "-DGIT=${GIT_EXECUTABLE}"
         "-DSRC=<SOURCE_DIR>"
@@ -189,8 +178,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googlebenchmark)
 
-# Report the checked-out upstream SHA rather than the requested pin. Fall back
-# to the pin for vendored sdists; local patches are not reflected in this value.
+# Report the checked-out upstream SHA (excluding patches); fall back to the pin
+# for vendored sdists.
 set(MEW_BENCHMARK_BUILT_COMMIT "${MEW_BENCHMARK_COMMIT}")
 if(Git_FOUND AND IS_DIRECTORY "${googlebenchmark_SOURCE_DIR}/.git")
     execute_process(
@@ -203,6 +192,13 @@ if(Git_FOUND AND IS_DIRECTORY "${googlebenchmark_SOURCE_DIR}/.git")
         set(MEW_BENCHMARK_BUILT_COMMIT "${MEW_BENCHMARK_COMMIT}")
     endif()
 endif()
+
+# GB versions itself with `git describe --dirty`, which the patches always
+# trigger; report them as semver build metadata instead.
+get_directory_property(MEW_BENCHMARK_VERSION
+    DIRECTORY "${googlebenchmark_SOURCE_DIR}" DEFINITION VERSION)
+string(REGEX REPLACE "-dirty$" "" MEW_BENCHMARK_VERSION "${MEW_BENCHMARK_VERSION}")
+string(APPEND MEW_BENCHMARK_VERSION "+mew")
 
 message(STATUS "Google Benchmark requested: ${MEW_BENCHMARK_COMMIT}")
 message(STATUS "Google Benchmark built:     ${MEW_BENCHMARK_BUILT_COMMIT}")
@@ -217,9 +213,8 @@ set(_MEW_SOURCES
     src/_mew/abort.cpp
 )
 
-# nanobind keeps whichever of STABLE_ABI / FREE_THREADED fits the interpreter:
-# `cp312` abi3 on stock CPython, a `Py_MOD_GIL_NOT_USED` wheel on free-threaded
-# builds (the limited API has no free-threaded variant). Inert on a GIL build.
+# nanobind keeps whichever of STABLE_ABI / FREE_THREADED fits the interpreter;
+# the limited API has no free-threaded variant.
 nanobind_add_module(
     _core
     STABLE_ABI
@@ -228,8 +223,8 @@ nanobind_add_module(
     ${_MEW_SOURCES}
 )
 
-# Scoped to _core so the fetched Google Benchmark keeps its own warning settings.
-# Not -Werror: a newer compiler or nanobind release must not break the build.
+# Scoped to _core so GB keeps its own warning settings. No -Werror: a newer
+# compiler or nanobind must not break the build.
 if(MSVC)
     target_compile_options(_core PRIVATE /W4)
 else()
@@ -240,11 +235,11 @@ target_include_directories(_core PRIVATE src/_mew)
 target_link_libraries(_core PRIVATE benchmark::benchmark)
 target_compile_definitions(_core PRIVATE
     MEW_BENCHMARK_COMMIT="${MEW_BENCHMARK_BUILT_COMMIT}"
+    MEW_BENCHMARK_VERSION="${MEW_BENCHMARK_VERSION}"
 )
 
-# Repeat the sanitizer flag on _core itself: nanobind's stubgen detector only
-# scans per-target COMPILE_OPTIONS / LINK_OPTIONS. Without this it skips
-# preloading libclang_rt.asan and stubgen aborts on `import _core`.
+# nanobind's stubgen only detects sanitizers from per-target options; without
+# them it skips preloading the runtime and aborts on `import _core`.
 if(MEW_ASAN)
     target_compile_options(_core PRIVATE -fsanitize=address -fno-omit-frame-pointer)
     target_link_options(_core PRIVATE -fsanitize=address)
@@ -256,7 +251,7 @@ endif()
 
 install(TARGETS _core LIBRARY DESTINATION mew)
 
-# Generate into the build tree to avoid regenerating the stub on out-of-tree builds.
+# Generated into the build tree so builds never write to the source checkout.
 set(_MEW_CORE_STUB "${CMAKE_CURRENT_BINARY_DIR}/_core.pyi")
 nanobind_add_stub(
     mew_core_stub
@@ -267,12 +262,10 @@ nanobind_add_stub(
     DEPENDS _core
 )
 
-# The checked-in, formatted stub is the distribution artifact. Stub generation
-# above is for verification and explicit maintainer updates; consumer builds
-# need neither ruff nor permission to modify mew's source checkout.
+# The checked-in, formatted stub ships; consumer builds need neither ruff nor
+# write access to the source checkout.
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/mew/_core.pyi DESTINATION mew)
 
-# Apply Ruff fixes and formatting to the generated stub when Ruff is available.
 execute_process(
     COMMAND ${Python_EXECUTABLE} -m ruff --version
     RESULT_VARIABLE _ruff_available
@@ -290,8 +283,7 @@ if(_ruff_available EQUAL 0)
     )
 endif()
 
-# Updating the repository copy is an explicit maintainer action.
-# Normal builds only read the source tree.
+# Explicit maintainer action; normal builds only read the source tree.
 add_custom_target(
     update_mew_core_stub
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -301,9 +293,8 @@ add_custom_target(
     COMMENT "Updating checked-in src/mew/_core.pyi"
     VERBATIM)
 
-# CI/release check: generation remains read-only, but a stale checked-in stub
-# fails loudly. Run after installing the development dependencies so ruff is
-# available and the generated file has its canonical formatting.
+# CI check for a stale checked-in stub. Needs the dev dependencies so ruff gives
+# the generated stub its canonical formatting.
 add_custom_target(
     check_mew_core_stub
     COMMAND ${CMAKE_COMMAND} -E compare_files

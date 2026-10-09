@@ -72,7 +72,6 @@ std::string addressable_name(const Run& r) {
     return name;
 }
 
-// Convert a native result to the public mapping shape.
 nb::dict run_to_dict(const Run& r) {
     nb::dict d;
     d["name"] = r.benchmark_name();
@@ -80,23 +79,20 @@ nb::dict run_to_dict(const Run& r) {
     d["benchmark"] = addressable_name(r);
     d["family_index"] = r.family_index;
     d["per_family_instance_index"] = r.per_family_instance_index;
-    d["run_type"] = r.run_type == Run::RT_Aggregate ? "aggregate" : "iteration";
+    const bool aggregate = r.run_type == Run::RT_Aggregate;
+    // A ratio aggregate such as `cv` is not a time: no unit scaling or
+    // per-iteration split.
+    const bool ratio = aggregate && r.aggregate_unit == benchmark::kPercentage;
+    d["run_type"] = aggregate ? "aggregate" : "iteration";
     d["aggregate_name"] = r.aggregate_name;
     // As in GB's JSON output: only aggregates carry a unit, "time" or "percentage".
-    if (r.run_type == Run::RT_Aggregate)
-        d["aggregate_unit"] = r.aggregate_unit == benchmark::kPercentage ? "percentage" : "time";
+    if (aggregate) d["aggregate_unit"] = ratio ? "percentage" : "time";
     d["repetitions"] = r.repetitions;
     d["repetition_index"] = r.repetition_index;
     d["threads"] = r.threads;
     d["iterations"] = r.iterations;
-    if (r.run_type == Run::RT_Aggregate && r.aggregate_unit == benchmark::kPercentage) {
-        // A ratio such as `cv`: not a time, so no unit scaling or per-iteration split.
-        d["real_time"] = r.real_accumulated_time;
-        d["cpu_time"] = r.cpu_accumulated_time;
-    } else {
-        d["real_time"] = r.GetAdjustedRealTime();
-        d["cpu_time"] = r.GetAdjustedCPUTime();
-    }
+    d["real_time"] = ratio ? r.real_accumulated_time : r.GetAdjustedRealTime();
+    d["cpu_time"] = ratio ? r.cpu_accumulated_time : r.GetAdjustedCPUTime();
     d["real_accumulated_time"] = r.real_accumulated_time;
     d["cpu_accumulated_time"] = r.cpu_accumulated_time;
     d["time_unit"] = time_unit_name(r.time_unit);
@@ -106,8 +102,7 @@ nb::dict run_to_dict(const Run& r) {
     nb::dict counters;
     for (const auto& kv : r.counters) counters[kv.first.c_str()] = kv.second.value;
     d["counters"] = counters;
-    // Both blocks ride on the Run: GB stamps the memory result, mew's patch the
-    // profiler one. Neither needs a lookup.
+    // GB stamps the memory result on the Run, mew's patch the profiler one.
     if (r.memory_result.memory_iterations > 0) d["memory"] = memory_block(r);
     if (!r.profile_result.values.empty() || !r.profile_result.labels.empty())
         d["cpu_profile"] = profile_block(r);
@@ -219,7 +214,6 @@ void register_reporter(nb::module_& m) {
         [](std::vector<std::string> argv, nb::object reporter, nb::dict extra_context,
            nb::list extra_rows) {
             // GB only shuffles the char** array, never writes into the strings.
-            if (argv.empty()) argv.emplace_back("mew");
             std::vector<char*> argp;
             argp.reserve(argv.size());
             for (auto& s : argv) argp.push_back(s.data());
