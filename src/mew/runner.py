@@ -192,8 +192,8 @@ def run(
         :class:`mew.memory.MemrayManager`. Registered for the duration of the run;
         its figures land in each row's ``memory`` block.
     memory_iterations : int, optional
-        Cap on the iterations run under ``memory_manager``; the pass runs
-        ``min(memory_iterations, iterations)`` per thread. Defaults to 16. Raise it to
+        Cap on the iterations run under ``memory_manager``; the single-threaded
+        pass runs ``min(memory_iterations, iterations)``. Defaults to 16. Raise it to
         amortize one-time allocations in ``allocations_per_iteration``.
     profiler_manager : ProfilerManager, optional
         A Google Benchmark profiler manager (``after_setup_start()`` /

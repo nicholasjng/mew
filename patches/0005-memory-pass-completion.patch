@@ -1,19 +1,21 @@
 diff --git a/include/benchmark/managers.h b/include/benchmark/managers.h
+index 360cafd..7f8f206 100644
 --- a/include/benchmark/managers.h
 +++ b/include/benchmark/managers.h
-@@ -49,6 +49,8 @@
+@@ -49,6 +49,8 @@ class MemoryManager {
    virtual ~MemoryManager() {}
    virtual void Start() = 0;
    virtual void Stop(Result& result) = 0;
-+  // Called after every worker and teardown finish, including skipped passes.
++  // Called after the pass and its teardown finish, including skipped passes.
 +  virtual void OnPassComplete(bool completed) { (void)completed; }
  };
  
  BENCHMARK_EXPORT
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
+index 4bcd8cc..9835e7a 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
-@@ -508,6 +508,7 @@
+@@ -504,6 +504,7 @@ MemoryManager::Result BenchmarkRunner::RunMemoryManager(
    // No complete loop, no figures: memory_iterations == 0 means "not measured".
    const ManagerPassResult pass = RunManagerPass(
        memory_iterations, &scope, perf_counters_measurement_ptr);

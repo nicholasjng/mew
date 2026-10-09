@@ -164,7 +164,7 @@ class State:
 
     @property
     def threads(self) -> int:
-        """Total number of threads in this run (1 unless threaded mode is on)."""
+        """Threads in this run: 1 without threaded mode or in a profiling pass."""
 
     @property
     def thread_index(self) -> int:

@@ -3,9 +3,11 @@
 `--profile-memory` measures each benchmark with
 [memray](https://bloomberg.github.io/memray/) in a separate, untimed pass.
 Tracking covers the timing loop, not fixture setup.
-The pass requests `min(--memory-iterations, iterations)` iterations per thread,
-16 by default. Batched loops can exceed that budget; the memory result records
-the actual iteration count across all threads.
+The pass requests `min(--memory-iterations, iterations)` iterations, 16 by
+default. Batched loops can exceed that budget; the memory result records the
+actual iteration count. Like Google Benchmark, the pass runs a single thread,
+also for threaded benchmarks, where `state.threads` reports 1. Peak memory of
+a threaded benchmark therefore covers one thread's working set.
 
 Use `allocations_per_iteration` for comparisons. `total_allocations` depends on
 the memory-pass iteration count; `peak_bytes` is comparable as-is. Raise

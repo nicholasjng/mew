@@ -1,5 +1,5 @@
 diff --git a/include/benchmark/state.h b/include/benchmark/state.h
-index 4b61e1e..b92ae4c 100644
+index 7921d3d..ef9e40a 100644
 --- a/include/benchmark/state.h
 +++ b/include/benchmark/state.h
 @@ -79,6 +79,9 @@ class BENCHMARK_EXPORT BENCHMARK_INTERNAL_CACHELINE_ALIGNED State {
@@ -13,7 +13,7 @@ index 4b61e1e..b92ae4c 100644
  
    void SetIterationTime(double seconds);
 diff --git a/src/benchmark.cc b/src/benchmark.cc
-index ffcc77f..50159cd 100644
+index 9389b69..fe1c4af 100644
 --- a/src/benchmark.cc
 +++ b/src/benchmark.cc
 @@ -294,6 +294,11 @@ void State::SkipWithError(const std::string& msg) {
@@ -28,7 +28,7 @@ index ffcc77f..50159cd 100644
  void State::SetIterationTime(double seconds) {
    timer_->SetIterationTime(seconds);
  }
-@@ -330,7 +335,9 @@ void State::FinishKeepRunning() {
+@@ -321,7 +326,9 @@ void State::FinishKeepRunning() {
    BM_CHECK(started_);
    // A second request for iterations must not stop timing or profiling again.
    if (finished_) return;
