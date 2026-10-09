@@ -1,8 +1,8 @@
 diff --git a/include/benchmark/state.h b/include/benchmark/state.h
-index 828c644..091fbf2 100644
+index 7921d3d..4b61e1e 100644
 --- a/include/benchmark/state.h
 +++ b/include/benchmark/state.h
-@@ -198,6 +198,7 @@
+@@ -200,6 +200,7 @@ class BENCHMARK_EXPORT BENCHMARK_INTERNAL_CACHELINE_ALIGNED State {
    ProfilerManager* const profiler_manager_;
  
    bool profiler_active_ = false;
@@ -11,10 +11,10 @@ index 828c644..091fbf2 100644
    friend class Fixture;
    friend class internal::BenchmarkInstance;
 diff --git a/src/benchmark.cc b/src/benchmark.cc
-index 4f2f175..704c08e 100644
+index 4f2f175..8c452ad 100644
 --- a/src/benchmark.cc
 +++ b/src/benchmark.cc
-@@ -304,11 +304,20 @@
+@@ -304,11 +304,20 @@ void State::StartKeepRunning() {
    BM_CHECK(!started_ && !finished_);
    started_ = true;
    total_iterations_ = skipped() ? 0 : max_iterations;
@@ -36,7 +36,7 @@ index 4f2f175..704c08e 100644
    if (!skipped()) {
      ResumeTiming();
    }
-@@ -324,14 +333,34 @@
+@@ -324,15 +333,32 @@ void State::FinishKeepRunning() {
    // Total iterations has now wrapped around past 0. Fix this.
    total_iterations_ = 0;
    finished_ = true;
@@ -46,16 +46,13 @@ index 4f2f175..704c08e 100644
  }
  
  void State::FinishBenchmarkBody() {
-+  const bool manager_pass = manager_ != nullptr && manager_->IsManagerPass();
++  const bool manager_pass = manager_->IsManagerPass();
 +  if (manager_pass) {
 +    if (manager_pass_finished_) return;
 +    manager_pass_finished_ = true;
-+    if (!finished_ && !skipped()) {
-+      // Cleanup must not turn a partial loop into a successful measurement.
-+      SkipWithError("The benchmark did not complete its manager-pass loop.");
-+    }
 +    if (!started_) {
-+      // A body that returned before the loop still participates in entry.
++      // A body that returned before the loop still takes part in the two
++      // entry barriers of StartKeepRunning().
 +      manager_->ManagerPassBarrier();
 +      manager_->ManagerPassBarrier();
 +    }
@@ -65,18 +62,19 @@ index 4f2f175..704c08e 100644
    if (profiler_active_) {
      profiler_active_ = false;
      profiler_manager_->BeforeTeardownStopWithState(*this);
-+  }
+   }
 +  if (manager_pass) {
 +    // No worker may run post-loop code or teardown until measurement stops.
 +    manager_->ManagerPassBarrier();
-   }
++  }
  }
  
+ namespace internal {
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
 index cd19f7b..5913c01 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
-@@ -138,10 +138,11 @@
+@@ -138,10 +138,11 @@ BenchmarkReporter::Run CreateRunReport(
  
      if (memory_iterations > 0) {
        report.memory_result = memory_result;
@@ -90,7 +88,7 @@ index cd19f7b..5913c01 100644
                : 0;
      }
  
-@@ -477,33 +478,40 @@
+@@ -477,33 +478,40 @@ void BenchmarkRunner::RunWarmUp() {
    }
  }
  
@@ -143,7 +141,7 @@ index cd19f7b..5913c01 100644
    return scope.result;
  }
  
-@@ -511,7 +519,8 @@
+@@ -511,7 +519,8 @@ ProfilerManager::Result BenchmarkRunner::RunProfilerManager(
      IterationCount profile_iterations) {
    ProfilerManager::Result profile_result;
    // Like a partial memory measurement, a partial profile is not reported.
@@ -157,7 +155,7 @@ diff --git a/src/benchmark_runner.h b/src/benchmark_runner.h
 index 474f08d..949918f 100644
 --- a/src/benchmark_runner.h
 +++ b/src/benchmark_runner.h
-@@ -105,8 +105,13 @@
+@@ -105,8 +105,13 @@ class BenchmarkRunner {
    };
    IterationResults DoNIterations();
  
@@ -185,7 +183,7 @@ index 80252b6..80215c7 100644
  
  #include "benchmark/counter.h"
  #include "benchmark/statistics.h"
-@@ -13,13 +14,19 @@
+@@ -13,7 +14,9 @@ namespace internal {
  
  class ThreadManager {
   public:
@@ -196,17 +194,18 @@ index 80252b6..80215c7 100644
  
    Mutex& GetBenchmarkMutex() const RETURN_CAPABILITY(benchmark_mutex_) {
      return benchmark_mutex_;
-   }
+@@ -21,6 +24,10 @@ class ThreadManager {
  
    bool StartStopBarrier() { return start_stop_barrier_.wait(); }
-+
+ 
 +  bool IsManagerPass() const { return manager_pass_barrier_ != nullptr; }
 +  // Fixed participants: even bodies that never enter a loop rendezvous here.
 +  void ManagerPassBarrier() { manager_pass_barrier_->wait(); }
- 
++
    void NotifyThreadComplete() { start_stop_barrier_.removeThread(); }
  
-@@ -39,6 +46,7 @@
+   struct Result {
+@@ -39,6 +46,7 @@ class ThreadManager {
   private:
    mutable Mutex benchmark_mutex_;
    Barrier start_stop_barrier_;

@@ -106,6 +106,15 @@ class TestFixture : public benchmark::Fixture {
         ++teardown_done[pass];
     }
     void BenchmarkCase(benchmark::State& state) override {
+        RunBody(state);
+        // As mew's trampoline does: a body that left its loop, including in the
+        // final iteration, is an incomplete measurement.
+        if (state.in_timed_section()) {
+            state.SkipWithError("The benchmark did not complete its loop.");
+        }
+    }
+
+    void RunBody(benchmark::State& state) {
         const int pass = invocations[state.thread_index()] - 1;
         const bool early = pass != 0 && state.thread_index() == early_thread;
         if (early && (body == Body::SkipBefore || body == Body::NoLoop)) {

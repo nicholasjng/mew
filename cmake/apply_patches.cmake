@@ -1,15 +1,11 @@
 # Apply mew's Google Benchmark patches to a FetchContent-populated source tree.
 #
-# Driven as a `cmake -P` script from FetchContent's PATCH_COMMAND, which has no
-# shell. Expects -DGIT=, -DSRC= and -DPATCHES= (a |-separated list: a ;-list
-# would be split into separate arguments on the PATCH_COMMAND line).
-# PATCHES_SHA256 is unused here: it only changes the command line when a patch
-# changes, which is what makes FetchContent re-run this script.
+# Run via `cmake -P` from PATCH_COMMAND with -DGIT=, -DSRC= and -DPATCHES= (a
+# |-separated list). PATCHES_SHA256 is unused; it only makes FetchContent re-run
+# this script when a patch changes.
 #
-# Idempotent through a stamp file recording the base commit and the applied
-# series. Patches build on each other, so a per-patch "already applied" probe
-# cannot work; instead a stale or missing stamp resets the tree to the pinned
-# commit and re-applies the whole series in order.
+# A stamp file records the base commit and applied series. Patches build on each
+# other, so a stale or missing stamp resets the tree and re-applies them all.
 
 if(NOT GIT OR NOT SRC OR NOT PATCHES)
     message(FATAL_ERROR "apply_patches.cmake: GIT, SRC and PATCHES are all required")
@@ -43,8 +39,7 @@ if(EXISTS "${_stamp}")
     file(REMOVE "${_stamp}")
 endif()
 
-# Back to the pinned commit. The tree is FetchContent's own clone, so the only
-# local modifications are a previous run of this script.
+# Safe: the tree is FetchContent's own clone, only ever modified by this script.
 execute_process(
     COMMAND "${GIT}" -C "${SRC}" reset --hard --quiet
     RESULT_VARIABLE _rc
@@ -56,17 +51,15 @@ endif()
 foreach(patch IN LISTS PATCHES)
     get_filename_component(_name "${patch}" NAME)
 
-    # --3way needs the pre-image blobs in the object store, which a
-    # FetchContent git checkout has. It degrades to a normal apply otherwise.
+    # --3way uses the pre-image blobs a FetchContent clone has; it degrades to a
+    # normal apply otherwise.
     execute_process(
         COMMAND "${GIT}" -C "${SRC}" apply --3way --whitespace=nowarn "${patch}"
         RESULT_VARIABLE _rc
         ERROR_VARIABLE _err)
 
-    # `--3way` merges blobs rather than matching text, so it cannot absorb a
-    # CRLF/LF difference between the patch and the tree; `--ignore-whitespace`
-    # can, but the two flags do not combine. `.gitattributes` and the GIT_CONFIG
-    # on the FetchContent_Declare should keep both sides at LF.
+    # --3way cannot absorb a CRLF/LF mismatch and doesn't combine with
+    # --ignore-whitespace, hence the fallback. Both sides should be LF anyway.
     if(NOT _rc EQUAL 0)
         execute_process(
             COMMAND "${GIT}" -C "${SRC}" apply --ignore-whitespace "${patch}"

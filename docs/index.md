@@ -103,6 +103,7 @@ reference/cli
 :maxdepth: 1
 
 development/building
+development/patches
 development/contributing
 development/releasing
 ```

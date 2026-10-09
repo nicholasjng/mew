@@ -1,11 +1,13 @@
 // nanobind module entry point.
 
-#include <benchmark/benchmark.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 
 #ifndef MEW_BENCHMARK_COMMIT
 #define MEW_BENCHMARK_COMMIT "unknown"
+#endif
+#ifndef MEW_BENCHMARK_VERSION
+#define MEW_BENCHMARK_VERSION "unknown"
 #endif
 
 namespace nb = nanobind;
@@ -19,7 +21,7 @@ NB_MODULE(_core, m) {
     m.doc() = "The mew C++ core (Google Benchmark bindings).";
 
     m.attr("BENCHMARK_COMMIT") = MEW_BENCHMARK_COMMIT;
-    m.attr("BENCHMARK_VERSION") = benchmark::GetBenchmarkVersion();
+    m.attr("BENCHMARK_VERSION") = MEW_BENCHMARK_VERSION;
 
     register_reporter(m);
     register_state(m);
