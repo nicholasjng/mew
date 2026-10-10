@@ -23,6 +23,26 @@ struct BatchIter {
     benchmark::State* state;
     int64_t n;
 };
+
+// Loop steps run through the iterator type slots: CPython calls them directly,
+// skipping the `__next__` lookup and nanobind's argument dispatch, which cost
+// about two thirds of an empty loop iteration. NULL without an exception set
+// ends the loop.
+PyObject* state_iternext(PyObject* self) {
+    if (nb::inst_ptr<benchmark::State>(self)->KeepRunning()) return Py_NewRef(Py_None);
+    return nullptr;
+}
+
+PyObject* batch_iternext(PyObject* self) {
+    BatchIter* it = nb::inst_ptr<BatchIter>(self);
+    if (it->state->KeepRunningBatch(it->n)) return PyLong_FromLongLong(it->n);
+    return nullptr;
+}
+
+PyType_Slot state_slots[] = {
+    {Py_tp_iter, (void*)PyObject_SelfIter}, {Py_tp_iternext, (void*)state_iternext}, {0, nullptr}};
+PyType_Slot batch_slots[] = {
+    {Py_tp_iter, (void*)PyObject_SelfIter}, {Py_tp_iternext, (void*)batch_iternext}, {0, nullptr}};
 }  // namespace
 
 void register_state(nb::module_& m) {
@@ -44,14 +64,8 @@ void register_state(nb::module_& m) {
         .value("kIs1000", benchmark::Counter::kIs1000)
         .value("kIs1024", benchmark::Counter::kIs1024);
 
-    nb::class_<BatchIter>(m, "BatchIter", "Iterator yielding batch sizes from `State.batches`.")
-        .def(
-            "__iter__", [](BatchIter& self) -> BatchIter& { return self; },
-            nb::rv_policy::reference_internal)
-        .def("__next__", [](BatchIter& self) {
-            if (!self.state->KeepRunningBatch(self.n)) throw nb::stop_iteration();
-            return self.n;
-        });
+    nb::class_<BatchIter>(m, "BatchIter", nb::type_slots(batch_slots),
+                          "Iterator yielding batch sizes from `State.batches`.");
 
     nb::class_<PauseScope>(m, "PauseScope",
                            "Context manager that pauses State timing within a scope.")
@@ -88,16 +102,9 @@ void register_state(nb::module_& m) {
             nb::sig("def __exit__(self, exc_type: type[BaseException] | None, exc_value: "
                     "BaseException | None, traceback: types.TracebackType | None) -> None"));
 
-    nb::class_<benchmark::State>(m, "State",
+    nb::class_<benchmark::State>(m, "State", nb::type_slots(state_slots),
                                  "Active microbenchmark state.\n"
                                  "Iterate with `for _ in state:` to time the body.")
-        .def(
-            "__iter__", [](benchmark::State& self) -> benchmark::State& { return self; },
-            nb::rv_policy::reference_internal)
-        .def("__next__",
-             [](benchmark::State& self) {
-                 if (!self.KeepRunning()) throw nb::stop_iteration();
-             })
         .def(
             "keep_running_batch",
             [](benchmark::State& self, int64_t n) {
@@ -111,12 +118,11 @@ void register_state(nb::module_& m) {
                 if (n <= 0) throw nb::value_error("batch size must be positive");
                 return BatchIter{&self, n};
             },
-            nb::keep_alive<0, 1>(), "n"_a,
+            "n"_a,
             "Iterate in batches of `n`, reducing dispatch overhead for fast bodies.\n"
             "The final batch may exceed the iteration budget.")
         .def(
             "pause", [](benchmark::State& self) { return PauseScope{&self, 0}; },
-            nb::keep_alive<0, 1>(),
             "Return a context manager that pauses timing for the duration of the `with` block.\n"
             "Nested scopes resume timing only when the outermost scope exits.")
         .def("skip_with_error", &benchmark::State::SkipWithError, "msg"_a,
