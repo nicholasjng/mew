@@ -35,9 +35,8 @@ change between minor releases.
   benchmarks, and a loop may end while paused.
 - Incomplete memory and CPU profiling passes report no figures and add nothing to
   flame graphs or CPU HTML reports; profilers are still stopped.
-- Memory figures for threaded and batched benchmarks: `allocations_per_iteration`
-  is no longer inflated by the thread count, `iterations` counts every thread and
-  any batch overshoot, and worker setup and post-loop code are not measured.
+- The memory pass's `iterations` includes the overshoot of batched loops
+  (`state.batches()`), so `allocations_per_iteration` is no longer inflated.
 - A second `for _ in state:` loop after the first has finished no longer adds
   time to the result.
 - `--regression-threshold` overrides `[tool.mew.regressions] default_threshold`

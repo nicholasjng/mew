@@ -112,7 +112,7 @@ class PyinstrumentManager:
         ``<no samples>`` hottest frame on every row.
         """
         session = self._session
-        # The runner requests a result only after every worker completed.
+        # The runner requests a result only after the pass completed its loop.
         if session is not None and (not self.sessions or self.sessions[-1] is not session):
             self.sessions.append(session)
         if session is None or session.sample_count == 0:

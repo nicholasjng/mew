@@ -5,9 +5,11 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 namespace {
@@ -18,10 +20,38 @@ void Check(bool condition, const char* message) {
     }
 }
 
+// Reusable rendezvous of a fixed number of threads.
+class Rendezvous {
+   public:
+    explicit Rendezvous(int count) : count_(count) {}
+    void Wait() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        const int generation = generation_;
+        if (++arrived_ == count_) {
+            arrived_ = 0;
+            ++generation_;
+            cv_.notify_all();
+            return;
+        }
+        const bool released =
+            cv_.wait_for(lock, std::chrono::seconds(10), [&] { return generation != generation_; });
+        Check(released, "rendezvous sized by State::threads() waited for absent workers");
+    }
+
+   private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    const int count_;
+    int arrived_ = 0;
+    int generation_ = 0;
+};
+
 enum class Body { Normal, Batch, Break, BreakLast, Skip, SkipBefore, NoLoop };
 Body body;
 int thread_count;
 int early_thread;
+// Sized in the plain benchmark's Setup() callback from State::threads().
+std::unique_ptr<Rendezvous> rendezvous;
 std::thread::id main_thread;
 std::atomic<bool> active{false};
 std::atomic<int> operations{0};
@@ -31,13 +61,19 @@ std::array<std::atomic<int>, 3> loop_done{};
 std::array<std::atomic<int>, 3> teardown_done{};
 int starts;
 int stops;
+
+// Pass 0 is the timed run; the memory (1) and profiler (2) passes run thread 0 alone.
+int Workers(int pass) { return pass == 0 ? thread_count : 1; }
+
+// Only thread 0 runs the manager passes, so only its early exit can end one.
+bool Complete() { return body == Body::Normal || body == Body::Batch || early_thread != 0; }
 int collected;
 int memory_finalized;
 int memory_accepted;
 
 void Start(int pass) {
     Check(std::this_thread::get_id() == main_thread, "start hook left thread 0");
-    Check(setup_done[pass] == thread_count, "measurement began during worker setup");
+    Check(setup_done[pass] == Workers(pass), "measurement began during setup");
     Check(!active.exchange(true), "duplicate start");
     operations = 0;
     ++starts;
@@ -45,9 +81,7 @@ void Start(int pass) {
 
 int Stop(int pass) {
     Check(std::this_thread::get_id() == main_thread, "stop hook left thread 0");
-    Check(loop_done[pass] == thread_count, "measurement stopped before workers exited");
-    // Workers must remain parked for the entire stop hook, even if it is slow.
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Check(loop_done[pass] == Workers(pass), "measurement stopped before the loop exited");
     Check(teardown_done[pass] == 0, "fixture teardown preceded stop hook");
     Check(active.exchange(false), "stop without start");
     ++stops;
@@ -59,9 +93,8 @@ struct Memory : benchmark::MemoryManager {
     void Stop(Result& result) override { result.num_allocs = ::Stop(1); }
     void OnPassComplete(bool completed) override {
         Check(std::this_thread::get_id() == main_thread, "completion left thread 0");
-        Check(!active && teardown_done[1] == thread_count, "memory pass finalized before cleanup");
-        Check(completed == (body == Body::Normal || body == Body::Batch),
-              "incorrect memory-pass completion status");
+        Check(!active && teardown_done[1] == 1, "memory pass finalized before cleanup");
+        Check(completed == Complete(), "incorrect memory-pass completion status");
         ++memory_finalized;
         if (completed) ++memory_accepted;
     }
@@ -78,7 +111,7 @@ struct Profiler : benchmark::ProfilerManager {
         measured = Stop(2);
     }
     void GetResult(Result& result) override {
-        Check(teardown_done[2] == thread_count, "results collected before teardown");
+        Check(teardown_done[2] == 1, "results collected before teardown");
         ++collected;
         result.values["operations"] = measured;
     }
@@ -93,10 +126,7 @@ class TestFixture : public benchmark::Fixture {
     }
     void SetUp(benchmark::State& state) override {
         const int pass = invocations[state.thread_index()]++;
-        // Give thread 0 a chance to reach the entry barrier first.
-        if (state.thread_index() == thread_count - 1) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
+        Check(state.threads() == Workers(pass), "State::threads() disagrees with the pass");
         Check(!active, "worker setup was measured");
         ++setup_done[pass];
     }
@@ -116,6 +146,8 @@ class TestFixture : public benchmark::Fixture {
 
     void RunBody(benchmark::State& state) {
         const int pass = invocations[state.thread_index()] - 1;
+        // Every thread of the run arrives, including those about to exit early.
+        if (rendezvous) rendezvous->Wait();
         const bool early = pass != 0 && state.thread_index() == early_thread;
         if (early && (body == Body::SkipBefore || body == Body::NoLoop)) {
             if (body == Body::SkipBefore) state.SkipWithError("before loop");
@@ -147,15 +179,16 @@ struct Reporter : benchmark::BenchmarkReporter {
         for (const auto& run : runs) {
             ++rows;
             Check(run.skipped == benchmark::internal::NotSkipped, "timed run skipped");
-            const bool complete = body == Body::Normal || body == Body::Batch;
-            const int expected = (body == Body::Batch ? 10 : 4) * thread_count;
+            const bool complete = Complete();
+            // A batch of 10 overshoots the memory pass's 4 iterations.
+            const int expected = body == Body::Batch ? 10 : 4;
             Check(run.memory_result.memory_iterations == (complete ? expected : 0),
                   "incorrect memory iteration count");
             if (complete) {
                 Check(run.memory_result.num_allocs == expected, "incorrect allocation count");
                 Check(run.allocs_per_iter == 1.0, "incorrect allocation rate");
-                Check(run.profile_result.values.at("operations") == 20 * thread_count,
-                      "profile missed worker operations");
+                Check(run.profile_result.values.at("operations") == 20,
+                      "incorrect profiled operation count");
             } else {
                 Check(run.profile_result.values.empty(), "partial profile was reported");
             }
@@ -195,14 +228,21 @@ int main(int argc, char** argv) {
                                                  })
                         ->Iterations(20)
                         ->Threads(thread_count)
-                        ->Teardown([](const benchmark::State&) {
+                        ->Setup([](const benchmark::State& state) {
+                            rendezvous = std::make_unique<Rendezvous>(state.threads());
+                        })
+                        ->Teardown([](const benchmark::State& state) {
                             Check(!active, "plain benchmark teardown was measured");
-                            teardown_done[invocations[0] - 1] = thread_count;
+                            const int pass = invocations[0] - 1;
+                            Check(state.threads() == Workers(pass),
+                                  "Teardown() State::threads() disagrees with the pass");
+                            teardown_done[pass] = Workers(pass);
+                            rendezvous.reset();
                         });
                 }
                 Reporter reporter;
                 benchmark::RunSpecifiedBenchmarks(&reporter);
-                const bool complete = body == Body::Normal || body == Body::Batch;
+                const bool complete = Complete();
                 const bool no_start =
                     early_thread == 0 && (body == Body::SkipBefore || body == Body::NoLoop);
                 Check(reporter.rows == 1, "missing report");
@@ -210,8 +250,8 @@ int main(int argc, char** argv) {
                 Check(collected == (complete ? 1 : 0), "partial pass collected results");
                 Check(memory_finalized == 1 && memory_accepted == (complete ? 1 : 0),
                       "memory pass was not finalized exactly once");
-                for (const auto& value : teardown_done)
-                    Check(value == threads, "fixture teardown did not finish");
+                for (int pass = 0; pass != 3; ++pass)
+                    Check(teardown_done[pass] == Workers(pass), "fixture teardown did not finish");
                 benchmark::ClearRegisteredBenchmarks();
                 ++scenarios;
             }

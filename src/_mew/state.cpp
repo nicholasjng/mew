@@ -66,9 +66,9 @@ void register_state(nb::module_& m) {
                     ++self.depth;
                 } else if (self.state->timer_running()) {
                     self.state->PauseTiming();
-                    // Match CPU sampling to the timed region. Only thread 0
-                    // runs the profiler pass.
-                    if (self.state->thread_index() == 0) mew_profiler_pause();
+                    // Match CPU sampling to the timed region. A no-op outside
+                    // the single-threaded profiler pass.
+                    mew_profiler_pause();
                     self.depth = 1;
                 }
                 return self;
@@ -79,7 +79,7 @@ void register_state(nb::module_& m) {
             [](PauseScope& self, nb::object, nb::object, nb::object) {
                 // Ignore a nested scope, or an unmatched direct __exit__ call.
                 if (self.depth == 0 || --self.depth != 0) return;
-                if (self.state->thread_index() == 0) mew_profiler_resume();
+                mew_profiler_resume();
                 // As in ScopedPauseTiming: a skip inside the block ends the loop, and
                 // its timer must stay stopped.
                 if (self.state->in_timed_section()) self.state->ResumeTiming();
@@ -164,7 +164,7 @@ void register_state(nb::module_& m) {
         .def_prop_ro("iterations", &benchmark::State::iterations,
                      "Iterations completed so far; the total once the loop finishes.")
         .def_prop_ro("threads", &benchmark::State::threads,
-                     "Total number of threads in this run (1 unless threaded mode is on).")
+                     "Threads in this run: 1 without threaded mode or in a profiling pass.")
         .def_prop_ro("thread_index", &benchmark::State::thread_index,
                      "Index of the thread owning this State, in `[0, threads)`.")
         .def_prop_ro("name", &benchmark::State::name, "The registered benchmark name.")

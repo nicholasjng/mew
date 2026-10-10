@@ -1,0 +1,143 @@
+diff --git a/src/benchmark_api_internal.cc b/src/benchmark_api_internal.cc
+index e6ec602..c633c25 100644
+--- a/src/benchmark_api_internal.cc
++++ b/src/benchmark_api_internal.cc
+@@ -90,28 +90,28 @@ BenchmarkInstance::BenchmarkInstance(benchmark::Benchmark* benchmark,
+ }
+ 
+ State BenchmarkInstance::Run(
+-    IterationCount iters, int thread_id, internal::ThreadTimer* timer,
+-    internal::ThreadManager* manager,
++    IterationCount iters, int thread_id, int threads,
++    internal::ThreadTimer* timer, internal::ThreadManager* manager,
+     internal::PerfCountersMeasurement* perf_counters_measurement,
+     ProfilerManager* profiler_manager) const {
+-  State st(name_.function_name, iters, args_, thread_id, threads_, timer,
++  State st(name_.function_name, iters, args_, thread_id, threads, timer,
+            manager, perf_counters_measurement, profiler_manager);
+   benchmark_.Run(st);
+   st.FinishBenchmarkBody();
+   return st;
+ }
+ 
+-void BenchmarkInstance::Setup() const {
++void BenchmarkInstance::Setup(int threads) const {
+   if (setup_ != nullptr) {
+-    State st(name_.function_name, /*iters*/ 1, args_, /*thread_id*/ 0, threads_,
++    State st(name_.function_name, /*iters*/ 1, args_, /*thread_id*/ 0, threads,
+              nullptr, nullptr, nullptr, nullptr);
+     setup_(st);
+   }
+ }
+ 
+-void BenchmarkInstance::Teardown() const {
++void BenchmarkInstance::Teardown(int threads) const {
+   if (teardown_ != nullptr) {
+-    State st(name_.function_name, /*iters*/ 1, args_, /*thread_id*/ 0, threads_,
++    State st(name_.function_name, /*iters*/ 1, args_, /*thread_id*/ 0, threads,
+              nullptr, nullptr, nullptr, nullptr);
+     teardown_(st);
+   }
+diff --git a/src/benchmark_api_internal.h b/src/benchmark_api_internal.h
+index 0dd950c..08b8a0e 100644
+--- a/src/benchmark_api_internal.h
++++ b/src/benchmark_api_internal.h
+@@ -41,14 +41,16 @@ class BenchmarkInstance {
+   double min_warmup_time() const { return min_warmup_time_; }
+   IterationCount iterations() const { return iterations_; }
+   int threads() const { return threads_; }
+-  void Setup() const;
+-  void Teardown() const;
++  // `threads` is what State::threads() reports: the instance's count, or 1 in
++  // the single-threaded memory and profiler passes.
++  void Setup(int threads) const;
++  void Teardown(int threads) const;
+   const auto& GetUserThreadRunnerFactory() const {
+     return benchmark_.threadrunner_;
+   }
+ 
+-  State Run(IterationCount iters, int thread_id, internal::ThreadTimer* timer,
+-            internal::ThreadManager* manager,
++  State Run(IterationCount iters, int thread_id, int threads,
++            internal::ThreadTimer* timer, internal::ThreadManager* manager,
+             internal::PerfCountersMeasurement* perf_counters_measurement,
+             ProfilerManager* profiler_manager) const;
+ 
+diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
+index 9835e7a..429f5a6 100644
+--- a/src/benchmark_runner.cc
++++ b/src/benchmark_runner.cc
+@@ -160,7 +160,7 @@ BenchmarkReporter::Run CreateRunReport(
+ // Execute one thread of benchmark b for the specified number of iterations.
+ // Adds the stats collected for the thread into manager->results.
+ void RunInThread(const BenchmarkInstance* b, IterationCount iters,
+-                 int thread_id, ThreadManager* manager,
++                 int thread_id, int threads, ThreadManager* manager,
+                  PerfCountersMeasurement* perf_counters_measurement,
+                  ProfilerManager* profiler_manager_) {
+   internal::ThreadTimer timer(
+@@ -168,7 +168,7 @@ void RunInThread(const BenchmarkInstance* b, IterationCount iters,
+           ? internal::ThreadTimer::CreateProcessCpuTime()
+           : internal::ThreadTimer::Create());
+ 
+-  State st = b->Run(iters, thread_id, &timer, manager,
++  State st = b->Run(iters, thread_id, threads, &timer, manager,
+                     perf_counters_measurement, profiler_manager_);
+   if (!(st.skipped() || st.iterations() >= st.max_iterations)) {
+     st.SkipWithError(
+@@ -356,7 +356,7 @@ BenchmarkRunner::IterationResults BenchmarkRunner::DoNIterations() {
+   manager.reset(new internal::ThreadManager(b.threads()));
+ 
+   thread_runner->RunThreads([&](int thread_idx) {
+-    RunInThread(&b, iters, thread_idx, manager.get(),
++    RunInThread(&b, iters, thread_idx, b.threads(), manager.get(),
+                 perf_counters_measurement_ptr, /*profiler_manager=*/nullptr);
+   });
+ 
+@@ -455,9 +455,9 @@ void BenchmarkRunner::RunWarmUp() {
+   const IterationCount i_backup = iters;
+ 
+   for (;;) {
+-    b.Setup();
++    b.Setup(b.threads());
+     i_warmup = DoNIterations();
+-    b.Teardown();
++    b.Teardown(b.threads());
+ 
+     const bool finish = ShouldReportIterationResults(i_warmup);
+ 
+@@ -484,8 +484,11 @@ BenchmarkRunner::ManagerPassResult BenchmarkRunner::RunManagerPass(
+     PerfCountersMeasurement* pcm) {
+   std::unique_ptr<internal::ThreadManager> manager;
+   manager.reset(new internal::ThreadManager(1));
+-  b.Setup();
+-  RunInThread(&b, pass_iters, 0, manager.get(), pcm, pm);
++  // The body, Setup() and Teardown() all see State::threads() == 1, so code
++  // sized by the thread count (e.g. a barrier) cannot wait for absent workers.
++  b.Setup(/*threads=*/1);
++  RunInThread(&b, pass_iters, /*thread_id=*/0, /*threads=*/1, manager.get(),
++              pcm, pm);
+   // RunInThread() also marks a body that left the loop early as skipped.
+   ManagerPassResult result;
+   {
+@@ -494,7 +497,7 @@ BenchmarkRunner::ManagerPassResult BenchmarkRunner::RunManagerPass(
+     result.iterations = manager->results.iterations;
+   }
+   manager.reset();
+-  b.Teardown();
++  b.Teardown(/*threads=*/1);
+   return result;
+ }
+ 
+@@ -546,9 +549,9 @@ void BenchmarkRunner::DoOneRepetition() {
+   // is *only* calculated for the *first* repetition, and other repetitions
+   // simply use that precomputed iteration count.
+   for (;;) {
+-    b.Setup();
++    b.Setup(b.threads());
+     i = DoNIterations();
+-    b.Teardown();
++    b.Teardown(b.threads());
+ 
+     // Do we consider the results to be significant?
+     // If we are doing repetitions, and the first repetition was already done,

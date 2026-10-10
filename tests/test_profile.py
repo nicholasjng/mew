@@ -443,29 +443,36 @@ def test_memory_iterations_caps_the_memory_pass(tmp_path, memory_iterations, exp
     getattr(sys, "_is_gil_enabled", lambda: True)(),
     reason="threaded mode requires a free-threaded interpreter",
 )
-def test_manager_passes_run_with_the_configured_thread_count(tmp_path):
-    """The profiler pass spawns every worker like the timed run does, and the
-    manager hooks fire once per pass rather than once per thread."""
-    seen: list[int] = []
+def test_manager_passes_run_a_single_thread(tmp_path):
+    """As in Google Benchmark, the profiler pass runs thread 0 alone, and
+    `state.threads` says so: a barrier sized by it must not wait for absent
+    workers."""
+    import threading
+
+    seen: list[tuple[int, int]] = []
+    # One barrier per reported thread count, as a body sized by it would build.
+    barriers = {n: threading.Barrier(n) for n in (1, 2)}
 
     @mew.benchmark(threads=2, iterations=10)
     def bench_x(state):
-        seen.append(state.thread_index)
+        seen.append((state.thread_index, state.threads))
+        barriers[state.threads].wait(timeout=10)
         for _ in state:
             pass
 
     mgr = FakeProfilerManager()
     mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
     assert mgr.starts == 1 and mgr.stops == 1
-    # Timed run + profiler pass: both threads ran in both.
-    assert seen.count(0) >= 2 and seen.count(1) >= 2
+    # Timed run: both threads see 2. Profiler pass: thread 0 alone sees 1.
+    assert sorted(seen[:2]) == [(0, 2), (1, 2)]
+    assert seen[2:] == [(0, 1)]
 
 
 @pytest.mark.skipif(
     getattr(sys, "_is_gil_enabled", lambda: True)(),
     reason="threaded mode requires a free-threaded interpreter",
 )
-def test_threaded_memory_pass_counts_every_threads_iterations(tmp_path):
+def test_threaded_memory_pass_runs_one_thread(tmp_path):
     @mew.benchmark(threads=2, iterations=10)
     def bench_x(state):
         for _ in state:
@@ -474,12 +481,12 @@ def test_threaded_memory_pass_counts_every_threads_iterations(tmp_path):
     out = tmp_path / "out.json"
     mew.run(
         reporter=JSONReporter(output=out),
-        memory_manager=FakeMemoryManager(total_allocations=8),
+        memory_manager=FakeMemoryManager(total_allocations=4),
         memory_iterations=4,
     )
     mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
-    # 4 iterations on each of 2 threads, like the timed row's iteration count.
-    assert mem["iterations"] == 8
+    # 4 iterations on the pass's single thread.
+    assert mem["iterations"] == 4
     assert mem["allocations_per_iteration"] == 1.0
 
 
@@ -741,32 +748,3 @@ def test_pyinstrument_tolerates_a_pause_scope_open_at_loop_end(tmp_path):
     rows = json.loads(out.read_text())["benchmarks"]
     assert [r["skipped"] for r in rows] == [False, False]
     assert len(mgr.sessions) == 2
-
-
-@pytest.mark.skipif(
-    getattr(sys, "_is_gil_enabled", lambda: True)(),
-    reason="threaded mode requires a free-threaded interpreter",
-)
-def test_only_the_profiling_thread_pauses_the_profiler(tmp_path):
-    """The profiler pass hands the manager to thread 0 only; other workers'
-    pauses must not toggle it from under that thread."""
-    import threading
-
-    callers: set[int] = set()
-
-    class Recording(FakeProfilerManager):
-        def pause(self) -> None:
-            callers.add(threading.get_ident())
-            super().pause()
-
-    mgr = Recording()
-
-    @mew.benchmark(threads=2, iterations=3)
-    def bench_x(state):
-        for _ in state:
-            with state.pause():
-                pass
-
-    mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
-    assert len(callers) == 1
-    assert mgr.pauses == mgr.resumes == 3

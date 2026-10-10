@@ -72,8 +72,8 @@ class MemrayManager:
 
     One capture per (benchmark, repetition), scoped to the benchmark loop in
     a separate, untimed pass. :meth:`start` opens the tracker and :meth:`stop`
-    closes it. :meth:`on_pass_complete` keeps the capture only if every worker
-    completed the pass.
+    closes it. :meth:`on_pass_complete` keeps the capture only if the pass
+    completed its loop.
 
     Parameters
     ----------
@@ -83,9 +83,10 @@ class MemrayManager:
 
     Notes
     -----
-    The memory pass requests ``min(memory_iterations, iterations)`` iterations
-    per thread (16 by default; see :func:`mew.run`). Batched loops can exceed
-    this budget; ``allocations_per_iteration`` uses the actual total count.
+    The memory pass runs a single thread and requests
+    ``min(memory_iterations, iterations)`` iterations (16 by default; see
+    :func:`mew.run`). Batched loops can exceed this budget;
+    ``allocations_per_iteration`` uses the actual count.
     """
 
     def __init__(self, tmpdir: Path) -> None:
