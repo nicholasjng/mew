@@ -247,7 +247,7 @@ def run(
 
     rep = _to_single_reporter(reporter)
 
-    extra_context: dict[str, Any] = {}
+    session_context: dict[str, Any] = {}
     if rep is not None:
         session: dict[str, Any] = {
             "id": new_session_id(),
@@ -256,18 +256,17 @@ def run(
         }
         if session_tag:
             session["tag"] = session_tag
-        extra_context["session"] = session
+        session_context["session"] = session
         # Machine context first so a suite's providers can override it.
-        extra_context["context"] = {**machine_context(), **get_context()}
+        session_context["context"] = {**machine_context(), **get_context()}
 
     if not selected:
         # All skipped: GB emits no context for an empty registry, so drive the
         # reporter lifecycle here to surface the skipped rows.
         if rep is not None:
             try:
-                rep.report_context(extra_context)
-                if skipped_rows:
-                    rep.report_runs(skipped_rows)
+                rep.report_context(session_context)
+                rep.report_runs(skipped_rows)
             finally:
                 # As in GB's lifecycle, finalize even if a callback raised, so
                 # owned sinks close and streamed JSON documents are terminated.
@@ -311,7 +310,7 @@ def run(
         if profiler_manager is not None:
             _core.register_profiler_manager(profiler_manager)
             stack.callback(_core.unregister_profiler_manager)
-        return _core.run_benchmarks(cli, rep, extra_context, skipped_rows)
+        return _core.run_benchmarks(cli, rep, session_context, skipped_rows)
 
 
 def _to_single_reporter(
