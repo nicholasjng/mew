@@ -49,6 +49,8 @@ class Rendezvous {
 enum class Body { Normal, Batch, Break, BreakLast, Skip, SkipBefore, NoLoop };
 Body body;
 int thread_count;
+// The early-exiting bodies leave their loop on `early_thread` during `exit_pass`.
+int exit_pass;
 int early_thread;
 // Sized in the plain benchmark's Setup() callback from State::threads().
 std::unique_ptr<Rendezvous> rendezvous;
@@ -65,11 +67,10 @@ int stops;
 // Pass 0 is the timed run; the memory (1) and profiler (2) passes run thread 0 alone.
 int Workers(int pass) { return pass == 0 ? thread_count : 1; }
 
-// Only thread 0 runs the manager passes, so only its early exit can end one.
-bool Complete() { return body == Body::Normal || body == Body::Batch || early_thread != 0; }
+bool ExitsEarly(int pass) {
+    return body != Body::Normal && body != Body::Batch && exit_pass == pass;
+}
 int collected;
-int memory_finalized;
-int memory_accepted;
 
 void Start(int pass) {
     Check(std::this_thread::get_id() == main_thread, "start hook left thread 0");
@@ -91,13 +92,6 @@ int Stop(int pass) {
 struct Memory : benchmark::MemoryManager {
     void Start() override { ::Start(1); }
     void Stop(Result& result) override { result.num_allocs = ::Stop(1); }
-    void OnPassComplete(bool completed) override {
-        Check(std::this_thread::get_id() == main_thread, "completion left thread 0");
-        Check(!active && teardown_done[1] == 1, "memory pass finalized before cleanup");
-        Check(completed == Complete(), "incorrect memory-pass completion status");
-        ++memory_finalized;
-        if (completed) ++memory_accepted;
-    }
 } memory;
 
 struct Profiler : benchmark::ProfilerManager {
@@ -148,7 +142,7 @@ class TestFixture : public benchmark::Fixture {
         const int pass = invocations[state.thread_index()] - 1;
         // Every thread of the run arrives, including those about to exit early.
         if (rendezvous) rendezvous->Wait();
-        const bool early = pass != 0 && state.thread_index() == early_thread;
+        const bool early = ExitsEarly(pass) && state.thread_index() == early_thread;
         if (early && (body == Body::SkipBefore || body == Body::NoLoop)) {
             if (body == Body::SkipBefore) state.SkipWithError("before loop");
             ++loop_done[pass];
@@ -178,19 +172,21 @@ struct Reporter : benchmark::BenchmarkReporter {
     void ReportRuns(const std::vector<Run>& runs) override {
         for (const auto& run : runs) {
             ++rows;
-            Check(run.skipped == benchmark::internal::NotSkipped, "timed run skipped");
-            const bool complete = Complete();
-            // A batch of 10 overshoots the memory pass's 4 iterations.
-            const int expected = body == Body::Batch ? 10 : 4;
-            Check(run.memory_result.memory_iterations == (complete ? expected : 0),
-                  "incorrect memory iteration count");
-            if (complete) {
+            Check((run.skipped != benchmark::internal::NotSkipped) == ExitsEarly(0),
+                  "incorrect timed-run status");
+            if (ExitsEarly(0)) continue;
+            // A pass that exits early reports whatever it measured; check the others.
+            if (!ExitsEarly(1)) {
+                // A batch of 10 overshoots the memory pass's 4 iterations.
+                const int expected = body == Body::Batch ? 10 : 4;
+                Check(run.memory_result.memory_iterations == expected,
+                      "incorrect memory iteration count");
                 Check(run.memory_result.num_allocs == expected, "incorrect allocation count");
                 Check(run.allocs_per_iter == 1.0, "incorrect allocation rate");
+            }
+            if (!ExitsEarly(2)) {
                 Check(run.profile_result.values.at("operations") == 20,
                       "incorrect profiled operation count");
-            } else {
-                Check(run.profile_result.values.empty(), "partial profile was reported");
             }
         }
     }
@@ -208,15 +204,17 @@ int main(int argc, char** argv) {
         for (Body test_body : {Body::Normal, Body::Batch, Body::Break, Body::BreakLast, Body::Skip,
                                Body::SkipBefore, Body::NoLoop}) {
             body = test_body;
-            for (int variant = 0; variant != 4; ++variant) {
-                const int exiting_thread = variant % 2 == 0 ? 0 : threads - 1;
-                const bool use_fixture = variant < 2;
-                early_thread = exiting_thread;
+            // Exits in the timed run on thread 0 or the last thread, or on thread 0
+            // (the only one) in the memory or profiler pass.
+            for (int variant = 0; variant != 8; ++variant) {
+                const bool use_fixture = variant % 2 == 0;
+                exit_pass = variant / 2 == 3 ? 0 : variant / 2;
+                early_thread = variant / 2 == 3 ? threads - 1 : 0;
                 for (auto& value : invocations) value = 0;
                 for (auto& value : setup_done) value = 0;
                 for (auto& value : loop_done) value = 0;
                 for (auto& value : teardown_done) value = 0;
-                starts = stops = collected = memory_finalized = memory_accepted = 0;
+                starts = stops = collected = 0;
                 TestFixture plain_body;
                 if (use_fixture) {
                     benchmark::internal::RegisterBenchmarkInternal(std::make_unique<TestFixture>());
@@ -242,16 +240,17 @@ int main(int argc, char** argv) {
                 }
                 Reporter reporter;
                 benchmark::RunSpecifiedBenchmarks(&reporter);
-                const bool complete = Complete();
-                const bool no_start =
-                    early_thread == 0 && (body == Body::SkipBefore || body == Body::NoLoop);
+                // A failed timed run skips both passes; a pass that exits before
+                // its loop never starts its manager.
+                const bool passes = !ExitsEarly(0);
+                const bool no_loop = body == Body::SkipBefore || body == Body::NoLoop;
+                const int expected_starts = passes ? 2 - (no_loop && exit_pass != 0 ? 1 : 0) : 0;
                 Check(reporter.rows == 1, "missing report");
-                Check(starts == (no_start ? 0 : 2) && stops == starts, "unpaired hooks");
-                Check(collected == (complete ? 1 : 0), "partial pass collected results");
-                Check(memory_finalized == 1 && memory_accepted == (complete ? 1 : 0),
-                      "memory pass was not finalized exactly once");
+                Check(starts == expected_starts && stops == starts, "unpaired hooks");
+                Check(collected == (passes ? 1 : 0), "incorrect result collection");
                 for (int pass = 0; pass != 3; ++pass)
-                    Check(teardown_done[pass] == Workers(pass), "fixture teardown did not finish");
+                    Check(teardown_done[pass] == (pass == 0 || passes ? Workers(pass) : 0),
+                          "fixture teardown did not finish");
                 benchmark::ClearRegisteredBenchmarks();
                 ++scenarios;
             }

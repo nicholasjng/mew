@@ -52,38 +52,6 @@ class PyManager {
     nb::object py_;
 };
 
-// Keys the manager omits keep their tombstone and are dropped by `Run.to_dict`.
-bool fill_memory_result(const nb::dict& d, benchmark::MemoryManager::Result& out) {
-    auto set = [&](const char* key, int64_t& target) {
-        if (!d.contains(key)) return true;
-        int64_t value;
-        if (!nb::try_cast(d[key], value)) return false;
-        target = value;
-        return true;
-    };
-    return set("total_allocations", out.num_allocs) && set("peak_bytes", out.max_bytes_used) &&
-           set("total_bytes", out.total_allocated_bytes) &&
-           set("net_heap_growth", out.net_heap_growth);
-}
-
-// Split a flat Python mapping into Google Benchmark's label and value maps.
-bool fill_profile_result(const nb::dict& d, benchmark::ProfilerManager::Result& out) {
-    for (auto [k, v] : d) {
-        std::string key;
-        if (!nb::try_cast(k, key, false)) return false;
-        if (nb::isinstance<nb::str>(v)) {
-            std::string value;
-            if (!nb::try_cast(v, value, false)) return false;
-            out.labels[key] = std::move(value);
-        } else {
-            double value;
-            if (!nb::try_cast(v, value)) return false;
-            out.values[key] = value;
-        }
-    }
-    return true;
-}
-
 class PyMemoryManager final : public benchmark::MemoryManager, public PyManager {
    public:
     using PyManager::PyManager;
@@ -97,16 +65,20 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
         nb::gil_scoped_acquire gil;
         nb::object r = call("stop");
         if (r.is_none()) return;
-        if (!nb::isinstance<nb::dict>(r) || !fill_memory_result(nb::borrow<nb::dict>(r), out)) {
+        // A cast_error must not unwind through Google Benchmark.
+        try {
+            auto metrics = nb::cast<nb::dict>(r);
+            // Keys the manager omits keep their tombstone and are dropped by `Run.to_dict`.
+            auto take = [&](const char* key, int64_t& target) {
+                if (metrics.contains(key)) target = nb::cast<int64_t>(metrics[key]);
+            };
+            take("total_allocations", out.num_allocs);
+            take("peak_bytes", out.max_bytes_used);
+            take("total_bytes", out.total_allocated_bytes);
+            take("net_heap_growth", out.net_heap_growth);
+        } catch (const nb::cast_error&) {
             abort_with_type_error(
                 "memory manager stop() must return a dict with integer values, or None");
-        }
-    }
-
-    void OnPassComplete(bool completed) override {
-        nb::gil_scoped_acquire gil;
-        if (nb::hasattr(py_, "on_pass_complete")) {
-            call("on_pass_complete", completed && !mew_abort_pending());
         }
     }
 };
@@ -144,7 +116,18 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
         if (!nb::hasattr(py_, "get_result")) return;
         nb::object r = call("get_result");
         if (r.is_none()) return;
-        if (!nb::isinstance<nb::dict>(r) || !fill_profile_result(nb::borrow<nb::dict>(r), out)) {
+        // A cast_error must not unwind through Google Benchmark.
+        try {
+            // Split into Google Benchmark's label and value maps.
+            for (auto [k, v] : nb::cast<nb::dict>(r)) {
+                auto key = nb::cast<std::string>(k);
+                if (nb::isinstance<nb::str>(v)) {
+                    out.labels[key] = nb::cast<std::string>(v);
+                } else {
+                    out.values[key] = nb::cast<double>(v);
+                }
+            }
+        } catch (const nb::cast_error&) {
             abort_with_type_error(
                 "profiler manager get_result() must return a flat dict with string keys and "
                 "string or numeric values, or None");
@@ -183,7 +166,6 @@ void register_managers(nb::module_& m) {
         "manager"_a,
         "Register `manager` as Google Benchmark's memory manager, replacing any other.\n"
         "Requires `start()` and `stop()`; `stop()` returns memory metrics or None.\n"
-        "Optional `on_pass_complete(completed)` accepts or discards a closed capture.\n"
         "Pair with `unregister_memory_manager`.");
     m.def("unregister_memory_manager", [] {
         benchmark::RegisterMemoryManager(nullptr);

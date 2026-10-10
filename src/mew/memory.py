@@ -72,8 +72,7 @@ class MemrayManager:
 
     One capture per (benchmark, repetition), scoped to the benchmark loop in
     a separate, untimed pass. :meth:`start` opens the tracker and :meth:`stop`
-    closes it. :meth:`on_pass_complete` keeps the capture only if the pass
-    completed its loop.
+    closes it and records the capture.
 
     Parameters
     ----------
@@ -95,7 +94,6 @@ class MemrayManager:
         self._dest: Path | None = None
         self._tracker: Tracker | None = None
         self._root: Frame = ("<benchmark>", "?", 0)
-        self._pending_capture: tuple[Path, Frame] | None = None
         #: Accepted captures as ``(path, root_frame)``, one per (benchmark,
         #: repetition), in run order. :func:`write_flamegraph` renders them.
         self.captures: list[tuple[Path, Frame]] = []
@@ -103,7 +101,6 @@ class MemrayManager:
     def start(self) -> None:
         import memray
 
-        self._pending_capture = None
         self._dest = self._dir / f"capture-{self._i}.bin"
         self._i += 1
         # Before entering the tracker: see _caller_frame.
@@ -123,17 +120,11 @@ class MemrayManager:
         # so the optional `total_bytes` metric stays unset.
         with memray.FileReader(dest) as reader:
             meta = reader.metadata
-        self._pending_capture = (dest, self._root)
+        self.captures.append((dest, self._root))
         return {
             "peak_bytes": meta.peak_memory,
             "total_allocations": meta.total_allocations,
         }
-
-    def on_pass_complete(self, completed: bool) -> None:
-        """Publish a closed capture only after the runner accepts the pass."""
-        capture, self._pending_capture = self._pending_capture, None
-        if completed and capture is not None:
-            self.captures.append(capture)
 
 
 def manager(stack: ExitStack) -> MemrayManager:

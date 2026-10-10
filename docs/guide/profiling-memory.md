@@ -42,8 +42,8 @@ $ mew run --flamegraph alloc.html
 
 This implies `--profile-memory`. The self-contained HTML report combines the
 captures from the selected benchmarks.
-Skipped or incomplete memory passes contribute neither row metrics nor captures
-to the flame graph.
+A benchmark whose timed run fails or is skipped gets no memory pass, so it
+contributes neither row metrics nor captures to the flame graph.
 
 ## Caveats
 

@@ -13,7 +13,7 @@ index 7921d3d..ef9e40a 100644
  
    void SetIterationTime(double seconds);
 diff --git a/src/benchmark.cc b/src/benchmark.cc
-index 9389b69..fe1c4af 100644
+index 9389b69..a1543f0 100644
 --- a/src/benchmark.cc
 +++ b/src/benchmark.cc
 @@ -294,6 +294,11 @@ void State::SkipWithError(const std::string& msg) {
@@ -33,8 +33,8 @@ index 9389b69..fe1c4af 100644
    // A second request for iterations must not stop timing or profiling again.
    if (finished_) return;
 -  if (!skipped()) {
-+  // The loop may end inside a paused region; stopping the timer again would
-+  // fail its check, or count the paused time twice without one.
++  // The loop may end inside a paused region, e.g. a pause scope an ExitStack
++  // holds open; stopping the timer again would count the paused time twice.
 +  if (!skipped() && timer_->running()) {
      PauseTiming();
    }

@@ -64,7 +64,7 @@ index 0dd950c..08b8a0e 100644
              ProfilerManager* profiler_manager) const;
  
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index 9835e7a..429f5a6 100644
+index 4edbd0a..7c129f3 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
 @@ -160,7 +160,7 @@ BenchmarkReporter::Run CreateRunReport(
@@ -106,8 +106,8 @@ index 9835e7a..429f5a6 100644
  
      const bool finish = ShouldReportIterationResults(i_warmup);
  
-@@ -484,8 +484,11 @@ BenchmarkRunner::ManagerPassResult BenchmarkRunner::RunManagerPass(
-     PerfCountersMeasurement* pcm) {
+@@ -484,15 +484,18 @@ IterationCount BenchmarkRunner::RunManagerPass(IterationCount pass_iters,
+                                                PerfCountersMeasurement* pcm) {
    std::unique_ptr<internal::ThreadManager> manager;
    manager.reset(new internal::ThreadManager(1));
 -  b.Setup();
@@ -117,19 +117,18 @@ index 9835e7a..429f5a6 100644
 +  b.Setup(/*threads=*/1);
 +  RunInThread(&b, pass_iters, /*thread_id=*/0, /*threads=*/1, manager.get(),
 +              pcm, pm);
-   // RunInThread() also marks a body that left the loop early as skipped.
-   ManagerPassResult result;
+   IterationCount iterations;
    {
-@@ -494,7 +497,7 @@ BenchmarkRunner::ManagerPassResult BenchmarkRunner::RunManagerPass(
-     result.iterations = manager->results.iterations;
+     MutexLock l(manager->GetBenchmarkMutex());
+     iterations = manager->results.iterations;
    }
    manager.reset();
 -  b.Teardown();
 +  b.Teardown(/*threads=*/1);
-   return result;
+   return iterations;
  }
  
-@@ -546,9 +549,9 @@ void BenchmarkRunner::DoOneRepetition() {
+@@ -535,9 +538,9 @@ void BenchmarkRunner::DoOneRepetition() {
    // is *only* calculated for the *first* repetition, and other repetitions
    // simply use that precomputed iteration count.
    for (;;) {

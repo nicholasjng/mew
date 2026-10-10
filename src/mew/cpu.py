@@ -52,7 +52,7 @@ class PyinstrumentManager:
     Attributes
     ----------
     sessions : list[Session]
-        Every accepted session, kept only so :func:`write_html` can render one
+        Every profiling session, kept only so :func:`write_html` can render one
         combined report; the per-row summaries ride on the ``Run``.
 
     Raises
@@ -83,11 +83,14 @@ class PyinstrumentManager:
     def before_teardown_stop(self) -> None:
         if self._prof is None:
             return
-        # A pause scope left open at the end of the loop already stopped it.
+        # A pause scope held open over the end of the loop already stopped it.
         if self._depth == 0:
             self._prof.stop()
+        # Its later exit finds the pass over and does not resume.
         self._depth = 0
         self._session = self._prof.last_session
+        if self._session is not None:
+            self.sessions.append(self._session)
         self._prof = None
 
     def pause(self) -> None:
@@ -112,9 +115,6 @@ class PyinstrumentManager:
         ``<no samples>`` hottest frame on every row.
         """
         session = self._session
-        # The runner requests a result only after the pass completed its loop.
-        if session is not None and (not self.sessions or self.sessions[-1] is not session):
-            self.sessions.append(session)
         if session is None or session.sample_count == 0:
             return None
         root = session.root_frame()

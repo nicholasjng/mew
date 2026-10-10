@@ -98,8 +98,8 @@ set(MEW_BENCHMARK_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-profilermanager-result.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-memory-pass-iterations.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0004-memory-iterations-flag.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-memory-pass-completion.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-pause-ownership.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-skip-passes-after-failure.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-timer-running.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-manager-pass-thread-count.patch")
 
 string(JOIN "|" _mew_patches_arg ${MEW_BENCHMARK_PATCHES})

@@ -491,26 +491,30 @@ def test_state_skip_inside_pause_does_not_resume_timing():
 
 
 @pytest.mark.parametrize("loop", ["iter", "batches", "keep_running_batch"])
-def test_pause_scope_open_at_loop_end_stays_untimed_and_does_not_leak(loop):
-    """The loop may end inside a pause scope: GB must not stop the stopped timer
-    again, and the next benchmark's scopes must still pause."""
+def test_pause_scope_held_open_across_the_loop_end_stays_untimed(loop):
+    """An ExitStack around the loop keeps its pause scopes open over the final
+    loop step: GB must not stop the stopped timer again, and the paused time
+    must stay out of the result."""
     import time
+    from contextlib import ExitStack
 
     @mew.benchmark(iterations=2)
-    def bench_open(state):
-        def body():
-            state.pause().__enter__()  # never exited
-            time.sleep(0.02)
+    def bench_held(state):
+        with ExitStack() as stack:
 
-        if loop == "iter":
-            for _ in state:
-                body()
-        elif loop == "batches":
-            for _ in state.batches(1):
-                body()
-        else:
-            while state.keep_running_batch(1):
-                body()
+            def body():
+                stack.enter_context(state.pause())
+                time.sleep(0.02)
+
+            if loop == "iter":
+                for _ in state:
+                    body()
+            elif loop == "batches":
+                for _ in state.batches(1):
+                    body()
+            else:
+                while state.keep_running_batch(1):
+                    body()
 
     @mew.benchmark(iterations=2)
     def bench_next(state):

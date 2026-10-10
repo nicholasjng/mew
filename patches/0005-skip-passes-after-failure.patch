@@ -1,0 +1,28 @@
+diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
+index 49de078..4edbd0a 100644
+--- a/src/benchmark_runner.cc
++++ b/src/benchmark_runner.cc
+@@ -561,10 +561,13 @@ void BenchmarkRunner::DoOneRepetition() {
+            "then we should have accepted the current iteration run.");
+   }
+ 
++  // A skipped or failed run reports no figures, so don't run its passes.
++  const bool run_passes = i.results.skipped_ == internal::NotSkipped;
++
+   // Produce memory measurements if requested.
+   MemoryManager::Result memory_result;
+   IterationCount memory_iterations = 0;
+-  if (memory_manager != nullptr) {
++  if (memory_manager != nullptr && run_passes) {
+     // Only run a few iterations to reduce the impact of one-time
+     // allocations in benchmarks that are not properly managed.
+     memory_iterations = std::min<IterationCount>(
+@@ -573,7 +576,7 @@ void BenchmarkRunner::DoOneRepetition() {
+   }
+ 
+   ProfilerManager::Result profile_result;
+-  if (profiler_manager != nullptr) {
++  if (profiler_manager != nullptr && run_passes) {
+     // We want to externally profile the benchmark for the same number of
+     // iterations because, for example, if we're tracing the benchmark then we
+     // want trace data to reasonably match PMU data.
