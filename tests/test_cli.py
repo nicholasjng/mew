@@ -780,3 +780,54 @@ def test_directory_selectors_keep_filters_scoped_with_global_pattern(mew_cli, tm
     res = mew_cli("list", "a::bench_one", "b::bench_two", "-k", "bench_two", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     assert res.stdout.splitlines() == [str(Path("b/nested/bench_fixture.py::bench_two"))]
+
+
+def test_e2e_benchmark_output_cannot_corrupt_json_on_stdout(tmp_path):
+    (tmp_path / "bench_noisy.py").write_text(
+        textwrap.dedent(
+            """
+            import os
+
+            import mew
+
+            @mew.benchmark(iterations=1)
+            def noisy(state):
+                print("from print")
+                os.write(1, b"from fd 1\\n")
+                for _ in state:
+                    pass
+            """
+        )
+    )
+    res = _mew("run", "bench_noisy.py", "-o", "-", "--format", "json", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert len(json.loads(res.stdout)["benchmarks"]) == 1
+    assert "from print" in res.stderr and "from fd 1" in res.stderr
+
+
+@pytest.mark.parametrize(
+    ("config", "flag", "captured"),
+    [("", None, True), ('capture = "no"', None, False), ('capture = "no"', "fd", True)],
+)
+def test_e2e_capture_setting_and_flag_precedence(tmp_path, config, flag, captured):
+    (tmp_path / "pyproject.toml").write_text(f"[tool.mew]\n{config}\n")
+    (tmp_path / "bench_noisy.py").write_text(
+        textwrap.dedent(
+            """
+            import os
+
+            import mew
+
+            @mew.benchmark(iterations=1)
+            def noisy(state):
+                os.write(2, b"from the benchmark\\n")
+                for _ in state:
+                    pass
+            """
+        )
+    )
+    args = ["run", "bench_noisy.py"] + (["--capture", flag] if flag else [])
+    res = _mew(*args, cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert ("output from benchmarks:" in res.stderr) == captured
+    assert "from the benchmark" in res.stderr

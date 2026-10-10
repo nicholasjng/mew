@@ -38,12 +38,10 @@ class _RootedRecord:
     thread_name: str
     stack: tuple[Frame, ...]
 
-    def stack_trace(self, max_stacks: int | None = None) -> tuple[Frame, ...]:
-        return self.stack if max_stacks is None else self.stack[:max_stacks]
-
-    def hybrid_stack_trace(self, max_stacks: int | None = None) -> tuple[Frame, ...]:
-        # Only consulted under native_traces=True, which mew does not enable.
-        return self.stack_trace(max_stacks)
+    def stack_trace(self) -> tuple[Frame, ...]:
+        # The flame graph calls this without arguments; `hybrid_stack_trace`
+        # is only consulted under native_traces=True, which mew does not enable.
+        return self.stack
 
 
 def require_memray() -> None:

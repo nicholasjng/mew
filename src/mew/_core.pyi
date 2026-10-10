@@ -37,9 +37,12 @@ def run_benchmarks(
     reporter: object | None = None,
     session_context: dict = {},
     skipped_rows: list = [],
+    capture: object | None = None,
 ) -> int:
     """
     Initialize Google Benchmark with `argv` and run all registered benchmarks.
+    `capture` (an active mew._capture.OutputCapture) is suspended around every
+    reporter callback, so reporters write to the real stdout/stderr.
     Returns the number of benchmarks run.
     """
 

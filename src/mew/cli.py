@@ -265,6 +265,7 @@ def run(
     session_tag: str | None,
     append: bool,
     strict: bool,
+    capture: str | None,
     profile_memory: bool,
     memory_iterations: int | None,
     flamegraph: Path | None,
@@ -310,6 +311,8 @@ def run(
                 random_interleaving=random_interleaving,
                 session_tag=session_tag,
                 strict=strict,
+                # --capture wins; else fall back to [tool.mew] capture; else fd.
+                capture_output=(capture or cfg.capture or "fd") == "fd",
                 memory_manager=memory_manager,
                 memory_iterations=memory_iterations,
                 profiler_manager=profiler_manager,
@@ -640,6 +643,11 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         "--strict",
         action="store_true",
         help="Fail instead of skipping unsupported threaded benchmarks.",
+    )
+    p.add_argument(
+        "--capture",
+        choices=_config.CAPTURE_MODES,
+        help="Print benchmark stdout/stderr after the run (fd, default), or live (no).",
     )
     p.add_argument(
         "--profile-memory",

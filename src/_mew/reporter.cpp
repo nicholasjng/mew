@@ -5,6 +5,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <cstdio>
 #include <exception>
 #include <memory>
 #include <string>
@@ -117,18 +118,36 @@ class PyReporter : public BenchmarkReporter {
     // Rows for benchmarks mew skipped before registering them, reported right
     // after the context so they share its session and precede GB's rows.
     nb::list skipped_rows;
+    // mew._capture.OutputCapture, or None. Suspended around every callback so
+    // reporters write to the real streams.
+    nb::object capture;
 
     // Constructed and destroyed by `run_benchmarks` while it holds the GIL.
-    PyReporter(nb::object obj, nb::dict context, nb::list skipped)
+    PyReporter(nb::object obj, nb::dict context, nb::list skipped, nb::object cap)
         : py(std::move(obj)),
           session_context(std::move(context)),
-          skipped_rows(std::move(skipped)) {}
+          skipped_rows(std::move(skipped)),
+          capture(std::move(cap)) {}
+
+    // Both flush C stdio first, so output buffered while redirected stays on its side.
+    void suspend_capture() {
+        if (capture.is_none()) return;
+        std::fflush(nullptr);
+        capture.attr("suspend")();
+    }
+    void resume_capture() {
+        if (capture.is_none()) return;
+        std::fflush(nullptr);
+        capture.attr("resume")();
+    }
 
     bool ReportContext(const Context&) override {
         nb::gil_scoped_acquire gil;
         try {
+            suspend_capture();
             py.attr("report_context")(session_context);
             if (skipped_rows.size() > 0) py.attr("report_runs")(skipped_rows);
+            resume_capture();
             return true;
         } catch (...) {
             mew_set_pending_abort(std::current_exception());
@@ -142,11 +161,13 @@ class PyReporter : public BenchmarkReporter {
         if (mew_abort_pending()) return;
         nb::gil_scoped_acquire gil;
         try {
+            suspend_capture();
             nb::list rows;
             for (const auto& r : runs) {
                 rows.append(run_to_dict(r));
             }
             py.attr("report_runs")(rows);
+            resume_capture();
         } catch (...) {
             mew_set_pending_abort(std::current_exception());
         }
@@ -155,6 +176,8 @@ class PyReporter : public BenchmarkReporter {
     void Finalize() override {
         nb::gil_scoped_acquire gil;
         try {
+            // Stays suspended: the run is over, and the caller closes the capture.
+            suspend_capture();
             if (nb::hasattr(py, "finalize")) py.attr("finalize")();
         } catch (...) {
             mew_set_pending_abort(std::current_exception());
@@ -209,7 +232,7 @@ void register_reporter(nb::module_& m) {
     m.def(
         "run_benchmarks",
         [](std::vector<std::string> argv, nb::object reporter, nb::dict session_context,
-           nb::list skipped_rows) {
+           nb::list skipped_rows, nb::object capture) {
             // GB only shuffles the char** array, never writes into the strings.
             std::vector<char*> argp;
             argp.reserve(argv.size());
@@ -222,7 +245,7 @@ void register_reporter(nb::module_& m) {
 
             std::unique_ptr<PyReporter> pr;
             if (!reporter.is_none()) {
-                pr = std::make_unique<PyReporter>(reporter, session_context, skipped_rows);
+                pr = std::make_unique<PyReporter>(reporter, session_context, skipped_rows, capture);
             }
 
             size_t count;
@@ -241,7 +264,9 @@ void register_reporter(nb::module_& m) {
             return count;
         },
         "argv"_a, "reporter"_a = nb::none(), "session_context"_a = nb::dict(),
-        "skipped_rows"_a = nb::list(),
+        "skipped_rows"_a = nb::list(), "capture"_a = nb::none(),
         "Initialize Google Benchmark with `argv` and run all registered benchmarks.\n"
+        "`capture` (an active mew._capture.OutputCapture) is suspended around every\n"
+        "reporter callback, so reporters write to the real stdout/stderr.\n"
         "Returns the number of benchmarks run.");
 }

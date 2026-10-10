@@ -6,6 +6,13 @@ change between minor releases.
 
 ## Version 0.2.1 (unreleased)
 
+### Added
+
+- `mew run` captures what benchmarks write to stdout and stderr, native writes
+  included, and prints it to stderr after the run, so library warnings no longer
+  break up the console table or corrupt JSON on stdout. `--capture=no`,
+  `[tool.mew] capture = "no"` or `capture_output=False` shows it live instead.
+
 ### Changed
 
 - Google Benchmark is pinned to `e662de9` (v1.9.5-144).
@@ -18,6 +25,8 @@ change between minor releases.
   registered one, as in Google Benchmark, instead of raising `ValueError`.
 - `vcs_context()` lets jj snapshot the working copy, so uncommitted edits mark a
   jj checkout as dirty.
+- A benchmark that raises is no longer additionally printed as an
+  "Exception ignored in" message; its row's skip message carries the traceback.
 
 ### Fixed
 
