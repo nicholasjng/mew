@@ -28,19 +28,13 @@ def overflow(total: int, shown: int) -> str:
     return f" (+{total - shown} more)" if total > shown else ""
 
 
-def sgr(text: str, *styles: str, enabled: bool = True) -> str:
+def sgr(text: str, *styles: str | None, enabled: bool = True) -> str:
     """Wrap ``text`` in ANSI codes for ``styles``; a no-op when disabled or empty."""
     names = [s for s in styles if s]
     if not enabled or not names or not text:
         return text
     codes = ";".join(_SGR[s] for s in names)
     return f"\x1b[{codes}m{text}\x1b[0m"
-
-
-def terminal_width(default: int = 80) -> int:
-    import shutil
-
-    return shutil.get_terminal_size((default, 24)).columns
 
 
 def color_enabled(stream: TextIO) -> bool:
@@ -81,7 +75,11 @@ class Terminal:
 
     @property
     def width(self) -> int:
-        return self._width if self._width is not None else terminal_width()
+        if self._width is not None:
+            return self._width
+        import shutil
+
+        return shutil.get_terminal_size((80, 24)).columns
 
     @property
     def color(self) -> bool:
@@ -124,7 +122,7 @@ def _format_cell(cell: Cell, width: int, justify: str, color: bool) -> str:
         pad = width - len(text)
         body = text
     else:  # styled spans: only ever in fixed columns, so never truncated
-        body = "".join(sgr(t, s, enabled=color) if s else t for t, s in cell)
+        body = "".join(sgr(t, s, enabled=color) for t, s in cell)
         pad = max(0, width - _visible_len(cell))
     return " " * pad + body if justify == "right" else body + " " * pad
 
