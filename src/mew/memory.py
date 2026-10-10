@@ -23,18 +23,6 @@ Frame = tuple[str, str, int]
 # reaches the system allocator memray hooks by default, so track them separately.
 _TRACE_PYTHON_ALLOCATORS = not _gil_enabled()
 
-_MEW_DIR = str(Path(__file__).parent)
-
-
-def _caller_frame() -> Frame:
-    """Return the first caller frame outside mew."""
-    frame = sys._getframe(1)
-    while frame is not None and frame.f_code.co_filename.startswith(_MEW_DIR):
-        frame = frame.f_back
-    if frame is None:  # called from somewhere unexpected; keep the graph renderable
-        return ("<benchmark>", "?", 0)
-    return (frame.f_code.co_name, frame.f_code.co_filename, frame.f_lineno)
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _RootedRecord:
@@ -50,12 +38,10 @@ class _RootedRecord:
     thread_name: str
     stack: tuple[Frame, ...]
 
-    def stack_trace(self, max_stacks: int | None = None) -> tuple[Frame, ...]:
-        return self.stack if max_stacks is None else self.stack[:max_stacks]
-
-    def hybrid_stack_trace(self, max_stacks: int | None = None) -> tuple[Frame, ...]:
-        # Only consulted under native_traces=True, which mew does not enable.
-        return self.stack_trace(max_stacks)
+    def stack_trace(self) -> tuple[Frame, ...]:
+        # The flame graph calls this without arguments; `hybrid_stack_trace`
+        # is only consulted under native_traces=True, which mew does not enable.
+        return self.stack
 
 
 def require_memray() -> None:
@@ -72,8 +58,7 @@ class MemrayManager:
 
     One capture per (benchmark, repetition), scoped to the benchmark loop in
     a separate, untimed pass. :meth:`start` opens the tracker and :meth:`stop`
-    closes it. :meth:`on_pass_complete` keeps the capture only if the pass
-    completed its loop.
+    closes it and records the capture.
 
     Parameters
     ----------
@@ -94,8 +79,6 @@ class MemrayManager:
         self._i = 0
         self._dest: Path | None = None
         self._tracker: Tracker | None = None
-        self._root: Frame = ("<benchmark>", "?", 0)
-        self._pending_capture: tuple[Path, Frame] | None = None
         #: Accepted captures as ``(path, root_frame)``, one per (benchmark,
         #: repetition), in run order. :func:`write_flamegraph` renders them.
         self.captures: list[tuple[Path, Frame]] = []
@@ -103,11 +86,12 @@ class MemrayManager:
     def start(self) -> None:
         import memray
 
-        self._pending_capture = None
         self._dest = self._dir / f"capture-{self._i}.bin"
         self._i += 1
-        # Before entering the tracker: see _caller_frame.
-        self._root = _caller_frame()
+        # GB calls this from the body's first loop step, so the direct Python
+        # caller is the benchmark body. Read before entering the tracker.
+        body = sys._getframe(1)
+        self._root: Frame = (body.f_code.co_name, body.f_code.co_filename, body.f_lineno)
         self._tracker = memray.Tracker(self._dest, trace_python_allocators=_TRACE_PYTHON_ALLOCATORS)
         self._tracker.__enter__()
 
@@ -115,6 +99,7 @@ class MemrayManager:
         import memray
 
         tracker, dest = self._tracker, self._dest
+        # GB pairs this with start() even when start() raised before tracking.
         if tracker is None or dest is None:
             return None
         tracker.__exit__(None, None, None)
@@ -123,17 +108,11 @@ class MemrayManager:
         # so the optional `total_bytes` metric stays unset.
         with memray.FileReader(dest) as reader:
             meta = reader.metadata
-        self._pending_capture = (dest, self._root)
+        self.captures.append((dest, self._root))
         return {
             "peak_bytes": meta.peak_memory,
             "total_allocations": meta.total_allocations,
         }
-
-    def on_pass_complete(self, completed: bool) -> None:
-        """Publish a closed capture only after the runner accepts the pass."""
-        capture, self._pending_capture = self._pending_capture, None
-        if completed and capture is not None:
-            self.captures.append(capture)
 
 
 def manager(stack: ExitStack) -> MemrayManager:

@@ -56,8 +56,9 @@ class BenchmarkResult(TypedDict):
         contributed (:func:`mew.machine_context`, :func:`mew.vcs_context`).
     memory : dict, optional
         Google Benchmark's memory-manager figures for this run
-        (``peak_bytes``, ``total_bytes``, ``total_allocations``, ``iterations``,
-        ``allocations_per_iteration``); present under ``--profile-memory``.
+        (``peak_bytes``, ``total_allocations``, ``iterations``,
+        ``allocations_per_iteration``, and optionally ``total_bytes`` and
+        ``net_heap_growth``); present under ``--profile-memory``.
     cpu_profile : dict, optional
         The profiler manager's summary for this run (``profiler``, ``wall_time``,
         ``sample_count``, ``top_function``, ``top_function_total_self_time``);
@@ -142,12 +143,7 @@ ProfilerSummary: TypeAlias = dict[str, str | float]
 
 @runtime_checkable
 class MemoryManager(Protocol):
-    """Memory-measurement callbacks accepted by :func:`mew.run`.
-
-    Managers retaining captures may also implement ``on_pass_complete(completed)``.
-    This optional hook runs after all workers return, with ``False`` for a
-    skipped or incomplete pass. ``stop()`` must still release tracking resources.
-    """
+    """Memory-measurement callbacks accepted by :func:`mew.run`."""
 
     def start(self) -> None: ...
     def stop(self) -> MemoryMetrics | None: ...

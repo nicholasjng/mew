@@ -69,8 +69,8 @@ def test_set_counter_values_reach_rows_normalized_by_flags():
     assert cap.runs[0]["counters"] == {"bytes": 1024, "total": 12, "mean": 2}
 
 
-def test_run_benchmarks_passes_extra_context_through():
-    """`extra_context` *is* the context block: Google Benchmark's own carries
+def test_run_benchmarks_passes_session_context_through():
+    """`session_context` *is* the context block: Google Benchmark's own carries
     nothing mew keeps, so the binding forwards what the caller assembled."""
     from mew import _core
 
@@ -449,8 +449,6 @@ def test_leaving_the_last_iteration_marks_the_run_as_incomplete(batch, exit_kind
     assert cap.runs[0]["skip_message"] == "The benchmark did not complete its loop."
 
 
-# mew reports the body's exception as unraisable after skipping the run.
-@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 @pytest.mark.parametrize("where", ["before", "after"])
 def test_state_pause_outside_the_loop_skips_with_error(where):
     # Unchecked, this stops a timer that never ran and reports the raw clock.
@@ -491,26 +489,30 @@ def test_state_skip_inside_pause_does_not_resume_timing():
 
 
 @pytest.mark.parametrize("loop", ["iter", "batches", "keep_running_batch"])
-def test_pause_scope_open_at_loop_end_stays_untimed_and_does_not_leak(loop):
-    """The loop may end inside a pause scope: GB must not stop the stopped timer
-    again, and the next benchmark's scopes must still pause."""
+def test_pause_scope_held_open_across_the_loop_end_stays_untimed(loop):
+    """An ExitStack around the loop keeps its pause scopes open over the final
+    loop step: GB must not stop the stopped timer again, and the paused time
+    must stay out of the result."""
     import time
+    from contextlib import ExitStack
 
     @mew.benchmark(iterations=2)
-    def bench_open(state):
-        def body():
-            state.pause().__enter__()  # never exited
-            time.sleep(0.02)
+    def bench_held(state):
+        with ExitStack() as stack:
 
-        if loop == "iter":
-            for _ in state:
-                body()
-        elif loop == "batches":
-            for _ in state.batches(1):
-                body()
-        else:
-            while state.keep_running_batch(1):
-                body()
+            def body():
+                stack.enter_context(state.pause())
+                time.sleep(0.02)
+
+            if loop == "iter":
+                for _ in state:
+                    body()
+            elif loop == "batches":
+                for _ in state.batches(1):
+                    body()
+            else:
+                while state.keep_running_batch(1):
+                    body()
 
     @mew.benchmark(iterations=2)
     def bench_next(state):
@@ -777,3 +779,45 @@ def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
     assert cap.runs[0]["iterations"] > 0
     if min_time == " 7x ":
         assert cap.runs[0]["iterations"] == 7
+
+
+# --- output capture -----------------------------------------------------------
+# Writes go through os.write: under pytest, print() targets pytest's own
+# sys.stdout replacement, while native libraries write to the descriptors.
+
+
+def test_benchmark_output_is_printed_to_stderr_after_the_run(capfd):
+    import os
+
+    class Recording(Capture):
+        def report_runs(self, runs):
+            # Reporters write to the real streams while the capture is suspended.
+            os.write(1, b"reporter row\n")
+            super().report_runs(runs)
+
+    @mew.benchmark(iterations=1)
+    def bench_noisy(state):
+        os.write(1, b"to stdout\n")
+        os.write(2, b"to stderr\n")
+        for _ in state:
+            pass
+
+    rep = Recording()
+    mew.run(reporter=rep)
+    assert all("output" not in r for r in rep.runs)
+    out, err = capfd.readouterr()
+    assert out == "reporter row\n"
+    assert err == "\noutput from benchmarks:\nto stdout\nto stderr\n"
+
+
+def test_capture_output_false_leaves_output_live(capfd):
+    import os
+
+    @mew.benchmark(iterations=1)
+    def bench_noisy(state):
+        os.write(2, b"live\n")
+        for _ in state:
+            pass
+
+    mew.run(reporter=Capture(), capture_output=False)
+    assert capfd.readouterr().err == "live\n"

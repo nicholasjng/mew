@@ -215,47 +215,48 @@ def test_managers_do_not_leak_into_a_later_run(tmp_path):
     assert "cpu_profile" not in bench
 
 
-def test_memory_pass_completion_exception_propagates_out_of_run(tmp_path):
+def test_memory_manager_stop_exception_propagates_out_of_run(tmp_path):
     class Exploding(FakeMemoryManager):
-        def on_pass_complete(self, completed):
-            raise RuntimeError("capture publication failed")
-
-    @mew.benchmark(iterations=1)
-    def bench_complete(state):
-        for _ in state:
-            pass
-
-    with pytest.raises(RuntimeError, match="capture publication failed"):
-        mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), memory_manager=Exploding())
-
-
-def test_memory_pass_is_not_accepted_when_stop_raises(tmp_path):
-    class Exploding(FakeMemoryManager):
-        completed: list[bool]
-
-        def __init__(self):
-            super().__init__()
-            self.completed = []
-
         def stop(self):
             raise RuntimeError("capture unreadable")
 
-        def on_pass_complete(self, completed):
-            self.completed.append(completed)
-
     @mew.benchmark(iterations=1)
     def bench_complete(state):
         for _ in state:
             pass
 
-    manager = Exploding()
     with pytest.raises(RuntimeError, match="capture unreadable"):
-        mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), memory_manager=manager)
-    assert manager.completed == [False]
+        mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), memory_manager=Exploding())
 
 
-@pytest.mark.parametrize("kind", ["memory", "profiler"])
-def test_malformed_manager_result_propagates_out_of_run(tmp_path, kind):
+def test_memory_manager_extra_keys_are_ignored(tmp_path):
+    class Annotated(FakeMemoryManager):
+        def stop(self):
+            return {"peak_bytes": 1024, "backend": "custom"}
+
+    @mew.benchmark(iterations=1)
+    def bench_annotated(state):
+        for _ in state:
+            pass
+
+    out = tmp_path / "o.json"
+    mew.run(reporter=JSONReporter(output=out), memory_manager=Annotated())
+    mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
+    assert mem["peak_bytes"] == 1024
+    assert "backend" not in mem
+
+
+@pytest.mark.parametrize(
+    ("kind", "result"),
+    [
+        ("memory", {"peak_bytes": "not an integer"}),
+        ("memory", [("peak_bytes", 1)]),
+        ("profiler", {"sample_count": object()}),
+        ("profiler", {1: 2.0}),
+        ("profiler", [("sample_count", 1)]),
+    ],
+)
+def test_malformed_manager_result_propagates_out_of_run(tmp_path, kind, result):
     """A wrong-shaped manager result fails the run instead of being dropped silently."""
 
     @mew.benchmark
@@ -268,14 +269,14 @@ def test_malformed_manager_result_propagates_out_of_run(tmp_path, kind):
 
         class BadMemory(FakeMemoryManager):
             def stop(self):
-                return {"peak_bytes": "not an integer"}
+                return result
 
         kwargs = {"memory_manager": BadMemory()}
     else:
 
         class BadProfiler(FakeProfilerManager):
             def get_result(self):
-                return {"sample_count": object()}
+                return result
 
         kwargs = {"profiler_manager": BadProfiler()}
 
@@ -358,68 +359,6 @@ def test_pyinstrument_manager_summarizes_the_hot_frame(tmp_path):
     sessions = len(mgr.sessions)
     assert mgr.get_result() is not None
     assert len(mgr.sessions) == sessions
-
-
-@pytest.mark.parametrize("kind", ["memory", "profiler"])
-@pytest.mark.parametrize("exit_at", ["before", "first", "last"])
-@pytest.mark.parametrize("exit_kind", ["return", "skip"])
-def test_rejected_passes_do_not_publish_captures(tmp_path, kind, exit_at, exit_kind):
-    import time
-
-    if kind == "memory":
-        pytest.importorskip("memray")
-        from mew.memory import MemrayManager
-
-        manager: Any = MemrayManager(tmp_path)
-        retained = manager.captures
-    else:
-        if not getattr(sys, "_is_gil_enabled", lambda: True)():
-            pytest.skip("pyinstrument's native sampler enables the GIL")
-        pytest.importorskip("pyinstrument")
-        from mew.cpu import PyinstrumentManager
-
-        manager = cast("Any", PyinstrumentManager())
-        retained = manager.sessions
-
-    calls = 0
-
-    @mew.benchmark(iterations=4, repetitions=3)
-    def bench_partial(state):
-        nonlocal calls
-        calls += 1
-        # Manager passes are invocations 2, 4 and 6. Reject the first and last
-        # to check that neither an earlier nor a later failure loses a good capture.
-        reject = calls in (2, 6)
-        if reject and exit_at == "before":
-            if exit_kind == "skip":
-                state.skip_with_message("incomplete manager pass")
-            return
-        for iteration, _ in enumerate(state, 1):
-            data = bytearray(16_384)
-            time.sleep(0.004)  # collect enough CPU samples for a summary
-            del data
-            if reject and iteration == (4 if exit_at == "last" else 1):
-                if exit_kind == "skip":
-                    state.skip_with_message("incomplete manager pass")
-                return
-
-    out = tmp_path / "out.json"
-    kwargs: dict[str, Any] = {f"{kind}_manager": manager}
-    mew.run(reporter=JSONReporter(output=out), **kwargs)
-    rows = [r for r in json.loads(out.read_text())["benchmarks"] if r["run_type"] == "iteration"]
-    key = "memory" if kind == "memory" else "cpu_profile"
-    assert len(rows) == 3
-    assert all(not r["skipped"] for r in rows)
-    assert [key in r for r in rows] == [False, True, False]
-    assert len(retained) == 1
-    if kind == "memory":
-        assert manager._tracker is None
-        assert manager._pending_capture is None
-        # Repeated notifications cannot publish the same capture twice.
-        manager.on_pass_complete(True)
-    else:
-        assert manager._prof is None
-    assert len(retained) == 1
 
 
 @pytest.mark.parametrize(("memory_iterations", "expected"), [(None, 16), (4, 4), (1000, 50)])
@@ -508,32 +447,25 @@ def test_memory_pass_counts_batch_overshoot(tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["memory", "profiler"])
-@pytest.mark.parametrize("exit_at", ["before", "first", "last"])
-def test_partial_manager_pass_is_not_reported(tmp_path, kind, exit_at):
+def test_interrupted_pass_still_stops_the_manager(tmp_path, kind):
     calls = 0
 
     @mew.benchmark(iterations=4)
-    def bench_partial(state):
+    def bench_interrupted(state):
         nonlocal calls
         calls += 1
-        if calls == 2 and exit_at == "before":
-            return
-        for iteration, _ in enumerate(state, 1):
-            if calls == 2 and iteration == (4 if exit_at == "last" else 1):
-                return
+        for _ in state:
+            if calls == 2:  # the manager pass, after the timed run
+                raise KeyboardInterrupt
 
     manager = FakeMemoryManager() if kind == "memory" else FakeProfilerManager()
     kwargs: dict[str, Any] = {f"{kind}_manager": manager}
-    out = tmp_path / "out.json"
-    mew.run(reporter=JSONReporter(output=out), **kwargs)
-    row = json.loads(out.read_text())["benchmarks"][0]
-    assert not row["skipped"]
-    assert ("memory" if kind == "memory" else "cpu_profile") not in row
-    assert manager.starts == manager.stops == (0 if exit_at == "before" else 1)
+    with pytest.raises(KeyboardInterrupt):
+        mew.run(reporter=JSONReporter(output=tmp_path / "out.json"), **kwargs)
+    assert manager.starts == manager.stops == 1
 
 
-@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
-def test_manager_is_stopped_when_the_body_leaves_the_loop_early(tmp_path):
+def test_failed_timed_runs_skip_the_manager_passes(tmp_path):
     @mew.benchmark(iterations=4)
     def bench_raises(state):
         for _ in state:
@@ -547,8 +479,9 @@ def test_manager_is_stopped_when_the_body_leaves_the_loop_early(tmp_path):
     mem, prof = FakeMemoryManager(), FakeProfilerManager()
     out = tmp_path / "out.json"
     mew.run(reporter=JSONReporter(output=out), memory_manager=mem, profiler_manager=prof)
-    assert (mem.starts, mem.stops) == (2, 2)
-    assert (prof.starts, prof.stops) == (2, 2)
+    # Only bench_ok gets memory and profiler passes.
+    assert (mem.starts, mem.stops) == (1, 1)
+    assert (prof.starts, prof.stops) == (1, 1)
     raises, ok = json.loads(out.read_text())["benchmarks"]
     assert "memory" not in raises and "cpu_profile" not in raises
     assert "memory" in ok and "cpu_profile" in ok
@@ -688,7 +621,7 @@ def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
 def test_pause_only_reaches_the_profiler_during_its_own_pass(tmp_path):
     """GB drives the timed run with no profiler manager, so `state.pause()` there
     must not call one: it would suspend nothing, and in a threaded run several
-    worker threads would race on the manager's depth counter."""
+    worker threads would race on the manager's pause state."""
     calls: list[str] = []
 
     class Probe:
@@ -723,18 +656,50 @@ def test_pause_only_reaches_the_profiler_during_its_own_pass(tmp_path):
     assert set(calls) == {"sampling"}
 
 
+def test_pause_held_across_the_loop_end_is_not_resumed_after_the_pass(tmp_path):
+    """The profiler stops while still paused; the scope's exit after the loop
+    must not resume a manager whose pass is over."""
+    from contextlib import ExitStack
+
+    mgr = FakeProfilerManager()
+
+    @mew.benchmark(iterations=3)
+    def bench_held(state):
+        with ExitStack() as stack:
+            for _ in state:
+                stack.enter_context(state.pause())
+
+    mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
+    assert mgr.starts == mgr.stops == 1
+    assert (mgr.pauses, mgr.resumes) == (1, 0)
+
+
 @pytest.mark.skipif(
     not getattr(sys, "_is_gil_enabled", lambda: True)(),
     reason="pyinstrument's native sampler enables the GIL",
 )
-def test_pyinstrument_tolerates_a_pause_scope_open_at_loop_end(tmp_path):
+def test_pyinstrument_handles_a_pause_held_over_the_loop_end(tmp_path):
+    """A pass that ends paused must not stop pyinstrument twice, nor leave a
+    paused flag that keeps the next benchmark from pausing."""
     pytest.importorskip("pyinstrument")
+    from contextlib import ExitStack
+
     from mew.cpu import PyinstrumentManager
 
+    class Recording(PyinstrumentManager):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stopped_on_pause: list[bool] = []
+
+        def pause(self) -> None:
+            self.stopped_on_pause.append(not self._paused)
+            super().pause()
+
     @mew.benchmark(iterations=2)
-    def bench_open(state):
-        for _ in state:
-            state.pause().__enter__()  # never exited
+    def bench_held(state):
+        with ExitStack() as stack:
+            for _ in state:
+                stack.enter_context(state.pause())
 
     @mew.benchmark(iterations=2)
     def bench_next(state):
@@ -743,8 +708,10 @@ def test_pyinstrument_tolerates_a_pause_scope_open_at_loop_end(tmp_path):
                 pass
 
     out = tmp_path / "o.json"
-    mgr = PyinstrumentManager()
+    mgr = Recording()
     mew.run(reporter=JSONReporter(output=out), profiler_manager=mgr)
     rows = json.loads(out.read_text())["benchmarks"]
     assert [r["skipped"] for r in rows] == [False, False]
     assert len(mgr.sessions) == 2
+    # bench_held pauses once; each of bench_next's pauses stops the profiler.
+    assert mgr.stopped_on_pause == [True, True, True]

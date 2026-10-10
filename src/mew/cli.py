@@ -144,17 +144,17 @@ _PATHS_HELP = "Discover benchmarks from files, directories, or <path>::<filter> 
 def list_(
     paths: list[str],
     *,
-    pattern: str | None = None,
-    literal: bool = False,
-    tag: list[str] | None = None,
-    show_tags: bool = False,
-    show_cases: bool = False,
-    names_only: bool = False,
+    pattern: str | None,
+    literal: bool,
+    tag: list[str],
+    show_tags: bool,
+    show_cases: bool,
+    names_only: bool,
 ) -> None:
     """List discovered benchmarks without running them."""
     with _discovery.discovered():
         entries = _collect(
-            paths, cfg=_load_config_or_exit(), pattern=pattern, tags=tag or [], literal=literal
+            paths, cfg=_load_config_or_exit(), pattern=pattern, tags=tag, literal=literal
         )
         for e in entries:
             tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
@@ -252,35 +252,33 @@ def _build_reporters(
 def run(
     paths: list[str],
     *,
-    pattern: str | None = None,
-    literal: bool = False,
-    stdin: bool = False,
-    tag: list[str] | None = None,
-    output: list[str] | None = None,
-    format: str = "rich",
-    min_time: str | None = None,
-    min_warmup_time: float | None = None,
-    random_interleaving: bool = False,
-    repetitions: int | None = None,
-    session_tag: str | None = None,
-    append: bool = False,
-    strict: bool = False,
-    profile_memory: bool = False,
-    memory_iterations: int | None = None,
-    flamegraph: Path | None = None,
-    sample: bool = False,
-    sample_interval: float = 1e-4,
-    sample_html: Path | None = None,
+    pattern: str | None,
+    literal: bool,
+    stdin: bool,
+    tag: list[str],
+    output: list[str],
+    format: str,
+    min_time: str | None,
+    min_warmup_time: float | None,
+    random_interleaving: bool,
+    repetitions: int | None,
+    session_tag: str | None,
+    append: bool,
+    strict: bool,
+    capture: str | None,
+    profile_memory: bool,
+    memory_iterations: int | None,
+    flamegraph: Path | None,
+    sample: bool,
+    sample_interval: float,
+    sample_html: Path | None,
 ) -> None:
     """Discover and run benchmarks."""
-    output = output or []
     profile_memory = profile_memory or flamegraph is not None
     sample = sample or sample_html is not None
     cfg = _load_config_or_exit()
     with _discovery.discovered():
-        entries = _collect(
-            paths, cfg=cfg, pattern=pattern, tags=tag or [], literal=literal, stdin=stdin
-        )
+        entries = _collect(paths, cfg=cfg, pattern=pattern, tags=tag, literal=literal, stdin=stdin)
 
         reporters = _build_reporters(
             output,
@@ -313,6 +311,8 @@ def run(
                 random_interleaving=random_interleaving,
                 session_tag=session_tag,
                 strict=strict,
+                # --capture wins; else fall back to [tool.mew] capture; else fd.
+                capture_output=(capture or cfg.capture or "fd") == "fd",
                 memory_manager=memory_manager,
                 memory_iterations=memory_iterations,
                 profiler_manager=profiler_manager,
@@ -329,14 +329,14 @@ def run(
 def compare(
     files: list[Path],
     *,
-    metric: str = "real_time",
-    key: str = "name",
-    pattern: str | None = None,
-    literal: bool = False,
-    stddev: bool = False,
-    statistic: str | None = None,
-    regression_threshold: float | None = None,
-    exit_non_zero_on_regression: bool = False,
+    metric: str,
+    key: str,
+    pattern: str | None,
+    literal: bool,
+    stddev: bool,
+    statistic: str | None,
+    regression_threshold: float | None,
+    exit_non_zero_on_regression: bool,
 ) -> None:
     """Compare benchmark result files; the last file is the baseline."""
     from mew._statistics import resolve_statistic
@@ -444,6 +444,9 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
         return text
 
 
+_SHELLS = ("bash", "zsh", "fish")
+
+
 def completions(shell: str) -> None:
     """Print a shell-completion script for ``shell`` to stdout."""
     from mew import _completions
@@ -543,15 +546,23 @@ def _add_tag_arg(p: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
+def _add_command(
+    sub: argparse._SubParsersAction, name: str, *, help: str, aliases: tuple[str, ...] = ()
+) -> argparse.ArgumentParser:
+    """Add a subcommand parser with mew's help formatter and ``-h/--help``."""
     p = sub.add_parser(
-        "list",
-        aliases=["ls"],
-        help="List discovered benchmarks.",
+        name,
+        aliases=aliases,
+        help=help,
         formatter_class=_CommandHelpFormatter,
         add_help=False,
     )
     p.add_argument("-h", "--help", action="help", help="Show this help.")
+    return p
+
+
+def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
+    p = _add_command(sub, "list", aliases=("ls",), help="List discovered benchmarks.")
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
     _add_filter_args(p, pattern_help="List benchmarks whose name matches <regex>.")
     _add_tag_arg(p)
@@ -571,13 +582,7 @@ def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
 
 
 def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser(
-        "run",
-        help="Discover and run benchmarks.",
-        formatter_class=_CommandHelpFormatter,
-        add_help=False,
-    )
-    p.add_argument("-h", "--help", action="help", help="Show this help.")
+    p = _add_command(sub, "run", help="Discover and run benchmarks.")
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
     _add_filter_args(
         p,
@@ -640,6 +645,11 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         help="Fail instead of skipping unsupported threaded benchmarks.",
     )
     p.add_argument(
+        "--capture",
+        choices=_config.CAPTURE_MODES,
+        help="Print benchmark stdout/stderr after the run (fd, default), or live (no).",
+    )
+    p.add_argument(
         "--profile-memory",
         action="store_true",
         help="Profile memory allocations with memray.",
@@ -678,13 +688,7 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
 
 
 def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser(
-        "compare",
-        help="Compare benchmark result files.",
-        formatter_class=_CommandHelpFormatter,
-        add_help=False,
-    )
-    p.add_argument("-h", "--help", action="help", help="Show this help.")
+    p = _add_command(sub, "compare", help="Compare benchmark result files.")
     p.add_argument(
         "files",
         nargs="+",
@@ -725,32 +729,18 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
 
 
 def _add_sessions_cmd(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser(
-        "sessions",
-        help="List the sessions stored in result files.",
-        formatter_class=_CommandHelpFormatter,
-        add_help=False,
-    )
-    p.add_argument("-h", "--help", action="help", help="Show this help.")
+    p = _add_command(sub, "sessions", help="List the sessions stored in result files.")
     p.add_argument("files", nargs="+", type=Path, help="Result files to inspect.")
     p.set_defaults(_func=sessions)
 
 
 def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
-    from mew._completions import SHELLS
-
-    p = sub.add_parser(
-        "completions",
-        help="Print a shell-completion script for eval/install.",
-        formatter_class=_CommandHelpFormatter,
-        add_help=False,
-    )
-    p.add_argument("-h", "--help", action="help", help="Show this help.")
+    p = _add_command(sub, "completions", help="Print a shell-completion script for eval/install.")
     p.add_argument(
         "shell",
-        choices=list(SHELLS),
+        choices=list(_SHELLS),
         metavar="<shell>",
-        help=f"Generate completions for {', '.join(SHELLS)}.",
+        help=f"Generate completions for {', '.join(_SHELLS)}.",
     )
     p.set_defaults(_func=completions)
 

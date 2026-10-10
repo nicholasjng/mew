@@ -47,7 +47,7 @@ index 3faa21d..49f6572 100644
  
    struct PerFamilyRunReports {
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index 0d267a3..cd19f7b 100644
+index 0d267a3..98f0623 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
 @@ -83,12 +83,28 @@ constexpr IterationCount kMaxIterations = 1000000000000;
@@ -88,14 +88,15 @@ index 0d267a3..cd19f7b 100644
  
      if (memory_iterations > 0) {
        report.memory_result = memory_result;
-@@ -460,32 +477,44 @@ void BenchmarkRunner::RunWarmUp() {
+@@ -460,32 +477,32 @@ void BenchmarkRunner::RunWarmUp() {
    }
  }
  
 -MemoryManager::Result BenchmarkRunner::RunMemoryManager(
 -    IterationCount memory_iterations) {
-+// Runs one memory or profiler pass and returns whether its loop completed.
-+bool BenchmarkRunner::RunManagerPass(IterationCount iters, ProfilerManager* pm,
++// Runs one memory or profiler pass.
++void BenchmarkRunner::RunManagerPass(IterationCount pass_iters,
++                                     ProfilerManager* pm,
 +                                     PerfCountersMeasurement* pcm) {
    std::unique_ptr<internal::ThreadManager> manager;
    manager.reset(new internal::ThreadManager(1));
@@ -106,18 +107,11 @@ index 0d267a3..cd19f7b 100644
 -              /*profiler_manager=*/nullptr);
 -  MemoryManager::Result memory_result;
 -  memory_manager->Stop(memory_result);
-+  RunInThread(&b, iters, 0, manager.get(), pcm, pm);
-+  // RunInThread() also marks a body that left the loop early as skipped.
-+  bool completed;
-+  {
-+    MutexLock l(manager->GetBenchmarkMutex());
-+    completed = manager->results.skipped_ == internal::NotSkipped;
-+  }
++  RunInThread(&b, pass_iters, 0, manager.get(), pcm, pm);
    manager.reset();
    b.Teardown();
 -  memory_result.memory_iterations = memory_iterations;
 -  return memory_result;
-+  return completed;
  }
  
 -void BenchmarkRunner::RunProfilerManager(IterationCount profile_iterations) {
@@ -132,27 +126,21 @@ index 0d267a3..cd19f7b 100644
 +MemoryManager::Result BenchmarkRunner::RunMemoryManager(
 +    IterationCount memory_iterations) {
 +  MemoryLoopScope scope(memory_manager);
-+  // No complete loop, no figures: memory_iterations == 0 means "not measured".
-+  if (!RunManagerPass(memory_iterations, &scope,
-+                      perf_counters_measurement_ptr)) {
-+    return MemoryManager::Result();
-+  }
++  RunManagerPass(memory_iterations, &scope, perf_counters_measurement_ptr);
 +  scope.result.memory_iterations = memory_iterations;
 +  return scope.result;
 +}
 +
 +ProfilerManager::Result BenchmarkRunner::RunProfilerManager(
 +    IterationCount profile_iterations) {
++  RunManagerPass(profile_iterations, profiler_manager, /*pcm=*/nullptr);
 +  ProfilerManager::Result profile_result;
-+  // Like a partial memory measurement, a partial profile is not reported.
-+  if (RunManagerPass(profile_iterations, profiler_manager, /*pcm=*/nullptr)) {
-+    profiler_manager->GetResult(profile_result);
-+  }
++  profiler_manager->GetResult(profile_result);
 +  return profile_result;
  }
  
  void BenchmarkRunner::DoOneRepetition() {
-@@ -546,17 +575,18 @@ void BenchmarkRunner::DoOneRepetition() {
+@@ -546,17 +563,18 @@ void BenchmarkRunner::DoOneRepetition() {
      memory_result = RunMemoryManager(memory_iterations);
    }
  
@@ -174,14 +162,14 @@ index 0d267a3..cd19f7b 100644
    if (reports_for_family != nullptr) {
      ++reports_for_family->num_runs_done;
 diff --git a/src/benchmark_runner.h b/src/benchmark_runner.h
-index 9a2231a..474f08d 100644
+index 9a2231a..5afb734 100644
 --- a/src/benchmark_runner.h
 +++ b/src/benchmark_runner.h
 @@ -105,9 +105,12 @@ class BenchmarkRunner {
    };
    IterationResults DoNIterations();
  
-+  bool RunManagerPass(IterationCount iters, ProfilerManager* pm,
++  void RunManagerPass(IterationCount pass_iters, ProfilerManager* pm,
 +                      PerfCountersMeasurement* pcm);
 +
    MemoryManager::Result RunMemoryManager(IterationCount memory_iterations);

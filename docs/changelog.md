@@ -6,6 +6,13 @@ change between minor releases.
 
 ## Version 0.2.1 (unreleased)
 
+### Added
+
+- `mew run` captures what benchmarks write to stdout and stderr, native writes
+  included, and prints it to stderr after the run, so library warnings no longer
+  break up the console table or corrupt JSON on stdout. `--capture=no`,
+  `[tool.mew] capture = "no"` or `capture_output=False` shows it live instead.
+
 ### Changed
 
 - Google Benchmark is pinned to `e662de9` (v1.9.5-144).
@@ -18,6 +25,8 @@ change between minor releases.
   registered one, as in Google Benchmark, instead of raising `ValueError`.
 - `vcs_context()` lets jj snapshot the working copy, so uncommitted edits mark a
   jj checkout as dirty.
+- A benchmark that raises is no longer additionally printed as an
+  "Exception ignored in" message; its row's skip message carries the traceback.
 
 ### Fixed
 
@@ -32,9 +41,11 @@ change between minor releases.
   adding a raw clock reading to the result.
 - Nested `state.pause()` scopes keep timing and CPU sampling paused until the
   outermost scope exits. A scope left open no longer disables pausing in later
-  benchmarks, and a loop may end while paused.
-- Incomplete memory and CPU profiling passes report no figures and add nothing to
-  flame graphs or CPU HTML reports; profilers are still stopped.
+  benchmarks, and a scope held open over the end of the loop, for example by an
+  `ExitStack`, keeps its paused time out of the result.
+- Benchmarks whose timed run fails or is skipped no longer get memory and CPU
+  profiling passes, so they add nothing to flame graphs or CPU HTML reports. A
+  pass that ends early, for example on Ctrl-C, still stops its profiler.
 - The memory pass's `iterations` includes the overshoot of batched loops
   (`state.batches()`), so `allocations_per_iteration` is no longer inflated.
 - A second `for _ in state:` loop after the first has finished no longer adds

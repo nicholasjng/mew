@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-SHELLS = ("bash", "zsh", "fish")
-
 
 @dataclass
 class _Opt:
@@ -39,9 +37,8 @@ def _value_kind(action: argparse.Action) -> str | list[str] | None:
     dest = action.dest
     if getattr(action, "type", None) is Path:
         return "file"
-    if not action.option_strings:  # positional
-        # `paths` accepts `file::name` selectors; `files` (compare) is plain paths.
-        return "selector" if dest == "paths" else "file"
+    if dest == "paths":  # list/run's positional accepts `file::name` selectors
+        return "selector"
     if dest == "output":  # run's `-o` takes `-`/`stdout` and file paths
         return "file"
     return None
@@ -52,7 +49,6 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
     help_by_name = {ca.dest: (ca.help or "") for ca in sub._choices_actions}
     # Group by parser identity: argparse stores aliases as extra keys → same parser.
     grouped: dict[int, _Cmd] = {}
-    order: list[int] = []
     # The isinstance narrowing leaves _SubParsersAction unparameterized, so its
     # choices values type as `object`.
     choices = cast(dict[str, argparse.ArgumentParser], sub.choices)
@@ -60,7 +56,6 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
         key = id(subp)
         if key not in grouped:
             grouped[key] = _Cmd(names=[], help=help_by_name.get(name, ""))
-            order.append(key)
             for a in subp._actions:
                 if a.option_strings:
                     grouped[key].opts.append(
@@ -76,7 +71,12 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
                 else:
                     grouped[key].positional = _value_kind(a)
         grouped[key].names.append(name)
-    return [grouped[k] for k in order]
+    return list(grouped.values())
+
+
+def _first_clause(text: str, width: int) -> str:
+    """First sentence of a help string on one line, cut to ``width`` characters."""
+    return text.replace("\n", " ").split(". ")[0][:width]
 
 
 # --- bash ---------------------------------------------------------------------
@@ -138,7 +138,7 @@ def _bash(parser: argparse.ArgumentParser) -> str:
 
 def _zdesc(help_text: str) -> str:
     """First clause of a help string, sanitized for a zsh `_arguments` description."""
-    s = (help_text or "").replace("\n", " ").split(". ")[0][:64]
+    s = _first_clause(help_text, 64)
     return s.translate(str.maketrans({"'": "", "[": "", "]": "", "`": "", ":": ";"}))
 
 
@@ -200,7 +200,7 @@ def _zsh(parser: argparse.ArgumentParser) -> str:
 
 
 def _fquote(s: str) -> str:
-    s = (s or "").replace("\n", " ").split(". ")[0][:80]
+    s = _first_clause(s, 80)
     return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 

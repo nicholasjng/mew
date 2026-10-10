@@ -23,23 +23,18 @@ def _check_key(key: str) -> list[str]:
     return parts
 
 
-_MISSING = object()
-
-
-def _set_nested(target: dict[str, Any], key: str, value: Any) -> None:
+def _set_nested(key: str, value: Any) -> None:
     parts = _check_key(key)
-    cur: dict[str, Any] = target
+    cur: dict[str, Any] = _CONTEXT
     for i, part in enumerate(parts[:-1]):
-        existing = cur.get(part, _MISSING)
-        if existing is _MISSING:
-            cur[part] = {}
-        elif not isinstance(existing, dict):
-            path = ".".join(parts[: i + 1])
-            raise ValueError(
-                f"cannot set context key {key!r}: existing value at {path!r} "
-                f"is not a dict ({type(existing).__name__})"
-            )
-        cur = cur[part]
+        cur = cur.setdefault(part, {})
+        if isinstance(cur, dict):
+            continue
+        path = ".".join(parts[: i + 1])
+        raise ValueError(
+            f"cannot set context key {key!r}: existing value at {path!r} "
+            f"is not a dict ({type(cur).__name__})"
+        )
     cur[parts[-1]] = value
 
 
@@ -58,7 +53,7 @@ def set_context(key: str, value: Any) -> None:
     ValueError
         If ``key`` is empty, has an empty path segment, or traverses through a non-dict value.
     """
-    _set_nested(_CONTEXT, key, value)
+    _set_nested(key, value)
 
 
 def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
@@ -79,11 +74,9 @@ def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
     ValueError
         Same conditions as :func:`set_context`.
     """
-    for m in mapping:
+    for m in (*mapping, kwargs):
         for k, v in m.items():
-            _set_nested(_CONTEXT, k, v)
-    for k, v in kwargs.items():
-        _set_nested(_CONTEXT, k, v)
+            _set_nested(k, v)
 
 
 def get_context() -> dict[str, Any]:

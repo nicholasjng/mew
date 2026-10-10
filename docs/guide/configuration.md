@@ -17,6 +17,10 @@ statistic = "median"
 # Python file imported once, before any benchmark file. Relative to this
 # pyproject.toml, so it applies from any working directory.
 setup = "benchmarks/conf.py"
+
+# What `mew run` does with benchmark stdout/stderr: "fd" prints it after the
+# run, "no" shows it live. Omit to keep "fd"; --capture wins.
+capture = "fd"
 ```
 
 ## Where measurement settings live

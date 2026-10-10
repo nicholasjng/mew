@@ -35,11 +35,14 @@ class TimeUnit(enum.StrEnum):
 def run_benchmarks(
     argv: Sequence[str],
     reporter: object | None = None,
-    extra_context: dict = {},
-    extra_rows: list = [],
+    session_context: dict = {},
+    skipped_rows: list = [],
+    capture: object | None = None,
 ) -> int:
     """
     Initialize Google Benchmark with `argv` and run all registered benchmarks.
+    `capture` (an active mew._capture.OutputCapture) is suspended around every
+    reporter callback, so reporters write to the real stdout/stderr.
     Returns the number of benchmarks run.
     """
 
@@ -262,7 +265,6 @@ def register_memory_manager(manager: object) -> None:
     """
     Register `manager` as Google Benchmark's memory manager, replacing any other.
     Requires `start()` and `stop()`; `stop()` returns memory metrics or None.
-    Optional `on_pass_complete(completed)` accepts or discards a closed capture.
     Pair with `unregister_memory_manager`.
     """
 

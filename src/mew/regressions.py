@@ -36,6 +36,17 @@ class Verdict(Enum):
     """Out-of-scope per a matching ``ignore=true`` rule. Listed to keep the allowlist visible."""
 
 
+def _check_threshold(value: object, field: str) -> None:
+    """Raise unless ``value`` is a finite, non-negative, non-``bool`` number."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise ValueError(f"{field} must be a finite, non-negative number")
+
+
 @dataclass(frozen=True, slots=True)
 class AllowRule:
     """One ``[[tool.mew.regressions.allow]]`` entry.
@@ -61,13 +72,8 @@ class AllowRule:
     def __post_init__(self) -> None:
         if not isinstance(self.ignore, bool):
             raise TypeError("ignore must be a boolean")
-        if self.threshold is not None and (
-            isinstance(self.threshold, bool)
-            or not isinstance(self.threshold, int | float)
-            or not math.isfinite(self.threshold)
-            or self.threshold < 0
-        ):
-            raise ValueError("threshold must be a finite, non-negative number")
+        if self.threshold is not None:
+            _check_threshold(self.threshold, "threshold")
         if self.ignore == (self.threshold is not None):
             raise ValueError("set exactly one of ignore=true or threshold=<float>")
 
@@ -102,13 +108,7 @@ class RegressionConfig:
     rules: tuple[AllowRule, ...] = ()
 
     def __post_init__(self) -> None:
-        if (
-            isinstance(self.default_threshold, bool)
-            or not isinstance(self.default_threshold, int | float)
-            or not math.isfinite(self.default_threshold)
-            or self.default_threshold < 0
-        ):
-            raise ValueError("default_threshold must be a finite, non-negative number")
+        _check_threshold(self.default_threshold, "default_threshold")
 
     def find_rule(self, name: str) -> AllowRule | None:
         """The first rule matching ``name``, or ``None`` if none do."""
@@ -198,30 +198,23 @@ def load_config(
     RegressionConfig
         Parsed threshold and ordered allowlist rules.
     """
-    rules: list[AllowRule] = []
     threshold = default_threshold if default_threshold is not None else 5.0
+    source = root / "pyproject.toml" if root is not None else None
+    if source is None or not source.is_file():
+        return RegressionConfig(default_threshold=threshold)
 
-    source: Path | None = None
-    if root is not None and (candidate := root / "pyproject.toml").is_file():
-        source = candidate
-
-    if source is not None:
-        with source.open("rb") as fh:
-            doc = tomllib.load(fh)
-        table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
-        if default_threshold is None:
-            threshold = table.get("default_threshold", threshold)
-        allow = table.get("allow", [])
-        if not isinstance(allow, list) or not all(isinstance(r, dict) for r in allow):
-            raise ValueError(f"{source}: [tool.mew.regressions] allow must be an array of tables")
-        for raw in allow:
-            rules.append(_coerce_rule(raw, source=source))
-
+    with source.open("rb") as fh:
+        doc = tomllib.load(fh)
+    table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
+    if default_threshold is None:
+        threshold = table.get("default_threshold", threshold)
+    allow = table.get("allow", [])
+    if not isinstance(allow, list) or not all(isinstance(r, dict) for r in allow):
+        raise ValueError(f"{source}: [tool.mew.regressions] allow must be an array of tables")
+    rules = tuple(_coerce_rule(raw, source=source) for raw in allow)
     try:
-        return RegressionConfig(default_threshold=threshold, rules=tuple(rules))
+        return RegressionConfig(default_threshold=threshold, rules=rules)
     except ValueError as e:
-        if source is None:
-            raise
         raise ValueError(f"{source}: {e}") from e
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import tempfile
 import warnings
 from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
@@ -11,6 +12,7 @@ from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 from mew import _core
+from mew._capture import OutputCapture
 from mew._console import overflow
 from mew._options import parse_min_time
 from mew._registry import REGISTRY, Entry
@@ -151,6 +153,7 @@ def run(
     memory_manager: MemoryManager | None = None,
     memory_iterations: int | None = None,
     profiler_manager: ProfilerManager | None = None,
+    capture_output: bool = True,
 ) -> int:
     """Run benchmarks via the C++ Google Benchmark backend.
 
@@ -201,6 +204,12 @@ def run(
         ``pause()``/``resume()``), e.g. :class:`mew.cpu.PyinstrumentManager`.
         Registered for the duration of the run; its summary lands in each row's
         ``cpu_profile`` block.
+    capture_output : bool, default True
+        Capture what benchmarks write to stdout and stderr, including from native
+        code, and print it to stderr after the run, so it cannot interleave with
+        console rows or corrupt JSON streamed to stdout. Applies only with a
+        ``reporter``. Disable it to see output live, e.g. when debugging a crash,
+        which loses the captured output.
 
     Returns
     -------
@@ -247,7 +256,7 @@ def run(
 
     rep = _to_single_reporter(reporter)
 
-    extra_context: dict[str, Any] = {}
+    session_context: dict[str, Any] = {}
     if rep is not None:
         session: dict[str, Any] = {
             "id": new_session_id(),
@@ -256,18 +265,17 @@ def run(
         }
         if session_tag:
             session["tag"] = session_tag
-        extra_context["session"] = session
+        session_context["session"] = session
         # Machine context first so a suite's providers can override it.
-        extra_context["context"] = {**machine_context(), **get_context()}
+        session_context["context"] = {**machine_context(), **get_context()}
 
     if not selected:
         # All skipped: GB emits no context for an empty registry, so drive the
         # reporter lifecycle here to surface the skipped rows.
         if rep is not None:
             try:
-                rep.report_context(extra_context)
-                if skipped_rows:
-                    rep.report_runs(skipped_rows)
+                rep.report_context(session_context)
+                rep.report_runs(skipped_rows)
             finally:
                 # As in GB's lifecycle, finalize even if a callback raised, so
                 # owned sinks close and streamed JSON documents are terminated.
@@ -311,7 +319,11 @@ def run(
         if profiler_manager is not None:
             _core.register_profiler_manager(profiler_manager)
             stack.callback(_core.unregister_profiler_manager)
-        return _core.run_benchmarks(cli, rep, extra_context, skipped_rows)
+        capture = None
+        if capture_output and rep is not None:
+            capture = OutputCapture(stack.enter_context(tempfile.TemporaryFile()))
+            stack.callback(capture.close)
+        return _core.run_benchmarks(cli, rep, session_context, skipped_rows, capture)
 
 
 def _to_single_reporter(

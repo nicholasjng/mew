@@ -85,3 +85,15 @@ def test_load_rejects_non_string_setup(tmp_path: Path):
     _write(tmp_path, "[tool.mew]\nsetup = 3\n")
     with pytest.raises(ValueError, match="setup must be a string"):
         load(tmp_path)
+
+
+@pytest.mark.parametrize("value", ["fd", "no"])
+def test_load_capture(tmp_path: Path, value: str):
+    _write(tmp_path, f'[tool.mew]\ncapture = "{value}"\n')
+    assert load(tmp_path).capture == value
+
+
+def test_load_rejects_unknown_capture_mode(tmp_path: Path):
+    _write(tmp_path, '[tool.mew]\ncapture = "sys"\n')
+    with pytest.raises(ValueError, match="capture must be one of fd, no"):
+        load(tmp_path)

@@ -138,6 +138,36 @@ def _check_unregistered(fn: BenchmarkFn) -> None:
         )
 
 
+def _register(
+    target: BenchmarkFn,
+    fn: BenchmarkFn,
+    *,
+    name: str | None,
+    options: BenchmarkOptions,
+    tags: frozenset[str],
+    case_labels: list[str] | None = None,
+) -> BenchmarkFn:
+    """Add ``target`` to the registry as ``fn`` and mark it registered."""
+    # Guard before adding: a failed double-registration must not leave a
+    # second entry in the registry.
+    _check_unregistered(target)
+    file = _source_file(target)
+    REGISTRY.add(
+        Entry(
+            name=name or _qualified_name(target, file),
+            fn=fn,
+            file=file,
+            options=options,
+            tags=tags,
+            case_labels=case_labels,
+        )
+    )
+    # Marked only once added: a rejected name must leave the function
+    # available for a corrected attempt.
+    setattr(target, _REGISTERED_ATTR, True)
+    return target
+
+
 def _make_family_trampoline(
     fn: BenchmarkFn,
     cases: list[dict[str, Any]],
@@ -221,23 +251,7 @@ def benchmark(
     norm_tags = _normalize_tags(tags)
 
     def deco(target: BenchmarkFn) -> BenchmarkFn:
-        # Guard before adding: a failed double-registration must not leave a
-        # second entry in the registry.
-        _check_unregistered(target)
-        file = _source_file(target)
-        REGISTRY.add(
-            Entry(
-                name=name or _qualified_name(target, file),
-                fn=target,
-                file=file,
-                options=norm_options,
-                tags=norm_tags,
-            )
-        )
-        # Marked only once added: a rejected name must leave the function
-        # available for a corrected attempt.
-        setattr(target, _REGISTERED_ATTR, True)
-        return target
+        return _register(target, target, name=name, options=norm_options, tags=norm_tags)
 
     if fn is not None:
         return deco(fn)
@@ -253,7 +267,8 @@ def _register_family(
     options: BenchmarkOptions,
     tags: frozenset[str],
 ) -> BenchmarkFn:
-    cases = [dict(kw) for kw in variants]
+    # Fresh dicts from parametrize/product, only ever unpacked by the trampoline.
+    cases = list(variants)
     labels = list(ids) if ids is not None else [_default_id(kw) for kw in cases]
     if len(labels) != len(cases):
         raise ValueError(f"ids has {len(labels)} entries but parameters has {len(cases)}")
@@ -262,8 +277,6 @@ def _register_family(
     if name is not None:
         _check_addressable(name, "benchmark name")
 
-    file = _source_file(target)
-    base_name = name or _qualified_name(target, file)
     # Labels are spliced into `name[label]`, so they share the name constraints.
     for label in labels:
         _check_addressable(label, "case label")
@@ -275,21 +288,8 @@ def _register_family(
             "(non-scalar parameter values collapse to their type name)"
         )
 
-    _check_unregistered(target)
-    REGISTRY.add(
-        Entry(
-            name=base_name,
-            fn=_make_family_trampoline(target, cases, labels),
-            file=file,
-            options=options,
-            tags=tags,
-            case_labels=labels,
-        )
-    )
-    # Marked only once added: a rejected decorator must leave the function
-    # available for a corrected attempt.
-    setattr(target, _REGISTERED_ATTR, True)
-    return target
+    trampoline = _make_family_trampoline(target, cases, labels)
+    return _register(target, trampoline, name=name, options=options, tags=tags, case_labels=labels)
 
 
 def parametrize(
