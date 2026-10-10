@@ -7,7 +7,7 @@ import json
 import math
 import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,7 +30,7 @@ from mew._results import (
 )
 from mew._significance import mannwhitney_p
 from mew._statistics import Statistic
-from mew.regressions import RegressionConfig, report
+from mew.regressions import BenchmarkVerdict, RegressionConfig, report
 from mew.reporter import _fmt_bytes
 
 __all__ = ["Sample", "SessionSummary", "compare", "read_results", "session_summaries"]
@@ -61,12 +61,11 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def _ctx_summary(ctx: dict[str, Any], *, exclude: Iterable[str] = ()) -> str:
+def _ctx_summary(ctx: dict[str, Any], *, exclude: Collection[str]) -> str:
     """Build one provenance line per comparison column.
 
     ``exclude`` omits user-context keys already shown in the column label.
     """
-    exclude = set(exclude)
     sess = ctx.get("session") or {}
     provenance = ctx.get("context") or {}
     parts: list[str] = []
@@ -151,21 +150,6 @@ def _fmt_stddev(sample: Sample, metric: str) -> str:
 _SIGNIFICANCE_ALPHA = 0.05
 
 
-def _significance_p(base: Sample, other: Sample, *, is_time_metric: bool) -> float | None:
-    """Mann-Whitney two-sided p-value between two samples' raw repetitions.
-
-    ``None`` when either side has fewer than 2 repetitions (nothing to rank).
-    """
-    if len(base.values) < 2 or len(other.values) < 2:
-        return None
-    if is_time_metric:
-        a = [_to_ns(v, base.time_unit) for v in base.values]
-        b = [_to_ns(v, other.time_unit) for v in other.values]
-    else:
-        a, b = list(base.values), list(other.values)
-    return mannwhitney_p(a, b)
-
-
 @dataclass(frozen=True, slots=True)
 class _Comparison:
     delta: float
@@ -186,11 +170,17 @@ def _compare_samples(base: Sample, other: Sample, metric: str) -> _Comparison:
     num, den = (
         (other_value, base_value) if metric in _HIGHER_IS_BETTER else (base_value, other_value)
     )
+    # Mann-Whitney over raw repetitions; fewer than 2 per side leaves nothing to rank.
+    p_value: float | None = None
+    if len(base.values) >= 2 and len(other.values) >= 2:
+        a = [_to_ns(v, base.time_unit) if is_time else v for v in base.values]
+        b = [_to_ns(v, other.time_unit) if is_time else v for v in other.values]
+        p_value = mannwhitney_p(a, b)
     return _Comparison(
         delta=delta,
         # 0 vs 0 (e.g. allocation-free bodies) is unchanged, not infinitely faster.
         speedup=num / den if den else (1.0 if not num else math.inf),
-        p_value=_significance_p(base, other, is_time_metric=is_time),
+        p_value=p_value,
     )
 
 
@@ -214,9 +204,9 @@ def _value_cell(sample: Sample, metric: str) -> str | list[Span]:
 
 @dataclass(slots=True)
 class _Column:
-    """One comparison column: a result file, or one value of a pivot dimension.
+    """One comparison column: a result file, or one ``path@selector`` session of it.
 
-    ``source`` identifies the column in warnings (file path / pivot value);
+    ``source`` identifies the column in warnings (``path`` or ``path@selector``);
     ``label`` heads its table column.
     """
 
@@ -239,7 +229,7 @@ def _render(
     """Compare the first column against the rest and render the table.
 
     Column-shaped on purpose: anything producing labelled sample sets with contexts
-    (files, sessions, pivot groups) compares the same way.
+    (files, ``path@selector`` sessions) compares the same way.
     """
     all_names: set[str] = set().union(*(c.samples.keys() for c in columns))
     if pattern is not None:
@@ -302,22 +292,8 @@ def _render(
     higher_is_better = metric in _HIGHER_IS_BETTER
     is_time_metric = metric in _TIME_METRICS
     baseline = columns[0].samples
-    comparisons = [
-        {
-            name: _compare_samples(baseline[name], c.samples[name], metric)
-            for name in sorted(all_names & baseline.keys() & c.samples.keys())
-        }
-        for c in columns[1:]
-    ]
-    # Gating uses candidate/baseline overlap, independently of rendered rows.
-    verdicts = (
-        [
-            regressions.evaluate(name, result.delta * 100.0, higher_is_better=higher_is_better)
-            for name, result in comparisons[0].items()
-        ]
-        if regressions is not None
-        else []
-    )
+    # Rows are the gated baseline/candidate overlap, so the candidate is always present.
+    verdicts: list[BenchmarkVerdict] = []
     unit_skew: dict[str, tuple[Any, Any]] = {}
 
     for name in sorted(shared):
@@ -332,14 +308,16 @@ def _render(
             s = c.samples[name]
             if is_time_metric and base.time_unit != s.time_unit:
                 unit_skew[name] = (base.time_unit, s.time_unit)
-            result = comparisons[idx][name]
-            delta_text, delta_style = _fmt_delta(result.delta, higher_is_better=higher_is_better)
-            delta_cell: str | list[Span] = (
-                [(delta_text, delta_style)] if delta_style else delta_text
-            )
+            result = _compare_samples(base, s, metric)
+            if idx == 0 and regressions is not None:
+                verdicts.append(
+                    regressions.evaluate(
+                        name, result.delta * 100.0, higher_is_better=higher_is_better
+                    )
+                )
+            delta_cell: list[Span] = [_fmt_delta(result.delta, higher_is_better=higher_is_better)]
             if result.p_value is not None and result.p_value < _SIGNIFICANCE_ALPHA:
-                spans = delta_cell if isinstance(delta_cell, list) else [(delta_cell, None)]
-                delta_cell = [*spans, (" (signif.)", "bold")]
+                delta_cell.append((" (signif.)", "bold"))
             row.append(_value_cell(s, metric))
             row.append(delta_cell)
             row.append(f"×{result.speedup:.3f}")

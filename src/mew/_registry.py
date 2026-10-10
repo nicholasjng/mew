@@ -70,56 +70,12 @@ def case_names(entry: Entry) -> Iterator[tuple[int, str]]:
         yield i, f"{entry.name}[{label}]"
 
 
-@dataclass(frozen=True, slots=True)
-class _CaseMatch:
-    """Outcome of matching one entry: excluded, all cases, or a specific subset."""
-
-    matched: bool
-    cases: tuple[int, ...] | None = None  # None + matched ⇒ all cases
-
-    @classmethod
-    def none(cls) -> _CaseMatch:
-        return cls(False)
-
-    @classmethod
-    def all(cls) -> _CaseMatch:
-        return cls(True)
-
-
-def _match_one(entry: Entry, rx: re.Pattern[str]) -> _CaseMatch:
-    """Match a single regex against an entry, resolving family-vs-case granularity."""
+def _match_cases(entry: Entry, rx: re.Pattern[str], n: int) -> set[int]:
+    """Return the indices of the ``n`` cases a regex selects; a plain benchmark has one."""
     # Plain benchmark, or a family whose own name matches → the whole entry.
-    if entry.case_labels is None:
-        return _CaseMatch.all() if rx.search(entry.name) else _CaseMatch.none()
     if rx.search(entry.name):
-        return _CaseMatch.all()
-    hits = sorted({i for i, name in case_names(entry) if rx.search(name)})
-    if not hits:
-        return _CaseMatch.none()
-    if len(hits) == len(entry.case_labels):
-        return _CaseMatch.all()
-    return _CaseMatch(True, tuple(hits))
-
-
-def _union(a: _CaseMatch, b: _CaseMatch) -> _CaseMatch:
-    if not a.matched:
-        return b
-    if not b.matched:
-        return a
-    if a.cases is None or b.cases is None:
-        return _CaseMatch.all()
-    return _CaseMatch(True, tuple(sorted(set(a.cases) | set(b.cases))))
-
-
-def _intersect(a: _CaseMatch, b: _CaseMatch) -> _CaseMatch:
-    if not a.matched or not b.matched:
-        return _CaseMatch.none()
-    if a.cases is None:
-        return b
-    if b.cases is None:
-        return a
-    both = tuple(sorted(set(a.cases) & set(b.cases)))
-    return _CaseMatch(True, both) if both else _CaseMatch.none()
+        return set(range(n))
+    return {i for i, name in case_names(entry) if rx.search(name)}
 
 
 def narrow_entry(
@@ -134,18 +90,16 @@ def narrow_entry(
     an extra AND constraint (the global ``-k``). A family whose own name matches keeps
     all its cases. The registered entry is never mutated; a strict subset is a copy.
     """
-    match = _CaseMatch.all()
+    n = len(entry.case_labels) if entry.case_labels is not None else 1
+    cases = set(range(n))
     any_of = list(any_of)
     if any_of:
-        union = _CaseMatch.none()
-        for rx in any_of:
-            union = _union(union, _match_one(entry, rx))
-        match = _intersect(match, union)
+        cases &= set().union(*(_match_cases(entry, rx, n) for rx in any_of))
     if all_of is not None:
-        match = _intersect(match, _match_one(entry, all_of))
-    if not match.matched:
+        cases &= _match_cases(entry, all_of, n)
+    if not cases:
         return None
-    return entry if match.cases is None else dataclasses.replace(entry, cases=list(match.cases))
+    return entry if len(cases) == n else dataclasses.replace(entry, cases=sorted(cases))
 
 
 class Registry:

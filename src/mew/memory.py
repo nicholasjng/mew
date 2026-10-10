@@ -23,18 +23,6 @@ Frame = tuple[str, str, int]
 # reaches the system allocator memray hooks by default, so track them separately.
 _TRACE_PYTHON_ALLOCATORS = not _gil_enabled()
 
-_MEW_DIR = str(Path(__file__).parent)
-
-
-def _caller_frame() -> Frame:
-    """Return the first caller frame outside mew."""
-    frame = sys._getframe(1)
-    while frame is not None and frame.f_code.co_filename.startswith(_MEW_DIR):
-        frame = frame.f_back
-    if frame is None:  # called from somewhere unexpected; keep the graph renderable
-        return ("<benchmark>", "?", 0)
-    return (frame.f_code.co_name, frame.f_code.co_filename, frame.f_lineno)
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _RootedRecord:
@@ -93,7 +81,6 @@ class MemrayManager:
         self._i = 0
         self._dest: Path | None = None
         self._tracker: Tracker | None = None
-        self._root: Frame = ("<benchmark>", "?", 0)
         #: Accepted captures as ``(path, root_frame)``, one per (benchmark,
         #: repetition), in run order. :func:`write_flamegraph` renders them.
         self.captures: list[tuple[Path, Frame]] = []
@@ -103,8 +90,10 @@ class MemrayManager:
 
         self._dest = self._dir / f"capture-{self._i}.bin"
         self._i += 1
-        # Before entering the tracker: see _caller_frame.
-        self._root = _caller_frame()
+        # GB calls this from the body's first loop step, so the direct Python
+        # caller is the benchmark body. Read before entering the tracker.
+        body = sys._getframe(1)
+        self._root: Frame = (body.f_code.co_name, body.f_code.co_filename, body.f_lineno)
         self._tracker = memray.Tracker(self._dest, trace_python_allocators=_TRACE_PYTHON_ALLOCATORS)
         self._tracker.__enter__()
 
@@ -112,6 +101,7 @@ class MemrayManager:
         import memray
 
         tracker, dest = self._tracker, self._dest
+        # GB pairs this with start() even when start() raised before tracking.
         if tracker is None or dest is None:
             return None
         tracker.__exit__(None, None, None)

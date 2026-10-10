@@ -30,10 +30,6 @@ def _average_ranks(values: list[float]) -> tuple[list[float], float]:
     return ranks, tie_term
 
 
-def _norm_cdf(x: float) -> float:
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2)))
-
-
 def mannwhitney_p(a: list[float], b: list[float]) -> float | None:
     """Return a two-sided p-value, or ``None`` if either sample is empty."""
     n1, n2 = len(a), len(b)
@@ -51,5 +47,5 @@ def mannwhitney_p(a: list[float], b: list[float]) -> float | None:
     diff = u1 - mu
     correction = 0.5 if diff > 0 else -0.5 if diff < 0 else 0.0
     z = (diff - correction) / sigma
-    p = 2.0 * (1.0 - _norm_cdf(abs(z)))
-    return min(1.0, max(0.0, p))
+    # 2 * (1 - Phi(|z|)), via erfc to stay accurate for tiny p.
+    return math.erfc(abs(z) / math.sqrt(2))

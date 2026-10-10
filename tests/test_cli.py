@@ -52,14 +52,10 @@ class _Result:
 
 
 @pytest.fixture
-def mew_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path):
-    """Invoke `mew.cli.main` in-process; returns a subprocess-shaped result.
-
-    The completion cache goes to tmp so discovery stays out of the real ``~/.cache``.
-    """
+def mew_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+    """Invoke `mew.cli.main` in-process; returns a subprocess-shaped result."""
     from mew.cli import main
 
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / ".cache"))
     # Output assertions expect plain text unless a test opts into color.
     monkeypatch.delenv("FORCE_COLOR", raising=False)
 

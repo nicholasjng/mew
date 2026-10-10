@@ -308,6 +308,17 @@ def test_compare_reads_every_result_format(tmp_path: Path, suffix: str) -> None:
     assert "-50.00%" in out and "×2.000" in out
 
 
+def test_load_gzip_jsonl_with_uppercase_suffix(tmp_path: Path) -> None:
+    # The suffix check is case-insensitive, so the gzip check must be too.
+    import gzip
+
+    p = tmp_path / "a.JSONL.GZ"
+    with gzip.open(p, "wt") as fh:
+        fh.write(json.dumps(_row("bench_x", 10.0)) + "\n")
+    samples, _ = _load(p, "real_time")
+    assert samples["bench_x"].value == 10.0
+
+
 def test_same_second_runs_stay_distinct_by_session_id(tmp_path: Path) -> None:
     # Two runs in one wall-clock second on one host: the id keeps them apart.
     p = tmp_path / "agg.json"

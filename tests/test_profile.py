@@ -622,7 +622,7 @@ def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
 def test_pause_only_reaches_the_profiler_during_its_own_pass(tmp_path):
     """GB drives the timed run with no profiler manager, so `state.pause()` there
     must not call one: it would suspend nothing, and in a threaded run several
-    worker threads would race on the manager's depth counter."""
+    worker threads would race on the manager's pause state."""
     calls: list[str] = []
 
     class Probe:
@@ -681,7 +681,7 @@ def test_pause_held_across_the_loop_end_is_not_resumed_after_the_pass(tmp_path):
 )
 def test_pyinstrument_handles_a_pause_held_over_the_loop_end(tmp_path):
     """A pass that ends paused must not stop pyinstrument twice, nor leave a
-    pause depth that keeps the next benchmark from pausing."""
+    paused flag that keeps the next benchmark from pausing."""
     pytest.importorskip("pyinstrument")
     from contextlib import ExitStack
 
@@ -693,7 +693,7 @@ def test_pyinstrument_handles_a_pause_held_over_the_loop_end(tmp_path):
             self.stopped_on_pause: list[bool] = []
 
         def pause(self) -> None:
-            self.stopped_on_pause.append(self._depth == 0)
+            self.stopped_on_pause.append(not self._paused)
             super().pause()
 
     @mew.benchmark(iterations=2)

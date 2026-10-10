@@ -70,7 +70,7 @@ class PyinstrumentManager:
         self._interval = interval
         self._prof: Profiler | None = None
         self._session: Session | None = None
-        self._depth = 0
+        self._paused = False
         self.sessions: list[Session] = []
 
     def after_setup_start(self) -> None:
@@ -84,10 +84,10 @@ class PyinstrumentManager:
         if self._prof is None:
             return
         # A pause scope held open over the end of the loop already stopped it.
-        if self._depth == 0:
+        if not self._paused:
             self._prof.stop()
         # Its later exit finds the pass over and does not resume.
-        self._depth = 0
+        self._paused = False
         self._session = self._prof.last_session
         if self._session is not None:
             self.sessions.append(self._session)
@@ -97,16 +97,18 @@ class PyinstrumentManager:
         """Suspend sampling for a ``state.pause()`` region.
 
         pyinstrument accumulates across ``stop()``/``start()`` and drops the gap.
-        Only the outermost pause toggles it: unbalanced start/stop raises.
+        The binding forwards only the outermost pause scope, and only during the
+        profiler pass, so each pause is resumed except one held open over the
+        end of the loop, which :meth:`before_teardown_stop` absorbs.
         """
-        if self._prof is not None and self._depth == 0:
+        if self._prof is not None:
             self._prof.stop()
-        self._depth += 1
+            self._paused = True
 
     def resume(self) -> None:
-        self._depth -= 1
-        if self._prof is not None and self._depth == 0:
+        if self._prof is not None:
             self._prof.start()
+            self._paused = False
 
     def get_result(self) -> ProfilerSummary | None:
         """Summarize the last session, or ``None`` when nothing was sampled.

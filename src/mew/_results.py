@@ -8,7 +8,7 @@ import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import Any, cast
 
 from mew._console import overflow
 from mew._statistics import Statistic
@@ -104,16 +104,12 @@ def _rows_from_json(path: Path) -> list[dict[str, Any]]:
 
 def _rows_from_jsonl(path: Path) -> list[dict[str, Any]]:
     """Read the JSONL sink (plain or gzip): one self-contained row per line."""
-    rows: list[dict[str, Any]] = []
-    if path.name.endswith(".gz"):
-        import gzip
+    import gzip
 
-        def _open(p: Path) -> TextIO:
-            return gzip.open(p, "rt")
-    else:
-        _open = Path.open
+    rows: list[dict[str, Any]] = []
+    # Case-insensitive like `_read_rows`' dispatch, so `.JSONL.GZ` decompresses too.
     # Stream: a growing --append archive can be large.
-    with _open(path) as fh:
+    with gzip.open(path, "rt") if path.name.lower().endswith(".gz") else path.open() as fh:
         for lineno, line in enumerate(fh, start=1):
             if not line.strip():
                 continue
@@ -154,7 +150,7 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
     """Per-repetition values in the first row's unit, dropping absent metrics."""
     # Appended sessions may declare different units.
-    unit_scale = _NS_PER_UNIT.get(rows[0].get("time_unit") or "ns", 1.0) if rows else 1.0
+    unit_scale = _NS_PER_UNIT.get(rows[0].get("time_unit") or "ns", 1.0)
     return [
         _to_ns(float(v), r.get("time_unit")) / unit_scale if metric in _TIME_METRICS else float(v)
         for r in rows

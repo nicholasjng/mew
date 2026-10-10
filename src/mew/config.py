@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -51,6 +50,14 @@ def _parse_str_list(raw: Any, key: str) -> list[str]:
     raise ValueError(f"[tool.mew] {key} must be a string or a list of strings")
 
 
+def _parse_str(tool: dict[str, Any], key: str) -> str | None:
+    """Validate an optional string config field."""
+    value = tool.get(key)
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"[tool.mew] {key} must be a string")
+    return value
+
+
 def load(start: Path | None = None) -> Config:
     """Read ``[tool.mew]`` from the nearest ``pyproject.toml``.
 
@@ -71,6 +78,8 @@ def load(start: Path | None = None) -> Config:
     ValueError
         If a config field has the wrong shape.
     """
+    import tomllib
+
     cwd = (start or Path.cwd()).resolve()
     for parent in [cwd, *cwd.parents]:
         candidate = parent / "pyproject.toml"
@@ -80,13 +89,11 @@ def load(start: Path | None = None) -> Config:
             data = tomllib.load(fh)
         # Keys are written with dashes (TOML idiom) but map onto snake_case fields.
         tool = {k.replace("-", "_"): v for k, v in data.get("tool", {}).get("mew", {}).items()}
-        statistic = tool.get("statistic")
-        if statistic is not None and not isinstance(statistic, str):
-            raise ValueError("[tool.mew] statistic must be a string")
-        setup = tool.get("setup")
-        if setup is not None and not isinstance(setup, str):
-            raise ValueError("[tool.mew] setup must be a string")
-        cfg = Config(setup=setup, statistic=statistic, project_root=parent)
+        cfg = Config(
+            statistic=_parse_str(tool, "statistic"),
+            setup=_parse_str(tool, "setup"),
+            project_root=parent,
+        )
         if (raw := tool.get("benchpaths")) is not None:
             cfg.benchpaths = _parse_str_list(raw, "benchpaths")
         if (raw := tool.get("python_files")) is not None:
