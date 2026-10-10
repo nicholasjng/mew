@@ -51,6 +51,15 @@ $ mew run --format json | jq '.benchmarks | length'
 
 `--format` only configures stdout; file `-o` sinks keep their by-extension format.
 
+### Benchmark output
+
+What benchmarked code writes to stdout or stderr, such as a library's warning on
+first use, is captured during the run, native writes included, and printed to
+stderr after the run under `output from benchmarks:`. It can neither break up the
+table nor corrupt JSON on stdout. `--capture=no` shows it live instead, e.g. when
+debugging a crash: captured output is lost if the process dies. To make that the
+project default, set `capture = "no"` in [`[tool.mew]`](configuration.md).
+
 `--append` adds the run as a new session to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-sessions-in-one-file).
 
 ### Selecting from stdin

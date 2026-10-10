@@ -449,8 +449,6 @@ def test_leaving_the_last_iteration_marks_the_run_as_incomplete(batch, exit_kind
     assert cap.runs[0]["skip_message"] == "The benchmark did not complete its loop."
 
 
-# mew reports the body's exception as unraisable after skipping the run.
-@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 @pytest.mark.parametrize("where", ["before", "after"])
 def test_state_pause_outside_the_loop_skips_with_error(where):
     # Unchecked, this stops a timer that never ran and reports the raw clock.
@@ -781,3 +779,45 @@ def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
     assert cap.runs[0]["iterations"] > 0
     if min_time == " 7x ":
         assert cap.runs[0]["iterations"] == 7
+
+
+# --- output capture -----------------------------------------------------------
+# Writes go through os.write: under pytest, print() targets pytest's own
+# sys.stdout replacement, while native libraries write to the descriptors.
+
+
+def test_benchmark_output_is_printed_to_stderr_after_the_run(capfd):
+    import os
+
+    class Recording(Capture):
+        def report_runs(self, runs):
+            # Reporters write to the real streams while the capture is suspended.
+            os.write(1, b"reporter row\n")
+            super().report_runs(runs)
+
+    @mew.benchmark(iterations=1)
+    def bench_noisy(state):
+        os.write(1, b"to stdout\n")
+        os.write(2, b"to stderr\n")
+        for _ in state:
+            pass
+
+    rep = Recording()
+    mew.run(reporter=rep)
+    assert all("output" not in r for r in rep.runs)
+    out, err = capfd.readouterr()
+    assert out == "reporter row\n"
+    assert err == "\noutput from benchmarks:\nto stdout\nto stderr\n"
+
+
+def test_capture_output_false_leaves_output_live(capfd):
+    import os
+
+    @mew.benchmark(iterations=1)
+    def bench_noisy(state):
+        os.write(2, b"live\n")
+        for _ in state:
+            pass
+
+    mew.run(reporter=Capture(), capture_output=False)
+    assert capfd.readouterr().err == "live\n"

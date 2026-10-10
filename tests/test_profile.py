@@ -465,7 +465,6 @@ def test_interrupted_pass_still_stops_the_manager(tmp_path, kind):
     assert manager.starts == manager.stops == 1
 
 
-@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 def test_failed_timed_runs_skip_the_manager_passes(tmp_path):
     @mew.benchmark(iterations=4)
     def bench_raises(state):

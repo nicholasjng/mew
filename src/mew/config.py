@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# `mew run --capture` values; also accepted as `[tool.mew] capture`.
+CAPTURE_MODES = ("fd", "no")
+
 
 @dataclass(slots=True)
 class Config:
@@ -25,6 +28,9 @@ class Config:
         benchmark files a given invocation happens to select.
     statistic : str or None
         Default ``mew compare`` reducer; ``None`` keeps the median.
+    capture : str or None
+        Default for ``mew run --capture``: ``"fd"`` captures benchmark output and
+        prints it after the run, ``"no"`` shows it live; ``None`` keeps ``"fd"``.
     project_root : Path or None
         Directory of the ``pyproject.toml`` these settings came from; ``None``
         when no file was found and defaults are in use.
@@ -34,6 +40,7 @@ class Config:
     python_files: list[str] = field(default_factory=lambda: ["bench_*.py", "*_bench.py"])
     setup: str | None = None
     statistic: str | None = None
+    capture: str | None = None
     project_root: Path | None = None
 
 
@@ -92,8 +99,11 @@ def load(start: Path | None = None) -> Config:
         cfg = Config(
             statistic=_parse_str(tool, "statistic"),
             setup=_parse_str(tool, "setup"),
+            capture=_parse_str(tool, "capture"),
             project_root=parent,
         )
+        if cfg.capture not in (None, *CAPTURE_MODES):
+            raise ValueError(f"[tool.mew] capture must be one of {', '.join(CAPTURE_MODES)}")
         if (raw := tool.get("benchpaths")) is not None:
             cfg.benchpaths = _parse_str_list(raw, "benchpaths")
         if (raw := tool.get("python_files")) is not None:
