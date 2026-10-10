@@ -69,8 +69,8 @@ def test_set_counter_values_reach_rows_normalized_by_flags():
     assert cap.runs[0]["counters"] == {"bytes": 1024, "total": 12, "mean": 2}
 
 
-def test_run_benchmarks_passes_extra_context_through():
-    """`extra_context` *is* the context block: Google Benchmark's own carries
+def test_run_benchmarks_passes_session_context_through():
+    """`session_context` *is* the context block: Google Benchmark's own carries
     nothing mew keeps, so the binding forwards what the caller assembled."""
     from mew import _core
 

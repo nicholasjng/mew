@@ -112,26 +112,23 @@ nb::dict run_to_dict(const Run& r) {
 class PyReporter : public BenchmarkReporter {
    public:
     nb::object py;
-    // Context supplied by the Python runner.
-    nb::dict extra_context;
-    // Rows for benchmarks rejected before native registration.
-    nb::list extra_rows;
+    // mew's session and provenance block, reported instead of GB's Context.
+    nb::dict session_context;
+    // Rows for benchmarks mew skipped before registering them, reported right
+    // after the context so they share its session and precede GB's rows.
+    nb::list skipped_rows;
 
-    PyReporter(nb::object obj, nb::dict extra, nb::list rows)
-        : py(std::move(obj)), extra_context(std::move(extra)), extra_rows(std::move(rows)) {}
-
-    ~PyReporter() override {
-        nb::gil_scoped_acquire gil;
-        py.reset();
-        extra_context.reset();
-        extra_rows.reset();
-    }
+    // Constructed and destroyed by `run_benchmarks` while it holds the GIL.
+    PyReporter(nb::object obj, nb::dict context, nb::list skipped)
+        : py(std::move(obj)),
+          session_context(std::move(context)),
+          skipped_rows(std::move(skipped)) {}
 
     bool ReportContext(const Context&) override {
         nb::gil_scoped_acquire gil;
         try {
-            py.attr("report_context")(extra_context);
-            if (extra_rows.size() > 0) py.attr("report_runs")(extra_rows);
+            py.attr("report_context")(session_context);
+            if (skipped_rows.size() > 0) py.attr("report_runs")(skipped_rows);
             return true;
         } catch (...) {
             mew_set_pending_abort(std::current_exception());
@@ -211,8 +208,8 @@ void register_reporter(nb::module_& m) {
 
     m.def(
         "run_benchmarks",
-        [](std::vector<std::string> argv, nb::object reporter, nb::dict extra_context,
-           nb::list extra_rows) {
+        [](std::vector<std::string> argv, nb::object reporter, nb::dict session_context,
+           nb::list skipped_rows) {
             // GB only shuffles the char** array, never writes into the strings.
             std::vector<char*> argp;
             argp.reserve(argv.size());
@@ -225,7 +222,7 @@ void register_reporter(nb::module_& m) {
 
             std::unique_ptr<PyReporter> pr;
             if (!reporter.is_none()) {
-                pr = std::make_unique<PyReporter>(reporter, extra_context, extra_rows);
+                pr = std::make_unique<PyReporter>(reporter, session_context, skipped_rows);
             }
 
             size_t count;
@@ -243,8 +240,8 @@ void register_reporter(nb::module_& m) {
             }
             return count;
         },
-        "argv"_a, "reporter"_a = nb::none(), "extra_context"_a = nb::dict(),
-        "extra_rows"_a = nb::list(),
+        "argv"_a, "reporter"_a = nb::none(), "session_context"_a = nb::dict(),
+        "skipped_rows"_a = nb::list(),
         "Initialize Google Benchmark with `argv` and run all registered benchmarks.\n"
         "Returns the number of benchmarks run.");
 }

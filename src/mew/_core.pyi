@@ -35,8 +35,8 @@ class TimeUnit(enum.StrEnum):
 def run_benchmarks(
     argv: Sequence[str],
     reporter: object | None = None,
-    extra_context: dict = {},
-    extra_rows: list = [],
+    session_context: dict = {},
+    skipped_rows: list = [],
 ) -> int:
     """
     Initialize Google Benchmark with `argv` and run all registered benchmarks.
