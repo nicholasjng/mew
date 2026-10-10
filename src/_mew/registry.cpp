@@ -75,12 +75,9 @@ void register_registry(nb::module_& m) {
                 } catch (nb::python_error& e) {
                     // The skip message carries the formatted traceback.
                     s.SkipWithError(e.what());
-                    if (e.matches(PyExc_Exception)) {
-                        // Also show it while the run continues.
-                        e.discard_as_unraisable(*holder);
-                    } else {
-                        // BaseException-only (KeyboardInterrupt, SystemExit) must
-                        // stop the whole run, not skip one benchmark.
+                    // BaseException-only (KeyboardInterrupt, SystemExit) must
+                    // stop the whole run, not skip one benchmark.
+                    if (!e.matches(PyExc_Exception)) {
                         mew_set_pending_abort(std::current_exception());
                     }
                 } catch (std::exception& e) {
