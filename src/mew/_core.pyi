@@ -262,7 +262,6 @@ def register_memory_manager(manager: object) -> None:
     """
     Register `manager` as Google Benchmark's memory manager, replacing any other.
     Requires `start()` and `stop()`; `stop()` returns memory metrics or None.
-    Optional `on_pass_complete(completed)` accepts or discards a closed capture.
     Pair with `unregister_memory_manager`.
     """
 

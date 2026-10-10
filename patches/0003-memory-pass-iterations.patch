@@ -1,5 +1,5 @@
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index cd19f7b..b1de556 100644
+index 98f0623..aacfee8 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
 @@ -139,9 +139,9 @@ BenchmarkReporter::Run CreateRunReport(
@@ -14,81 +14,55 @@ index cd19f7b..b1de556 100644
                : 0;
      }
  
-@@ -477,33 +477,37 @@ void BenchmarkRunner::RunWarmUp() {
+@@ -477,23 +477,30 @@ void BenchmarkRunner::RunWarmUp() {
    }
  }
  
--// Runs one memory or profiler pass and returns whether its loop completed.
--bool BenchmarkRunner::RunManagerPass(IterationCount iters, ProfilerManager* pm,
+-// Runs one memory or profiler pass.
+-void BenchmarkRunner::RunManagerPass(IterationCount pass_iters,
+-                                     ProfilerManager* pm,
 -                                     PerfCountersMeasurement* pcm) {
-+// Runs one memory or profiler pass on a single thread.
-+BenchmarkRunner::ManagerPassResult BenchmarkRunner::RunManagerPass(
-+    IterationCount pass_iters, ProfilerManager* pm,
-+    PerfCountersMeasurement* pcm) {
++// Runs one memory or profiler pass and returns the iterations it ran.
++IterationCount BenchmarkRunner::RunManagerPass(IterationCount pass_iters,
++                                               ProfilerManager* pm,
++                                               PerfCountersMeasurement* pcm) {
    std::unique_ptr<internal::ThreadManager> manager;
    manager.reset(new internal::ThreadManager(1));
    b.Setup();
--  RunInThread(&b, iters, 0, manager.get(), pcm, pm);
-+  RunInThread(&b, pass_iters, 0, manager.get(), pcm, pm);
-   // RunInThread() also marks a body that left the loop early as skipped.
--  bool completed;
-+  ManagerPassResult result;
-   {
-     MutexLock l(manager->GetBenchmarkMutex());
--    completed = manager->results.skipped_ == internal::NotSkipped;
-+    result.completed = manager->results.skipped_ == internal::NotSkipped;
-+    result.iterations = manager->results.iterations;
-   }
+   RunInThread(&b, pass_iters, 0, manager.get(), pcm, pm);
++  IterationCount iterations;
++  {
++    MutexLock l(manager->GetBenchmarkMutex());
++    iterations = manager->results.iterations;
++  }
    manager.reset();
    b.Teardown();
--  return completed;
-+  return result;
++  return iterations;
  }
  
  MemoryManager::Result BenchmarkRunner::RunMemoryManager(
      IterationCount memory_iterations) {
    MemoryLoopScope scope(memory_manager);
-   // No complete loop, no figures: memory_iterations == 0 means "not measured".
--  if (!RunManagerPass(memory_iterations, &scope,
--                      perf_counters_measurement_ptr)) {
-+  const ManagerPassResult pass = RunManagerPass(
-+      memory_iterations, &scope, perf_counters_measurement_ptr);
-+  if (!pass.completed) {
-     return MemoryManager::Result();
-   }
+-  RunManagerPass(memory_iterations, &scope, perf_counters_measurement_ptr);
 -  scope.result.memory_iterations = memory_iterations;
 +  // Includes any overshoot from KeepRunningBatch().
-+  scope.result.memory_iterations = pass.iterations;
++  scope.result.memory_iterations = RunManagerPass(
++      memory_iterations, &scope, perf_counters_measurement_ptr);
    return scope.result;
  }
  
-@@ -511,7 +515,8 @@ ProfilerManager::Result BenchmarkRunner::RunProfilerManager(
-     IterationCount profile_iterations) {
-   ProfilerManager::Result profile_result;
-   // Like a partial memory measurement, a partial profile is not reported.
--  if (RunManagerPass(profile_iterations, profiler_manager, /*pcm=*/nullptr)) {
-+  if (RunManagerPass(profile_iterations, profiler_manager, /*pcm=*/nullptr)
-+          .completed) {
-     profiler_manager->GetResult(profile_result);
-   }
-   return profile_result;
 diff --git a/src/benchmark_runner.h b/src/benchmark_runner.h
-index 474f08d..1a93e8d 100644
+index 5afb734..9ac94ee 100644
 --- a/src/benchmark_runner.h
 +++ b/src/benchmark_runner.h
-@@ -105,8 +105,13 @@ class BenchmarkRunner {
+@@ -105,8 +105,8 @@ class BenchmarkRunner {
    };
    IterationResults DoNIterations();
  
--  bool RunManagerPass(IterationCount iters, ProfilerManager* pm,
+-  void RunManagerPass(IterationCount pass_iters, ProfilerManager* pm,
 -                      PerfCountersMeasurement* pcm);
-+  struct ManagerPassResult {
-+    bool completed;
-+    IterationCount iterations;
-+  };
-+  ManagerPassResult RunManagerPass(IterationCount pass_iters,
-+                                   ProfilerManager* pm,
-+                                   PerfCountersMeasurement* pcm);
++  IterationCount RunManagerPass(IterationCount pass_iters, ProfilerManager* pm,
++                                PerfCountersMeasurement* pcm);
  
    MemoryManager::Result RunMemoryManager(IterationCount memory_iterations);
  

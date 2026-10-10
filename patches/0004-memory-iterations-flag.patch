@@ -30,7 +30,7 @@ index 4f2f175..9389b69 100644
            "          [--benchmark_enable_random_interleaving={true|false}]\n"
            "          [--benchmark_report_aggregates_only={true|false}]\n"
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index b1de556..4bcd8cc 100644
+index aacfee8..49de078 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
 @@ -67,6 +67,7 @@ BM_DECLARE_bool(benchmark_dry_run);
@@ -41,7 +41,7 @@ index b1de556..4bcd8cc 100644
  BM_DECLARE_bool(benchmark_report_aggregates_only);
  BM_DECLARE_bool(benchmark_display_aggregates_only);
  BM_DECLARE_string(benchmark_perf_counters);
-@@ -576,7 +577,8 @@ void BenchmarkRunner::DoOneRepetition() {
+@@ -566,7 +567,8 @@ void BenchmarkRunner::DoOneRepetition() {
    if (memory_manager != nullptr) {
      // Only run a few iterations to reduce the impact of one-time
      // allocations in benchmarks that are not properly managed.
