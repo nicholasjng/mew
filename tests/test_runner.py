@@ -821,3 +821,17 @@ def test_capture_output_false_leaves_output_live(capfd):
 
     mew.run(reporter=Capture(), capture_output=False)
     assert capfd.readouterr().err == "live\n"
+
+
+def test_run_without_reporter_prints_mews_console_table(capsys):
+    @mew.benchmark(iterations=1)
+    def bench_plain(state):
+        for _ in state:
+            pass
+
+    assert mew.run() == 1
+    out = capsys.readouterr().out
+    assert out.startswith("mew · host=")
+    assert "bench_plain" in out
+    # Google Benchmark's own console reporter prints a "Run on (...)" header.
+    assert "Run on (" not in out
