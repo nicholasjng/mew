@@ -7,7 +7,6 @@
 
 #include <cstdio>
 #include <exception>
-#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -243,16 +242,12 @@ void register_reporter(nb::module_& m) {
             // `--help` in argv still triggers exit(0); documented GB behavior.
             benchmark::Initialize(&argc, argp.data());
 
-            std::unique_ptr<PyReporter> pr;
-            if (!reporter.is_none()) {
-                pr = std::make_unique<PyReporter>(reporter, session_context, skipped_rows, capture);
-            }
-
+            PyReporter pr(std::move(reporter), std::move(session_context), std::move(skipped_rows),
+                          std::move(capture));
             size_t count;
             {
                 nb::gil_scoped_release release;
-                count = pr ? benchmark::RunSpecifiedBenchmarks(pr.get())
-                           : benchmark::RunSpecifiedBenchmarks();
+                count = benchmark::RunSpecifiedBenchmarks(&pr);
             }
 
             // Do NOT clear here: callers clear before registering and atexit
@@ -263,9 +258,10 @@ void register_reporter(nb::module_& m) {
             }
             return count;
         },
-        "argv"_a, "reporter"_a = nb::none(), "session_context"_a = nb::dict(),
-        "skipped_rows"_a = nb::list(), "capture"_a = nb::none(),
-        "Initialize Google Benchmark with `argv` and run all registered benchmarks.\n"
+        "argv"_a, "reporter"_a, "session_context"_a = nb::dict(), "skipped_rows"_a = nb::list(),
+        "capture"_a = nb::none(),
+        "Initialize Google Benchmark with `argv` and run all registered benchmarks,\n"
+        "reporting through `reporter`.\n"
         "`capture` (an active mew._capture.OutputCapture) is suspended around every\n"
         "reporter callback, so reporters write to the real stdout/stderr.\n"
         "Returns the number of benchmarks run.");

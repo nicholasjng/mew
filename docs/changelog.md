@@ -27,6 +27,9 @@ change between minor releases.
   jj checkout as dirty.
 - A benchmark that raises is no longer additionally printed as an
   "Exception ignored in" message; its row's skip message carries the traceback.
+- `mew.run()` without a reporter prints mew's console table, like `mew run`,
+  instead of Google Benchmark's console output. Google Benchmark's reporters
+  are no longer used.
 
 ### Fixed
 

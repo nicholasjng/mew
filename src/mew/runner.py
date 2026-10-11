@@ -20,7 +20,7 @@ from mew._session import new_session_id
 from mew._typing import MemoryManager, ProfilerManager
 from mew.context import get_context
 from mew.machine import _gil_enabled, _silence_native_stderr, machine_context
-from mew.reporter import Fanout, Reporter
+from mew.reporter import Fanout, Reporter, RichReporter
 
 if TYPE_CHECKING:
     from mew._typing import BenchmarkOptions, BenchmarkResult
@@ -168,7 +168,8 @@ def run(
         subset (e.g. from :meth:`Registry.filter`) to scope a run.
     reporter : Reporter, Iterable[Reporter], or None, optional
         A single reporter, an iterable of reporters (multiplexed via :class:`Fanout`),
-        or ``None`` for Google Benchmark's default console reporter.
+        or ``None`` (or an empty iterable) for mew's console table
+        (:class:`~mew.reporter.RichReporter`).
     min_time : str or float, optional
         Global minimum time per benchmark: seconds (``0.5``) or a fixed
         iteration count (``"100x"``). Per-benchmark ``min_time`` options win.
@@ -207,9 +208,8 @@ def run(
     capture_output : bool, default True
         Capture what benchmarks write to stdout and stderr, including from native
         code, and print it to stderr after the run, so it cannot interleave with
-        console rows or corrupt JSON streamed to stdout. Applies only with a
-        ``reporter``. Disable it to see output live, e.g. when debugging a crash,
-        which loses the captured output.
+        console rows or corrupt JSON streamed to stdout. Disable it to see output
+        live, e.g. when debugging a crash, which loses the captured output.
 
     Returns
     -------
@@ -255,32 +255,35 @@ def run(
         threaded = []
 
     rep = _to_single_reporter(reporter)
+    if rep is None:
+        # mew's console table, set up like the CLI's; GB's own reporter is never used.
+        rep = RichReporter(
+            show_memory=memory_manager is not None,
+            show_cpu=profiler_manager is not None,
+            show_label=any(e.case_labels for e in selected),
+        )
 
-    session_context: dict[str, Any] = {}
-    if rep is not None:
-        session: dict[str, Any] = {
-            "id": new_session_id(),
-            "date": datetime.now(UTC).isoformat(),
-            "host": socket.gethostname(),
-        }
-        if session_tag:
-            session["tag"] = session_tag
-        session_context["session"] = session
-        # Machine context first so a suite's providers can override it.
-        session_context["context"] = {**machine_context(), **get_context()}
+    session: dict[str, Any] = {
+        "id": new_session_id(),
+        "date": datetime.now(UTC).isoformat(),
+        "host": socket.gethostname(),
+    }
+    if session_tag:
+        session["tag"] = session_tag
+    # Machine context first so a suite's providers can override it.
+    session_context = {"session": session, "context": {**machine_context(), **get_context()}}
 
     if not selected:
         # All skipped: GB emits no context for an empty registry, so drive the
         # reporter lifecycle here to surface the skipped rows.
-        if rep is not None:
-            try:
-                rep.report_context(session_context)
-                rep.report_runs(skipped_rows)
-            finally:
-                # As in GB's lifecycle, finalize even if a callback raised, so
-                # owned sinks close and streamed JSON documents are terminated.
-                if fn := getattr(rep, "finalize", None):
-                    fn()
+        try:
+            rep.report_context(session_context)
+            rep.report_runs(skipped_rows)
+        finally:
+            # As in GB's lifecycle, finalize even if a callback raised, so
+            # owned sinks close and streamed JSON documents are terminated.
+            if fn := getattr(rep, "finalize", None):
+                fn()
         return 0
 
     cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, memory_iterations)
@@ -320,7 +323,7 @@ def run(
             _core.register_profiler_manager(profiler_manager)
             stack.callback(_core.unregister_profiler_manager)
         capture = None
-        if capture_output and rep is not None:
+        if capture_output:
             capture = OutputCapture(stack.enter_context(tempfile.TemporaryFile()))
             stack.callback(capture.close)
         return _core.run_benchmarks(cli, rep, session_context, skipped_rows, capture)
