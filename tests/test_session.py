@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gzip
 import json
 import shutil
 import subprocess
@@ -11,7 +10,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from _helpers import row
+from _helpers import row, write_jsonl
 
 import mew
 from mew._session import new_session_id
@@ -105,6 +104,10 @@ def test_vcs_context_jj_sees_uncommitted_edits(tmp_path: Path):
 
 
 def test_json_reporter_persists_session_identity(tmp_path: Path):
+    """JSON rows are the same self-contained objects JSONL writes; the header
+    repeats `session` / `context` for readers."""
+    mew.set_context("build", "asan")
+
     @mew.benchmark
     def bench_s(state):
         for _ in state:
@@ -113,14 +116,19 @@ def test_json_reporter_persists_session_identity(tmp_path: Path):
     out = tmp_path / "out.json"
     mew.run(
         min_time="1x",
+        repetitions=2,
         reporter=JSONReporter(output=out),
         session_tag="before",
     )
     doc = json.loads(out.read_text())
     assert uuid.UUID(doc["session"]["id"]).version == 7
     assert doc["session"]["tag"] == "before"
-    # Rows carry the same identity, so a document reads like a JSONL file.
-    assert all(row["session"] == doc["session"] for row in doc["benchmarks"])
+    assert doc["context"]["build"] == "asan"
+    # Every row, aggregates included, carries the header's blocks.
+    assert doc["benchmarks"]
+    for bench in doc["benchmarks"]:
+        assert bench["session"] == doc["session"]
+        assert bench["context"] == doc["context"]
 
 
 def test_jsonl_rows_are_self_contained(tmp_path: Path):
@@ -150,12 +158,7 @@ def test_jsonl_rows_read_back_without_a_header(tmp_path: Path, compressed: bool)
         row("first", 2, session_id="first"),
         row("second", 3, session_id="second", custom={"engine": "second"}),
     ]
-    text = "\n".join(json.dumps(r) for r in rows) + "\n"
-    if compressed:
-        with gzip.open(path, "wt") as fh:
-            fh.write(text)
-    else:
-        path.write_text(text)
+    write_jsonl(path, rows)
     assert {s.id for s in session_summaries(path)} == {"first", "second"}
     by_id = {r["session"]["id"]: r for r in read_results(path)}
     assert "context" not in by_id["first"]

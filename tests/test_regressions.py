@@ -91,6 +91,19 @@ reason = "noisy on shared runners"
     assert cfg.rules[1].threshold == 25.0
 
 
+def test_allow_rule_brackets_match_literally() -> None:
+    rule = AllowRule(pattern="*[algo=bubble]", reason="slow on purpose", ignore=True)
+    assert rule.matches("bench.py::sort[algo=bubble]")
+    assert not rule.matches("bench.py::sort[algo=merge]")
+    # As a character class, `[algo=bubble]` would have matched a single letter.
+    assert not rule.matches("bench.py::sorta")
+
+
+def test_load_config_accepts_dashed_keys(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.mew.regressions]\ndefault-threshold = 7.5\n")
+    assert load_config(root=tmp_path).default_threshold == 7.5
+
+
 def test_load_config_missing_reason_rejected(tmp_path: Path) -> None:
     py = tmp_path / "pyproject.toml"
     py.write_text(
@@ -183,33 +196,21 @@ def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixtu
     assert "❌ b   +20.00%" in err  # exact panel line: name + signed delta
 
 
-def test_compare_config_allow_lifts_threshold(tmp_path: Path) -> None:
-    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
+@pytest.mark.parametrize(
+    ("other_time", "rule"),
+    [
+        # A lifted threshold: +20% is within the rule's 50%.
+        (120.0, 'threshold = 50.0\nreason = "noisy"'),
+        # An ignore rule skips gating however far the benchmark moved.
+        (200.0, 'ignore = true\nreason = "known-flaky"'),
+    ],
+)
+def test_compare_config_allow_rule_passes_the_gate(
+    tmp_path: Path, other_time: float, rule: str
+) -> None:
+    other, base = _write_pair(tmp_path, other=[_row("b", other_time)], base=[_row("b", 100.0)])
     py = tmp_path / "pyproject.toml"
-    py.write_text(
-        """
-[[tool.mew.regressions.allow]]
-pattern = "b"
-threshold = 50.0
-reason = "noisy"
-"""
-    )
-    cfg = load_config(default_threshold=5.0, root=tmp_path)
-    code = compare([other, base], regressions=cfg, console=Console(width=200))
-    assert code == 0
-
-
-def test_compare_config_allow_ignore_skips_gating(tmp_path: Path) -> None:
-    other, base = _write_pair(tmp_path, other=[_row("b", 200.0)], base=[_row("b", 100.0)])
-    py = tmp_path / "pyproject.toml"
-    py.write_text(
-        """
-[[tool.mew.regressions.allow]]
-pattern = "b"
-ignore = true
-reason = "known-flaky"
-"""
-    )
+    py.write_text(f'[[tool.mew.regressions.allow]]\npattern = "b"\n{rule}\n')
     cfg = load_config(default_threshold=5.0, root=tmp_path)
     code = compare([other, base], regressions=cfg, console=Console(width=200))
     assert code == 0
