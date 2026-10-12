@@ -92,14 +92,16 @@ column isn't a selector.)
 These attach **in-process** measurements to the timing table. For native (C/C++)
 frames, sample the process from outside: see {doc}`profiling-native`.
 
-| Flag                    | Effect                                              |
-| ----------------------- | --------------------------------------------------- |
-| `--sample`              | Sample each benchmark in-process with `pyinstrument`. |
-| `--sample-html FILE`    | Write an HTML pyinstrument report.                  |
-| `--sample-interval F`   | Sampling interval seconds (default `1e-4`).         |
-| `--profile-memory`      | Run each benchmark under `memray`.                  |
-| `--memory-iterations N` | Cap the memory pass at `N` iterations (default 16).  |
-| `--flamegraph FILE`     | Write an HTML flame graph with allocation data.     |
+| Flag                    | Effect                                                                      |
+| ----------------------- | --------------------------------------------------------------------------- |
+| `--sample`              | Sample each benchmark in-process with the `--sampler`.                      |
+| `--sampler NAME`        | `tachyon` (3.15+), `pyinstrument`, or `auto`: Tachyon on 3.15+, else pyinstrument (default). |
+| `--sample-html FILE`    | Write an HTML CPU profile: a Tachyon flame graph or a pyinstrument call tree. |
+| `--sample-interval F`   | Sampling interval seconds (default `1e-4`).                                 |
+| `--sample-top-k K`      | Hottest bytecode instructions per row with Tachyon on free-threaded 3.15+ (default 5). |
+| `--profile-memory`      | Run each benchmark under `memray`.                                          |
+| `--memory-iterations N` | Cap the memory pass at `N` iterations (default 16).                         |
+| `--flamegraph FILE`     | Write an HTML flame graph with allocation data.                             |
 
 `--sample-html`/`--flamegraph` imply `--sample` / `--profile-memory` respectively.
 For a cross-engine memory/CPU comparison, run each suite separately with its own artifact paths and compare the result files; see {doc}`ab-comparison`.

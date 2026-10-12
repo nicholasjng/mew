@@ -9,9 +9,10 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
 {class}`~mew.RichReporter`
 : Streams one row per run as a formatted, colorized table. The default for
   `mew run` when no `-o` is given, and for `mew.run()` without a `reporter`. Optional columns: `Peak Mem`
-  (via `show_memory=True`) and `Samples` / `Hottest Frame`
-  (via `show_cpu=True`). The CLI exposes those options via
-  `--profile-memory` / `--sample`.
+  (via `show_memory=True`), `Samples` / `Hottest Frame`
+  (via `show_cpu=True`) and `Hottest Instruction` (via
+  `show_instructions=True`, for Tachyon on free-threaded builds). The CLI
+  exposes those options via `--profile-memory` / `--sample`.
 
 {class}`~mew.JSONReporter`
 : Streams one `{"session": ..., "context": ..., "benchmarks": [...]}` document
