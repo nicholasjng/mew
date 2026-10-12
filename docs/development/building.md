@@ -74,7 +74,7 @@ $ uv run pytest tests/ -q
 $ uvx prek run --all-files
 ```
 
-These steps run in CI (`.github/workflows/ci.yml`) across Linux, macOS, and Windows on Python 3.11–3.14.
+These steps run in CI (`.github/workflows/ci.yml`) across Linux, macOS, and Windows on Python 3.11–3.15.
 
 ## AddressSanitizer
 
