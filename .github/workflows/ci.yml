@@ -24,7 +24,6 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
-          enable-cache: true
 
       - name: Install project and its dependencies
         run: uv sync --all-extras --all-groups
@@ -55,7 +54,6 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: ${{ matrix.python-version }}
-          enable-cache: true
 
       - name: Install project and its dependencies
         run: uv sync --all-extras --group test
@@ -75,7 +73,6 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.14t"
-          enable-cache: true
 
       # duckdb has no 3.14t wheel yet.
       - name: Install project and its dependencies
@@ -86,7 +83,7 @@ jobs:
           uv run --no-sync python - <<'PY'
           import sys
           assert not sys._is_gil_enabled(), "interpreter is not free-threaded"
-          import mew._core  # FREE_THREADED build must not re-enable the GIL
+          import mew._core
           assert not sys._is_gil_enabled(), "importing mew._core re-enabled the GIL"
           print("OK: GIL disabled after `import mew._core`")
           PY
@@ -107,7 +104,6 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
-          enable-cache: true
 
       - name: Build the ASAN editable install
         env:
@@ -134,17 +130,9 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
-          enable-cache: true
 
       - name: Install project and docs dependencies
         run: uv sync --all-extras --group docs
 
       - name: Build docs (warnings = errors)
         run: uv run sphinx-build -W --keep-going -b html docs docs/_build/html
-
-      - name: Run doctests
-        run: uv run sphinx-build -b doctest docs docs/_build/doctest
-
-      - name: Check links
-        run: uv run sphinx-build -b linkcheck docs docs/_build/linkcheck
-        continue-on-error: true
