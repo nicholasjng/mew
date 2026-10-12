@@ -108,6 +108,13 @@ class State:
 
     def __iter__(self) -> State: ...
     def __next__(self) -> None: ...
+    def pause(self) -> PauseScope:
+        """
+        Return a context manager that pauses timing for the duration of the `with` block.
+        Inside another pause it does nothing. Entering it outside the benchmark loop, or
+        again while it is active, raises RuntimeError.
+        """
+
     def keep_running_batch(self, n: int) -> bool:
         """Advance by `n` iterations and return whether another batch should run."""
 
@@ -115,12 +122,6 @@ class State:
         """
         Iterate in batches of `n`, reducing dispatch overhead for fast bodies.
         The final batch may exceed the iteration budget.
-        """
-
-    def pause(self) -> PauseScope:
-        """
-        Return a context manager that pauses timing for the duration of the `with` block.
-        Nested scopes resume timing only when the outermost scope exits.
         """
 
     def skip_with_error(self, msg: str) -> None:

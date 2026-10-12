@@ -17,3 +17,17 @@ BatchIter\.__iter__:
 
 BatchIter\.__next__:
     def __next__(self) -> int: ...
+
+# State.pause and PauseScope are bound as plain CPython methods, which stubgen
+# sees as untyped method descriptors.
+State\.pause:
+    def pause(self) -> PauseScope:
+        \doc
+
+PauseScope\.__enter__:
+    \from typing import Self
+    def __enter__(self) -> Self: ...
+
+PauseScope\.__exit__:
+    \import types
+    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: types.TracebackType | None) -> None: ...

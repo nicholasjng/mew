@@ -102,9 +102,12 @@ change between minor releases.
 - `state.pause()` outside the benchmark loop raises `RuntimeError` instead of
   adding a raw clock reading to the result.
 - Nested `state.pause()` scopes keep timing and CPU sampling paused until the
-  outermost scope exits. A scope left open no longer disables pausing in later
-  benchmarks, and a scope held open over the end of the loop, for example by an
-  `ExitStack`, keeps its paused time out of the result.
+  outer scope exits; an inner scope does nothing. 0.2.0 stopped the stopped
+  timer again, counting the time since it last started twice. Re-entering a
+  scope object inside its own `with` block raises `RuntimeError`. A scope left
+  open no longer disables pausing in later benchmarks, and a scope held open
+  over the end of the loop, for example by an `ExitStack`, keeps its paused time
+  out of the result.
 - Benchmarks whose timed run fails or is skipped no longer get memory and CPU
   profiling passes, so they add nothing to flame graphs or CPU HTML reports. A
   pass that ends early, for example on Ctrl-C, still stops its profiler.

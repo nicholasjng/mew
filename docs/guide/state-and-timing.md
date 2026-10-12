@@ -51,7 +51,15 @@ def bench_shuffle_then_sort(state):
 
 The context manager resumes timing when its body raises. It is only valid inside
 the benchmark loop: setup before the loop is never timed, so pausing there (or
-after the loop) raises `RuntimeError` and the run is reported as skipped.
+after the loop) raises `RuntimeError` and the run is reported as skipped. A
+scope entered inside another `with state.pause():` block does nothing, so timing
+resumes when the outer scope exits. Entering the same scope object again inside
+its own block raises `RuntimeError`.
+
+A pause is not free. On an Apple Silicon Mac with Python 3.13, a `with
+state.pause():` block adds about 60 ns to an iteration's real time and about
+190 ns to its CPU time, most of that one read of the CPU clock. Pause only
+around work that takes much longer than that.
 
 ## Repetitions vs iterations
 
