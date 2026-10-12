@@ -52,13 +52,6 @@ nb::dict memory_block(const Run& r) {
     return d;
 }
 
-nb::dict profile_block(const Run& r) {
-    nb::dict d;
-    for (const auto& kv : r.profile_result.labels) d[kv.first.c_str()] = kv.second;
-    for (const auto& kv : r.profile_result.values) d[kv.first.c_str()] = kv.second;
-    return d;
-}
-
 // The registered name (`name[label]` for a family case) plus `/threads:N`,
 // without the case index argument.
 std::string addressable_name(const Run& r) {
@@ -115,8 +108,8 @@ nb::dict run_to_dict(const Run& r) {
     d["counters"] = counters;
     // GB stamps the memory result on the Run, mew's patch the profiler one.
     if (r.memory_result.memory_iterations > 0) d["memory"] = memory_block(r);
-    if (!r.profile_result.values.empty() || !r.profile_result.labels.empty())
-        d["cpu_profile"] = profile_block(r);
+    if (!r.profile_result.json.empty())
+        d["cpu_profile"] = nb::module_::import_("json").attr("loads")(r.profile_result.json);
     return d;
 }
 

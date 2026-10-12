@@ -84,6 +84,10 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
 };
 
 class PyProfilerManager final : public benchmark::ProfilerManager, public PyManager {
+    static constexpr const char* kResultShape =
+        "profiler manager get_result() must return a dict with string keys and "
+        "JSON-serializable values, or None";
+
    public:
     using PyManager::PyManager;
 
@@ -116,21 +120,20 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
         if (!nb::hasattr(py_, "get_result")) return;
         nb::object r = call("get_result");
         if (r.is_none()) return;
-        // A cast_error must not unwind through Google Benchmark.
+        if (!nb::isinstance<nb::dict>(r)) return abort_with_type_error(kResultShape);
+        nb::dict summary = nb::borrow<nb::dict>(r);
+        if (summary.size() == 0) return;
+        // json.dumps would turn an int key into a string; nested keys follow JSON's rules.
+        for (auto [k, v] : summary)
+            if (!nb::isinstance<nb::str>(k)) return abort_with_type_error(kResultShape);
+        // GB only carries the text; the reporter decodes it. json.dumps' error
+        // must not unwind through Google Benchmark.
         try {
-            // Split into Google Benchmark's label and value maps.
-            for (auto [k, v] : nb::cast<nb::dict>(r)) {
-                auto key = nb::cast<std::string>(k);
-                if (nb::isinstance<nb::str>(v)) {
-                    out.labels[key] = nb::cast<std::string>(v);
-                } else {
-                    out.values[key] = nb::cast<double>(v);
-                }
-            }
-        } catch (const nb::cast_error&) {
-            abort_with_type_error(
-                "profiler manager get_result() must return a flat dict with string keys and "
-                "string or numeric values, or None");
+            auto dumps = nb::module_::import_("json").attr("dumps");
+            out.json = nb::cast<std::string>(dumps(summary));
+        } catch (const nb::python_error& e) {
+            std::string reason = nb::cast<std::string>(nb::str(e.value()));
+            abort_with_type_error((std::string(kResultShape) + ": " + reason).c_str());
         }
     }
 
