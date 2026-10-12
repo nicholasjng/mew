@@ -292,7 +292,6 @@ def _render(
     higher_is_better = metric in _HIGHER_IS_BETTER
     is_time_metric = metric in _TIME_METRICS
     baseline = columns[0].samples
-    # Rows are the gated baseline/candidate overlap, so the candidate is always present.
     verdicts: list[BenchmarkVerdict] = []
     unit_skew: dict[str, tuple[Any, Any]] = {}
 

@@ -311,7 +311,6 @@ def run(
                 random_interleaving=random_interleaving,
                 session_tag=session_tag,
                 strict=strict,
-                # --capture wins; else fall back to [tool.mew] capture; else fd.
                 capture_output=(capture or cfg.capture or "fd") == "fd",
                 memory_manager=memory_manager,
                 memory_iterations=memory_iterations,

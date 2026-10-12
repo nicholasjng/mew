@@ -30,7 +30,6 @@ class OutputCapture:
         self._active = True
 
     def suspend(self) -> None:
-        # Flush buffered Python writes into the capture before switching back.
         sys.stdout.flush()
         sys.stderr.flush()
         os.dup2(self._saved[0], 1)
