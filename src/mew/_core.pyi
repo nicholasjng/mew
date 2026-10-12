@@ -72,6 +72,8 @@ class CounterFlags(enum.IntFlag):
 
     kAvgIterationsRate = 9
 
+    kStringifyExponent = 16
+
     kInvert = -2147483648
 
 class CounterOneK(enum.Enum):
@@ -152,7 +154,8 @@ class State:
     ) -> None:
         """
         Attach a user-defined counter, surfaced in `BenchmarkResult['counters']`.
-        `flags` controls normalization; `one_k` selects decimal or binary scaling.
+        `flags` controls normalization (and rate/exponent display); `one_k` selects
+        decimal or binary prefixes when the console shows the counter.
         """
 
     def range(self, pos: int = 0) -> int:

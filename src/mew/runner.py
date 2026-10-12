@@ -15,7 +15,7 @@ from mew import _core
 from mew._capture import OutputCapture
 from mew._console import overflow
 from mew._options import parse_min_time
-from mew._registry import REGISTRY, Entry
+from mew._registry import REGISTRY, Entry, case_names
 from mew._session import new_session_id
 from mew._typing import MemoryManager, ProfilerManager
 from mew.context import get_context
@@ -62,7 +62,7 @@ def _skipped_row(name: str, threads: int, message: str) -> BenchmarkResult:
         "label": "",
         "skipped": True,
         "skip_message": message,
-        "counters": {},
+        "counters": [],
     }
 
 
@@ -76,7 +76,6 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
     if (v := opts.get("repetitions")) is not None:
         handle.repetitions(int(v))
     if v := opts.get("unit"):
-        # The binding takes the enum; TimeUnit(...) also accepts a member as-is.
         handle.unit(_core.TimeUnit(v))
     if opts.get("use_real_time"):
         handle.use_real_time()
@@ -256,7 +255,6 @@ def run(
 
     rep = _to_single_reporter(reporter)
     if rep is None:
-        # mew's console table, set up like the CLI's; GB's own reporter is never used.
         rep = RichReporter(
             show_memory=memory_manager is not None,
             show_cpu=profiler_manager is not None,
@@ -292,17 +290,16 @@ def run(
     # doesn't double-register entries.
     _core.clear_registered_benchmarks()
     for entry in selected:
-        handle = _core.register_benchmark(entry.name, entry.fn)
-        _apply_options(handle, entry.options)
-        if entry.case_labels is not None:
-            if entry.cases is None:
-                handle.dense_range(0, len(entry.case_labels) - 1)
-            else:
-                # A name filter narrowed the family; each arg is a case index
-                # the trampoline reads via state.range(0).
-                for i in entry.cases:
-                    handle.arg(i)
-            handle.arg_name("case")
+        if entry.case_labels is None:
+            _apply_options(_core.register_benchmark(entry.name, entry.fn), entry.options)
+            continue
+        # One benchmark per case, named `name[label]`; the trampoline reads the
+        # case index from state.range(0). A name filter may have narrowed the cases.
+        for i, case_name in case_names(entry):
+            if entry.cases is None or i in entry.cases:
+                handle = _core.register_benchmark(case_name, entry.fn)
+                _apply_options(handle, entry.options)
+                handle.arg(i).arg_name("case")
 
     # On free-threaded builds the first second-thread creation runs a
     # stop-the-world pass that deadlocks GB's attaching workers; trigger it here.
