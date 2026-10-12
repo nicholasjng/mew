@@ -135,7 +135,8 @@ def test_jsonl_reporter_duckdb_query_round_trip(tmp_path):
     assert len(rows) == 1
     name, real_time, sz, session_id = rows[0]
     assert "bench_x" in name
-    assert real_time > 0
+    # One empty iteration can be shorter than a clock tick, so 0 is possible.
+    assert real_time == json.loads(out.read_text())["real_time"]
     assert sz == 1024
     assert session_id  # identity on the row itself, no header join
 

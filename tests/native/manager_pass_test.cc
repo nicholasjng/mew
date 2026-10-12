@@ -10,6 +10,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 
 namespace {
@@ -107,7 +108,7 @@ struct Profiler : benchmark::ProfilerManager {
     void GetResult(Result& result) override {
         Check(teardown_done[2] == 1, "results collected before teardown");
         ++collected;
-        result.values["operations"] = measured;
+        result.json = "{\"operations\": " + std::to_string(measured) + "}";
     }
 } profiler;
 
@@ -185,7 +186,7 @@ struct Reporter : benchmark::BenchmarkReporter {
                 Check(run.allocs_per_iter == 1.0, "incorrect allocation rate");
             }
             if (!ExitsEarly(2)) {
-                Check(run.profile_result.values.at("operations") == 20,
+                Check(run.profile_result.json == "{\"operations\": 20}",
                       "incorrect profiled operation count");
             }
         }
