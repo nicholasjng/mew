@@ -3,7 +3,7 @@
 A *regression* is a benchmark whose delta against the baseline exceeds a threshold
 in the slower direction (larger for ``real_time`` / ``cpu_time``, smaller for
 ``iterations``). Per-benchmark allowlist rules can ignore a benchmark or raise its
-threshold, matched against the full name via :func:`fnmatch.fnmatchcase`.
+threshold, matched against the full name with ``*`` and ``?`` wildcards.
 """
 
 from __future__ import annotations
@@ -54,7 +54,9 @@ class AllowRule:
     Attributes
     ----------
     pattern : str
-        ``fnmatch`` pattern matched case-sensitively against the full benchmark name.
+        Pattern matched case-sensitively against the full benchmark name: ``*``
+        and ``?`` are wildcards, and brackets match literally, so
+        ``"*[algo=bubble]"`` selects that case of every family.
     reason : str
         Why this benchmark is allowlisted. Required, so the file explains itself.
     ignore : bool, default False
@@ -79,7 +81,8 @@ class AllowRule:
 
     def matches(self, name: str) -> bool:
         """Whether ``name`` falls under this rule's pattern."""
-        return fnmatch.fnmatchcase(name, self.pattern)
+        # Escape `[` so a case's `[label]` matches literally.
+        return fnmatch.fnmatchcase(name, self.pattern.replace("[", "[[]"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +208,9 @@ def load_config(
 
     with source.open("rb") as fh:
         doc = tomllib.load(fh)
-    table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
+    # Dashed keys (TOML idiom) map onto snake_case, as in `[tool.mew]`.
+    raw_table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
+    table = {k.replace("-", "_"): v for k, v in raw_table.items()}
     if default_threshold is None:
         threshold = table.get("default_threshold", threshold)
     allow = table.get("allow", [])

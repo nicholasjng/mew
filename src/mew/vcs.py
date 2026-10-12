@@ -35,8 +35,8 @@ def _run(cwd: Path | None, program: str, *args: str) -> str | None:
 
 
 def _jj(cwd: Path | None) -> dict[str, Any] | None:
-    # One process for all fields. Lets jj snapshot the working copy first, so
-    # uncommitted edits show up as dirty.
+    # One process for all fields. jj snapshots the working copy first,
+    # so uncommitted edits show up as dirty.
     out = _run(
         cwd,
         "jj",

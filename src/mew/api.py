@@ -177,6 +177,7 @@ def _make_family_trampoline(
 
     def trampoline(state, _fn=fn, _cases=cases, _labels=labels):
         idx = state.range(0)
+        # A default the body may override; the registered name carries the case.
         state.set_label(_labels[idx])
         return _fn(state, **_cases[idx])
 
