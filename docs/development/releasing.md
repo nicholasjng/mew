@@ -68,8 +68,8 @@ Add a fresh `## Version X.Y.Z (unreleased)` heading above the release you just c
 
 - Bump the minor for behaviour changes, the patch for fixes and docs; pre-1.0, breaking
   changes go in a minor.
-- A `release` event runs the workflow file from **master**, not from the tag. Changes to
-  `release.yml` must be landed before the release that should use them.
+- A `release` event runs the workflow file from the **tagged commit**. Changes to
+  `release.yml` must be on master before you tag the release that should use them.
 - `jj git push` cannot push tags, which is why step 5 lets GitHub create it.
 - The publish job rejects any artifact whose filename doesn't carry the tag's version, so
   a tag that disagrees with `__version__` fails before upload rather than after.

@@ -4,7 +4,7 @@ All notable changes to `mew` are documented here. Versions follow
 [semantic versioning](https://semver.org/); until 1.0 the public API may still
 change between minor releases.
 
-## Version 0.2.1 (unreleased)
+## Version 0.3.0 (unreleased)
 
 ### Added
 
@@ -12,9 +12,18 @@ change between minor releases.
   included, and prints it to stderr after the run, so library warnings no longer
   break up the console table or corrupt JSON on stdout. `--capture=no`,
   `[tool.mew] capture = "no"` or `capture_output=False` shows it live instead.
+- The console shows counters after the timing columns, formatted like Google
+  Benchmark's console (`bytes_per_second=1.2Gi/s`): SI or binary prefixes
+  (`one_k`) and `/s` for rates. A counter carries this in an optional `format`.
+  `CounterFlags.kStringifyExponent` is exposed for exponent notation.
 
 ### Changed
 
+- A row's `counters` is a list of `{"name", "value"}` records, plus the optional
+  `format`, instead of a name-to-value mapping. DuckDB now infers the same type
+  for it in every archive, whichever counters the archive contains. Archives
+  written by 0.2.0 keep the old mapping, so don't query them together with
+  newer ones.
 - Google Benchmark is pinned to `e662de9` (v1.9.5-144).
 - `mew --version` and `mew.BENCHMARK_VERSION` report Google Benchmark as
   `v1.9.5-144-ge662de9a+mew` instead of with a `-dirty` suffix caused by
@@ -25,6 +34,10 @@ change between minor releases.
   registered one, as in Google Benchmark, instead of raising `ValueError`.
 - `vcs_context()` lets jj snapshot the working copy, so uncommitted edits mark a
   jj checkout as dirty.
+- The CPU and memory profiling passes run a single thread again, as in Google
+  Benchmark, also for threaded benchmarks. `state.threads` reports 1 in these
+  passes, in the body and in setup and teardown, so code sized by the thread
+  count (for example a barrier) cannot wait for absent workers.
 - A benchmark that raises is no longer additionally printed as an
   "Exception ignored in" message; its row's skip message carries the traceback.
 - `mew.run()` without a reporter prints mew's console table, like `mew run`,
@@ -55,6 +68,15 @@ change between minor releases.
   time to the result.
 - `--regression-threshold` overrides `[tool.mew.regressions] default_threshold`
   instead of being silently replaced by it.
+- `[tool.mew.regressions]` accepts dashed keys such as `default-threshold`, as
+  `[tool.mew]` does, instead of silently ignoring them.
+- Regression allowlist patterns match brackets literally, so `*[algo=bubble]`
+  selects that case instead of acting as a character class.
+- Calling `state.set_label()` in a parametrized family only sets the row's
+  `label`; rows stay named by their case label, so cases that set the same
+  label no longer collapse into one benchmark in `mew compare`. Each case is now
+  registered with Google Benchmark on its own, so the raw `name` reads
+  `f[n=1]/case:1/…` and `family_index` counts cases rather than families.
 - `mew compare` shows `×1.000` instead of `×inf` when both sides are zero, and
   scales the `memory.peak_bytes` stddev column like its values.
 - The memory flame graph's header totals cover every benchmark, not the first.

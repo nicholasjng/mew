@@ -61,3 +61,19 @@ importable from `mew` directly:
 
 {data}`mew.ProfilerSummary` describes the free-form dictionary returned by a
 {class}`mew.ProfilerResultProvider`.
+
+## Build information
+
+```{eval-rst}
+.. py:data:: BENCHMARK_VERSION
+   :type: str
+
+   The Google Benchmark version the extension was built against, in
+   ``git describe`` form with ``+mew`` marking mew's patches, e.g.
+   ``v1.9.5-144-ge662de9a+mew``.
+
+.. py:data:: BENCHMARK_COMMIT
+   :type: str
+
+   The full hash of the pinned Google Benchmark commit.
+```

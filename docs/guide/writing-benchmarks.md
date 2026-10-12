@@ -24,7 +24,7 @@ All options are optional and map 1:1 to Google Benchmark concepts:
 | ---------------------------- | ------------------------------------------------------------ |
 | `min_time`                   | Seconds Google Benchmark may spend stabilising the timing.    |
 | `min_warmup_time`            | Seconds spent warming caches before measurement.              |
-| `iterations`                 | Force an exact iteration count (skips auto-tuning).           |
+| `iterations`                 | Force an exact iteration count (skips auto-tuning); excludes `min_time` and `min_warmup_time`. |
 | `repetitions`                | Re-run the whole benchmark _N_ times for variance metrics.    |
 | `unit`                       | Override reported time unit (`"ns"`, `"us"`, `"ms"`, `"s"`).  |
 | `use_real_time`              | Report wall-clock instead of CPU time.                        |
@@ -69,7 +69,7 @@ Combine with `-k` for AND across tag and name.
 
 - **Setup inside the loop.** The body of `for _ in state:` is the measured
   region. Move data construction, file reads, and randomization outside
-  the loop, or wrap them in {meth}`State.pause`.
+  the loop, or wrap them in {meth}`mew.State.pause`.
 - **Measuring nothing.** CPython does not elide calls, so there is no
   `DoNotOptimize`; `sorted(data)` as a bare statement still runs. Constant
   expressions such as `2 + 3` are folded at compile time, leaving a loop that

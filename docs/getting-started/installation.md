@@ -20,7 +20,7 @@ $ pip install mew-bench
 To track the development version instead, point at the repository:
 
 ```console
-$ uv add mew-bench --git https://github.com/nicholasjng/mew
+$ uv add git+https://github.com/nicholasjng/mew
 $ pip install git+https://github.com/nicholasjng/mew.git
 ```
 
@@ -34,7 +34,8 @@ $ uv tool install mew-bench
 
 The tool environment does not contain your benchmark suite's dependencies:
 
-- `mew compare` and `mew completions` work from the tool environment.
+- `mew compare`, `mew sessions` and `mew completions` work from the tool
+  environment.
 - `mew run` and `mew list` require the dependencies imported by the benchmark
   files.
 
@@ -72,8 +73,9 @@ $ uv add 'mew-bench[cpu,memory]'
 
 ```console
 $ mew --version
-mew 0.1.0 (Google Benchmark v1.9.5-74-ga8460680)
+mew 0.2.0 (Google Benchmark v1.9.5-144-ge662de9a+mew)
 ```
 
-The trailing identifier is `git describe` output for the Google Benchmark commit
-the C++ extension was built against.
+The trailing identifier names the Google Benchmark commit the C++ extension was
+built against, in `git describe` form; `+mew` marks it as patched by mew (see
+[](../development/patches.md)).

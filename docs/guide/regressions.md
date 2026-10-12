@@ -47,8 +47,8 @@ converted to a common unit before reducing repetitions.
 
 ## Context and noise
 
-Context is printed above each column. `compare` warns when machine properties
-differ and adds differing custom values to column labels.
+Context is printed per file above the table. `compare` warns when machine
+properties differ and adds differing custom values to that file's context line.
 
 For repeated measurements, a red `±N% (!)` marks a coefficient of variation
 above 25%. Treat that delta as unreliable.
@@ -118,7 +118,9 @@ reason = "Bubble sort is intentionally slow; skip the gate."
 ```
 
 Rules are read from the `pyproject.toml` that `[tool.mew]` configuration comes
-from. Patterns use {func}`fnmatch.fnmatchcase` against the full benchmark name.
+from. Patterns use `*` and `?` wildcards (brackets match literally) against the
+benchmark name as `mew compare` keys it: `file.py::func[label]` by default,
+`func[label]` under `--key func`.
 Each rule must include a `reason` so the allowlist stays explainable. A
 rule must either set `ignore=true` or `threshold=<float>`.
 
@@ -127,7 +129,7 @@ rule must either set `ignore=true` or `threshold=<float>`.
 | Verdict         | Meaning                                                                          |
 | --------------- | -------------------------------------------------------------------------------- |
 | `OK`            | Within the active threshold.                                                     |
-| `REGRESSED`     | Over the default threshold, no rule matched; fails the gate.                    |
+| `REGRESSED`     | Over the active threshold (the default, or a matching rule's); fails the gate.  |
 | `ALLOWED_OVER`  | Over the default, but a rule raised the bar. Shown as a warning, not a failure. |
 | `IGNORED`       | A matching rule says skip gating entirely. Listed for visibility.                |
 

@@ -102,7 +102,7 @@ frames, sample the process from outside: see {doc}`profiling-native`.
 | `--flamegraph FILE`     | Write an HTML flame graph with allocation data.     |
 
 `--sample-html`/`--flamegraph` imply `--sample` / `--profile-memory` respectively.
-For a cross-engine memory/CPU comparison, run each suite separately with its own artifact paths and pivot the merged file; see {doc}`ab-comparison`.
+For a cross-engine memory/CPU comparison, run each suite separately with its own artifact paths and compare the result files; see {doc}`ab-comparison`.
 
 ## `mew list` (alias `ls`)
 
