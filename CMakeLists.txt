@@ -25,23 +25,17 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# AddressSanitizer, enabled with -DMEW_ASAN=ON or MEW_ASAN=1. Global flags also
-# instrument Google Benchmark; _core repeats them for nanobind's stub generator.
+# pyproject.toml passes -DMEW_ASAN=ON for MEW_ASAN=1. Directory-level flags also
+# instrument Google Benchmark, and nanobind's stub generator reads them off
+# _core to preload the sanitizer.
 option(MEW_ASAN "Build with AddressSanitizer" OFF)
-if(NOT MEW_ASAN AND DEFINED ENV{MEW_ASAN} AND "$ENV{MEW_ASAN}")
-    set(MEW_ASAN ON)
-endif()
 if(MEW_ASAN)
     add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address)
 endif()
 
-# ThreadSanitizer, enabled with -DMEW_TSAN=ON or MEW_TSAN=1. Mutually exclusive
-# with ASAN: the two runtimes can't co-load.
+# pyproject.toml passes -DMEW_TSAN=ON for MEW_TSAN=1.
 option(MEW_TSAN "Build with ThreadSanitizer" OFF)
-if(NOT MEW_TSAN AND DEFINED ENV{MEW_TSAN} AND "$ENV{MEW_TSAN}")
-    set(MEW_TSAN ON)
-endif()
 if(MEW_TSAN AND MEW_ASAN)
     message(FATAL_ERROR "MEW_TSAN and MEW_ASAN cannot be enabled at the same time")
 endif()
@@ -88,7 +82,6 @@ set(_MEW_BENCHMARK_LAST_DEFAULT_COMMIT "${_mew_benchmark_default_commit}"
     CACHE INTERNAL "")
 
 set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 
@@ -182,7 +175,7 @@ FetchContent_MakeAvailable(googlebenchmark)
 # Report the checked-out upstream SHA (excluding patches); fall back to the pin
 # for vendored sdists.
 set(MEW_BENCHMARK_BUILT_COMMIT "${MEW_BENCHMARK_COMMIT}")
-if(Git_FOUND AND IS_DIRECTORY "${googlebenchmark_SOURCE_DIR}/.git")
+if(IS_DIRECTORY "${googlebenchmark_SOURCE_DIR}/.git")
     execute_process(
         COMMAND "${GIT_EXECUTABLE}" -C "${googlebenchmark_SOURCE_DIR}" rev-parse HEAD
         OUTPUT_VARIABLE MEW_BENCHMARK_BUILT_COMMIT
@@ -238,17 +231,6 @@ target_compile_definitions(_core PRIVATE
     MEW_BENCHMARK_COMMIT="${MEW_BENCHMARK_BUILT_COMMIT}"
     MEW_BENCHMARK_VERSION="${MEW_BENCHMARK_VERSION}"
 )
-
-# nanobind's stubgen only detects sanitizers from per-target options; without
-# them it skips preloading the runtime and aborts on `import _core`.
-if(MEW_ASAN)
-    target_compile_options(_core PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-    target_link_options(_core PRIVATE -fsanitize=address)
-endif()
-if(MEW_TSAN)
-    target_compile_options(_core PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
-    target_link_options(_core PRIVATE -fsanitize=thread)
-endif()
 
 install(TARGETS _core LIBRARY DESTINATION mew)
 

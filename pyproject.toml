@@ -83,29 +83,13 @@ mew = "mew.cli:main"
 minimum-version = "build-system.requires"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["src/mew"]
+# Python < 3.12 and free-threaded builds get version-specific wheels instead.
 wheel.py-api = "cp312"
-cmake.version = ">=3.21"
-cmake.build-type = "Release"
 
 [[tool.dynamic-metadata]]
 provider = "scikit_build_core.metadata.regex"
 field = "version"
 input = "src/mew/__init__.py"
-
-[tool.scikit-build.cmake.define]
-BENCHMARK_ENABLE_TESTING = "OFF"
-BENCHMARK_ENABLE_GTEST_TESTS = "OFF"
-BENCHMARK_ENABLE_INSTALL = "OFF"
-CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
-
-[[tool.scikit-build.overrides]]
-if.python-version = "<3.12"
-wheel.py-api = ""
-
-[[tool.scikit-build.overrides]]
-# Free-threaded interpreters can't use the stable ABI.
-if.abi-flags = "t"
-wheel.py-api = ""
 
 [[tool.scikit-build.overrides]]
 if.env.MEW_ASAN = "1"
