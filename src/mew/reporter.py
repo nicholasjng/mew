@@ -41,6 +41,52 @@ def _fmt_bytes(n: int) -> str:
     return f"{n} B"
 
 
+_BIG_SI = ("k", "M", "G", "T", "P", "E", "Z", "Y")
+_BIG_IEC = ("Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi")
+_SMALL_SI = ("m", "u", "n", "p", "f", "a", "z", "y")
+
+
+def _human_readable(value: float, one_k: int, exponent: bool) -> str:
+    """Google Benchmark's ``HumanReadableNumber`` (string_util.cc), one digit of precision."""
+    sign, v, power = "-" if value < 0 else "", abs(value), 0
+    if v > one_k - 1:
+        scaled = v
+        for i in range(len(_BIG_SI)):
+            scaled /= one_k
+            if scaled <= one_k - 1:
+                v, power = scaled, i + 1
+                break
+    elif v < 0.01:  # values in [0.01, 1) print as they are
+        scaled = v
+        for i in range(len(_SMALL_SI)):
+            scaled *= one_k
+            if scaled >= 1:
+                v, power = scaled, -(i + 1)
+                break
+    mantissa = f"{sign}{v:g}"
+    if exponent:
+        return f"{mantissa}*2^{power * 10}" if one_k == 1024 else f"{mantissa}e{power * 3}"
+    if power > 0:
+        return mantissa + (_BIG_IEC if one_k == 1024 else _BIG_SI)[power - 1]
+    return mantissa + (_SMALL_SI[-power - 1] if power < 0 else "")
+
+
+def _fmt_counters(row: BenchmarkResult) -> str:
+    """Counters as Google Benchmark's console shows them: ``name=1.2Gi/s ...``."""
+    ratio = row.get("aggregate_unit") == "percentage"
+    parts = []
+    for counter in row["counters"]:
+        value, fmt = counter["value"], counter.get("format", {})
+        if ratio:  # e.g. the `cv` aggregate of a counter
+            text = f"{100 * value:.2f}%"
+        else:
+            text = _human_readable(value, fmt.get("one_k", 1000), fmt.get("exponent", False))
+            if fmt.get("rate"):
+                text += "s" if fmt.get("inverted") else "/s"
+        parts.append(f"{counter['name']}={text}")
+    return " ".join(parts)
+
+
 def canonical_row_name(row: Mapping[str, Any]) -> str:
     """The display name of a stored row: its ``benchmark`` plus any aggregate suffix."""
     aggregate = row.get("aggregate_name")
@@ -50,7 +96,6 @@ def canonical_row_name(row: Mapping[str, Any]) -> str:
 # Stamped onto every row so each one stands alone, in JSON and JSONL alike.
 _ROW_STAMP_FIELDS = ("session", "context")
 
-# Closing `]}` of the streamed doc, written once at finalize (GB-style).
 _JSON_CLOSER = "\n  ]\n}\n"
 
 
@@ -321,6 +366,8 @@ class RichReporter:
             top = cpu["top_function"] if cpu else "-"
             top = _truncate_right(top, w["hottest_frame"])
             cells.append(top.ljust(w["hottest_frame"]))
+        if row["counters"]:
+            cells.append(_fmt_counters(row))
         self._term.print(_COL_SEP.join(cells))
 
 

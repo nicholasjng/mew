@@ -57,6 +57,7 @@ void register_state(nb::module_& m) {
         .value("kIsIterationInvariantRate", benchmark::Counter::kIsIterationInvariantRate)
         .value("kAvgIterations", benchmark::Counter::kAvgIterations)
         .value("kAvgIterationsRate", benchmark::Counter::kAvgIterationsRate)
+        .value("kStringifyExponent", benchmark::Counter::kStringifyExponent)
         .value("kInvert", benchmark::Counter::kInvert);
 
     nb::enum_<benchmark::Counter::OneK>(m, "CounterOneK",
@@ -150,7 +151,8 @@ void register_state(nb::module_& m) {
             "flags"_a.sig("CounterFlags.kDefaults") = benchmark::Counter::kDefaults,
             "one_k"_a.sig("CounterOneK.kIs1000") = benchmark::Counter::kIs1000,
             "Attach a user-defined counter, surfaced in `BenchmarkResult['counters']`.\n"
-            "`flags` controls normalization; `one_k` selects decimal or binary scaling.")
+            "`flags` controls normalization (and rate/exponent display); `one_k` selects\n"
+            "decimal or binary prefixes when the console shows the counter.")
         .def(
             "range",
             [](const benchmark::State& self, std::size_t pos) {

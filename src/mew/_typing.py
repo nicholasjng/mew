@@ -40,8 +40,8 @@ class BenchmarkResult(TypedDict):
     Attributes
     ----------
     benchmark : str
-        The benchmark as mew addresses it: the registered name, ``[label]`` for
-        a family case, ``/threads:N`` when the benchmark set ``threads``. Shared
+        The benchmark as mew addresses it: the registered name, ``[case label]``
+        for a family case, ``/threads:N`` when the benchmark set ``threads``. Shared
         by all repetition and aggregate rows of one benchmark, unlike ``name``,
         which also carries Google Benchmark's option fragments and the
         aggregate suffix.
@@ -54,6 +54,13 @@ class BenchmarkResult(TypedDict):
     context : dict, optional
         Provenance: :func:`mew.set_context` values alongside whatever providers
         contributed (:func:`mew.machine_context`, :func:`mew.vcs_context`).
+    counters : list of dict
+        The run's counters in name order, each with a ``name``, a ``value``
+        (Google Benchmark has already applied the counter's flags) and, if the
+        console shows it as more than a plain decimal number, a ``format``:
+        ``one_k`` (1024 for binary prefixes), ``rate`` (shown per second),
+        ``inverted`` (an inverted rate, shown in seconds) and ``exponent``
+        (exponent notation).
     memory : dict, optional
         Google Benchmark's memory-manager figures for this run
         (``peak_bytes``, ``total_allocations``, ``iterations``,
@@ -86,7 +93,7 @@ class BenchmarkResult(TypedDict):
     label: str
     skipped: bool
     skip_message: str
-    counters: dict[str, float]
+    counters: list[dict[str, Any]]
     session: NotRequired[SessionInfo]
     context: NotRequired[dict[str, Any]]
     memory: NotRequired[dict[str, Any]]

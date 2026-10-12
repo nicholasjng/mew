@@ -8,7 +8,7 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
 
 {class}`~mew.RichReporter`
 : Streams one row per run as a formatted, colorized table. The default for
-  `mew run` when no `-o` is given. Optional columns: `Peak Mem`
+  `mew run` when no `-o` is given, and for `mew.run()` without a `reporter`. Optional columns: `Peak Mem`
   (via `show_memory=True`) and `Samples` / `Hottest Frame`
   (via `show_cpu=True`). The CLI exposes those options via
   `--profile-memory` / `--sample`.
@@ -83,8 +83,9 @@ class MetricsExporter:
         self._sink.flush()
 ```
 
-Base measurement keys are always present; `session`, `context`, `benchmark`,
-`memory`, and `cpu_profile` are conditional. `benchmark` is the benchmark as
+Base measurement keys, `benchmark` included, are always present; `session`,
+`context`, `aggregate_unit`, `memory`, and `cpu_profile` are conditional.
+`benchmark` is the benchmark as
 mew addresses it (`file.py::func[label]`, plus `/threads:N` for threaded runs),
 shared by all rows of one benchmark, so queries group on it without parsing
 `name`. Names never contain `[`, so `split_part(benchmark, '[', 1)` recovers
@@ -121,6 +122,11 @@ ORDER BY p95 DESC;
 SELECT name, context.dataset.size AS size, avg(real_time) AS mean_time
 FROM 'results.jsonl'
 GROUP BY name, size;
+
+-- One counter per row: `counters` is a list of {name, value, format} records
+SELECT benchmark, c.value AS bytes_per_second
+FROM 'results.jsonl', unnest(counters) AS t(c)
+WHERE c.name = 'bytes_per_second';
 ```
 
 ```python

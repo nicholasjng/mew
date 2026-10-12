@@ -10,4 +10,12 @@
 
 .. autoclass:: TimeUnit
    :members:
+
+.. autoclass:: CounterFlags
+   :members:
+   :undoc-members:
+
+.. autoclass:: CounterOneK
+   :members:
+   :undoc-members:
 ```

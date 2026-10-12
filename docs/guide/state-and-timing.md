@@ -33,7 +33,7 @@ Benchmark reports the actual count, so per-iteration timing remains correct.
 
 ## Pausing the timer
 
-{meth}`State.pause()` is a context manager that excludes its body from the measured region.
+{meth}`mew.State.pause` is a context manager that excludes its body from the measured region.
 Use it to rebuild state every iteration without leaking the cost into the timing:
 
 ```python
@@ -56,7 +56,8 @@ after the loop) raises `RuntimeError` and the run is reported as skipped.
 ## Repetitions vs iterations
 
 - **Iterations** are the inner-loop count. Google Benchmark chooses it to reach
-  `min_time`; setting it explicitly disables auto-tuning.
+  `min_time`; setting it explicitly disables auto-tuning, so `iterations` cannot
+  be combined with `min_time` or `min_warmup_time` (that raises `TypeError`).
 - **Repetitions** rerun the benchmark, including warm-up, and produce aggregate rows.
 
 Use `report_aggregates_only=True` to hide per-repetition rows.
@@ -78,10 +79,12 @@ Set `use_real_time=True` if your benchmark's primary metric is wall-clock time.
 
 ## Counters
 
-`state.set_counter()` attaches a numeric measurement to the result. Use
-{class}`mew.CounterFlags` for rates and other normalization, and set
-`one_k=mew.CounterOneK.kIs1024` when Google Benchmark's native console output should use binary
-rather than decimal prefixes.
+`state.set_counter()` adds a `{"name", "value"}` record to the result's
+`counters`. Use {class}`mew.CounterFlags` for rates and other normalization.
+The console shows counters after the timing columns, formatted like Google
+Benchmark's console: `bytes_per_second=1.2Gi/s hits=42`. Values get SI
+prefixes, or binary ones with `one_k=mew.CounterOneK.kIs1024`; rates get `/s`,
+and `CounterFlags.kStringifyExponent` switches to exponent notation.
 
 ## Threaded benchmarks (free-threading)
 

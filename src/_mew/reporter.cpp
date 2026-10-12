@@ -59,15 +59,10 @@ nb::dict profile_block(const Run& r) {
     return d;
 }
 
-// The benchmark as mew addresses it (`mew list --show-cases`, `-k -F`):
-// registration name, `[label]` for a family case, `/threads:N` when set.
-// Assembled from BenchmarkName's fields, never parsed from its rendering.
+// The registered name (`name[label]` for a family case) plus `/threads:N`,
+// without the case index argument.
 std::string addressable_name(const Run& r) {
     std::string name = r.run_name.function_name;
-    if (r.run_name.args.rfind("case:", 0) == 0 && !r.report_label.empty())
-        name += "[" + r.report_label + "]";
-    else if (!r.run_name.args.empty())
-        name += "/" + r.run_name.args;
     if (!r.run_name.threads.empty()) name += "/" + r.run_name.threads;
     return name;
 }
@@ -99,8 +94,24 @@ nb::dict run_to_dict(const Run& r) {
     d["label"] = r.report_label;
     d["skipped"] = r.skipped != benchmark::internal::NotSkipped;
     d["skip_message"] = r.skip_message;
-    nb::dict counters;
-    for (const auto& kv : r.counters) counters[kv.first.c_str()] = kv.second.value;
+    // A list of records, not a name -> value map: readers like DuckDB infer one
+    // type for it whichever counters a file contains.
+    nb::list counters;
+    for (const auto& [name, c] : r.counters) {
+        nb::dict counter;
+        counter["name"] = name;
+        counter["value"] = c.value;
+        // Display hints, only for counters that aren't plain decimal numbers.
+        nb::dict format;
+        if (c.oneK == benchmark::Counter::kIs1024) format["one_k"] = 1024;
+        if (c.flags & benchmark::Counter::kIsRate) {
+            format["rate"] = true;
+            if (c.flags & benchmark::Counter::kInvert) format["inverted"] = true;
+        }
+        if (c.flags & benchmark::Counter::kStringifyExponent) format["exponent"] = true;
+        if (format.size() > 0) counter["format"] = format;
+        counters.append(counter);
+    }
     d["counters"] = counters;
     // GB stamps the memory result on the Run, mew's patch the profiler one.
     if (r.memory_result.memory_iterations > 0) d["memory"] = memory_block(r);
@@ -262,6 +273,7 @@ void register_reporter(nb::module_& m) {
         "capture"_a = nb::none(),
         "Initialize Google Benchmark with `argv` and run all registered benchmarks,\n"
         "reporting through `reporter`.\n"
+
         "`capture` (an active mew._capture.OutputCapture) is suspended around every\n"
         "reporter callback, so reporters write to the real stdout/stderr.\n"
         "Returns the number of benchmarks run.");
