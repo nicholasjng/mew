@@ -4,20 +4,101 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 
-#include <stdexcept>
-
 #include "managers.h"
 
 namespace nb = nanobind;
 using namespace nb::literals;
 
 namespace {
-// The scope that stops the timer owns the pause; scopes nested inside it find
-// the timer stopped and do nothing. `depth` counts re-entries of the owner.
+// A plain CPython type rather than a nanobind class: CPython calls its methods
+// without nanobind's argument dispatch, which would otherwise count toward the
+// timed part of each `with state.pause()`.
+//
+// A scope entered while another holds the pause does nothing, so timing resumes
+// when the outer scope exits. (A nested ScopedPauseTiming in Google Benchmark
+// stops the stopped timer again, counting the time since it started twice.)
+// `active` is set while this scope holds the pause; re-entering it then raises,
+// as a flag can't tell which of its two exits ends the pause.
 struct PauseScope {
+    PyObject ob_base;  // PyObject_HEAD
     benchmark::State* state;
-    unsigned depth;
+    bool active;
 };
+
+PyTypeObject* pause_scope_type = nullptr;
+
+PyObject* pause_scope_enter(PyObject* self, PyObject*) {
+    auto* scope = reinterpret_cast<PauseScope*>(self);
+    if (!scope->state->in_timed_section()) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "state.pause() is only valid inside the benchmark loop");
+        return nullptr;
+    }
+    if (scope->active) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "this pause scope is already active and cannot be re-entered");
+        return nullptr;
+    }
+    // Inside the loop, only a pause scope stops the timer: another one holds it.
+    if (!scope->state->timer_running()) return Py_NewRef(self);
+    scope->state->PauseTiming();
+    // Match CPU sampling to the timed region. A no-op outside the
+    // single-threaded profiler pass.
+    mew_profiler_pause();
+    scope->active = true;
+    return Py_NewRef(self);
+}
+
+PyObject* pause_scope_exit(PyObject* self, PyObject* const*, Py_ssize_t nargs) {
+    if (nargs != 3) {
+        PyErr_Format(PyExc_TypeError, "__exit__() takes 3 arguments (%zd given)", nargs);
+        return nullptr;
+    }
+    auto* scope = reinterpret_cast<PauseScope*>(self);
+    // Ignore a nested scope, or an unmatched direct __exit__ call.
+    if (!scope->active) Py_RETURN_NONE;
+    scope->active = false;
+    mew_profiler_resume();
+    // As in ScopedPauseTiming: a skip inside the block ends the loop, and its
+    // timer must stay stopped.
+    if (scope->state->in_timed_section()) scope->state->ResumeTiming();
+    Py_RETURN_NONE;
+}
+
+PyMethodDef pause_scope_methods[] = {
+    {"__enter__", pause_scope_enter, METH_NOARGS, nullptr},
+    {"__exit__", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(pause_scope_exit)),
+     METH_FASTCALL, nullptr},
+    {nullptr, nullptr, 0, nullptr}};
+
+PyType_Slot pause_scope_slots[] = {
+    {Py_tp_doc, (void*)"Context manager that pauses State timing within a scope."},
+    {Py_tp_methods, pause_scope_methods},
+    {0, nullptr}};
+
+// Created only by State.pause(): a scope without a State would crash on entry.
+// register_state() fills in the name.
+PyType_Spec pause_scope_spec = {
+    nullptr, sizeof(PauseScope), 0,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    pause_scope_slots};
+
+PyObject* state_pause(PyObject* self, PyObject*) {
+    PyObject* obj = PyType_GenericAlloc(pause_scope_type, 0);
+    if (!obj) return nullptr;
+    auto* scope = reinterpret_cast<PauseScope*>(obj);
+    scope->state = nb::inst_ptr<benchmark::State>(self);
+    scope->active = false;
+    return obj;
+}
+
+// Bound through the type slots for the same reason as PauseScope's methods.
+PyMethodDef state_methods[] = {
+    {"pause", state_pause, METH_NOARGS,
+     "Return a context manager that pauses timing for the duration of the `with` block.\n"
+     "Inside another pause it does nothing. Entering it outside the benchmark loop, or\n"
+     "again while it is active, raises RuntimeError."},
+    {nullptr, nullptr, 0, nullptr}};
 
 struct BatchIter {
     benchmark::State* state;
@@ -29,7 +110,8 @@ struct BatchIter {
 // about two thirds of an empty loop iteration. NULL without an exception set
 // ends the loop.
 PyObject* state_iternext(PyObject* self) {
-    if (nb::inst_ptr<benchmark::State>(self)->KeepRunning()) return Py_NewRef(Py_None);
+    // Py_RETURN_NONE skips the reference count where None is immortal (3.12+).
+    if (nb::inst_ptr<benchmark::State>(self)->KeepRunning()) Py_RETURN_NONE;
     return nullptr;
 }
 
@@ -39,8 +121,10 @@ PyObject* batch_iternext(PyObject* self) {
     return nullptr;
 }
 
-PyType_Slot state_slots[] = {
-    {Py_tp_iter, (void*)PyObject_SelfIter}, {Py_tp_iternext, (void*)state_iternext}, {0, nullptr}};
+PyType_Slot state_slots[] = {{Py_tp_iter, (void*)PyObject_SelfIter},
+                             {Py_tp_iternext, (void*)state_iternext},
+                             {Py_tp_methods, state_methods},
+                             {0, nullptr}};
 PyType_Slot batch_slots[] = {
     {Py_tp_iter, (void*)PyObject_SelfIter}, {Py_tp_iternext, (void*)batch_iternext}, {0, nullptr}};
 }  // namespace
@@ -68,40 +152,15 @@ void register_state(nb::module_& m) {
     nb::class_<BatchIter>(m, "BatchIter", nb::type_slots(batch_slots),
                           "Iterator yielding batch sizes from `State.batches`.");
 
-    nb::class_<PauseScope>(m, "PauseScope",
-                           "Context manager that pauses State timing within a scope.")
-        .def(
-            "__enter__",
-            [](PauseScope& self) -> PauseScope& {
-                if (!self.state->in_timed_section()) {
-                    throw std::runtime_error(
-                        "state.pause() is only valid inside the benchmark loop");
-                }
-                if (self.depth > 0) {
-                    ++self.depth;
-                } else if (self.state->timer_running()) {
-                    self.state->PauseTiming();
-                    // Match CPU sampling to the timed region. A no-op outside
-                    // the single-threaded profiler pass.
-                    mew_profiler_pause();
-                    self.depth = 1;
-                }
-                return self;
-            },
-            nb::rv_policy::reference_internal, nb::sig("def __enter__(self) -> typing.Self"))
-        .def(
-            "__exit__",
-            [](PauseScope& self, nb::object, nb::object, nb::object) {
-                // Ignore a nested scope, or an unmatched direct __exit__ call.
-                if (self.depth == 0 || --self.depth != 0) return;
-                mew_profiler_resume();
-                // As in ScopedPauseTiming: a skip inside the block ends the loop, and
-                // its timer must stay stopped.
-                if (self.state->in_timed_section()) self.state->ResumeTiming();
-            },
-            "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none(),
-            nb::sig("def __exit__(self, exc_type: type[BaseException] | None, exc_value: "
-                    "BaseException | None, traceback: types.TracebackType | None) -> None"));
+    // Qualified by the module's import name, as nanobind does for its classes, so
+    // the stub generator (which imports `_core`) sees a type of this module.
+    // Static: Python 3.11 keeps the pointer as the type's name.
+    static const std::string pause_scope_name =
+        nb::cast<std::string>(m.attr("__name__")) + ".PauseScope";
+    pause_scope_spec.name = pause_scope_name.c_str();
+    pause_scope_type = reinterpret_cast<PyTypeObject*>(PyType_FromSpec(&pause_scope_spec));
+    if (!pause_scope_type) throw nb::python_error();
+    m.attr("PauseScope") = nb::borrow(reinterpret_cast<PyObject*>(pause_scope_type));
 
     nb::class_<benchmark::State>(m, "State", nb::type_slots(state_slots),
                                  "Active microbenchmark state.\n"
@@ -122,10 +181,6 @@ void register_state(nb::module_& m) {
             "n"_a,
             "Iterate in batches of `n`, reducing dispatch overhead for fast bodies.\n"
             "The final batch may exceed the iteration budget.")
-        .def(
-            "pause", [](benchmark::State& self) { return PauseScope{&self, 0}; },
-            "Return a context manager that pauses timing for the duration of the `with` block.\n"
-            "Nested scopes resume timing only when the outermost scope exits.")
         .def("skip_with_error", &benchmark::State::SkipWithError, "msg"_a,
              "Abort this benchmark and mark it failed; the row reports as skipped.")
         .def("skip_with_message", &benchmark::State::SkipWithMessage, "msg"_a,

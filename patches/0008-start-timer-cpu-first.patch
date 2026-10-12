@@ -1,0 +1,17 @@
+diff --git a/src/thread_timer.h b/src/thread_timer.h
+index eb23f59..b6cfa4a 100644
+--- a/src/thread_timer.h
++++ b/src/thread_timer.h
+@@ -22,8 +22,11 @@ class ThreadTimer {
+   // Called by each thread
+   void StartTimer() {
+     running_ = true;
+-    start_real_time_ = ChronoClockNow();
++    // The CPU clock first: it is a system call on common platforms, several
++    // times slower than the real one, and read second it would land in the
++    // timed real interval. StopTimer reads them in the reverse order.
+     start_cpu_time_ = ReadCpuTimerOfChoice();
++    start_real_time_ = ChronoClockNow();
+   }
+ 
+   // Called by each thread
