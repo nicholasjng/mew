@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+from typing import cast
 
 import pytest
+from _helpers import Capture
 
 import mew
 from mew import BenchmarkResult
@@ -90,7 +92,7 @@ def _fake_row(name: str, label: str = "", benchmark: str | None = None) -> Bench
         "label": label,
         "skipped": False,
         "skip_message": "",
-        "counters": {},
+        "counters": [],
     }
 
 
@@ -157,8 +159,8 @@ def test_rich_reporter_runs_without_error():
     out = buf.getvalue()
     assert "host=?" not in out
     assert "cpus=?" not in out
-    assert "Benchmark" in out  # the table header
-    assert "bench_x" in out  # a data row
+    assert "Benchmark" in out
+    assert "bench_x" in out
 
 
 def test_rich_reporter_streams_header_before_first_run():
@@ -225,8 +227,8 @@ def test_rich_reporter_shows_label_column_for_families():
     rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False), show_label=True)
     mew.run(min_time="1x", reporter=rep)
     out = buf.getvalue()
-    assert "Label" in out  # header
-    assert "small" in out and "big" in out  # case labels rendered per row
+    assert "Label" in out
+    assert "small" in out and "big" in out
 
 
 def test_rich_reporter_left_ellipsizes_long_names():
@@ -385,6 +387,20 @@ def test_rows_carry_the_addressable_benchmark_name(tmp_path):
     assert canonical_row_name(mean) == f"{entry.name}[n=1]_mean"
 
 
+def test_set_label_in_a_family_does_not_rename_its_cases():
+    @mew.parametrize([{"n": 1}, {"n": 2}], iterations=1)
+    def bench_fam(state, n):
+        state.set_label("same for every case")
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    (entry,) = mew.REGISTRY.all()
+    assert [r["benchmark"] for r in cap.runs] == [f"{entry.name}[n=1]", f"{entry.name}[n=2]"]
+    assert {r["label"] for r in cap.runs} == {"same for every case"}
+
+
 def test_canonical_row_name_appends_the_aggregate_suffix():
     from mew.reporter import canonical_row_name
 
@@ -440,22 +456,83 @@ def test_cv_aggregate_is_reported_as_a_ratio(tmp_path):
     assert " us" not in line
 
 
-def test_json_rows_carry_the_document_header(tmp_path):
-    """JSON rows are the same self-contained objects JSONL writes; the header
-    repeats `session` / `context` for readers."""
-    mew.set_context("build", "asan")
+@pytest.mark.parametrize(
+    ("value", "one_k", "exponent", "expected"),
+    [
+        (42, 1000, False, "42"),
+        (1500, 1000, False, "1.5k"),
+        (1e6, 1000, False, "1M"),
+        (1288490188.8, 1024, False, "1.2Gi"),
+        (0.5, 1000, False, "0.5"),
+        (0.005, 1000, False, "5m"),
+        (-1500, 1000, False, "-1.5k"),
+        (3.5e12, 1000, True, "3.5e12"),
+        (1024**2, 1024, True, "1*2^20"),
+    ],
+)
+def test_human_readable_matches_google_benchmark(value, one_k, exponent, expected):
+    """Expected strings are Google Benchmark's own `HumanReadableNumber` output."""
+    from mew.reporter import _human_readable
 
-    @mew.benchmark
-    def bench_ctx(state):
+    assert _human_readable(value, one_k, exponent) == expected
+
+
+def test_counters_carry_a_format_only_when_they_need_one():
+    from mew._core import CounterFlags, CounterOneK
+
+    @mew.benchmark(iterations=10)
+    def bench_counters(state):
         for _ in state:
             pass
+        state.set_bytes_processed(10 * 1024**3)
+        state.set_counter("hits", 42)
+        state.set_counter("latency", 10, flags=CounterFlags.kIsRate | CounterFlags.kInvert)
+        state.set_counter("big", 3.5e12, flags=CounterFlags.kStringifyExponent)
+        state.set_counter("mem", 2**20, one_k=CounterOneK.kIs1024)
 
-    out = tmp_path / "out.json"
-    mew.run(min_time="1x", repetitions=2, reporter=JSONReporter(output=out))
-    doc = json.loads(out.read_text())
-    assert doc["context"]["build"] == "asan"
-    assert doc["session"]["id"]
-    assert doc["benchmarks"]
-    for bench in doc["benchmarks"]:
-        assert bench["context"] == doc["context"]
-        assert bench["session"] == doc["session"]
+    cap = Capture()
+    mew.run(reporter=cap)
+    (row,) = cap.runs
+    assert [{k: v for k, v in c.items() if k != "value"} for c in row["counters"]] == [
+        {"name": "big", "format": {"exponent": True}},
+        {"name": "bytes_per_second", "format": {"one_k": 1024, "rate": True}},
+        {"name": "hits"},
+        {"name": "latency", "format": {"rate": True, "inverted": True}},
+        {"name": "mem", "format": {"one_k": 1024}},
+    ]
+
+
+def test_rich_reporter_shows_counters_like_google_benchmark():
+    from mew._console import Terminal
+
+    row = cast(
+        "BenchmarkResult",
+        {
+            **_fake_row("a::counted"),
+            "counters": [
+                {
+                    "name": "bytes_per_second",
+                    "value": 1288490188.8,
+                    "format": {"one_k": 1024, "rate": True},
+                },
+                {"name": "hits", "value": 42.0},
+                {"name": "latency", "value": 2e-7, "format": {"rate": True, "inverted": True}},
+            ],
+        },
+    )
+    cv = cast(
+        "BenchmarkResult",
+        {
+            **row,
+            "aggregate_name": "cv",
+            "aggregate_unit": "percentage",
+            "counters": [{"name": "hits", "value": 0.05}],
+        },
+    )
+    buf = io.StringIO()
+    rep = RichReporter(terminal=Terminal(file=buf, width=200, color=False))
+    rep.report_context({"session": {"host": "h"}, "context": {}})
+    rep.report_runs([row, cv])
+    plain, ratio = buf.getvalue().splitlines()[-2:]
+    assert plain.endswith(" │ bytes_per_second=1.2Gi/s hits=42 latency=200ns")
+    assert ratio.endswith(" │ hits=5.00%")

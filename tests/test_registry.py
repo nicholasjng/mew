@@ -84,7 +84,7 @@ def test_narrow_no_case_matches_drops_family():
 
 
 def test_narrow_all_cases_match_collapses_to_whole_family():
-    # A pattern matching every case needn't narrow — keep the dense path.
+    # A pattern matching every case needn't narrow.
     e = _family()
     narrowed = _narrow(e, r"n=\d+\]")
     assert narrowed is e

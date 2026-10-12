@@ -83,8 +83,7 @@ def test_list_discovers_all_entries(mew_cli, benchdir, tmp_path):
     res = mew_cli("list", str(benchdir), cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     names = [n for n in res.stdout.splitlines() if n.strip()]
-    # Parametrized families list as a single row; per-case expansion happens
-    # at run time via Google Benchmark's family bookkeeping.
+    # A parametrized family lists as one row without --show-cases.
     assert any(n.endswith("::bench_one") for n in names)
     assert any(n.endswith("::bench_two") for n in names)
 
@@ -240,8 +239,7 @@ def test_list_filter_by_multiple_tags_is_or(mew_cli, benchdir, tmp_path):
     res = mew_cli("list", str(benchdir), "-t", "io", "-t", "cpu", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     names = [n for n in res.stdout.splitlines() if n.strip()]
-    # io picks bench_one, cpu picks the bench_two family (`list` reports
-    # families; the family expands to two Runs only at run time).
+    # io picks bench_one, cpu picks the bench_two family, listed as one row.
     assert {n.rsplit("::", 1)[-1] for n in names} == {"bench_one", "bench_two"}
     assert len(names) == 2
 
@@ -264,12 +262,14 @@ def test_run_jsonl_gz_extension_accepted(mew_cli, benchdir, tmp_path):
     assert len(lines) == 3  # pure NDJSON: one row per benchmark, no header
 
 
-def test_run_min_warmup_time_accepts_durations(mew_cli, benchdir, tmp_path):
+@pytest.mark.parametrize(
+    ("value", "seconds"), [("0.5", 0.5), ("200ms", 0.2), ("10s", 10.0), ("1m", 60.0)]
+)
+def test_min_warmup_time_parses_durations(value, seconds):
     # Consistent with --min-time's suffix syntax: `200ms` parses to seconds.
-    res = mew_cli(
-        "run", str(benchdir), "--min-time", "1x", "--min-warmup-time", "200ms", cwd=tmp_path
-    )
-    assert res.returncode == 0, res.stderr
+    from mew.cli import _warmup_seconds
+
+    assert _warmup_seconds(value) == seconds
 
 
 @pytest.mark.parametrize(
@@ -447,6 +447,105 @@ def test_run_filter_by_tag(mew_cli, benchdir, tmp_path):
     assert all("bench_two" in n for n in names)
 
 
+@pytest.mark.parametrize(
+    ("config", "flag", "captured"),
+    [("", None, True), ('capture = "no"', None, False), ('capture = "no"', "fd", True)],
+)
+def test_capture_setting_and_flag_precedence(
+    monkeypatch, capfd: pytest.CaptureFixture[str], tmp_path, config, flag, captured
+):
+    # `main()` directly, not `mew_cli`: uncaptured, the body writes to the real
+    # fd 2, which only capfd sees (and capfd cannot share a test with capsys).
+    from mew.cli import main
+
+    (tmp_path / "pyproject.toml").write_text(f"[tool.mew]\n{config}\n")
+    (tmp_path / "bench_noisy.py").write_text(
+        textwrap.dedent(
+            """
+            import os
+
+            import mew
+
+            @mew.benchmark(iterations=1)
+            def noisy(state):
+                os.write(2, b"from the benchmark\\n")
+                for _ in state:
+                    pass
+            """
+        )
+    )
+    monkeypatch.chdir(tmp_path)
+    assert main(["run", "bench_noisy.py", *(["--capture", flag] if flag else [])]) == 0
+    err = capfd.readouterr().err
+    assert ("output from benchmarks:" in err) == captured
+    assert "from the benchmark" in err
+
+
+_PROFILED = """
+    import mew
+
+    def spin():
+        # Python-level work, so the sampled self time lands in this frame.
+        total = 0
+        for i in range(20_000):
+            total += i
+        return total
+
+    @mew.benchmark
+    def bench_hot(state):
+        for _ in state:
+            spin()
+            buf = bytearray(1 << 20)
+            del buf
+"""
+
+
+@pytest.mark.parametrize(
+    ("module", "flags"),
+    [
+        ("memray", ("--profile-memory", "--flamegraph")),
+        pytest.param(
+            "pyinstrument",
+            ("--sample", "--sample-interval", "1e-5", "--sample-html"),
+            marks=pytest.mark.skipif(
+                not getattr(sys, "_is_gil_enabled", lambda: True)(),
+                reason="pyinstrument's native sampler enables the GIL",
+            ),
+        ),
+    ],
+)
+def test_run_profiling_flags_write_the_report_and_annotate_rows(mew_cli, tmp_path, module, flags):
+    pytest.importorskip(module)
+    from mew.reporter import _fmt_bytes
+
+    (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_PROFILED))
+    report, out = tmp_path / "report.html", tmp_path / "rows.json"
+    res = mew_cli(
+        "run",
+        "bench_profiled.py",
+        "--min-time",
+        "20x",
+        *flags,
+        str(report),
+        "-o",
+        "stdout",
+        "-o",
+        str(out),
+        cwd=tmp_path,
+    )
+    assert res.returncode == 0, res.stderr
+    # The report renders from the run's own profiler pass, without a rerun.
+    assert "bench_hot" in report.read_text()
+    (row,) = json.loads(out.read_text())["benchmarks"]
+    # The row carries the profile, and the console table shows it.
+    if module == "memray":
+        assert row["memory"]["peak_bytes"] >= 1 << 20  # the loop's 1 MiB buffer
+        assert _fmt_bytes(row["memory"]["peak_bytes"]) in res.stdout
+    else:
+        assert "spin" in row["cpu_profile"]["top_function"]
+        assert row["cpu_profile"]["top_function"] in res.stdout
+
+
 # --- mew compare: --regression-threshold / --exit-non-zero-on-regression ---
 
 
@@ -465,37 +564,21 @@ def test_compare_regression_threshold_must_be_non_negative_and_finite(mew_cli, t
     assert res.returncode == 2
 
 
-def test_compare_regression_threshold_alone_is_report_only(mew_cli, tmp_path):
-    # Without --exit-non-zero-on-regression the panel is informational, not a gate.
-    # +20%, well over 5%:
+@pytest.mark.parametrize(
+    ("flags", "code"),
+    [
+        # Without --exit-non-zero-on-regression the panel is informational, not a gate.
+        (("--regression-threshold", "5%"), 0),
+        (("--regression-threshold", "5%", "--exit-non-zero-on-regression"), 2),
+        # The gate flag alone gates at the default threshold rather than no-opping.
+        (("--exit-non-zero-on-regression",), 2),
+    ],
+)
+def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path, flags, code):
+    # +20%, well over both the 5% threshold and the 5% default:
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
-    res = mew_cli("compare", str(other), str(base), "--regression-threshold", "5%", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    assert "❌" in res.stderr
-
-
-def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path):
-    # +20%, well over 5%:
-    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
-    res = mew_cli(
-        "compare",
-        str(other),
-        str(base),
-        "--regression-threshold",
-        "5%",
-        "--exit-non-zero-on-regression",
-        cwd=tmp_path,
-    )
-    assert res.returncode == 2
-    assert "❌" in res.stderr
-
-
-def test_compare_exit_non_zero_on_regression_gates_alone(mew_cli, tmp_path):
-    # The gate flag alone gates at the default threshold rather than no-opping.
-    # +20%, over the 5% default:
-    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
-    res = mew_cli("compare", str(other), str(base), "--exit-non-zero-on-regression", cwd=tmp_path)
-    assert res.returncode == 2
+    res = mew_cli("compare", str(other), str(base), *flags, cwd=tmp_path)
+    assert res.returncode == code, res.stderr
     assert "❌" in res.stderr
 
 
@@ -533,10 +616,6 @@ def test_sessions_lists_newest_first(mew_cli, tmp_path):
     assert lines[3].startswith("aaaaaaaa") and "before" in lines[3]
 
 
-def _ends(entries, suffix):
-    return any(e.name.endswith(suffix) for e in entries)
-
-
 def test_completions_unknown_shell_errors(mew_cli, tmp_path):
     res = mew_cli("completions", "tcsh", cwd=tmp_path)
     assert res.returncode == 2
@@ -562,15 +641,17 @@ def test_completions_generate(mew_cli, shell, marker, tmp_path):
     assert "%%" not in res.stdout
 
 
-@pytest.mark.skipif(not shutil.which("bash"), reason="bash not installed")
-def test_completions_bash_functional(mew_cli, tmp_path):
+@pytest.fixture
+def bash_complete(mew_cli, tmp_path):
+    """Source the generated bash completion; returns a `COMPREPLY` probe."""
     bash = shutil.which("bash")
-    assert bash is not None
+    if bash is None:
+        pytest.skip("bash not installed")
     f = tmp_path / "c.bash"
     f.write_text(mew_cli("completions", "bash", cwd=tmp_path).stdout)
     assert subprocess.run([bash, "-n", str(f)]).returncode == 0
 
-    def complete(words: str, cword: int) -> list[str]:
+    def complete(words: str, cword: int, cwd: Path | None = None) -> list[str]:
         # Forward-slash, quoted path: a Windows path has backslashes, which bash
         # would treat as escapes inside `source ...`, silently failing to load.
         probe = (
@@ -579,19 +660,25 @@ def test_completions_bash_functional(mew_cli, tmp_path):
             "_mew\n"
             'printf "%s\\n" "${COMPREPLY[@]}"\n'
         )
-        return subprocess.run([bash, "-c", probe], capture_output=True, text=True).stdout.split()
+        res = subprocess.run([bash, "-c", probe], capture_output=True, text=True, cwd=cwd)
+        return res.stdout.split()
 
-    assert "run" in complete("mew ru", 1)
-    assert "--pattern" in complete("mew run --pa", 2)
-    assert set(complete("mew run --format ''", 3)) == {"json", "jsonl", "rich"}
-    assert set(complete("mew completions ''", 2)) == {"bash", "zsh", "fish"}
+    return complete
 
 
-def test_completions_bash_positional_falls_back_to_files(mew_cli, tmp_path):
+def test_completions_bash_functional(bash_complete):
+    assert "run" in bash_complete("mew ru", 1)
+    assert "--pattern" in bash_complete("mew run --pa", 2)
+    assert set(bash_complete("mew run --format ''", 3)) == {"json", "jsonl", "rich"}
+    assert set(bash_complete("mew completions ''", 2)) == {"bash", "zsh", "fish"}
+
+
+def test_completions_bash_positional_falls_back_to_files(bash_complete, tmp_path):
     # run/list take `path[::filter]` selectors; bash completes the path part.
-    bash = mew_cli("completions", "bash", cwd=tmp_path).stdout
-    run_block = bash[bash.index("    run)") : bash.index("    compare)")]
-    assert 'COMPREPLY=( $(compgen -f -- "$cur") )\n        ;;' in run_block
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "bench_known.py").touch()
+    assert bash_complete("mew run ''", 2, cwd=project) == ["bench_known.py"]
 
 
 def test_completions_zsh_repeatable_options_star_form(mew_cli, tmp_path):
@@ -620,8 +707,8 @@ def test_completions_fish_syntax(mew_cli, tmp_path):
 
 # --- end-to-end: the real entry point in a subprocess -------------------------
 #
-# Proves the shipped binary: `python -m mew.cli` runs in a fresh interpreter,
-# real pipes round-trip, and errors are a message + exit code, no traceback.
+# `python -m mew.cli` in a fresh interpreter: real pipes round-trip, and errors
+# are a message and an exit code, not a traceback.
 
 
 def _mew(*args: str, cwd: Path, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -638,22 +725,12 @@ def _mew(*args: str, cwd: Path, stdin: str | None = None) -> subprocess.Complete
     )
 
 
-def test_e2e_run_both_sinks(benchdir, tmp_path):
-    out = tmp_path / "results.json"
-    res = _mew(
-        "run", str(benchdir), "--min-time", "1x", "-o", "stdout", "-o", str(out), cwd=tmp_path
-    )
-    assert res.returncode == 0, res.stderr
-    assert "Benchmark" in res.stdout
-    doc = json.loads(out.read_text())
-    assert len(doc["benchmarks"]) == 3
-
-
-def test_e2e_run_stdin_round_trip(benchdir):
+def test_e2e_run_stdin_round_trip(benchdir, tmp_path):
     # `mew list | mew run --stdin` with no xargs; run from the discovery cwd so
     # the relative paths in the listing resolve.
     listing = _mew("list", ".", cwd=benchdir)
     assert listing.returncode == 0, listing.stderr
+    out = tmp_path / "results.json"
     res = _mew(
         "run",
         "--stdin",
@@ -661,6 +738,10 @@ def test_e2e_run_stdin_round_trip(benchdir):
         "1x",
         "--format",
         "jsonl",
+        "-o",
+        "stdout",
+        "-o",
+        str(out),
         stdin=listing.stdout,
         cwd=benchdir,
     )
@@ -669,6 +750,9 @@ def test_e2e_run_stdin_round_trip(benchdir):
     names = [o["name"] for o in objs if "name" in o]
     assert any("bench_one" in n for n in names)
     assert any("bench_two" in n for n in names)
+    # Both sinks receive every row.
+    assert [b["name"] for b in json.loads(out.read_text())["benchmarks"]] == names
+    assert len(names) == 3
 
 
 def test_e2e_missing_default_benchpath_is_clean(tmp_path):
@@ -766,9 +850,9 @@ def test_stdin_path_selectors_do_not_cross_select_family_cases(mew_cli, tmp_path
     )
     assert res.returncode == 0, res.stderr
     rows = json.loads(res.stdout)["benchmarks"]
-    assert [(r["name"].split("/case:")[0], r["label"]) for r in rows] == [
-        ("bench_a.py::bench_two", "n=1"),
-        ("bench_b.py::bench_two", "n=2"),
+    assert [(r["benchmark"], r["label"]) for r in rows] == [
+        ("bench_a.py::bench_two[n=1]", "n=1"),
+        ("bench_b.py::bench_two[n=2]", "n=2"),
     ]
 
 
@@ -803,31 +887,3 @@ def test_e2e_benchmark_output_cannot_corrupt_json_on_stdout(tmp_path):
     assert res.returncode == 0, res.stderr
     assert len(json.loads(res.stdout)["benchmarks"]) == 1
     assert "from print" in res.stderr and "from fd 1" in res.stderr
-
-
-@pytest.mark.parametrize(
-    ("config", "flag", "captured"),
-    [("", None, True), ('capture = "no"', None, False), ('capture = "no"', "fd", True)],
-)
-def test_e2e_capture_setting_and_flag_precedence(tmp_path, config, flag, captured):
-    (tmp_path / "pyproject.toml").write_text(f"[tool.mew]\n{config}\n")
-    (tmp_path / "bench_noisy.py").write_text(
-        textwrap.dedent(
-            """
-            import os
-
-            import mew
-
-            @mew.benchmark(iterations=1)
-            def noisy(state):
-                os.write(2, b"from the benchmark\\n")
-                for _ in state:
-                    pass
-            """
-        )
-    )
-    args = ["run", "bench_noisy.py"] + (["--capture", flag] if flag else [])
-    res = _mew(*args, cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    assert ("output from benchmarks:" in res.stderr) == captured
-    assert "from the benchmark" in res.stderr

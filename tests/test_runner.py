@@ -58,7 +58,7 @@ def test_set_counter_values_reach_rows_normalized_by_flags():
     def bench_counter(state):
         for _ in state:
             pass
-        # one_k only affects GB's console formatting; rows carry the raw value.
+        # one_k only affects display; rows carry the raw value.
         state.set_counter("bytes", 1024, one_k=mew.CounterOneK.kIs1024)
         state.set_counter("total", 3, flags=mew.CounterFlags.kIsIterationInvariant)
         state.set_counter("mean", 8, flags=mew.CounterFlags.kAvgIterations)
@@ -66,7 +66,8 @@ def test_set_counter_values_reach_rows_normalized_by_flags():
     cap = Capture()
     mew.run(reporter=cap)
     assert cap.runs[0]["iterations"] == 4
-    assert cap.runs[0]["counters"] == {"bytes": 1024, "total": 12, "mean": 2}
+    counters = {c["name"]: c["value"] for c in cap.runs[0]["counters"]}
+    assert counters == {"bytes": 1024, "total": 12, "mean": 2}
 
 
 def test_run_benchmarks_passes_session_context_through():
@@ -135,18 +136,21 @@ def test_thread_counts_are_each_applied_to_native_handle():
     assert calls == [2, 4, 8]
 
 
-def test_threaded_benchmark_skipped_on_gil_build(monkeypatch):
-    """Threaded mode would deadlock on GB's start barrier under the GIL, so mew
-    warns and emits a skipped row instead."""
-    from mew import runner
+@pytest.fixture
+def threaded_bench_on_gil_build(monkeypatch):
+    """A GIL build (simulated) with one threaded benchmark registered."""
+    monkeypatch.setattr("mew.runner._gil_enabled", lambda: True)
 
-    monkeypatch.setattr(runner, "_gil_enabled", lambda: True)
-
-    @mew.benchmark(threads=4)
-    def bench_x(state):
+    @mew.benchmark(threads=4, iterations=1)
+    def bench_threaded(state):
         for _ in state:
             pass
 
+
+@pytest.mark.usefixtures("threaded_bench_on_gil_build")
+def test_threaded_benchmark_skipped_on_gil_build():
+    """Threaded mode would deadlock on GB's start barrier under the GIL, so mew
+    warns and emits a skipped row instead."""
     cap = Capture()
     with pytest.warns(RuntimeWarning, match="skipping 1 threaded benchmark"):
         n = mew.run(min_time="1x", reporter=cap)
@@ -160,32 +164,17 @@ def test_threaded_benchmark_skipped_on_gil_build(monkeypatch):
     assert cap.finalized
 
 
-def test_threaded_benchmark_strict_raises_on_gil_build(monkeypatch):
+@pytest.mark.usefixtures("threaded_bench_on_gil_build")
+def test_threaded_benchmark_strict_raises_on_gil_build():
     """`strict=True` errors so CI cannot mask a misconfiguration with a skip."""
-    from mew import runner
-
-    monkeypatch.setattr(runner, "_gil_enabled", lambda: True)
-
-    @mew.benchmark(threads=4)
-    def bench_x(state):
-        for _ in state:
-            pass
-
     with pytest.raises(RuntimeError, match="free-threaded interpreter"):
         mew.run(min_time="1x", reporter=Capture(), strict=True)
 
 
-def test_all_skipped_finalizes_reporter_when_report_runs_raises(monkeypatch):
+@pytest.mark.usefixtures("threaded_bench_on_gil_build")
+def test_all_skipped_finalizes_reporter_when_report_runs_raises():
     """The Python-driven all-skipped lifecycle must close reporters on errors,
     just like Google Benchmark's normal reporter lifecycle does."""
-    from mew import runner
-
-    monkeypatch.setattr(runner, "_gil_enabled", lambda: True)
-
-    @mew.benchmark(threads=2)
-    def bench_x(state):
-        for _ in state:
-            pass
 
     class RaisingReporter(Capture):
         def report_runs(self, runs):
@@ -198,10 +187,10 @@ def test_all_skipped_finalizes_reporter_when_report_runs_raises(monkeypatch):
     assert rep.finalized
 
 
-def test_mixed_suite_skips_threaded_runs_rest_on_gil_build(monkeypatch):
+@pytest.mark.usefixtures("threaded_bench_on_gil_build")
+def test_mixed_suite_skips_threaded_runs_rest_on_gil_build():
     """Only threaded benchmarks are skipped. Skipped rows flush from `report_context`,
     the only callback guaranteed to fire after a sink opens and before it writes."""
-    monkeypatch.setattr("mew.runner._gil_enabled", lambda: True)
     order: list[str] = []
 
     class Recording(Capture):
@@ -216,11 +205,6 @@ def test_mixed_suite_skips_threaded_runs_rest_on_gil_build(monkeypatch):
         def finalize(self) -> None:
             super().finalize()
             order.append("finalize")
-
-    @mew.benchmark(threads=4, iterations=1)
-    def bench_threaded(state):
-        for _ in state:
-            pass
 
     @mew.benchmark(iterations=1)
     def bench_plain(state):
@@ -311,16 +295,31 @@ def test_run_multiple_reporters_fan_out():
     assert a.finalized and b.finalized
 
 
-def test_run_options_iterations_applied():
-    @mew.benchmark(iterations=42)
-    def bench_x(state):
+def test_manual_time_replaces_the_measured_real_time():
+    @mew.benchmark(iterations=4, use_manual_time=True)
+    def bench_manual(state):
+        for _ in state:
+            state.set_iteration_time(0.5)
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    (row,) = cap.runs
+    assert row["iterations"] == 4
+    assert row["time_unit"] == "ns"
+    # 4 x 0.5 s reported over 4 iterations; the empty body's wall time plays no part.
+    assert row["real_time"] == 0.5e9
+
+
+def test_report_aggregates_only_drops_the_repetition_rows():
+    @mew.benchmark(iterations=1, repetitions=2, report_aggregates_only=True)
+    def bench_aggregated(state):
         for _ in state:
             pass
 
     cap = Capture()
-    # When iterations is set on the handle, GB ignores --benchmark_min_time.
     mew.run(reporter=cap)
-    assert cap.runs[0]["iterations"] == 42
+    assert [r["run_type"] for r in cap.runs] == ["aggregate"] * 4
+    assert [r["aggregate_name"] for r in cap.runs] == ["mean", "median", "stddev", "cv"]
 
 
 def test_state_pause_returns_a_context_manager_entering_as_itself():
@@ -381,6 +380,8 @@ def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
     mew.run(reporter=cap)
     row = cap.runs[0]
     assert not row["skipped"]
+    # A resumed timer adds the whole sleep, >= 0.2 s. The timed region is
+    # microseconds, but loaded CI runners stall threads for tens of ms.
     assert row["real_time"] < 0.1e9
 
 
@@ -396,7 +397,7 @@ def test_nested_state_pause_unwinds_after_an_exception():
                         raise ValueError("inner pause")
                 except ValueError:
                     pass
-                time.sleep(0.1)  # the outer scope must still be paused here
+                time.sleep(0.3)  # the outer scope must still be paused here
             time.sleep(0.01)  # timed: the outer scope must have resumed
 
     cap = Capture()
@@ -405,9 +406,9 @@ def test_nested_state_pause_unwinds_after_an_exception():
     assert not row["skipped"]
     assert row["iterations"] == 2
     assert row["time_unit"] == "ns"
-    # Per iteration: ~0.01 s timed; ~0.11 s if the inner exit resumed early,
-    # ~0 if the outer exit never resumed.
-    assert 0.008e9 <= row["real_time"] < 0.05e9
+    # Per iteration: ~0.01 s timed, which loaded CI runners stretch to ~0.05 s;
+    # >= 0.31 s if the inner exit resumed early, ~0 if the outer never resumed.
+    assert 0.008e9 <= row["real_time"] < 0.2e9
 
 
 @pytest.mark.skipif(
@@ -563,6 +564,8 @@ def test_second_loop_over_a_finished_state_adds_no_time():
     mew.run(reporter=cap)
     row = cap.runs[0]
     assert row["time_unit"] == "ns"
+    # Stopping the timer again adds the sleep, >= 0.2 s in total. Five empty
+    # iterations take microseconds, but loaded CI runners stall threads for tens of ms.
     assert row["real_time"] * row["iterations"] < 0.1e9
 
 
@@ -661,20 +664,6 @@ def test_keyboard_interrupt_stops_run_and_propagates():
     assert [r["skipped"] for r in cap2.runs] == [False]
 
 
-def test_benchmark_body_stderr_is_visible(capfd: pytest.CaptureFixture[str]):
-    # fd 2 must stay live during the run: only GB's system-info probes are
-    # silenced, not user output from benchmark bodies.
-    @mew.benchmark(iterations=1)
-    def bench_noisy(state):
-        for _ in state:
-            pass
-        print("body stderr marker", file=sys.stderr, flush=True)
-
-    cap = Capture()
-    mew.run(min_time="1x", reporter=cap)
-    assert "body stderr marker" in capfd.readouterr().err
-
-
 def test_gb_flags_do_not_leak_across_runs():
     """GB flags are process-global: a knob set for one run() must not apply to
     the next run() in the same process that didn't ask for it."""
@@ -721,28 +710,10 @@ def test_reporter_failure_aborts_the_run():
         mew.run(min_time="1x", reporter=Exploding())
     assert bodies == ["a"], "later benchmarks must not run once the sink failed"
 
-
-def test_abort_is_consumed_between_runs():
-    """The abort slot is cleared by the rethrow, so the next run starts clean."""
-
-    class Exploding:
-        def report_context(self, context, /):
-            pass
-
-        def report_runs(self, runs, /):
-            raise RuntimeError("sink is broken")
-
-    @mew.benchmark(iterations=1)
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    with pytest.raises(RuntimeError, match="sink is broken"):
-        mew.run(min_time="1x", reporter=Exploding())
-
+    # The abort slot is cleared by the rethrow, so a follow-up run starts clean.
     cap = Capture()
-    mew.run(min_time="1x", reporter=cap)
-    assert cap.runs, "a follow-up run must not inherit the previous abort"
+    assert mew.run(min_time="1x", reporter=cap) == 3
+    assert [r["skipped"] for r in cap.runs] == [False] * 3
 
 
 def test_report_context_return_value_is_ignored():

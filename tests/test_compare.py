@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -59,7 +60,7 @@ def test_load_ignores_gb_aggregate_rows(tmp_path: Path, selector: str | None) ->
     assert samples["b"].stddev is not None
 
 
-def test_compare_speedup_signs(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_compare_speedup_signs(tmp_path: Path) -> None:
     other, base = _write_pair(
         tmp_path,
         other=[_row("bench_x", 80.0), _row("bench_y", 75.0)],
@@ -102,20 +103,6 @@ def test_compare_empty_overlap(tmp_path: Path, capsys: pytest.CaptureFixture[str
     code = compare([other, base], console=Console())
     assert code == 1
     assert "no overlapping benchmarks" in capsys.readouterr().err
-
-
-def test_compare_pattern_filter(tmp_path: Path) -> None:
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("alpha", 5.0), _row("beta", 40.0)],
-        base=[_row("alpha", 10.0), _row("beta", 20.0)],
-    )
-    console = Console(width=200)
-    code = compare([other, base], pattern="alpha", console=console)
-    assert code == 0
-    out = console.export_text()
-    assert "alpha" in out
-    assert "beta" not in out
 
 
 def test_compare_pattern_is_regex(tmp_path: Path) -> None:
@@ -602,53 +589,44 @@ def test_compare_memory_metric_without_data_hints_profile_flag(
     assert "--profile-memory" in capsys.readouterr().err
 
 
-def test_compare_marks_high_cv_rows(tmp_path: Path) -> None:
-    # Baseline reps scatter wildly (CV >> 25%); other is steady.
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("b", 99.0), _row("b", 100.0), _row("b", 101.0)],
-        base=[_row("b", 40.0), _row("b", 100.0), _row("b", 160.0)],
+@pytest.mark.parametrize(
+    ("other", "base", "markers"),
+    [
+        # Baseline reps scatter wildly (CV >> 25%): stdev([40,100,160])/median = 60/100.
+        ((99.0, 100.0, 101.0), (40.0, 100.0, 160.0), ["±60% (!)"]),
+        # Both sides steady.
+        ((49.0, 50.0, 51.0), (99.0, 100.0, 101.0), []),
+    ],
+)
+def test_compare_marks_only_high_cv_rows(
+    tmp_path: Path, other: tuple[float, ...], base: tuple[float, ...], markers: list[str]
+) -> None:
+    other_path, base_path = _write_pair(
+        tmp_path, other=[_row("b", v) for v in other], base=[_row("b", v) for v in base]
     )
     console = Console(width=200)
-    assert compare([other, base], console=console) == 0
-    out = console.export_text()
-    assert "(!)" in out
-    assert "±60%" in out  # stdev([40,100,160])/median = 60/100
+    assert compare([other_path, base_path], console=console) == 0
+    assert re.findall(r"±\d+% \(!\)", console.export_text()) == markers
 
 
-def test_compare_no_cv_marker_on_steady_rows(tmp_path: Path) -> None:
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("b", 49.0), _row("b", 50.0), _row("b", 51.0)],
-        base=[_row("b", 99.0), _row("b", 100.0), _row("b", 101.0)],
+@pytest.mark.parametrize(
+    ("other", "base", "significant"),
+    [
+        # Both sides scatter over the same range; the ~2% delta shouldn't read as real.
+        ((99.0, 100.0, 101.0, 100.0), (101.0, 99.0, 103.0, 98.0), False),
+        # n=3 per side cannot reach p < 0.05 even at total separation; use 5 reps.
+        ((9.0, 10.0, 11.0, 9.5, 10.5), (99.0, 100.0, 101.0, 99.5, 100.5), True),
+    ],
+)
+def test_compare_marks_only_significant_deltas(
+    tmp_path: Path, other: tuple[float, ...], base: tuple[float, ...], significant: bool
+) -> None:
+    other_path, base_path = _write_pair(
+        tmp_path, other=[_row("b", v) for v in other], base=[_row("b", v) for v in base]
     )
     console = Console(width=200)
-    assert compare([other, base], console=console) == 0
-    assert "(!)" not in console.export_text()
-
-
-def test_compare_no_significance_marker_on_insignificant_delta(tmp_path: Path) -> None:
-    # Both sides scatter over the same range; the ~2% delta shouldn't read as real.
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("b", 99.0), _row("b", 100.0), _row("b", 101.0), _row("b", 100.0)],
-        base=[_row("b", 101.0), _row("b", 99.0), _row("b", 103.0), _row("b", 98.0)],
-    )
-    console = Console(width=200)
-    assert compare([other, base], console=console) == 0
-    assert "(signif.)" not in console.export_text()
-
-
-def test_compare_marks_significant_delta_on_clear_shift(tmp_path: Path) -> None:
-    # n=3 per side cannot reach p < 0.05 even at total separation; use 5 reps.
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("b", v) for v in (9.0, 10.0, 11.0, 9.5, 10.5)],
-        base=[_row("b", v) for v in (99.0, 100.0, 101.0, 99.5, 100.5)],
-    )
-    console = Console(width=200)
-    assert compare([other, base], console=console) == 0
-    assert "(signif.)" in console.export_text()
+    assert compare([other_path, base_path], console=console) == 0
+    assert ("(signif.)" in console.export_text()) is significant
 
 
 def test_load_excludes_skipped_rows(tmp_path: Path) -> None:
