@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from datetime import UTC, datetime
 
 # -- Project information -----------------------------------------------------
@@ -21,7 +20,6 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
-    "sphinx.ext.doctest",
     "sphinx_autodoc_typehints",
     "sphinx_copybutton",
     "sphinx_design",
@@ -54,7 +52,6 @@ autodoc_default_options = {
 }
 autodoc_typehints = "description"
 autodoc_typehints_format = "short"
-# NumPy-style docstrings (matches the in-tree convention in mew.api etc.).
 napoleon_numpy_docstring = True
 napoleon_google_docstring = False
 napoleon_use_rtype = False
@@ -62,11 +59,6 @@ napoleon_use_rtype = False
 # second py:attribute per entry, colliding with the one autodoc already generates
 # from the annotation on every documented dataclass field.
 napoleon_use_ivar = True
-
-# Only run doctests in explicit ``.. doctest::`` directives. The NumPy-style
-# `>>>` example blocks in docstrings are illustrative, not executable.
-doctest_test_doctest_blocks = ""
-doctest_global_setup = "import mew"
 
 # -- Intersphinx -------------------------------------------------------------
 
@@ -127,15 +119,12 @@ def _render_cli_help() -> None:
 
 _render_cli_help()
 
-# -- Suppress warnings for known third-party intersphinx gaps ----------------
+# -- Warnings ----------------------------------------------------------------
 
 nitpicky = False
 suppress_warnings = ["myst.header"]
 
 # -- linkcheck ---------------------------------------------------------------
 # GitHub's HTML commit pages aggressively rate-limit unauthenticated linkcheck
-# requests, which stalls CI.
+# requests.
 linkcheck_ignore = [r"https://github\.com/.*/commits/.*"]
-
-# Add docs/ to sys.path so any local helpers are importable.
-sys.path.insert(0, os.path.dirname(__file__))

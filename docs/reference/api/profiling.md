@@ -11,6 +11,24 @@ Custom managers implement the {class}`mew.MemoryManager` or
 {class}`mew.ProfilerResultProvider` and {class}`mew.PausableProfiler`.
 
 ```{eval-rst}
+.. currentmodule:: mew
+
+.. autoclass:: MemoryManager
+
+.. autoclass:: ProfilerManager
+
+.. autoclass:: ProfilerResultProvider
+
+.. autoclass:: PausableProfiler
+
+.. autoclass:: MemoryMetrics
+
+.. py:data:: ProfilerSummary
+   :type: dict[str, str | float]
+
+   Free-form summary a :class:`ProfilerResultProvider` returns from ``get_result()``;
+   it lands in each row's ``cpu_profile`` block.
+
 .. autoclass:: mew.memory.MemrayManager
    :members:
 

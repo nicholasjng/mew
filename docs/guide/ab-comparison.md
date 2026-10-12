@@ -41,8 +41,8 @@ $ mew compare --key func beta.jsonl alpha.jsonl
 
 Interleave the suites (A B A B …, not AAAAA BBBBB) to avoid bias from thermal
 and load drift. `--key func` matches on the function name, so the differing
-file prefixes do not matter. Differing context values (`engine=…`) are shown in
-the column labels.
+file prefixes do not matter. Differing context values (`engine=…`) are shown
+next to each file's label on its context line above the table.
 
 ```console
                        Comparison (real_time)
@@ -68,7 +68,7 @@ $ mew compare ft.jsonl gil.jsonl
 ```
 
 Here both sides are the *same* benchmark file, distinguished by the interpreter.
-Record which is which from inside the suite, so the column labels say so:
+Record which is which from inside the suite, so the context lines say so:
 
 ```python
 import sys

@@ -47,6 +47,8 @@ Decorators add an `Entry` to a process-global `Registry`.
 You can also drive a run programmatically:
 
 ```python
+from pathlib import Path
+
 from mew import REGISTRY, run, JSONReporter
 
 run(REGISTRY.all(), reporter=JSONReporter(output=Path("out.json")))

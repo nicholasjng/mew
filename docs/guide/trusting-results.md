@@ -102,7 +102,7 @@ deltas may reflect the environment, not the code
 ```
 
 Treat this warning as invalidating. Differing custom {doc}`context <context>`
-values are shown in column labels.
+values are shown next to each file's label on its context line above the table.
 
 ## A defensible CI gate
 

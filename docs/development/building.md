@@ -8,7 +8,7 @@
 - CMake ≥ 3.21
 - A C++17 compiler (Clang, GCC, MSVC).
 - [`uv`](https://docs.astral.sh/uv/): recommended for environments and locking.
-- [`prek`](https://pre-commit.com/): pre-commit runner used in CI.
+- [`prek`](https://github.com/j178/prek): pre-commit runner used in CI.
 
 ## One-time setup
 
@@ -36,7 +36,9 @@ environment.
 $ uv sync --reinstall-package=mew-bench  # editable install picks up the rebuilt .so
 ```
 
-Alternatively, rebuild the stable developer tree directly:
+To check that the C++ compiles without reinstalling, build the stable developer
+tree directly. The editable install does not load this tree's extension, so run
+the `uv sync` above before testing:
 
 ```console
 $ cmake --build build/clangd
@@ -77,7 +79,8 @@ These steps run in CI (`.github/workflows/ci.yml`) across Linux, macOS, and Wind
 ## AddressSanitizer
 
 Build a separate ASAN wheel (lands in `build/asan/`, leaving the Release wheel
-alone; a plain `uv sync` afterwards swaps the editable install back to Release):
+alone; `uv sync --all-groups --reinstall-package=mew-bench` without `MEW_ASAN`
+swaps the editable install back to Release):
 
 ```console
 $ MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew-bench
@@ -114,7 +117,7 @@ Confirm the GIL stays disabled after importing the extension:
 $ .venv-ft/bin/python -c "import sys, mew._core; assert not sys._is_gil_enabled()"
 ```
 
-Threaded benchmarks (`threads`, `thread_range`, or `dense_thread_range`) only run here; on a GIL
+Threaded benchmarks (the `threads` option) only run here; on a GIL
 interpreter, mew skips them with a warning to avoid deadlocking on Google Benchmark's start barrier.
 
 ```console
@@ -146,8 +149,7 @@ scripts/tsan-pytest.sh
 ## Building the documentation locally
 
 ```console
-$ uv pip install -e '.[docs]'
-$ uv run sphinx-build -W --keep-going -b html docs docs/_build/html
+$ uv run --group docs sphinx-build -W --keep-going -b html docs docs/_build/html
 $ open docs/_build/html/index.html
 ```
 

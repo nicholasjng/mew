@@ -36,8 +36,9 @@ rules. Configure measurements in decorators or CLI flags:
 
 ## Picking sensible defaults
 
-- Pass `--min-time 0.5` (or higher) in CI runs where you want stable timings.
-- Local iteration: leave it at Google Benchmark's default for faster feedback.
+- `--min-time` defaults to 0.5 s per benchmark. Raise it (e.g. `--min-time 2`)
+  in CI runs where you want more stable timings; lower it (`--min-time 0.1`)
+  locally for faster feedback.
 - Pass `--repetitions 5` if you compare with `mew compare`; variance metrics
   depend on it, and `--random-interleaving` decorrelates the repeats from
   thermal/load drift.
