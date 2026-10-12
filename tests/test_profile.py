@@ -212,6 +212,8 @@ def test_profiler_manager_get_result_is_optional(tmp_path):
 @pytest.mark.parametrize("reuse_scope", [False, True])
 def test_nested_pauses_toggle_the_profiler_only_at_the_outer_scope(tmp_path, reuse_scope):
     mgr = FakeProfilerManager()
+    errors: list[str] = []
+    resumed_early: list[bool] = []
 
     @mew.benchmark(iterations=2)
     def bench_nested(state):
@@ -219,13 +221,19 @@ def test_nested_pauses_toggle_the_profiler_only_at_the_outer_scope(tmp_path, reu
             outer = state.pause()
             with outer:
                 resumes = mgr.resumes
-                with outer if reuse_scope else state.pause():
-                    pass
-                assert mgr.resumes == resumes
+                try:
+                    with outer if reuse_scope else state.pause():
+                        pass
+                except RuntimeError as exc:
+                    errors.append(str(exc))
+                resumed_early.append(mgr.resumes != resumes)
 
     mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
     assert mgr.starts == mgr.stops == 1
     assert mgr.pauses == mgr.resumes == 2
+    assert resumed_early and not any(resumed_early)
+    # A fresh inner scope does nothing; re-entering the outer one raises.
+    assert len(errors) == (len(resumed_early) if reuse_scope else 0)
 
 
 def test_managers_do_not_leak_into_a_later_run(tmp_path):
@@ -323,6 +331,10 @@ def test_malformed_manager_result_propagates_out_of_run(tmp_path, kind, result):
 
 # --- the real backends -------------------------------------------------------
 
+# For tests that need samples from sub-millisecond bodies: a sampler starved by a
+# loaded machine can collect nothing in a shorter pass.
+_SAMPLED_ITERATIONS = "200x"
+
 
 def test_memray_manager_reports_loop_allocations(tmp_path):
     """Scoped to the timing loop: a large fixture allocated before the loop must
@@ -380,7 +392,7 @@ def test_pyinstrument_manager_summarizes_the_hot_frame(tmp_path):
 
     out = tmp_path / "out.json"
     mgr = _cpu.PyinstrumentManager(interval=1e-5)
-    mew.run(min_time="200x", reporter=JSONReporter(output=out), profiler_manager=mgr)
+    mew.run(min_time=_SAMPLED_ITERATIONS, reporter=JSONReporter(output=out), profiler_manager=mgr)
 
     cpu = json.loads(out.read_text())["benchmarks"][0].get("cpu_profile")
     assert cpu is not None, "sampler collected nothing; raise the iteration count"
@@ -849,7 +861,11 @@ def test_tachyon_manager_summarizes_the_hot_frame(tmp_path):
 
     out = tmp_path / "out.json"
     switch_interval = sys.getswitchinterval()
-    mew.run(min_time="200x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
+    mew.run(
+        min_time=_SAMPLED_ITERATIONS,
+        reporter=JSONReporter(output=out),
+        profiler_manager=TachyonManager(),
+    )
 
     cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
     assert cpu["profiler"] == "tachyon"
@@ -879,7 +895,9 @@ def test_tachyon_weights_samples_by_time(tmp_path):
             _spin()
 
     out = tmp_path / "out.json"
-    mew.run(min_time="20x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
+    # A sampler starved by a loaded machine leaves fewer, longer gaps; with 20
+    # iterations a few of them could still put `_spin` ahead.
+    mew.run(min_time="60x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
     cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
     assert cpu["top_function"]["function"] == "_hold_gil"
     assert cpu["top_function"]["self_time"] > cpu["wall_time"] / 2
@@ -903,7 +921,11 @@ def test_tachyon_skips_paused_regions(tmp_path):
             _spin()
 
     out = tmp_path / "out.json"
-    mew.run(min_time="100x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
+    mew.run(
+        min_time=_SAMPLED_ITERATIONS,
+        reporter=JSONReporter(output=out),
+        profiler_manager=TachyonManager(),
+    )
     cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
     assert cpu["top_function"]["function"] == "_spin"
 
@@ -949,7 +971,9 @@ def test_tachyon_flame_graph_has_one_root_per_benchmark(tmp_path):
 
     mgr = _cpu.TachyonManager()
     mew.run(
-        min_time="100x", reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr
+        min_time=_SAMPLED_ITERATIONS,
+        reporter=JSONReporter(output=tmp_path / "o.json"),
+        profiler_manager=mgr,
     )
     report = tmp_path / "cpu.html"
     _cpu.write_html(mgr, report)
@@ -977,7 +1001,11 @@ def test_tachyon_flame_graph_has_native_frames_and_free_threaded_opcodes(tmp_pat
             sorted(range(5_000), key=_negate)
 
     mgr = _cpu.TachyonManager()
-    mew.run(min_time="50x", reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
+    mew.run(
+        min_time=_SAMPLED_ITERATIONS,
+        reporter=JSONReporter(output=tmp_path / "o.json"),
+        profiler_manager=mgr,
+    )
     report = tmp_path / "cpu.html"
     _cpu.write_html(mgr, report)
     html = report.read_text(encoding="utf-8")
@@ -985,9 +1013,15 @@ def test_tachyon_flame_graph_has_native_frames_and_free_threaded_opcodes(tmp_pat
     assert ('"opcodes"' in html) is not getattr(sys, "_is_gil_enabled", lambda: True)()
 
 
+# Far past the compact ints BINARY_OP_ADD_INT handles: each add copies ~6 KB, so
+# `total += i` takes nearly all the time. Its lead must survive a starved sampler,
+# whose few samples each stand for a long gap.
+_BIG = 2**50_000
+
+
 def _grow_big_int() -> int:
-    total = 2**40  # past the small ints that BINARY_OP_ADD_INT handles
-    for i in range(20_000):
+    total = _BIG
+    for i in range(1_000):
         total += i
     return total
 
@@ -1021,7 +1055,7 @@ def test_tachyon_names_the_hottest_instruction_on_free_threaded_builds(tmp_path)
     assert isinstance(top[0]["line"], int)
     assert top[0]["share"] >= top[1]["share"] > 0
     assert top[0]["share"] <= cpu["unspecialized_share"] <= 1
-    assert cpu["unspecialized_share"] > 0.3
+    assert cpu["unspecialized_share"] > 0.5
 
 
 def test_instruction_source_slices_utf8_columns(tmp_path):
@@ -1055,8 +1089,14 @@ def test_tachyon_samples_without_enabling_the_gil(tmp_path):
             _spin()
 
     out = tmp_path / "out.json"
-    mew.run(min_time="100x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
-    assert json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]["sample_count"] > 0
+    mew.run(
+        min_time=_SAMPLED_ITERATIONS,
+        reporter=JSONReporter(output=out),
+        profiler_manager=TachyonManager(),
+    )
+    cpu = json.loads(out.read_text())["benchmarks"][0].get("cpu_profile")
+    assert cpu is not None, "sampler collected nothing; raise the iteration count"
+    assert cpu["sample_count"] > 0
     assert not getattr(sys, "_is_gil_enabled", lambda: True)()
 
 
@@ -1104,7 +1144,7 @@ def test_cpu_profile_has_one_shape_for_every_sampler_and_interpreter(tmp_path, s
             _spin()
 
     out = tmp_path / "out.json"
-    mew.run(min_time="200x", reporter=JSONReporter(output=out), profiler_manager=mgr)
+    mew.run(min_time=_SAMPLED_ITERATIONS, reporter=JSONReporter(output=out), profiler_manager=mgr)
     cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
     assert _conforms(cpu, _cpu.CpuProfile), cpu
     assert cpu["profiler"] == sampler

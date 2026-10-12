@@ -39,6 +39,8 @@ jobs:
   test:
     name: ${{ matrix.os }} · py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    # A threading regression hangs rather than fails; jobs take about 2 minutes.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +66,7 @@ jobs:
   free-threaded:
     name: free-threaded · py${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

@@ -361,6 +361,36 @@ def test_state_pause_returns_a_context_manager_entering_as_itself():
     assert seen == [True]
 
 
+def test_pause_scope_is_only_created_by_state_pause():
+    from mew._core import PauseScope
+
+    # A scope without a State would dereference null on entry.
+    with pytest.raises(TypeError, match="cannot create"):
+        PauseScope()
+
+
+def test_pause_scope_exit_requires_the_three_exception_arguments():
+    import time
+
+    errors: list[str] = []
+
+    @mew.benchmark(iterations=1)
+    def bench_x(state):
+        for _ in state:
+            scope = state.pause()
+            with scope:
+                try:
+                    scope.__exit__()
+                except TypeError as exc:
+                    errors.append(str(exc))
+                time.sleep(0.2)  # timed only if the bad call resumed the timer
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    assert errors == ["__exit__() takes 3 arguments (0 given)"]
+    assert cap.runs[0]["real_time"] < 0.1e9
+
+
 def test_state_pause_resumes_on_exception():
     import time
 
@@ -386,13 +416,18 @@ def test_state_pause_resumes_on_exception():
 def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
     import time
 
+    errors: list[str] = []
+
     @mew.benchmark(iterations=1)
     def bench_nested(state):
         for _ in state:
             outer = state.pause()
             with outer:
-                with outer if reuse_scope else state.pause():
-                    pass
+                try:
+                    with outer if reuse_scope else state.pause():
+                        pass
+                except RuntimeError as exc:
+                    errors.append(str(exc))
                 # Exiting the inner scope must not resume timing yet.
                 time.sleep(0.2)
 
@@ -400,6 +435,9 @@ def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
     mew.run(reporter=cap)
     row = cap.runs[0]
     assert not row["skipped"]
+    # A fresh inner scope does nothing; re-entering the outer one raises.
+    reentry = "this pause scope is already active and cannot be re-entered"
+    assert errors == ([reentry] if reuse_scope else [])
     # A resumed timer adds the whole sleep, >= 0.2 s. The timed region is
     # microseconds, but loaded CI runners stall threads for tens of ms.
     assert row["real_time"] < 0.1e9
@@ -429,6 +467,20 @@ def test_nested_state_pause_unwinds_after_an_exception():
     # Per iteration: ~0.01 s timed, which loaded CI runners stretch to ~0.05 s;
     # >= 0.31 s if the inner exit resumed early, ~0 if the outer never resumed.
     assert 0.008e9 <= row["real_time"] < 0.2e9
+
+
+def test_reentering_an_active_pause_scope_skips_with_error():
+    @mew.benchmark(iterations=1)
+    def bench_x(state):
+        for _ in state:
+            scope = state.pause()
+            with scope, scope:
+                pass
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    assert cap.runs[0]["skipped"] is True
+    assert "already active and cannot be re-entered" in cap.runs[0]["skip_message"]
 
 
 @pytest.mark.skipif(
@@ -523,7 +575,7 @@ def test_pause_scope_held_open_across_the_loop_end_stays_untimed(loop):
 
             def body():
                 stack.enter_context(state.pause())
-                time.sleep(0.02)
+                time.sleep(0.2)
 
             if loop == "iter":
                 for _ in state:
@@ -539,13 +591,15 @@ def test_pause_scope_held_open_across_the_loop_end_stays_untimed(loop):
     def bench_next(state):
         for _ in state:
             with state.pause():
-                time.sleep(0.05)
+                time.sleep(0.2)
 
     cap = Capture()
     mew.run(reporter=cap)
     for row in cap.runs:
         assert row["skipped"] is False
-        assert row["real_time"] < 0.01e9  # ns; the sleeps were paused
+        # A timed sleep adds >= 0.2 s per iteration. The timed region is
+        # microseconds, but loaded CI runners stall threads for tens of ms.
+        assert row["real_time"] < 0.1e9
 
 
 def test_pause_scope_left_open_after_a_break_does_not_leak():
@@ -561,12 +615,13 @@ def test_pause_scope_left_open_after_a_break_does_not_leak():
     def bench_next(state):
         for _ in state:
             with state.pause():
-                time.sleep(0.05)
+                time.sleep(0.2)
 
     cap = Capture()
     mew.run(reporter=cap)
     assert cap.runs[0]["skip_message"] == "The benchmark did not complete its loop."
-    assert cap.runs[1]["real_time"] < 0.01e9
+    # A leaked pause state would time the 0.2 s sleeps.
+    assert cap.runs[1]["real_time"] < 0.1e9
 
 
 def test_second_loop_over_a_finished_state_adds_no_time():

@@ -483,7 +483,9 @@ def test_capture_setting_and_flag_precedence(
     assert "from the benchmark" in err
 
 
-_PROFILED = """
+# Each body holds only what its profiler measures: a buffer next to `spin` would
+# compete with it for CPU self time on a loaded machine.
+_SAMPLED = """
     import mew
 
     def spin():
@@ -497,9 +499,20 @@ _PROFILED = """
     def bench_hot(state):
         for _ in state:
             spin()
+"""
+
+_ALLOCATING = """
+    import mew
+
+    @mew.benchmark
+    def bench_hot(state):
+        for _ in state:
             buf = bytearray(1 << 20)
             del buf
 """
+
+# A sampler starved by a loaded machine can collect nothing in fewer iterations.
+_SAMPLED_ITERATIONS = "200x"
 
 
 @pytest.mark.parametrize(
@@ -520,13 +533,16 @@ def test_run_profiling_flags_write_the_report_and_annotate_rows(mew_cli, tmp_pat
     pytest.importorskip(module)
     from mew.reporter import _fmt_bytes
 
-    (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_PROFILED))
+    memory = module == "memray"
+    (tmp_path / "bench_profiled.py").write_text(
+        textwrap.dedent(_ALLOCATING if memory else _SAMPLED)
+    )
     report, out = tmp_path / "report.html", tmp_path / "rows.json"
     res = mew_cli(
         "run",
         "bench_profiled.py",
         "--min-time",
-        "20x",
+        "20x" if memory else _SAMPLED_ITERATIONS,
         *flags,
         str(report),
         "-o",
@@ -540,7 +556,7 @@ def test_run_profiling_flags_write_the_report_and_annotate_rows(mew_cli, tmp_pat
     assert "bench_hot" in report.read_text()
     (row,) = json.loads(out.read_text())["benchmarks"]
     # The row carries the profile, and the console table shows it.
-    if module == "memray":
+    if memory:
         assert row["memory"]["peak_bytes"] >= 1 << 20  # the loop's 1 MiB buffer
         assert _fmt_bytes(row["memory"]["peak_bytes"]) in res.stdout
     else:
@@ -570,13 +586,13 @@ def test_run_rejects_tachyon_before_python_3_15(mew_cli, benchdir, tmp_path):
 def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
     """One sampler across a suite's interpreter range: pyinstrument on 3.15 too."""
     pytest.importorskip("pyinstrument")
-    (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_PROFILED))
+    (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_SAMPLED))
     out = tmp_path / "rows.json"
     res = mew_cli(
         "run",
         "bench_profiled.py",
         "--min-time",
-        "20x",
+        _SAMPLED_ITERATIONS,
         "--sample",
         "--sampler",
         "pyinstrument",
