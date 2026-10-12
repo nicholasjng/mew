@@ -19,11 +19,13 @@ mew.update_context(
   "session": {
     "id": "01975f2e-9c40-7b31-a1d4-8f0e2c5b7a90",
     "date": "2026-05-19T10:00:00+00:00",
-    "host": "laptop"
+    "host": "laptop",
+    "mew_version": "0.3.0"
   },
   "context": {
     "num_cpus": 10,
     "cpu_scaling_enabled": false,
+    "python": {"version": "3.15.0", "implementation": "cpython", "gil_enabled": true},
     "git_sha": "abc123",
     "dataset": {"name": "uniform-1k", "size": 1000}
   },
@@ -33,6 +35,11 @@ mew.update_context(
 
 Every row, in JSON and JSONL alike, carries both blocks as well; the JSON
 header repeats them for readers.
+
+`context.python` tells apart results from several interpreters in one archive,
+such as a suite run on 3.14 and on free-threaded 3.15t. `mew compare` labels
+each column with its version when the versions differ. `session.mew_version` is
+the mew that wrote the rows, and so their format.
 
 ## Session identity
 

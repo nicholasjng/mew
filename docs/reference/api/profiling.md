@@ -24,10 +24,13 @@ Custom managers implement the {class}`mew.MemoryManager` or
 .. autoclass:: MemoryMetrics
 
 .. py:data:: ProfilerSummary
-   :type: dict[str, str | float]
+   :type: dict[str, Any]
 
    Free-form summary a :class:`ProfilerResultProvider` returns from ``get_result()``;
-   it lands in each row's ``cpu_profile`` block.
+   it lands in each row's ``cpu_profile`` block. Keys are strings and values
+   anything :func:`json.dumps` accepts, ``None`` included, and they arrive with
+   their JSON types. A value ``json.dumps`` rejects, such as a NumPy integer,
+   fails the run with ``TypeError``.
 
 .. autoclass:: mew.memory.MemrayManager
    :members:
@@ -36,8 +39,19 @@ Custom managers implement the {class}`mew.MemoryManager` or
 
 .. autofunction:: mew.memory.write_flamegraph
 
+.. autofunction:: mew.cpu.manager
+
+.. autoclass:: mew.cpu.TachyonManager
+   :members:
+
 .. autoclass:: mew.cpu.PyinstrumentManager
    :members:
 
 .. autofunction:: mew.cpu.write_html
+
+.. autoclass:: mew.cpu.CpuProfile
+
+.. autoclass:: mew.cpu.TopFunction
+
+.. autoclass:: mew.cpu.TopInstruction
 ```

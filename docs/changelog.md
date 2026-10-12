@@ -8,6 +8,38 @@ change between minor releases.
 
 ### Added
 
+- `--sample` samples with Tachyon, the sampling profiler in Python 3.15's
+  standard library (`profiling.sampling`), through the new
+  `mew.cpu.TachyonManager`. It needs no extra install and works on free-threaded
+  3.15t, where pyinstrument would enable the GIL. Each sample counts as the time
+  since the previous one: on GIL builds a C call that holds the GIL delays the
+  sampler, and counting samples would all but drop it. `--sample-html` writes a
+  flame graph with one root per benchmark. Its `<native>` frames mark C code
+  calling back into Python, and on free-threaded builds each frame lists its
+  bytecode instructions, specializations included. Before 3.15, `--sample`
+  still uses pyinstrument; `mew.cpu.manager()` picks the sampler for the
+  interpreter.
+- `--sampler` and `mew.cpu.manager(sampler=...)` pick the CPU sampler: `auto`,
+  the default, samples with Tachyon on 3.15+ and with pyinstrument before.
+  `pyinstrument` also works on 3.15+ GIL builds, so a suite run on several
+  interpreter versions can be profiled with one sampler throughout; it ignores
+  `--sample-top-k`. `tachyon` fails before 3.15, and pyinstrument still fails
+  on free-threaded builds.
+- On free-threaded 3.15t, `--sample` also lists each row's hottest bytecode
+  instructions in `cpu_profile.top_instructions`, with the source each covers,
+  its line, its share of time and whether it stayed unspecialized, and gives the
+  share of time spent in such unspecialized instructions
+  (`unspecialized_share`). `--sample-top-k` sets how many (default 5). The
+  console shows the hottest in a `Hottest Instruction` column.
+- A profiler manager's `get_result()` may return any JSON-serializable values,
+  `None`, lists and dicts included. They reach `cpu_profile` with their JSON
+  types.
+- Every run records its interpreter in `context.python` (`version`,
+  `implementation`, `gil_enabled`) and the mew that wrote it in
+  `session.mew_version`, so an archive that mixes interpreters or mew releases
+  can be split by them.
+- Python 3.15 support. CI tests 3.15 and free-threaded 3.15t, and releases
+  include a `cp315t` wheel; the stable-ABI wheel already covers 3.15.
 - `mew run` captures what benchmarks write to stdout and stderr, native writes
   included, and prints it to stderr after the run, so library warnings no longer
   break up the console table or corrupt JSON on stdout. `--capture=no`,
@@ -19,11 +51,25 @@ change between minor releases.
 
 ### Changed
 
+- `mew.cpu.write_html()` takes the profiler manager instead of its pyinstrument
+  sessions, like `mew.memory.write_flamegraph()`.
 - A row's `counters` is a list of `{"name", "value"}` records, plus the optional
   `format`, instead of a name-to-value mapping. DuckDB now infers the same type
   for it in every archive, whichever counters the archive contains. Archives
   written by 0.2.0 keep the old mapping, so don't query them together with
   newer ones.
+- `cpu_profile` has the same keys and types for both samplers and every
+  interpreter, typed by `mew.cpu.CpuProfile`: a figure a sampler can't measure
+  is `null`, a list it can't measure empty. `top_function` is a record of
+  `function`, `file`, `line` and `self_time`, which replaces
+  `top_function_total_self_time`. Its `line` is the hottest line, or `null`
+  under pyinstrument, which reported the `def` line.
+- `cpu_profile.sample_count` is an integer instead of a float: the profiler
+  summary crosses Google Benchmark as JSON text, not as separate number and
+  string maps. DuckDB reads the column as `DOUBLE` when an archive mixes both.
+  For the same reason, a `get_result()` value that `json.dumps` rejects, such
+  as a NumPy integer, fails the run at any depth; 0.2.0 converted top-level
+  numbers to floats.
 - Google Benchmark is pinned to `e662de9` (v1.9.5-144).
 - `mew --version` and `mew.BENCHMARK_VERSION` report Google Benchmark as
   `v1.9.5-144-ge662de9a+mew` instead of with a `-dirty` suffix caused by
