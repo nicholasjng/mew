@@ -6,7 +6,7 @@ Tags are `vX.Y.Z`; the version lives in `src/mew/__init__.py` (scikit-build-core
 from there) and `uv.lock` does not pin it.
 
 Wheels come from cibuildwheel on four runners — `cp311`, a `cp312` stable-ABI wheel
-covering 3.12+, and `cp314t` — plus an sdist. Everything else installs from source.
+covering 3.12+, `cp314t` and `cp315t` — plus an sdist. Everything else installs from source.
 
 ## 1. Bump the version
 
