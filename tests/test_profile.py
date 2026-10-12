@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
 import json
+import math
+import random
 import sys
+import threading
+import types
+import typing
 from typing import Any, cast
 
 import pytest
+from _helpers import Capture
 
 import mew
 from mew.reporter import JSONReporter
@@ -40,8 +47,9 @@ class FakeProfilerManager:
         "profiler": "pyinstrument",
         "wall_time": 0.5,
         "sample_count": 500,
-        "top_function": "foo (bar.py:1)",
-        "top_function_total_self_time": 0.3,
+        "top_function": {"function": "foo", "file": "bar.py", "line": None, "self_time": 0.3},
+        "top_instructions": [],
+        "unspecialized_share": None,
     }
 
     def __init__(self, result: dict | None = _DEFAULT) -> None:
@@ -131,13 +139,37 @@ def test_profiler_manager_is_driven_and_stamped_onto_rows(tmp_path):
 
     assert mgr.starts == mgr.stops == 1
     bench = json.loads(out.read_text())["benchmarks"][0]
-    assert bench["cpu_profile"] == {
-        "profiler": "pyinstrument",
-        "wall_time": 0.5,
-        "sample_count": 500,
-        "top_function": "foo (bar.py:1)",
-        "top_function_total_self_time": 0.3,
+    assert bench["cpu_profile"] == FakeProfilerManager._DEFAULT
+
+
+def test_profiler_manager_result_keeps_its_json_types(tmp_path):
+    """The summary crosses Google Benchmark as JSON text, so every value comes
+    back as json.loads(json.dumps(value)) would return it."""
+    result = {
+        "profiler": "fake · ünïcode",
+        "sample_count": 2**70,
+        "share": 0.1,
+        "flag": True,
+        "missing": None,
+        "nan": float("nan"),
+        "top": [{"name": "a", "line": 7, "share": 0.5, "flag": False, "none": None}],
+        "record": {"k": ["v", 1], "nested": {"deep": [[1, 2], []]}},
+        "pair": (1, "a"),
     }
+
+    @mew.benchmark
+    def bench_structured(state):
+        for _ in state:
+            pass
+
+    rep = Capture()
+    mew.run(min_time="1x", reporter=rep, profiler_manager=FakeProfilerManager(result=result))
+    cpu = rep.runs[0]["cpu_profile"]
+    assert math.isnan(cpu.pop("nan"))
+    assert cpu == {**{k: v for k, v in result.items() if k != "nan"}, "pair": [1, "a"]}
+    assert type(cpu["sample_count"]) is int
+    assert cpu["flag"] is True
+    assert cpu["missing"] is None
 
 
 def test_profiler_manager_returning_none_leaves_row_unannotated(tmp_path):
@@ -252,6 +284,7 @@ def test_memory_manager_extra_keys_are_ignored(tmp_path):
         ("memory", {"peak_bytes": "not an integer"}),
         ("memory", [("peak_bytes", 1)]),
         ("profiler", {"sample_count": object()}),
+        ("profiler", {"top": [object()]}),
         ("profiler", {1: 2.0}),
         ("profiler", [("sample_count", 1)]),
     ],
@@ -353,7 +386,12 @@ def test_pyinstrument_manager_summarizes_the_hot_frame(tmp_path):
     assert cpu is not None, "sampler collected nothing; raise the iteration count"
     assert cpu["profiler"] == "pyinstrument"
     assert cpu["sample_count"] > 0
-    assert "spin" in cpu["top_function"]
+    top = cpu["top_function"]
+    # pyinstrument's line is the def line, so the summary leaves it out.
+    assert (top["function"], top["file"], top["line"]) == ("spin", "test_profile.py", None)
+    assert 0 < top["self_time"] <= cpu["wall_time"]
+    assert cpu["top_instructions"] == []
+    assert cpu["unspecialized_share"] is None
     # Sessions are retained only so --sample-html can render one combined report.
     assert mgr.sessions
     sessions = len(mgr.sessions)
@@ -516,15 +554,30 @@ def test_hottest_frame_excludes_pyinstrument_internals(tmp_path):
         [user],
     )
 
-    assert _hottest_frame(cast("Any", sampler)) == ("work (bench.py:1)", 0.1)
+    assert _hottest_frame(cast("Any", sampler)) == {
+        "function": "work",
+        "file": "bench.py",
+        "line": None,
+        "self_time": 0.1,
+    }
+    # Nothing but pyinstrument's own frames: no hottest frame to name.
+    assert _hottest_frame(cast("Any", Frame("_start_sampling", sampler.file_path, 1.0))) is None
 
 
+@pytest.mark.parametrize("manager", ["PyinstrumentManager", "TachyonManager"])
 @pytest.mark.parametrize("interval", [0, -1, float("nan"), float("inf")])
-def test_pyinstrument_manager_rejects_invalid_interval(interval):
-    from mew.cpu import PyinstrumentManager
+def test_cpu_managers_reject_invalid_interval(manager, interval):
+    from mew import cpu as _cpu
 
     with pytest.raises(ValueError, match="interval"):
-        PyinstrumentManager(interval=interval)
+        getattr(_cpu, manager)(interval=interval)
+
+
+def test_tachyon_manager_rejects_top_k_below_one():
+    from mew.cpu import TachyonManager
+
+    with pytest.raises(ValueError, match="top_k"):
+        TachyonManager(top_k=0)
 
 
 def test_flamegraph_is_rooted_at_the_benchmark_and_loop_scoped(tmp_path):
@@ -715,3 +768,366 @@ def test_pyinstrument_handles_a_pause_held_over_the_loop_end(tmp_path):
     assert len(mgr.sessions) == 2
     # bench_held pauses once; each of bench_next's pauses stops the profiler.
     assert mgr.stopped_on_pause == [True, True, True]
+
+
+# --- Tachyon (Python 3.15+) --------------------------------------------------
+
+needs_tachyon = pytest.mark.skipif(
+    sys.version_info < (3, 15), reason="Tachyon ships with Python 3.15+"
+)
+
+
+def _spin() -> int:
+    # Self time must land in `_spin` itself, so loop in Python rather than
+    # deferring to a C builtin like sum().
+    total = 0
+    for i in range(20_000):
+        total += i
+    return total
+
+
+_rng = random.Random(0)
+_FLOATS = [_rng.random() for _ in range(50_000)]
+
+
+def _hold_gil() -> list[float]:
+    # ~15x `_spin`, all in C: sorted() holds the GIL and never reaches an
+    # eval-breaker check, so an in-process sampler waits until it returns.
+    return sorted(_FLOATS)
+
+
+@pytest.mark.parametrize(
+    ("sampler", "expected"),
+    [
+        ("auto", "TachyonManager" if sys.version_info >= (3, 15) else "PyinstrumentManager"),
+        ("tachyon", "TachyonManager"),
+        ("pyinstrument", "PyinstrumentManager"),
+    ],
+)
+def test_cpu_manager_creates_the_chosen_sampler(monkeypatch, sampler, expected):
+    from mew import cpu as _cpu
+
+    made: list[tuple[str, tuple, dict]] = []
+    for name in ("TachyonManager", "PyinstrumentManager"):
+        monkeypatch.setattr(_cpu, name, lambda *a, _name=name, **kw: made.append((_name, a, kw)))
+    _cpu.manager(2e-4, sampler=sampler, top_k=3)
+    # pyinstrument reads no instructions, so it takes no top_k.
+    kwargs = {"top_k": 3} if expected == "TachyonManager" else {}
+    assert made == [(expected, (2e-4,), kwargs)]
+
+
+def test_cpu_manager_rejects_an_unknown_sampler():
+    from mew import cpu as _cpu
+
+    with pytest.raises(ValueError, match="sampler must be one of"):
+        _cpu.manager(sampler="perf")
+
+
+@needs_tachyon
+def test_cpu_manager_picks_tachyon():
+    from mew import cpu as _cpu
+
+    assert isinstance(_cpu.manager(), _cpu.TachyonManager)
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon is available")
+def test_tachyon_manager_requires_python_3_15():
+    from mew.cpu import TachyonManager
+
+    with pytest.raises(SystemExit, match="3.15"):
+        TachyonManager()
+
+
+@needs_tachyon
+def test_tachyon_manager_summarizes_the_hot_frame(tmp_path):
+    from mew.cpu import TachyonManager
+
+    @mew.benchmark
+    def bench_hot(state):
+        for _ in state:
+            _spin()
+
+    out = tmp_path / "out.json"
+    switch_interval = sys.getswitchinterval()
+    mew.run(min_time="200x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
+
+    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
+    assert cpu["profiler"] == "tachyon"
+    assert cpu["sample_count"] > 0
+    top = cpu["top_function"]
+    assert (top["function"], top["file"]) == ("_spin", "test_profile.py")
+    # The hottest line, not the def line.
+    lines, start = inspect.getsourcelines(_spin)
+    assert start < top["line"] < start + len(lines)
+    assert 0 < top["self_time"] <= cpu["wall_time"]
+    # GIL builds lower the switch interval for the pass only.
+    assert sys.getswitchinterval() == switch_interval
+
+
+@needs_tachyon
+def test_tachyon_weights_samples_by_time(tmp_path):
+    """On GIL builds, samples during a GIL-holding C call are lost, and the one
+    taken after it returns stands for the whole call. Counting samples would
+    name `_spin` hottest; weighting each by the time since the previous one
+    names `_hold_gil`."""
+    from mew.cpu import TachyonManager
+
+    @mew.benchmark
+    def bench_mixed(state):
+        for _ in state:
+            _hold_gil()
+            _spin()
+
+    out = tmp_path / "out.json"
+    mew.run(min_time="20x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
+    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
+    assert cpu["top_function"]["function"] == "_hold_gil"
+    assert cpu["top_function"]["self_time"] > cpu["wall_time"] / 2
+
+
+@needs_tachyon
+def test_tachyon_skips_paused_regions(tmp_path):
+    from mew.cpu import TachyonManager
+
+    def paused_work() -> int:
+        total = 0
+        for i in range(60_000):
+            total += i
+        return total
+
+    @mew.benchmark
+    def bench_paused(state):
+        for _ in state:
+            with state.pause():
+                paused_work()  # 3x the work of _spin, but never sampled
+            _spin()
+
+    out = tmp_path / "out.json"
+    mew.run(min_time="100x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
+    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
+    assert cpu["top_function"]["function"] == "_spin"
+
+
+@needs_tachyon
+def test_tachyon_handles_a_pause_held_over_the_loop_end(tmp_path):
+    from contextlib import ExitStack
+
+    from mew.cpu import TachyonManager
+
+    @mew.benchmark(iterations=2)
+    def bench_held(state):
+        with ExitStack() as stack:
+            for _ in state:
+                stack.enter_context(state.pause())
+
+    @mew.benchmark(iterations=2)
+    def bench_next(state):
+        for _ in state:
+            with state.pause():
+                pass
+
+    out = tmp_path / "o.json"
+    mew.run(reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
+    rows = json.loads(out.read_text())["benchmarks"]
+    assert [r["skipped"] for r in rows] == [False, False]
+    assert not any(t.name == "mew-tachyon" for t in threading.enumerate())
+
+
+@needs_tachyon
+def test_tachyon_flame_graph_has_one_root_per_benchmark(tmp_path):
+    from mew import cpu as _cpu
+
+    @mew.benchmark
+    def bench_a(state):
+        for _ in state:
+            _spin()
+
+    @mew.benchmark
+    def bench_b(state):
+        for _ in state:
+            _spin()
+
+    mgr = _cpu.TachyonManager()
+    mew.run(
+        min_time="100x", reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr
+    )
+    report = tmp_path / "cpu.html"
+    _cpu.write_html(mgr, report)
+    html = report.read_text(encoding="utf-8")
+    assert "bench_a" in html and "bench_b" in html
+    # Stacks are cut at the body: none of mew's own call chain above it.
+    assert "runner.py" not in html
+
+
+def _negate(x: float) -> float:
+    return -x
+
+
+@needs_tachyon
+def test_tachyon_flame_graph_has_native_frames_and_free_threaded_opcodes(tmp_path):
+    """`<native>` marks sorted() calling the key function. Opcodes are read only
+    where a sample can land mid-instruction, i.e. on free-threaded builds."""
+    from mew import cpu as _cpu
+
+    @mew.benchmark
+    def bench_callback(state):
+        for _ in state:
+            # Already ordered, so the key calls take most of the time. On GIL
+            # builds a short key phase before a long sort is never sampled.
+            sorted(range(5_000), key=_negate)
+
+    mgr = _cpu.TachyonManager()
+    mew.run(min_time="50x", reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
+    report = tmp_path / "cpu.html"
+    _cpu.write_html(mgr, report)
+    html = report.read_text(encoding="utf-8")
+    assert '"<native>"' in html
+    assert ('"opcodes"' in html) is not getattr(sys, "_is_gil_enabled", lambda: True)()
+
+
+def _grow_big_int() -> int:
+    total = 2**40  # past the small ints that BINARY_OP_ADD_INT handles
+    for i in range(20_000):
+        total += i
+    return total
+
+
+@needs_tachyon
+def test_tachyon_names_the_hottest_instruction_on_free_threaded_builds(tmp_path):
+    from mew.cpu import TachyonManager, reads_instructions
+
+    @mew.benchmark
+    def bench_big_int(state):
+        for _ in state:
+            _grow_big_int()
+
+    out = tmp_path / "out.json"
+    mgr = TachyonManager(top_k=2)
+    mew.run(min_time="100x", reporter=JSONReporter(output=out), profiler_manager=mgr)
+    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
+    assert mgr.reads_instructions is reads_instructions()
+    if not reads_instructions():
+        assert cpu["top_instructions"] == []
+        assert cpu["unspecialized_share"] is None
+        return
+    top = cpu["top_instructions"]
+    assert len(top) == 2
+    assert {k: v for k, v in top[0].items() if k not in ("line", "share")} == {
+        "instruction": "BINARY_OP",
+        "source": "total += i",
+        "file": "test_profile.py",
+        "unspecialized": True,
+    }
+    assert isinstance(top[0]["line"], int)
+    assert top[0]["share"] >= top[1]["share"] > 0
+    assert top[0]["share"] <= cpu["unspecialized_share"] <= 1
+    assert cpu["unspecialized_share"] > 0.3
+
+
+def test_instruction_source_slices_utf8_columns(tmp_path):
+    from mew.cpu import _instruction_source
+
+    src = tmp_path / "mod.py"
+    src.write_text('label = "äöü"; total = left + right\nnext = (\n    1)\n', encoding="utf-8")
+    first = src.read_text(encoding="utf-8").splitlines()[0].encode()
+    col = first.index(b"left + right")
+    # Column offsets count bytes: slicing the str would land two characters late.
+    assert _instruction_source(str(src), (1, 1, col, col + 12)) == "left + right"
+    # A span over several lines keeps its first line's part.
+    assert _instruction_source(str(src), (2, 3, 7, 5)) == "( …"
+    # Without columns (-X no_debug_ranges), the whole line.
+    assert _instruction_source(str(src), (2, 2, -1, -1)) == "next = ("
+    long = tmp_path / "long.py"
+    long.write_text("x = " + " + ".join(["value"] * 20) + "\n", encoding="utf-8")
+    assert len(_instruction_source(str(long), (1, 1, 4, 200))) == 40
+
+
+@needs_tachyon
+@pytest.mark.skipif(
+    getattr(sys, "_is_gil_enabled", lambda: True)(), reason="needs a free-threaded build"
+)
+def test_tachyon_samples_without_enabling_the_gil(tmp_path):
+    from mew.cpu import TachyonManager
+
+    @mew.benchmark
+    def bench_hot(state):
+        for _ in state:
+            _spin()
+
+    out = tmp_path / "out.json"
+    mew.run(min_time="100x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
+    assert json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]["sample_count"] > 0
+    assert not getattr(sys, "_is_gil_enabled", lambda: True)()
+
+
+# --- The cpu_profile contract --------------------------------------------------
+
+
+def _conforms(value: Any, hint: Any) -> bool:
+    """Whether JSON-decoded ``value`` has the type ``hint``, a TypedDict key for key."""
+    if typing.is_typeddict(hint):
+        fields = typing.get_type_hints(hint)
+        return (
+            isinstance(value, dict)
+            and value.keys() == fields.keys()
+            and all(_conforms(value[k], t) for k, t in fields.items())
+        )
+    if typing.get_origin(hint) in (typing.Union, types.UnionType):
+        return any(_conforms(value, t) for t in typing.get_args(hint))
+    if typing.get_origin(hint) is list:
+        (item,) = typing.get_args(hint)
+        return isinstance(value, list) and all(_conforms(v, item) for v in value)
+    return type(value) is hint
+
+
+@pytest.mark.parametrize("sampler", ["tachyon", "pyinstrument"])
+def test_cpu_profile_has_one_shape_for_every_sampler_and_interpreter(tmp_path, sampler):
+    """Each CI interpreter runs this, so a key or type that only one sampler or
+    CPython minor writes fails it: archives mixing them keep one schema."""
+    from mew import cpu as _cpu
+
+    mgr: _cpu.TachyonManager | _cpu.PyinstrumentManager
+    if sampler == "tachyon":
+        if sys.version_info < (3, 15):
+            pytest.skip("Tachyon ships with Python 3.15+")
+        mgr = _cpu.TachyonManager()
+    else:
+        # Before the import: importing pyinstrument would enable the GIL.
+        if not getattr(sys, "_is_gil_enabled", lambda: True)():
+            pytest.skip("pyinstrument's native sampler enables the GIL")
+        pytest.importorskip("pyinstrument")
+        mgr = _cpu.PyinstrumentManager(interval=1e-5)
+
+    @mew.benchmark
+    def bench_hot(state):
+        for _ in state:
+            _spin()
+
+    out = tmp_path / "out.json"
+    mew.run(min_time="200x", reporter=JSONReporter(output=out), profiler_manager=mgr)
+    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
+    assert _conforms(cpu, _cpu.CpuProfile), cpu
+    assert cpu["profiler"] == sampler
+    # Instructions are read on free-threaded Tachyon only, and then always.
+    reads = getattr(mgr, "reads_instructions", False)
+    assert bool(cpu["top_instructions"]) is reads
+    assert (cpu["unspecialized_share"] is not None) is reads
+
+
+def test_conforms_rejects_drift():
+    from mew.cpu import CpuProfile
+
+    good = {
+        "profiler": "tachyon",
+        "wall_time": 0.5,
+        "sample_count": 3,
+        "top_function": {"function": "f", "file": None, "line": None, "self_time": 0.1},
+        "top_instructions": [],
+        "unspecialized_share": None,
+    }
+    assert _conforms(good, CpuProfile)
+    assert not _conforms({**good, "extra": 1}, CpuProfile)
+    assert not _conforms({k: v for k, v in good.items() if k != "unspecialized_share"}, CpuProfile)
+    assert not _conforms({**good, "sample_count": 3.0}, CpuProfile)
+    assert not _conforms({**good, "top_function": "f (b.py:1)"}, CpuProfile)
+    assert not _conforms({**good, "top_instructions": [{"instruction": "NOP"}]}, CpuProfile)

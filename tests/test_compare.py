@@ -447,6 +447,26 @@ def test_compare_prints_context_and_warns_on_skew(
     assert "num_cpus" in err
 
 
+def test_compare_labels_columns_by_interpreter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A suite run on two interpreters compares by version, without a skew warning."""
+    python = {"implementation": "cpython", "gil_enabled": True}
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("bench_x", 80.0)],
+        base=[_row("bench_x", 100.0)],
+        other_context={"context": {"python": {**python, "version": "3.15.0"}}},
+        base_context={"context": {"python": {**python, "version": "3.14.3"}}},
+    )
+    console = Console(width=200)
+    assert compare([other, base], console=console) == 0
+    out = console.export_text()
+    assert "(python.version=3.14.3)" in out
+    assert "(python.version=3.15.0)" in out
+    assert "differ in" not in capsys.readouterr().err
+
+
 def test_compare_no_skew_warning_when_contexts_match(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

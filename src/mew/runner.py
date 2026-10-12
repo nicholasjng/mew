@@ -201,7 +201,7 @@ def run(
     profiler_manager : ProfilerManager, optional
         A Google Benchmark profiler manager (``after_setup_start()`` /
         ``before_teardown_stop()``, optionally ``get_result()`` and
-        ``pause()``/``resume()``), e.g. :class:`mew.cpu.PyinstrumentManager`.
+        ``pause()``/``resume()``), e.g. :class:`mew.cpu.TachyonManager`.
         Registered for the duration of the run; its summary lands in each row's
         ``cpu_profile`` block.
     capture_output : bool, default True
@@ -258,13 +258,17 @@ def run(
         rep = RichReporter(
             show_memory=memory_manager is not None,
             show_cpu=profiler_manager is not None,
+            show_instructions=getattr(profiler_manager, "reads_instructions", False),
             show_label=any(e.case_labels for e in selected),
         )
+
+    from mew import __version__  # deferred: mew imports this module
 
     session: dict[str, Any] = {
         "id": new_session_id(),
         "date": datetime.now(UTC).isoformat(),
         "host": socket.gethostname(),
+        "mew_version": __version__,
     }
     if session_tag:
         session["tag"] = session_tag

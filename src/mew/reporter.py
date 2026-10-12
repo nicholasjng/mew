@@ -41,6 +41,27 @@ def _fmt_bytes(n: int) -> str:
     return f"{n} B"
 
 
+def _fmt_function(cpu: Mapping[str, Any] | None) -> str:
+    """``work (bench.py:6)`` from a :class:`~mew.cpu.TopFunction`, as far as it goes."""
+    top = cpu.get("top_function") if cpu else None
+    if not isinstance(top, Mapping):  # A custom profiler's summary.
+        return str(top) if top else "-"
+    where = ":".join(str(part) for part in (top["file"], top["line"]) if part is not None)
+    return f"{top['function']} ({where})" if where else top["function"]
+
+
+def _fmt_instruction(cpu: Mapping[str, Any] | None, width: int) -> str:
+    """``BINARY_OP 62% · 62% generic``, cutting the opcode name to keep the shares."""
+    if not cpu or not cpu.get("top_instructions"):
+        return "-"
+    top = cpu["top_instructions"][0]
+    name = top["instruction"]
+    shares = f" {top['share']:.0%}"
+    if (generic := cpu.get("unspecialized_share") or 0.0) >= 0.005:
+        shares += f" · {generic:.0%} generic"
+    return _truncate_right(name, max(1, width - len(shares))) + shares
+
+
 _BIG_SI = ("k", "M", "G", "T", "P", "E", "Z", "Y")
 _BIG_IEC = ("Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi")
 _SMALL_SI = ("m", "u", "n", "p", "f", "a", "z", "y")
@@ -234,6 +255,10 @@ class RichReporter:
         Add a ``Peak Mem`` column.
     show_cpu : bool, default False
         Add ``Samples`` / ``Hottest Frame`` columns.
+    show_instructions : bool, default False
+        Add a ``Hottest Instruction`` column, e.g. ``BINARY_OP 62% · 62% generic``.
+        Pass with ``show_cpu`` where the sampler reads bytecode instructions; see
+        :func:`mew.cpu.reads_instructions`.
     show_label : bool, default False
         Add a ``Label`` column (the parametrize case id). Pass for families, where
         the case is otherwise indistinguishable from the truncated name.
@@ -245,11 +270,13 @@ class RichReporter:
         terminal: Terminal | None = None,
         show_memory: bool = False,
         show_cpu: bool = False,
+        show_instructions: bool = False,
         show_label: bool = False,
     ) -> None:
         self._term = terminal or Terminal()
         self._show_memory = show_memory
         self._show_cpu = show_cpu
+        self._show_instructions = show_instructions
         self._show_label = show_label
         self._context: dict[str, Any] = {}
         self._widths: dict[str, int] = {}
@@ -300,6 +327,8 @@ class RichReporter:
         if self._show_cpu:
             fixed["samples"] = 9
             fixed["hottest_frame"] = 30
+        if self._show_instructions:
+            fixed["hottest_instruction"] = 30
         n_cols = len(fixed) + 1  # +1 for the name column
         spacing = (n_cols - 1) * len(_COL_SEP)
         # Name column takes whatever's left; floor at 30 even if it overflows.
@@ -321,6 +350,8 @@ class RichReporter:
         if self._show_cpu:
             cells.append("Samples".rjust(w["samples"]))
             cells.append("Hottest Frame".ljust(w["hottest_frame"]))
+        if self._show_instructions:
+            cells.append("Hottest Instruction".ljust(w["hottest_instruction"]))
         line = _COL_SEP.join(cells)
         color = self._term.color
         self._term.print(sgr(line, "bold", enabled=color))
@@ -361,11 +392,12 @@ class RichReporter:
             cells.append((_fmt_bytes(mem["peak_bytes"]) if mem else "-").rjust(w["peak"]))
         if self._show_cpu:
             cpu = row.get("cpu_profile")
-            # Numeric profile values cross the binding as doubles.
-            cells.append((f"{int(cpu['sample_count']):,}" if cpu else "-").rjust(w["samples"]))
-            top = cpu["top_function"] if cpu else "-"
-            top = _truncate_right(top, w["hottest_frame"])
+            cells.append((f"{cpu['sample_count']:,}" if cpu else "-").rjust(w["samples"]))
+            top = _truncate_right(_fmt_function(cpu), w["hottest_frame"])
             cells.append(top.ljust(w["hottest_frame"]))
+        if self._show_instructions:
+            width = w["hottest_instruction"]
+            cells.append(_fmt_instruction(row.get("cpu_profile"), width).ljust(width))
         if row["counters"]:
             cells.append(_fmt_counters(row))
         self._term.print(_COL_SEP.join(cells))

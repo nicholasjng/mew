@@ -23,12 +23,15 @@ class SessionInfo(TypedDict):
     """Which run a result came from: what :mod:`mew.compare` orders and selects by.
 
     ``mew compare`` reads a file's newest session unless ``path@<tag>`` names
-    one; runs sharing a ``tag`` are pooled as repetitions.
+    one; runs sharing a ``tag`` are pooled as repetitions. ``mew_version`` is
+    the mew that wrote the rows, and so their format; files written before
+    0.3.0 lack it.
     """
 
     id: str
     date: str
     host: str
+    mew_version: NotRequired[str]
     tag: NotRequired[str]
 
 
@@ -67,10 +70,8 @@ class BenchmarkResult(TypedDict):
         ``allocations_per_iteration``, and optionally ``total_bytes`` and
         ``net_heap_growth``); present under ``--profile-memory``.
     cpu_profile : dict, optional
-        The profiler manager's summary for this run (``profiler``, ``wall_time``,
-        ``sample_count``, ``top_function``, ``top_function_total_self_time``);
-        present under ``--sample``. Numeric entries are floats, including
-        counts: the manager result carries them as doubles.
+        The profiler manager's summary for this run, with its JSON types;
+        present under ``--sample``, where it is a :class:`mew.cpu.CpuProfile`.
     """
 
     name: str
@@ -145,7 +146,7 @@ class MemoryMetrics(TypedDict, total=False):
     net_heap_growth: int
 
 
-ProfilerSummary: TypeAlias = dict[str, str | float]
+ProfilerSummary: TypeAlias = dict[str, Any]
 
 
 @runtime_checkable
