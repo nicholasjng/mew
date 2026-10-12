@@ -179,6 +179,7 @@ def _build_reporters(
     stdout_format: str = "rich",
     show_memory: bool = False,
     show_cpu: bool = False,
+    show_instructions: bool = False,
     show_label: bool = False,
     append: bool = False,
 ) -> list[Reporter]:
@@ -195,6 +196,7 @@ def _build_reporters(
         return RichReporter(
             show_memory=show_memory,
             show_cpu=show_cpu,
+            show_instructions=show_instructions,
             show_label=show_label,
         )
 
@@ -271,6 +273,8 @@ def run(
     flamegraph: Path | None,
     sample: bool,
     sample_interval: float,
+    sampler: str,
+    sample_top_k: int,
     sample_html: Path | None,
 ) -> None:
     """Discover and run benchmarks."""
@@ -279,12 +283,22 @@ def run(
     cfg = _load_config_or_exit()
     with _discovery.discovered():
         entries = _collect(paths, cfg=cfg, pattern=pattern, tags=tag, literal=literal, stdin=stdin)
+        # Before the reporters: whether the console shows instructions depends on
+        # the sampler.
+        profiler_manager = None
+        if sample:
+            from mew import cpu as _cpu
+
+            profiler_manager = _cpu.manager(
+                interval=sample_interval, sampler=sampler, top_k=sample_top_k
+            )
 
         reporters = _build_reporters(
             output,
             stdout_format=format,
             show_memory=profile_memory,
             show_cpu=sample,
+            show_instructions=getattr(profiler_manager, "reads_instructions", False),
             # Label column distinguishes family case rows from the truncated name.
             show_label=any(e.case_labels for e in entries),
             append=append,
@@ -292,15 +306,10 @@ def run(
 
         with ExitStack() as stack:
             memory_manager = None
-            profiler_manager = None
             if profile_memory:
                 from mew import memory as _memory
 
                 memory_manager = _memory.manager(stack)
-            if sample:
-                from mew import cpu as _cpu
-
-                profiler_manager = _cpu.PyinstrumentManager(interval=sample_interval)
 
             _run(
                 entries,
@@ -320,7 +329,7 @@ def run(
             # Both artifacts render from what the run already captured, so
             # neither re-executes the suite.
             if profiler_manager is not None and sample_html is not None:
-                _cpu.write_html(profiler_manager.sessions, sample_html)
+                _cpu.write_html(profiler_manager, sample_html)
             if memory_manager is not None and flamegraph is not None:
                 _memory.write_flamegraph(memory_manager, flamegraph)
 
@@ -668,20 +677,35 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--sample",
         action="store_true",
-        help="Sample Python CPU usage with pyinstrument.",
+        help="Sample Python CPU usage (see --sampler).",
+    )
+    p.add_argument(
+        "--sampler",
+        choices=("auto", "tachyon", "pyinstrument"),
+        default="auto",
+        help="Set the CPU sampler: tachyon (Python 3.15+), pyinstrument, or auto "
+        "(default: tachyon on 3.15+, else pyinstrument).",
     )
     p.add_argument(
         "--sample-interval",
         type=_positive_float,
         default=1e-4,
         metavar="<seconds>",
-        help="Set the pyinstrument sampling interval (default 1e-4).",
+        help="Set the sampling interval (default 1e-4).",
+    )
+    p.add_argument(
+        "--sample-top-k",
+        type=_positive_int,
+        default=5,
+        metavar="<k>",
+        help="Report the <k> hottest bytecode instructions with Tachyon on free-threaded "
+        "3.15+ (default 5).",
     )
     p.add_argument(
         "--sample-html",
         type=Path,
         metavar="<file>",
-        help="Write a pyinstrument report to <file> (implies --sample).",
+        help="Write an HTML CPU profile to <file> (implies --sample).",
     )
     p.set_defaults(_func=run)
 

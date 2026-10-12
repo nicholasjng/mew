@@ -198,7 +198,10 @@ def test_rich_reporter_profile_flags_add_columns():
     # fallback), so feed real rows too.
     row = _fake_row("bench.py::bench_x")
     row["memory"] = {"peak_bytes": 2 * (1 << 20)}  # 2.0 MB
-    row["cpu_profile"] = {"sample_count": 42, "top_function": "hot_fn (mod.py:10)"}
+    row["cpu_profile"] = {
+        "sample_count": 42,
+        "top_function": {"function": "hot_fn", "file": "mod.py", "line": 10, "self_time": 0.1},
+    }
     rep.report_runs([row])
     out = buf.getvalue()
     assert "2.0 MB" in out
@@ -268,7 +271,12 @@ def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
     row = _fake_row("bench.py::bench_x", label="a-very-long-case-label-well-past-twenty-chars")
     row["cpu_profile"] = {
         "sample_count": 1,
-        "top_function": "a_very_long_function_name_that_exceeds_thirty_characters (mod.py:1)",
+        "top_function": {
+            "function": "a_very_long_function_name_that_exceeds_thirty_characters",
+            "file": "mod.py",
+            "line": 1,
+            "self_time": 0.1,
+        },
     }
     rep.report_runs([row])
     out = buf.getvalue()
@@ -276,6 +284,71 @@ def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
     # Fixed widths from `_compute_widths`: label=20, hottest_frame=30.
     assert "a-very-long-case-la…" in out  # left prefix of label survives, truncated
     assert "a_very_long_function_name_tha" in out  # left prefix of hottest frame
+
+
+@pytest.mark.parametrize(
+    ("top", "shown"),
+    [
+        ({"function": "f", "file": "b.py", "line": 6, "self_time": 0.1}, "f (b.py:6)"),
+        # pyinstrument knows no hottest line, a synthetic frame no file.
+        ({"function": "f", "file": "b.py", "line": None, "self_time": 0.1}, "f (b.py)"),
+        ({"function": "<GC>", "file": None, "line": None, "self_time": 0.1}, "<GC>"),
+        # A custom profiler's free-form summary.
+        ("custom (x.py:2)", "custom (x.py:2)"),
+    ],
+)
+def test_rich_reporter_renders_the_hottest_frame(top, shown):
+    from mew._console import Terminal
+
+    buf = io.StringIO()
+    rep = RichReporter(terminal=Terminal(file=buf, width=200, color=False), show_cpu=True)
+    rep.report_context({"session": {"host": "h"}, "context": {}})
+    row = _fake_row("bench.py::bench_x")
+    row["cpu_profile"] = {"sample_count": 1, "top_function": top}
+    rep.report_runs([row])
+    assert buf.getvalue().splitlines()[-1].split(" │ ")[-1].strip() == shown
+
+
+def test_rich_reporter_instruction_column_keeps_the_shares():
+    from mew._console import Terminal
+
+    buf = io.StringIO()
+    rep = RichReporter(
+        terminal=Terminal(file=buf, width=200, color=False), show_cpu=True, show_instructions=True
+    )
+    rep.report_context(
+        {"session": {"host": "h"}, "context": {"num_cpus": 1, "cpu_scaling_enabled": False}}
+    )
+    assert "Hottest Instruction" in buf.getvalue()
+
+    profiles = [
+        ("BINARY_OP", 0.62, 0.62),
+        ("LOAD_ATTR_INSTANCE_VALUE", 0.32, 0.0),
+        ("CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS", 0.4, 0.1),
+    ]
+    for name, share, generic in profiles:
+        row = _fake_row("bench.py::bench_x")
+        row["cpu_profile"] = {
+            "sample_count": 1,
+            "top_function": {"function": "f", "file": "b.py", "line": 1, "self_time": 0.1},
+            # Only the first, hottest entry reaches the console.
+            "top_instructions": [
+                {"instruction": name, "share": share},
+                {"instruction": "STORE_FAST", "share": 0.01},
+            ],
+            "unspecialized_share": generic,
+        }
+        rep.report_runs([row])
+    rep.report_runs([_fake_row("bench.py::bench_y")])
+
+    cells = [line.split(" │ ")[-1].rstrip() for line in buf.getvalue().splitlines()[-4:]]
+    assert cells == [
+        "BINARY_OP 62% · 62% generic",
+        "LOAD_ATTR_INSTANCE_VALUE 32%",
+        # Width 30: the name is cut, the shares are not.
+        "CALL_METHOD… 40% · 10% generic",
+        "-",
+    ]
 
 
 def test_rich_reporter_renders_the_benchmark_field():

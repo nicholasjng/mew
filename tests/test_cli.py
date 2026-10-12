@@ -282,9 +282,11 @@ def test_min_warmup_time_parses_durations(value, seconds):
         ("--repetitions", "0"),
         ("--memory-iterations", "0"),
         ("--sample-interval", "0"),
+        ("--sample-top-k", "0"),
+        ("--sampler", "perf"),
     ],
 )
-def test_run_rejects_invalid_numeric_options(mew_cli, benchdir, tmp_path, flag, value):
+def test_run_rejects_invalid_option_values(mew_cli, benchdir, tmp_path, flag, value):
     # argparse type errors exit 2 (usage), not 1 (the "nothing matched" code).
     res = mew_cli("run", str(benchdir), flag, value, cwd=tmp_path)
     assert res.returncode == 2
@@ -505,10 +507,10 @@ _PROFILED = """
     [
         ("memray", ("--profile-memory", "--flamegraph")),
         pytest.param(
-            "pyinstrument",
-            ("--sample", "--sample-interval", "1e-5", "--sample-html"),
+            "profiling.sampling" if sys.version_info >= (3, 15) else "pyinstrument",
+            ("--sample", "--sample-interval", "1e-5", "--sample-top-k", "2", "--sample-html"),
             marks=pytest.mark.skipif(
-                not getattr(sys, "_is_gil_enabled", lambda: True)(),
+                sys.version_info < (3, 15) and not getattr(sys, "_is_gil_enabled", lambda: True)(),
                 reason="pyinstrument's native sampler enables the GIL",
             ),
         ),
@@ -542,8 +544,57 @@ def test_run_profiling_flags_write_the_report_and_annotate_rows(mew_cli, tmp_pat
         assert row["memory"]["peak_bytes"] >= 1 << 20  # the loop's 1 MiB buffer
         assert _fmt_bytes(row["memory"]["peak_bytes"]) in res.stdout
     else:
-        assert "spin" in row["cpu_profile"]["top_function"]
-        assert row["cpu_profile"]["top_function"] in res.stdout
+        from mew.cpu import reads_instructions
+
+        top = row["cpu_profile"]["top_function"]
+        assert "spin" in top["function"]
+        assert f"{top['function']} ({top['file']}" in res.stdout
+        # Only free-threaded Tachyon reads bytecode instructions.
+        assert ("Hottest Instruction" in res.stdout) is reads_instructions()
+        assert bool(row["cpu_profile"]["top_instructions"]) is reads_instructions()
+        assert len(row["cpu_profile"]["top_instructions"]) <= 2
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon runs here")
+def test_run_rejects_tachyon_before_python_3_15(mew_cli, benchdir, tmp_path):
+    res = mew_cli("run", str(benchdir), "--sample", "--sampler", "tachyon", cwd=tmp_path)
+    assert res.returncode == 1
+    assert "requires Python 3.15" in res.stderr
+
+
+@pytest.mark.skipif(sys.version_info < (3, 15), reason="pyinstrument is the default here")
+@pytest.mark.skipif(
+    not getattr(sys, "_is_gil_enabled", lambda: True)(),
+    reason="pyinstrument's native sampler enables the GIL",
+)
+def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
+    """One sampler across a suite's interpreter range: pyinstrument on 3.15 too."""
+    pytest.importorskip("pyinstrument")
+    (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_PROFILED))
+    out = tmp_path / "rows.json"
+    res = mew_cli(
+        "run",
+        "bench_profiled.py",
+        "--min-time",
+        "20x",
+        "--sample",
+        "--sampler",
+        "pyinstrument",
+        "--sample-top-k",
+        "2",
+        "-o",
+        "stdout",
+        "-o",
+        str(out),
+        cwd=tmp_path,
+    )
+    assert res.returncode == 0, res.stderr
+    (row,) = json.loads(out.read_text())["benchmarks"]
+    assert row["cpu_profile"]["profiler"] == "pyinstrument"
+    assert "spin" in row["cpu_profile"]["top_function"]["function"]
+    # pyinstrument reads no instructions, whatever --sample-top-k says.
+    assert row["cpu_profile"]["top_instructions"] == []
+    assert "Hottest Instruction" not in res.stdout
 
 
 # --- mew compare: --regression-threshold / --exit-non-zero-on-regression ---

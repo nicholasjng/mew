@@ -7,6 +7,7 @@ so ``cpu_scaling_enabled`` is part of every reporter's context.
 from __future__ import annotations
 
 import os
+import platform
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -42,10 +43,12 @@ def _silence_native_stderr() -> Generator[None]:
 
 
 def machine_context() -> dict[str, Any]:
-    """Return CPU count and frequency-scaling state.
+    """Return CPU count, frequency-scaling state and the interpreter.
 
     ``cpu_scaling_enabled`` is ``True`` only when scaling was positively
-    detected.
+    detected. ``python`` records the interpreter's ``version``, its
+    ``implementation`` and whether the GIL is enabled (``gil_enabled``), so
+    results from several interpreters stay apart.
 
     Returns
     -------
@@ -57,4 +60,9 @@ def machine_context() -> dict[str, Any]:
     return {
         "num_cpus": info["num_cpus"],
         "cpu_scaling_enabled": info["cpu_scaling"] == "enabled",
+        "python": {
+            "version": platform.python_version(),
+            "implementation": sys.implementation.name,
+            "gil_enabled": _gil_enabled(),
+        },
     }

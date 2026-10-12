@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import platform
 import sys
 
 import pytest
@@ -23,6 +24,25 @@ def test_run_single_benchmark_captures_one_run():
     assert cap.finalized
     assert cap.context is not None
     assert cap.context["context"]["num_cpus"] >= 1
+
+
+def test_run_records_the_interpreter_and_mew_version():
+    """Rows from several interpreters or mew releases stay apart in one archive."""
+
+    @mew.benchmark
+    def bench_x(state):
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(min_time="1x", reporter=cap)
+    assert cap.context is not None
+    assert cap.context["context"]["python"] == {
+        "version": platform.python_version(),
+        "implementation": sys.implementation.name,
+        "gil_enabled": getattr(sys, "_is_gil_enabled", lambda: True)(),
+    }
+    assert cap.context["session"]["mew_version"] == mew.__version__
 
 
 @pytest.mark.parametrize(
