@@ -201,29 +201,15 @@ void register_reporter(nb::module_& m) {
         },
         "Attach one native thread to initialize free-threaded CPython state.");
     m.def(
-        "preload_system_info",
-        [] {
-            nb::gil_scoped_release release;
-            benchmark::CPUInfo::Get();
-            benchmark::SystemInfo::Get();
-        },
-        "Initialize Google Benchmark's CPU and system information.");
-    m.def(
         "cpu_info",
         [] {
             const auto& cpu = benchmark::CPUInfo::Get();
             nb::dict d;
             d["num_cpus"] = cpu.num_cpus;
-            const char* scaling = "unknown";
-            if (cpu.scaling == benchmark::CPUInfo::ENABLED)
-                scaling = "enabled";
-            else if (cpu.scaling == benchmark::CPUInfo::DISABLED)
-                scaling = "disabled";
-            d["cpu_scaling"] = scaling;
+            d["cpu_scaling_enabled"] = cpu.scaling == benchmark::CPUInfo::ENABLED;
             return d;
         },
-        "CPU count and frequency-scaling state.\n"
-        "Scaling probes sysfs on Linux and sysctl on macOS. `\"unknown\"` when undetectable.");
+        "CPU count, and whether frequency scaling was detected (sysfs on Linux, sysctl on macOS).");
 
     nb::enum_<benchmark::TimeUnit>(m, "TimeUnit", nb::is_str(),
                                    "Time unit used for reported per-iteration durations.")

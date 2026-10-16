@@ -95,7 +95,8 @@ set(MEW_BENCHMARK_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-timer-running.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-manager-pass-thread-count.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0008-start-timer-cpu-first.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0009-macos-thread-cpu-clock.patch")
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0009-macos-thread-cpu-clock.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0010-skip-cpu-frequency-estimate.patch")
 
 string(JOIN "|" _mew_patches_arg ${MEW_BENCHMARK_PATCHES})
 

@@ -12,13 +12,9 @@ BENCHMARK_VERSION: str = "v1.9.5-144-ge662de9a+mew"
 def warmup_free_threading() -> None:
     """Attach one native thread to initialize free-threaded CPython state."""
 
-def preload_system_info() -> None:
-    """Initialize Google Benchmark's CPU and system information."""
-
 def cpu_info() -> dict:
     """
-    CPU count and frequency-scaling state.
-    Scaling probes sysfs on Linux and sysctl on macOS. `"unknown"` when undetectable.
+    CPU count, and whether frequency scaling was detected (sysfs on Linux, sysctl on macOS).
     """
 
 class TimeUnit(enum.StrEnum):
@@ -235,11 +231,6 @@ class BenchmarkHandle:
     def report_aggregates_only(self, value: bool = True) -> BenchmarkHandle:
         """Emit only the aggregate rows, suppressing per-repetition ones."""
 
-    def dense_range(self, start: int, limit: int, step: int = 1) -> BenchmarkHandle:
-        """
-        Register one case per value in `[start, limit]`, readable via `State.range`.
-        """
-
     def threads(self, n: int) -> BenchmarkHandle:
         """
         Run the benchmark with `n` threads, each with its own State and timer.
@@ -253,10 +244,6 @@ class BenchmarkHandle:
 
     def arg_name(self, name: str) -> BenchmarkHandle:
         """Name the first range argument; appears in the reported benchmark name."""
-
-    @property
-    def name(self) -> str:
-        """The registered benchmark name."""
 
 def register_benchmark(name: str, fn: Callable) -> BenchmarkHandle:
     """
