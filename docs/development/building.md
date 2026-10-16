@@ -95,7 +95,7 @@ LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libstdc++.
     ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" .venv/bin/python -m pytest --capture no
 
 # for macOS, there's a wrapper script to work around SIP.
-scripts/asan-pytest.sh
+scripts/sanitizer-pytest.sh asan
 ```
 
 ## Free-threaded (3.14t+) build
@@ -143,7 +143,7 @@ LD_PRELOAD="$(gcc -print-file-name=libtsan.so) $(gcc -print-file-name=libstdc++.
     TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0" .venv/bin/python -m pytest --capture no
 
 # macOS
-scripts/tsan-pytest.sh
+scripts/sanitizer-pytest.sh tsan
 ```
 
 ## Building the documentation locally
