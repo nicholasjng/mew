@@ -21,13 +21,8 @@ against an unpatched tree.
    it in a scratch clone: check out the new pin, apply the patches before it with
    `git apply`, commit, redo the failing patch's change by hand, and write
    `git diff` back to its file. Repeat for each later patch that fails.
-3. Run the native regressions in a Debug build, where Google Benchmark's checks
-   and asserts are active:
-
-   ```console
-   $ uv run --no-sync python scripts/test-benchmark-patches.py build/<wheel_tag>/_deps/googlebenchmark-src
-   ```
-
-4. Run the Python suite in both the default and the free-threaded environment (see
-   {doc}`building`), refresh the stub with `update_mew_core_stub` (it embeds the
-   version string), and update the pin in `docs/changelog.md`.
+3. Run the Python suite in the default and the free-threaded environment, and
+   once in the ASAN build, a Debug build where Google Benchmark's checks and
+   asserts are active (see {doc}`building`). Refresh the stub with
+   `update_mew_core_stub` (it embeds the version string), and update the pin in
+   `docs/changelog.md`.

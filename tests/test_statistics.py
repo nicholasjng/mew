@@ -51,16 +51,18 @@ def test_aggregate_values_casts_statistic_result_to_float() -> None:
     [
         ("min", 1.0),
         ("max", 9.0),
-        ("median", 5.0),
-        ("mean", 5.0),
-        ("p50", 5.0),
+        ("median", 2.0),
+        ("mean", 4.0),
+        ("gmean", 18.0 ** (1 / 3)),
+        ("p50", 2.0),
         ("p100", 9.0),
         ("p0", 1.0),
     ],
 )
 def test_resolve_statistic_builtin_names(spec: str, expected: float) -> None:
     stat = resolve_statistic(spec)
-    assert stat([1.0, 5.0, 9.0]) == expected
+    # Skewed, so mean, median and gmean all differ.
+    assert stat([1.0, 2.0, 9.0]) == pytest.approx(expected)
 
 
 def test_resolve_statistic_percentile_picks_tail() -> None:

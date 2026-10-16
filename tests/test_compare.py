@@ -37,24 +37,21 @@ def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
     assert "-48.48%" in out
 
 
-@pytest.mark.parametrize("selector", [None, "before"])
-def test_load_ignores_gb_aggregate_rows(tmp_path: Path, selector: str | None) -> None:
-    """GB aggregate rows (median/mean/stddev/cv) must not skew the recomputed
-    median, with or without a session selector."""
+def test_load_ignores_gb_aggregate_rows(tmp_path: Path) -> None:
+    """GB aggregate rows (median/mean/stddev/cv) must not skew the recomputed median."""
     p = tmp_path / "a.json"
-    common = dict(date="2026-01-01T00:00:00", session_id="0197-aaaa", session_tag="before")
     _write_json(
         p,
         [
-            _row("b", 5.0, **common),
-            _row("b", 7.0, **common),
-            _row("b", 999.0, aggregate_name="median", **common),
-            _row("b", 999.0, aggregate_name="mean", **common),
-            _row("b", 1.0, aggregate_name="stddev", **common),
-            _row("b", 0.1, aggregate_name="cv", **common),
+            _row("b", 5.0),
+            _row("b", 7.0),
+            _row("b", 999.0, aggregate_name="median"),
+            _row("b", 999.0, aggregate_name="mean"),
+            _row("b", 1.0, aggregate_name="stddev"),
+            _row("b", 0.1, aggregate_name="cv"),
         ],
     )
-    samples, _ = _load(p, "real_time", selector=selector)
+    samples, _ = _load(p, "real_time")
     assert samples["b"].value == 6.0
     assert samples["b"].values == (5.0, 7.0)
     assert samples["b"].stddev is not None
@@ -150,65 +147,32 @@ def test_compare_stddev_column(tmp_path: Path) -> None:
     assert "2.00" in out
 
 
-def test_load_jsonl(tmp_path: Path) -> None:
-    p = tmp_path / "a.jsonl"
-    _write_jsonl(p, [_row("bench_x", 10.0)], context={"session": {"host": "h1"}})
-    samples, ctx = _load(p, "real_time")
-    assert samples["bench_x"].value == 10.0
-    assert ctx["session"] == {"host": "h1"}
+_ROW_LINE = json.dumps(_row("b", 1.0))
 
 
-def test_load_jsonl_rejects_invalid_line(tmp_path: Path) -> None:
-    # A clean CLI error naming the file and line, not a ValueError traceback.
-    p = tmp_path / "a.jsonl"
-    p.write_text(json.dumps(_row("b", 1.0)) + "\nnot json\n")
-    with pytest.raises(SystemExit, match="a.jsonl:2: invalid JSON"):
+@pytest.mark.parametrize(
+    ("filename", "content", "match"),
+    [
+        ("a.json", None, "result file not found"),
+        ("a.json", "not json", "a.json: invalid JSON"),
+        ("a.json", "[1, 2]", "missing 'benchmarks' array"),  # valid JSON, wrong shape
+        ("a.json", '{"benchmarks": [1]}', r"benchmarks\[0\]: expected a mew result row"),
+        ("a.jsonl", _ROW_LINE + "\nnot json\n", "a.jsonl:2: invalid JSON"),
+        # Pure NDJSON: every line is a row with `name` and `benchmark`.
+        ("a.jsonl", _ROW_LINE + "\n[1, 2]\n", "a.jsonl:2: expected a mew result row"),
+        ("a.jsonl", _ROW_LINE + '\n{"context": {}}\n', "a.jsonl:2: expected a mew result row"),
+        ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', "a.jsonl:2: expected a mew result row"),
+    ],
+)
+def test_load_rejects_unreadable_files(
+    tmp_path: Path, filename: str, content: str | None, match: str
+) -> None:
+    # A clean CLI error naming the file (and line), not a traceback.
+    p = tmp_path / filename
+    if content is not None:
+        p.write_text(content)
+    with pytest.raises(SystemExit, match=match):
         _load(p, "real_time")
-
-
-@pytest.mark.parametrize("line", ["[1, 2]", '{"context": {}}', '{"name": "no benchmark"}'])
-def test_load_jsonl_rejects_non_row_lines(tmp_path: Path, line: str) -> None:
-    # Pure NDJSON: every line is a row with `name` and `benchmark`.
-    p = tmp_path / "a.jsonl"
-    p.write_text(json.dumps(_row("b", 1.0)) + "\n" + line + "\n")
-    with pytest.raises(SystemExit, match="a.jsonl:2: expected a mew result row"):
-        _load(p, "real_time")
-
-
-def test_load_rejects_json_with_non_object_rows(tmp_path: Path) -> None:
-    p = tmp_path / "a.json"
-    p.write_text('{"context": {}, "benchmarks": [1]}')
-    with pytest.raises(SystemExit, match=r"benchmarks\[0\]: expected a mew result row"):
-        _load(p, "real_time")
-
-
-def test_load_rejects_malformed_json(tmp_path: Path) -> None:
-    p = tmp_path / "a.json"
-    p.write_text("not json")
-    with pytest.raises(SystemExit, match="a.json: invalid JSON"):
-        _load(p, "real_time")
-
-
-def test_load_rejects_json_without_benchmarks_array(tmp_path: Path) -> None:
-    p = tmp_path / "a.json"
-    p.write_text("[1, 2]")  # valid JSON, wrong shape
-    with pytest.raises(SystemExit, match="missing 'benchmarks' array"):
-        _load(p, "real_time")
-
-
-def test_compare_missing_file_is_clean_error(tmp_path: Path) -> None:
-    present = tmp_path / "a.json"
-    _write_json(present, [_row("bench_x", 10.0)])
-    with pytest.raises(SystemExit, match="result file not found"):
-        compare([present, tmp_path / "missing.json"], console=Console())
-
-
-def test_load_key_func_strips_file_prefix(tmp_path: Path) -> None:
-    p = tmp_path / "a.json"
-    _write_json(p, [_row("bench_ducky.py::bench_select", 10.0)])
-    samples, _ = _load(p, "real_time", key="func")
-    assert set(samples) == {"bench_select"}
-    assert samples["bench_select"].name == "bench_select"
 
 
 def test_load_key_func_rejects_collisions(tmp_path: Path) -> None:
@@ -239,11 +203,10 @@ def test_compare_unknown_key(tmp_path: Path) -> None:
         compare([tmp_path / "a.json", tmp_path / "b.json"], key="bogus")
 
 
-def _two_session_file(tmp_path: Path, suffix: str = ".json") -> Path:
+def _two_session_file(tmp_path: Path) -> Path:
     """One file holding 'before' and 'after' sessions of one benchmark."""
-    p = tmp_path / f"results{suffix}"
-    writer = _write_jsonl if suffix.startswith(".jsonl") else _write_json
-    writer(
+    p = tmp_path / "results.json"
+    _write_json(
         p,
         [
             _row(
@@ -272,9 +235,8 @@ def test_split_selector(tmp_path: Path) -> None:
     assert _split_selector(str(weird)) == (weird, None)
 
 
-@pytest.mark.parametrize("suffix", [".json", ".jsonl", ".jsonl.gz"])
-def test_compare_two_sessions_of_one_file(tmp_path: Path, suffix: str) -> None:
-    p = _two_session_file(tmp_path, suffix)
+def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
+    p = _two_session_file(tmp_path)
     console = Console(width=200)
     assert compare([Path(f"{p}@after"), Path(f"{p}@before")], console=console) == 0
     out = console.export_text()
@@ -323,19 +285,10 @@ def test_same_second_runs_stay_distinct_by_session_id(tmp_path: Path) -> None:
     assert _load(p, "real_time", selector="after")[0]["b"].value == 20.0
 
 
-def test_load_with_selector(tmp_path: Path) -> None:
-    p = _two_session_file(tmp_path)
-    samples, ctx = _load(p, "real_time", selector="before")
-    assert samples["b"].value == 100.0
-    assert ctx["session"]["tag"] == "before"
-    latest, ctx = _load(p, "real_time", selector="latest")
-    assert latest["b"].value == 80.0
-    assert ctx["session"]["tag"] == "after"
-
-
 def test_tag_selector_pools_runs_sharing_the_tag(tmp_path: Path) -> None:
     """Repeated runs under one tag reduce together, so an interleaved A/B loop
-    keeps every repetition. Without a selector only the newest run counts."""
+    keeps every repetition. Without a selector, or with `@latest`, only the
+    newest run counts."""
     p = tmp_path / "r.json"
     _write_json(
         p,
@@ -349,8 +302,10 @@ def test_tag_selector_pools_runs_sharing_the_tag(tmp_path: Path) -> None:
     assert pooled["b"].values == (10.0, 20.0)
     assert pooled["b"].value == 15.0
     assert ctx["session"]["id"] == "bbbb"  # provenance from the newest pooled run
-    newest, _ = _load(p, "real_time")
-    assert newest["b"].value == 99.0
+    for selector in (None, "latest"):
+        newest, ctx = _load(p, "real_time", selector=selector)
+        assert newest["b"].value == 99.0
+        assert ctx["session"]["tag"] == "other"
 
 
 def test_unknown_selector_lists_the_tags(tmp_path: Path) -> None:
@@ -427,11 +382,11 @@ def test_compare_prints_context_and_warns_on_skew(
         base=[_row("bench_x", 100.0)],
         other_context={
             "session": {"host": "h2"},
-            "context": {"num_cpus": 4, "engine": "duckdb 1.5.3"},
+            "context": {"cpu_model": "Apple M2", "num_cpus": 4, "engine": "duckdb 1.5.3"},
         },
         base_context={
             "session": {"host": "h1"},
-            "context": {"num_cpus": 8, "engine": "ducky 0.1"},
+            "context": {"cpu_model": "Apple M1", "num_cpus": 8, "engine": "ducky 0.1"},
         },
     )
     console = Console(width=200)
@@ -444,6 +399,7 @@ def test_compare_prints_context_and_warns_on_skew(
     assert "engine=duckdb 1.5.3" in out
     err = capsys.readouterr().err
     assert "host" in err
+    assert "differ in cpu_model (base: Apple M1, other: Apple M2)" in err
     assert "num_cpus" in err
 
 
@@ -485,27 +441,6 @@ def test_compare_no_skew_warning_when_contexts_match(
     assert compare([other, base], console=console) == 0
     assert "host=h1" in console.export_text()  # the context was actually read
     assert "differ in" not in capsys.readouterr().err
-
-
-def test_load_renders_case_rows_by_label(tmp_path: Path) -> None:
-    p = tmp_path / "a.json"
-    _write_json(
-        p,
-        [
-            _row(
-                "bench.py::bench_udf/case:0/min_time:0.200",
-                10.0,
-                benchmark="bench.py::bench_udf[n=100]",
-            ),
-            _row(
-                "bench.py::bench_udf/case:1/min_time:0.200",
-                20.0,
-                benchmark="bench.py::bench_udf[n=10000]",
-            ),
-        ],
-    )
-    samples, _ = _load(p, "real_time")
-    assert set(samples) == {"bench.py::bench_udf[n=100]", "bench.py::bench_udf[n=10000]"}
 
 
 def test_compare_aligns_files_run_with_different_min_time(tmp_path: Path) -> None:

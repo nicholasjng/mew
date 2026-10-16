@@ -14,86 +14,45 @@ def _write(root: Path, body: str) -> None:
     (root / "pyproject.toml").write_text(textwrap.dedent(body))
 
 
-def test_load_defaults_when_no_pyproject(tmp_path: Path):
-    cfg = load(tmp_path)
-    assert cfg.benchpaths == ["benchmarks"]
-    assert cfg.statistic is None
-
-
-def test_load_bare_string_benchpaths_is_one_path(tmp_path: Path):
-    # A bare TOML string must be one path, not list("perf") == ["p","e","r","f"].
-    _write(
-        tmp_path,
-        """
-        [tool.mew]
-        benchpaths = "perf"
-        python-files = "bench_*.py"
-        """,
-    )
-    cfg = load(tmp_path)
-    assert cfg.benchpaths == ["perf"]
-    assert cfg.python_files == ["bench_*.py"]
-
-
-def test_load_rejects_non_string_benchpaths(tmp_path: Path):
-    _write(
-        tmp_path,
-        """
-        [tool.mew]
-        benchpaths = 42
-        """,
-    )
-    with pytest.raises(ValueError, match="benchpaths"):
-        load(tmp_path)
-
-
-def test_load_statistic_reference(tmp_path: Path):
-    _write(
-        tmp_path,
-        """
-        [tool.mew]
-        statistic = "scipy.stats:gmean"
-        """,
-    )
-    assert load(tmp_path).statistic == "scipy.stats:gmean"
-
-
-def test_load_rejects_non_string_statistic(tmp_path: Path):
-    _write(
-        tmp_path,
-        """
-        [tool.mew]
-        statistic = 95
-        """,
-    )
-    with pytest.raises(ValueError, match="statistic must be a string"):
-        load(tmp_path)
-
-
-def test_load_setup_path(tmp_path: Path):
-    _write(tmp_path, '[tool.mew]\nsetup = "benchmarks/conf.py"\n')
-    assert load(tmp_path).setup == "benchmarks/conf.py"
-
-
-def test_load_empty_table_uses_dataclass_defaults(tmp_path: Path):
+# The nearest pyproject.toml anchors the project, with or without a [tool.mew]
+# table, so no ancestor of tmp_path can leak its settings in.
+@pytest.mark.parametrize("body", ["", "[tool.mew]\n"])
+def test_load_defaults_from_the_nearest_pyproject(tmp_path: Path, body: str):
+    _write(tmp_path, body)
+    nested = tmp_path / "src" / "pkg"
+    nested.mkdir(parents=True)
     # Defaults live only on the dataclass; the loader just records the root.
-    _write(tmp_path, "[tool.mew]\n")
-    assert load(tmp_path) == Config(project_root=tmp_path.resolve())
+    assert load(nested) == Config(project_root=tmp_path.resolve())
 
 
-def test_load_rejects_non_string_setup(tmp_path: Path):
-    _write(tmp_path, "[tool.mew]\nsetup = 3\n")
-    with pytest.raises(ValueError, match="setup must be a string"):
-        load(tmp_path)
+@pytest.mark.parametrize(
+    ("setting", "field", "expected"),
+    [
+        ('benchpaths = ["perf", "slow"]', "benchpaths", ["perf", "slow"]),
+        # A bare TOML string must be one path, not list("perf") == ["p","e","r","f"].
+        ('benchpaths = "perf"', "benchpaths", ["perf"]),
+        ('python-files = "bench_*.py"', "python_files", ["bench_*.py"]),
+        ('statistic = "gmean"', "statistic", "gmean"),
+        ('setup = "benchmarks/conf.py"', "setup", "benchmarks/conf.py"),
+        ('capture = "fd"', "capture", "fd"),
+        ('capture = "no"', "capture", "no"),
+    ],
+)
+def test_load_setting(tmp_path: Path, setting: str, field: str, expected):
+    _write(tmp_path, f"[tool.mew]\n{setting}\n")
+    assert getattr(load(tmp_path), field) == expected
 
 
-@pytest.mark.parametrize("value", ["fd", "no"])
-def test_load_capture(tmp_path: Path, value: str):
-    _write(tmp_path, f'[tool.mew]\ncapture = "{value}"\n')
-    assert load(tmp_path).capture == value
-
-
-def test_load_rejects_unknown_capture_mode(tmp_path: Path):
-    _write(tmp_path, '[tool.mew]\ncapture = "sys"\n')
-    with pytest.raises(ValueError, match="capture must be one of fd, no"):
+@pytest.mark.parametrize(
+    ("setting", "message"),
+    [
+        ("benchpaths = 42", "benchpaths must be a string or a list of strings"),
+        ("statistic = 95", "statistic must be a string"),
+        ("setup = 3", "setup must be a string"),
+        ('capture = "sys"', "capture must be one of fd, no"),
+    ],
+)
+def test_load_rejects_malformed_setting(tmp_path: Path, setting: str, message: str):
+    _write(tmp_path, f"[tool.mew]\n{setting}\n")
+    with pytest.raises(ValueError, match=message):
         load(tmp_path)

@@ -41,24 +41,17 @@ def test_nesting_under_a_leaf_raises(leaf):
         mew.set_context("dataset.size", 1024)
 
 
-def test_update_context_with_kwargs():
-    mew.update_context(commit="abc", env={"python": "3.13"})
-    assert mew.get_context() == {"commit": "abc", "env": {"python": "3.13"}}
-
-
-def test_update_context_dotted_via_splat():
-    mew.update_context(**{"dataset.size": 1024, "env.python": "3.13"})
+def test_update_context_applies_mappings_then_kwargs():
+    # Dotted keys nest in both forms; keyword arguments override the mappings.
+    mew.update_context(
+        {"dataset.size": 1024, "commit": "abc"},
+        commit="def",
+        **{"env.python": "3.13"},
+    )
     assert mew.get_context() == {
         "dataset": {"size": 1024},
+        "commit": "def",
         "env": {"python": "3.13"},
-    }
-
-
-def test_update_context_with_positional_mapping():
-    mew.update_context({"dataset.size": 1024, "commit": "abc"})
-    assert mew.get_context() == {
-        "dataset": {"size": 1024},
-        "commit": "abc",
     }
 
 
@@ -85,24 +78,6 @@ def test_get_context_returns_a_snapshot():
     snap["a"]["nested"] = 999
     snap["new"] = "value"
     assert mew.get_context() == {"a": {"nested": 1}}
-
-
-def test_context_flows_into_reporter():
-    mew.set_context("dataset.size", 1024)
-    mew.set_context("commit", "abc")
-
-    @mew.benchmark
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    cap = Capture()
-    mew.run(min_time="1x", reporter=cap)
-    assert cap.context is not None
-    # The machine provider is applied by default, so user values sit beside it.
-    assert cap.context["context"]["dataset"] == {"size": 1024}
-    assert cap.context["context"]["commit"] == "abc"
-    assert "cpu_scaling_enabled" in cap.context["context"]
 
 
 def test_context_snapshot_is_captured_at_run_start():

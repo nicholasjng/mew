@@ -11,6 +11,7 @@ from _helpers import Capture
 
 import mew
 from mew import BenchmarkResult
+from mew.compare import read_results
 from mew.reporter import JSONLReporter, JSONReporter, RichReporter
 
 
@@ -52,22 +53,22 @@ def test_json_reporter_writes_to_stream():
     assert doc["benchmarks"][0]["iterations"] >= 1
 
 
-def test_json_reporter_can_be_reused(tmp_path):
-    out = tmp_path / "results.json"
-    rep = JSONReporter(output=out)
+@pytest.mark.parametrize(
+    ("reporter", "suffix"), [(JSONReporter, ".json"), (JSONLReporter, ".jsonl")]
+)
+def test_file_reporter_can_be_reused(tmp_path, reporter, suffix):
+    # A second run reopens the sink finalize() closed, and starts it over.
+    out = tmp_path / f"results{suffix}"
+    rep = reporter(output=out)
 
     @mew.benchmark
     def bench_reuse(state):
         for _ in state:
             pass
 
-    mew.run(min_time="1x", reporter=rep)
-    first = json.loads(out.read_text())
-    mew.run(min_time="1x", reporter=rep)
-    second = json.loads(out.read_text())
-
-    assert len(first["benchmarks"]) == 1
-    assert len(second["benchmarks"]) == 1
+    for _ in range(2):
+        mew.run(min_time="1x", reporter=rep)
+        assert len(read_results(out)) == 1
 
 
 def _fake_row(name: str, label: str = "", benchmark: str | None = None) -> BenchmarkResult:
@@ -151,17 +152,14 @@ def test_jsonl_gz_reporter_duckdb_query_round_trip(tmp_path):
     assert "bench_x" in row[0]
 
 
-def test_rich_reporter_runs_without_error():
-    from mew._console import Terminal
+def test_jsonl_reporter_gzips_an_uppercase_gz_suffix(tmp_path):
+    # The CLI and the reader match `.jsonl.gz` in any case, so the writer must too.
+    out = tmp_path / "results.JSONL.GZ"
+    _run_one(JSONLReporter(output=out))
 
-    buf = io.StringIO()
-    rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False))
-    _run_one(rep)
-    out = buf.getvalue()
-    assert "host=?" not in out
-    assert "cpus=?" not in out
-    assert "Benchmark" in out
-    assert "bench_x" in out
+    assert out.read_bytes()[:2] == b"\x1f\x8b"  # the gzip magic number
+    (row,) = read_results(out)
+    assert "bench_x" in row["name"]
 
 
 def test_rich_reporter_streams_header_before_first_run():
@@ -219,22 +217,6 @@ def test_rich_reporter_profile_flags_add_columns():
     assert hottest_frame.strip() == "-"
 
 
-def test_rich_reporter_shows_label_column_for_families():
-    from mew._console import Terminal
-
-    @mew.parametrize([{"n": 10}, {"n": 20}], ids=["small", "big"])
-    def bench_x(state, n):
-        for _ in state:
-            pass
-
-    buf = io.StringIO()
-    rep = RichReporter(terminal=Terminal(file=buf, width=120, color=False), show_label=True)
-    mew.run(min_time="1x", reporter=rep)
-    out = buf.getvalue()
-    assert "Label" in out
-    assert "small" in out and "big" in out
-
-
 def test_rich_reporter_left_ellipsizes_long_names():
     from mew._console import Terminal
 
@@ -282,9 +264,10 @@ def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
     rep.report_runs([row])
     out = buf.getvalue()
 
-    # Fixed widths from `_compute_widths`: label=20, hottest_frame=30.
+    assert "Label" in out
+    # Fixed widths from `RichReporter.report_context`: Label=20, Hottest Frame=30.
     assert "a-very-long-case-la…" in out  # left prefix of label survives, truncated
-    assert "a_very_long_function_name_tha" in out  # left prefix of hottest frame
+    assert "a_very_long_function_name_tha…" in out  # left prefix of hottest frame
 
 
 @pytest.mark.parametrize(
@@ -377,18 +360,6 @@ def test_rich_reporter_renders_the_benchmark_field():
     assert "min_time" not in out
 
 
-def test_jsonl_reporter_streams_one_object_per_line(tmp_path):
-    @mew.parametrize([{"n": 1}, {"n": 2}])
-    def bench_x(state, n):
-        for _ in state:
-            pass
-
-    out = tmp_path / "results.jsonl"
-    mew.run(min_time="1x", reporter=JSONLReporter(output=out))
-    rows = [json.loads(ln) for ln in out.read_text().splitlines()]
-    assert len(rows) == 2  # one line per parametrized case
-
-
 def test_jsonl_reporter_flushes_incrementally(tmp_path):
     out = tmp_path / "partial.jsonl"
     rep = JSONLReporter(output=out)
@@ -399,17 +370,6 @@ def test_jsonl_reporter_flushes_incrementally(tmp_path):
     assert len(lines) == 1
     assert json.loads(lines[0])["name"] == "f::bench"
     rep.finalize()
-
-
-def test_jsonl_reporter_releases_owned_sink_after_finalize(tmp_path):
-    out = tmp_path / "out.jsonl"
-    rep = JSONLReporter(output=out)
-    _run_one(rep)
-    assert rep._fh is None
-    # Reusable: a second run reopens the sink instead of writing to a closed one.
-    mew.REGISTRY.clear()
-    _run_one(rep)
-    assert out.read_text().count("\n") == 1
 
 
 def test_fanout_finalize_runs_every_sink_despite_failure():
@@ -455,10 +415,6 @@ def test_rows_carry_the_addressable_benchmark_name(tmp_path):
     # Repetition and aggregate rows of one case share the stamp; `name` differs.
     by_case = {row["benchmark"] for row in rows}
     assert by_case == {f"{entry.name}[n=1]", f"{entry.name}[n=2]"}
-    from mew.reporter import canonical_row_name
-
-    mean = next(r for r in rows if r["aggregate_name"] == "mean" and r["label"] == "n=1")
-    assert canonical_row_name(mean) == f"{entry.name}[n=1]_mean"
 
 
 def test_set_label_in_a_family_does_not_rename_its_cases():

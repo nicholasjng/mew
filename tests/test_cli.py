@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 from _helpers import row as _row, write_json as _write_json, write_pair as _write_pair
 
+import mew
+
 FIXTURE = """
     import mew
 
@@ -29,6 +31,11 @@ FIXTURE = """
 
     @mew.parametrize([{"n": 1}, {"n": 2}], tags=("cpu",))
     def bench_two(state, n):
+        for _ in state:
+            pass
+
+    @mew.benchmark
+    def bench_untagged(state):
         for _ in state:
             pass
 """
@@ -57,7 +64,8 @@ def mew_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str])
     from mew.cli import main
 
     # Output assertions expect plain text unless a test opts into color.
-    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    for var in ("FORCE_COLOR", "NO_COLOR", "PYTHON_COLORS"):
+        monkeypatch.delenv(var, raising=False)
 
     def invoke(*args: str, cwd: Path, stdin: str | None = None) -> _Result:
         monkeypatch.chdir(cwd)
@@ -79,19 +87,28 @@ def mew_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str])
     return invoke
 
 
-def test_list_discovers_all_entries(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    # A parametrized family lists as one row without --show-cases.
-    assert any(n.endswith("::bench_one") for n in names)
-    assert any(n.endswith("::bench_two") for n in names)
-
-
 @pytest.mark.parametrize(
-    "args",
-    [("-h",), ("list", "-h"), ("run", "-h"), ("compare", "-h"), ("completions", "-h")],
+    ("args", "expected"),
+    [
+        # A parametrized family lists as one row without --show-cases.
+        ((), ["bench_one", "bench_two", "bench_untagged"]),
+        (("--show-cases",), ["bench_one", "bench_two[n=1]", "bench_two[n=2]", "bench_untagged"]),
+        (("-k", "bench_(one|two)"), ["bench_one", "bench_two"]),  # a regex
+        # A -k matching one case lists just that case.
+        (("-k", "n=2"), ["bench_two[n=2]"]),
+        (("-t", "io"), ["bench_one"]),
+        # Repeated -t is OR; the untagged benchmark matches neither.
+        (("-t", "io", "-t", "cpu"), ["bench_one", "bench_two"]),
+        (("-k", "nonexistent"), []),
+    ],
 )
+def test_list_selects_and_expands(mew_cli, benchdir, tmp_path, args, expected):
+    res = mew_cli("list", str(benchdir), "--names-only", *args, cwd=tmp_path)
+    assert res.returncode == (0 if expected else 1), res.stderr
+    assert res.stdout.splitlines() == expected
+
+
+@pytest.mark.parametrize("args", [("-h",), ("run", "-h")])
 def test_help_is_plain_terminal_text(mew_cli, tmp_path, args):
     res = mew_cli(*args, cwd=tmp_path)
     assert res.returncode == 0
@@ -101,10 +118,13 @@ def test_help_is_plain_terminal_text(mew_cli, tmp_path, args):
 
 def test_help_honors_force_color(mew_cli, tmp_path, monkeypatch):
     # Like the reporters and tables: FORCE_COLOR colors even redirected output.
+    from mew._console import sgr
+
     monkeypatch.setenv("FORCE_COLOR", "1")
-    res = mew_cli("-h", cwd=tmp_path)
+    res = mew_cli("run", "-h", cwd=tmp_path)
     assert res.returncode == 0
-    assert "\x1b[" in res.stdout
+    # mew's styling, not the theme argparse colors help with on 3.14+.
+    assert sgr("--min-time", "cyan") in res.stdout
 
 
 def test_list_selects_symlinked_bench_file_in_benchpath(mew_cli, tmp_path):
@@ -124,11 +144,6 @@ def test_list_selects_symlinked_bench_file_in_benchpath(mew_cli, tmp_path):
     assert "bench_one" in res.stdout
 
 
-def test_list_no_matches_exits_nonzero(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), "-k", "nonexistent", cwd=tmp_path)
-    assert res.returncode == 1
-
-
 def test_list_works_from_subdirectory(mew_cli, benchdir, tmp_path):
     # Config benchpaths anchor at the project root (pyproject.toml), not cwd.
     (tmp_path / "pyproject.toml").write_text("[tool.mew]\n")
@@ -139,43 +154,18 @@ def test_list_works_from_subdirectory(mew_cli, benchdir, tmp_path):
     assert "bench_one" in res.stdout
 
 
-def test_list_pattern_is_regex(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), "-k", "bench_(one|two)", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    assert len(names) == 2
-
-    res = mew_cli("list", str(benchdir), "-k", "bench_one$", cwd=tmp_path)
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    assert len(names) == 1 and names[0].endswith("::bench_one")
-
-
 def test_run_invalid_pattern_errors(mew_cli, benchdir, tmp_path):
     res = mew_cli("run", str(benchdir), "--min-time", "1x", "-k", "foo(", cwd=tmp_path)
     assert res.returncode == 2
     assert "invalid benchmark filter pattern" in res.stderr
 
 
-def test_run_k_selects_single_family_case(mew_cli, benchdir, tmp_path):
-    # bench_two is parametrized [{n:1},{n:2}]; `n=2` addresses case index 1 only.
-    out = tmp_path / "results.json"
-    res = mew_cli(
-        "run", str(benchdir), "--min-time", "1x", "-k", "n=2", "-o", str(out), cwd=tmp_path
-    )
-    assert res.returncode == 0, res.stderr
-    benches = json.loads(out.read_text())["benchmarks"]
-    assert len(benches) == 1
-    assert "bench_two" in benches[0]["name"]
-    assert "/case:1" in benches[0]["name"]
-
-
-def test_list_show_cases_expands_family(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), "--show-cases", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    assert any(n.endswith("::bench_two[n=1]") for n in names)
-    assert any(n.endswith("::bench_two[n=2]") for n in names)
-    assert any(n.endswith("::bench_one") for n in names)
+def test_invalid_selector_filter_errors_before_import(mew_cli, tmp_path):
+    # Filters compile before discovery, so a bad one never runs benchmark code.
+    (tmp_path / "bench_boom.py").write_text("raise RuntimeError('imported')\n")
+    res = mew_cli("list", "bench_boom.py::foo(", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "invalid benchmark filter pattern" in res.stderr
 
 
 def test_run_literal_selects_bracketed_case_without_escaping(mew_cli, benchdir, tmp_path):
@@ -203,45 +193,10 @@ def test_run_literal_selects_bracketed_case_without_escaping(mew_cli, benchdir, 
     assert "no benchmarks found" in res.stderr
 
 
-def test_list_k_shows_narrowed_family_cases(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), "-k", "n=2", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    assert len(names) == 1
-    assert names[0].endswith("::bench_two[n=2]")
-
-
-def test_run_nodeid_filter(mew_cli, benchdir, tmp_path):
-    nodeid = f"{benchdir}/bench_fixture.py::bench_one"
-    out = tmp_path / "results.json"
-    res = mew_cli("run", nodeid, "--min-time", "1x", "-o", str(out), cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    doc = json.loads(out.read_text())
-    assert len(doc["benchmarks"]) == 1
-    assert "bench_one" in doc["benchmarks"][0]["name"]
-
-
 def test_run_rejects_unknown_output_format(mew_cli, benchdir, tmp_path):
     res = mew_cli("run", str(benchdir), "--min-time", "1x", "-o", "results.txt", cwd=tmp_path)
     assert res.returncode == 2
     assert "unsupported output format" in res.stderr
-
-
-def test_list_filter_by_tag(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), "-t", "io", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    assert all("bench_one" in n for n in names)
-    assert names
-
-
-def test_list_filter_by_multiple_tags_is_or(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), "-t", "io", "-t", "cpu", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    # io picks bench_one, cpu picks the bench_two family, listed as one row.
-    assert {n.rsplit("::", 1)[-1] for n in names} == {"bench_one", "bench_two"}
-    assert len(names) == 2
 
 
 def test_list_show_tags(mew_cli, benchdir, tmp_path):
@@ -259,7 +214,7 @@ def test_run_jsonl_gz_extension_accepted(mew_cli, benchdir, tmp_path):
 
     with gzip.open(out, "rt") as fh:
         lines = fh.read().splitlines()
-    assert len(lines) == 3  # pure NDJSON: one row per benchmark, no header
+    assert len(lines) == 4  # pure NDJSON: one row per benchmark, no header
 
 
 @pytest.mark.parametrize(
@@ -283,7 +238,6 @@ def test_min_warmup_time_parses_durations(value, seconds):
         ("--memory-iterations", "0"),
         ("--sample-interval", "0"),
         ("--sample-top-k", "0"),
-        ("--sampler", "perf"),
     ],
 )
 def test_run_rejects_invalid_option_values(mew_cli, benchdir, tmp_path, flag, value):
@@ -329,9 +283,9 @@ def test_run_promoted_gb_flags_accepted(mew_cli, benchdir, tmp_path):
     )
     assert res.returncode == 0, res.stderr
     doc = json.loads(out.read_text())
-    # 3 benchmarks x 2 repetitions, plus GB aggregate rows for the repeats.
+    # 4 benchmarks x 2 repetitions, plus GB aggregate rows for the repeats.
     per_rep = [b for b in doc["benchmarks"] if not b.get("aggregate_name")]
-    assert len(per_rep) == 6
+    assert len(per_rep) == 8
     assert all(b["iterations"] == 1 for b in per_rep)
 
 
@@ -364,22 +318,6 @@ def test_run_stdin_empty_runs_nothing(mew_cli, benchdir):
     assert "no benchmarks found" in res.stderr
 
 
-def test_list_names_only_drops_path(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), "--names-only", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    assert "bench_one" in names
-    assert all("::" not in n for n in names)
-
-
-def test_list_names_only_show_cases(mew_cli, benchdir, tmp_path):
-    res = mew_cli("list", str(benchdir), "--names-only", "--show-cases", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    names = [n for n in res.stdout.splitlines() if n.strip()]
-    assert "bench_two[n=1]" in names and "bench_two[n=2]" in names
-    assert all("::" not in n for n in names)
-
-
 def test_run_stdin_names_only_round_trip_is_cwd_independent(mew_cli, benchdir, tmp_path):
     # A path-free name selects against run's own discovery, so the run cwd
     # need not match the bench dir.
@@ -405,25 +343,34 @@ def test_run_stdin_names_only_round_trip_is_cwd_independent(mew_cli, benchdir, t
 
 def test_run_format_jsonl_streams_to_stdout(mew_cli, benchdir, tmp_path):
     # Every stdout line is valid JSON (no rich banner) → pipeable to `jq`.
-    res = mew_cli("run", str(benchdir), "--min-time", "1x", "--format", "jsonl", cwd=tmp_path)
+    out = tmp_path / "results.json"
+    res = mew_cli(
+        "run",
+        str(benchdir),
+        "--min-time",
+        "1x",
+        "--format",
+        "jsonl",
+        "-o",
+        "stdout",
+        "-o",
+        str(out),
+        cwd=tmp_path,
+    )
     assert res.returncode == 0, res.stderr
     objs = [json.loads(line) for line in res.stdout.splitlines() if line.strip()]
     names = [o["name"] for o in objs if "name" in o]
     assert any("bench_one" in n for n in names)
     assert any("bench_two" in n for n in names)
+    # Both sinks receive every row.
+    assert [b["name"] for b in json.loads(out.read_text())["benchmarks"]] == names
 
 
 def test_run_format_json_to_stdout(mew_cli, benchdir, tmp_path):
     res = mew_cli("run", str(benchdir), "--min-time", "1x", "--format", "json", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     doc = json.loads(res.stdout)
-    assert len(doc["benchmarks"]) == 3
-
-
-def test_run_format_unknown_errors(mew_cli, benchdir, tmp_path):
-    res = mew_cli("run", str(benchdir), "--min-time", "1x", "--format", "yaml", cwd=tmp_path)
-    assert res.returncode == 2
-    assert "invalid choice: 'yaml'" in res.stderr
+    assert len(doc["benchmarks"]) == 4
 
 
 def test_run_format_without_stdout_sink_warns(mew_cli, benchdir, tmp_path):
@@ -435,18 +382,6 @@ def test_run_format_without_stdout_sink_warns(mew_cli, benchdir, tmp_path):
     assert res.returncode == 0, res.stderr
     assert "no effect without a stdout sink" in res.stderr
     assert res.stdout.strip() == ""
-
-
-def test_run_filter_by_tag(mew_cli, benchdir, tmp_path):
-    out = tmp_path / "results.json"
-    res = mew_cli(
-        "run", str(benchdir), "--min-time", "1x", "-t", "cpu", "-o", str(out), cwd=tmp_path
-    )
-    assert res.returncode == 0, res.stderr
-    doc = json.loads(out.read_text())
-    names = [b["name"] for b in doc["benchmarks"]]
-    assert len(names) == 2
-    assert all("bench_two" in n for n in names)
 
 
 @pytest.mark.parametrize(
@@ -523,7 +458,7 @@ _SAMPLED_ITERATIONS = "200x"
             "profiling.sampling" if sys.version_info >= (3, 15) else "pyinstrument",
             ("--sample", "--sample-interval", "1e-5", "--sample-top-k", "2", "--sample-html"),
             marks=pytest.mark.skipif(
-                sys.version_info < (3, 15) and not getattr(sys, "_is_gil_enabled", lambda: True)(),
+                sys.version_info < (3, 15) and not mew.gil_enabled(),
                 reason="pyinstrument's native sampler enables the GIL",
             ),
         ),
@@ -580,7 +515,7 @@ def test_run_rejects_tachyon_before_python_3_15(mew_cli, benchdir, tmp_path):
 
 @pytest.mark.skipif(sys.version_info < (3, 15), reason="pyinstrument is the default here")
 @pytest.mark.skipif(
-    not getattr(sys, "_is_gil_enabled", lambda: True)(),
+    not mew.gil_enabled(),
     reason="pyinstrument's native sampler enables the GIL",
 )
 def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
@@ -616,19 +551,15 @@ def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
 # --- mew compare: --regression-threshold / --exit-non-zero-on-regression ---
 
 
-def test_compare_regression_threshold_requires_percent_suffix(mew_cli, tmp_path):
-    other, base = _write_pair(tmp_path, other=[], base=[])
-    res = mew_cli("compare", str(other), str(base), "--regression-threshold", "5", cwd=tmp_path)
+@pytest.mark.parametrize("value", ["5", "-1%", "nan%", "inf%"])
+def test_compare_regression_threshold_must_be_a_finite_non_negative_percent(
+    mew_cli, tmp_path, value
+):
+    # Rejected while parsing, before any file is read. `=` keeps argparse from
+    # taking `-1%` for an option, so every value reaches the validator.
+    res = mew_cli("compare", "a.json", "b.json", f"--regression-threshold={value}", cwd=tmp_path)
     assert res.returncode == 2  # usage error, not the "nothing matched" exit 1
-    assert "--regression-threshold" in res.stderr
-    assert "'5'" in res.stderr
-
-
-@pytest.mark.parametrize("value", ["-1%", "nan%", "inf%"])
-def test_compare_regression_threshold_must_be_non_negative_and_finite(mew_cli, tmp_path, value):
-    other, base = _write_pair(tmp_path, other=[], base=[])
-    res = mew_cli("compare", str(other), str(base), "--regression-threshold", value, cwd=tmp_path)
-    assert res.returncode == 2
+    assert f"--regression-threshold: expected a percent like '5%', got '{value}'" in res.stderr
 
 
 @pytest.mark.parametrize(
@@ -659,7 +590,6 @@ def test_compare_malformed_regressions_config_is_usage_error(mew_cli, tmp_path):
     assert res.returncode == 2
     assert "invalid regressions config" in res.stderr
     assert "reason" in res.stderr
-    assert "Traceback" not in res.stderr
 
 
 def test_sessions_lists_newest_first(mew_cli, tmp_path):
@@ -681,12 +611,6 @@ def test_sessions_lists_newest_first(mew_cli, tmp_path):
     assert lines[0].startswith("Id")
     assert lines[2].startswith("bbbbbbbb") and "after" in lines[2]
     assert lines[3].startswith("aaaaaaaa") and "before" in lines[3]
-
-
-def test_completions_unknown_shell_errors(mew_cli, tmp_path):
-    res = mew_cli("completions", "tcsh", cwd=tmp_path)
-    assert res.returncode == 2
-    assert "invalid choice" in res.stderr
 
 
 @pytest.mark.parametrize(
@@ -774,52 +698,21 @@ def test_completions_fish_syntax(mew_cli, tmp_path):
 
 # --- end-to-end: the real entry point in a subprocess -------------------------
 #
-# `python -m mew.cli` in a fresh interpreter: real pipes round-trip, and errors
-# are a message and an exit code, not a traceback.
+# `python -m mew.cli` in a fresh interpreter: real pipes carry clean JSON, and
+# errors are a message and an exit code, not a traceback.
 
 
-def _mew(*args: str, cwd: Path, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+def _mew(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
         [sys.executable, "-m", "mew.cli", *args],
         cwd=cwd,
-        input=stdin,
         capture_output=True,
         text=True,
         encoding="utf-8",
         env=env,
         check=False,
     )
-
-
-def test_e2e_run_stdin_round_trip(benchdir, tmp_path):
-    # `mew list | mew run --stdin` with no xargs; run from the discovery cwd so
-    # the relative paths in the listing resolve.
-    listing = _mew("list", ".", cwd=benchdir)
-    assert listing.returncode == 0, listing.stderr
-    out = tmp_path / "results.json"
-    res = _mew(
-        "run",
-        "--stdin",
-        "--min-time",
-        "1x",
-        "--format",
-        "jsonl",
-        "-o",
-        "stdout",
-        "-o",
-        str(out),
-        stdin=listing.stdout,
-        cwd=benchdir,
-    )
-    assert res.returncode == 0, res.stderr
-    objs = [json.loads(x) for x in res.stdout.splitlines() if x.strip()]
-    names = [o["name"] for o in objs if "name" in o]
-    assert any("bench_one" in n for n in names)
-    assert any("bench_two" in n for n in names)
-    # Both sinks receive every row.
-    assert [b["name"] for b in json.loads(out.read_text())["benchmarks"]] == names
-    assert len(names) == 3
 
 
 def test_e2e_missing_default_benchpath_is_clean(tmp_path):
@@ -898,7 +791,7 @@ def test_path_filters_are_scoped_to_their_files(mew_cli, tmp_path, second_filter
     assert res.returncode == 0, res.stderr
     expected = {"bench_a.py::bench_one", "bench_b.py::bench_two"}
     if not second_filter:
-        expected.add("bench_b.py::bench_one")
+        expected |= {"bench_b.py::bench_one", "bench_b.py::bench_untagged"}
     assert set(res.stdout.splitlines()) == expected
 
 

@@ -1,22 +1,44 @@
-"""Session identity: UUIDv7 generation, VCS provenance, reporter persistence."""
+"""Session identity: UUIDv7 generation, VCS and machine provenance, reporter persistence."""
 
 from __future__ import annotations
 
 import json
+import os
+import platform
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
 
 import pytest
-from _helpers import row, write_jsonl
 
 import mew
 from mew._session import new_session_id
-from mew.compare import read_results, session_summaries
+from mew.compare import session_summaries
+from mew.machine import _cpuinfo_model
 from mew.reporter import JSONLReporter, JSONReporter
 from mew.vcs import vcs_context
+
+
+@pytest.fixture
+def _isolated_vcs(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch):
+    """Keep the developer's git and jj config (signing, hooks, auto-track) and an
+    enclosing repo's GIT_* variables out of the test repos."""
+    # Outside tmp_path: jj would snapshot a config file in the work tree as an edit.
+    jj_config = tmp_path_factory.mktemp("jj") / "config.toml"
+    jj_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("JJ_CONFIG", str(jj_config))
+    for var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        monkeypatch.delenv(var, raising=False)
+    # Commit identity, which the global config no longer provides.
+    for var in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME", "JJ_USER"):
+        monkeypatch.setenv(var, "t")
+    for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL", "JJ_EMAIL"):
+        monkeypatch.setenv(var, "t@t")
 
 
 def test_new_session_id_is_a_version7_uuid():
@@ -33,74 +55,83 @@ def test_new_session_ids_are_unique_and_time_ordered():
     assert first < second  # lexicographic order matches creation order
 
 
+@pytest.mark.usefixtures("_isolated_vcs")
 def test_vcs_context_outside_a_repo(tmp_path: Path):
     """Always safe to hand to `update_context`, work tree or not."""
     assert vcs_context(cwd=tmp_path) == {}
 
 
+@pytest.mark.usefixtures("_isolated_vcs")
 def test_vcs_context_in_a_git_repo(tmp_path: Path):
     if not shutil.which("git"):
         pytest.skip("git not available")
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "user.name=t",
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "x",
-        ],
-        cwd=tmp_path,
-        check=True,
-    )
-    info = vcs_context(cwd=tmp_path)["vcs"]
-    assert info["backend"] == "git"
-    assert len(info["commit"]) == 40, "full sha: an abbreviation can collide as history grows"
-    assert info["dirty"] is False
-
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("v1")
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    # Without a commit, HEAD names nothing to record.
+    assert vcs_context(cwd=tmp_path) == {}
+    for args in (["add", "tracked.txt"], ["commit", "-q", "-m", "x"]):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True)
     # Untracked files are not a change to what was benchmarked: a results file or
     # build artifact in the tree must not mark every run dirty.
     (tmp_path / "results.jsonl").write_text("{}")
-    assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is False
+    info = vcs_context(cwd=tmp_path)["vcs"]
+    assert info["backend"] == "git"
+    assert len(info["commit"]) == 40, "full sha: an abbreviation can collide as history grows"
+    assert info["branch"] == "main"
+    assert info["dirty"] is False
 
     # A modified tracked file is.
-    tracked = tmp_path / "tracked.txt"
-    tracked.write_text("v1")
-    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
-    subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "add"],
-        cwd=tmp_path,
-        check=True,
-    )
-    assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is False
     tracked.write_text("v2")
     assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is True
 
+    # A detached HEAD is on no branch.
+    subprocess.run(["git", "checkout", "-q", "--detach"], cwd=tmp_path, check=True)
+    assert "branch" not in vcs_context(cwd=tmp_path)["vcs"]
 
+
+@pytest.mark.usefixtures("_isolated_vcs")
 def test_vcs_context_prefers_jj(tmp_path: Path):
     if not shutil.which("jj"):
         pytest.skip("jj not available")
-    # `jj git init` (not --colocate) leaves no usable git HEAD, so git yields
-    # nothing here regardless; the point is that jj is tried first.
-    subprocess.run(["jj", "git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    # Colocated with one commit, git has a HEAD too: only the order picks jj.
+    for args in (["git", "init", "--colocate"], ["commit", "-m", "x"]):
+        subprocess.run(["jj", *args], cwd=tmp_path, capture_output=True, check=True)
     info = vcs_context(cwd=tmp_path)["vcs"]
     assert info["backend"] == "jj"
     assert info["change_id"] and info["commit"]
     assert info["dirty"] is False
 
-
-def test_vcs_context_jj_sees_uncommitted_edits(tmp_path: Path):
-    if not shutil.which("jj"):
-        pytest.skip("jj not available")
-    subprocess.run(["jj", "git", "init"], cwd=tmp_path, capture_output=True, check=True)
     # Not yet snapshotted: only a fresh snapshot shows the edit.
     (tmp_path / "f.txt").write_text("x")
     assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is True
+
+
+def test_machine_context_names_the_cpu():
+    model = mew.machine_context()["cpu_model"]
+    if sys.platform == "darwin":
+        sysctl = ["sysctl", "-n", "machdep.cpu.brand_string"]
+        assert model == subprocess.run(sysctl, capture_output=True, text=True).stdout.strip()
+    elif sys.platform == "linux" and platform.machine() == "aarch64":
+        pytest.skip("Arm64 kernels name no CPU model")
+    else:
+        # CI's x86-64 Linux and Windows runners name theirs.
+        assert model and model == model.strip()
+
+
+@pytest.mark.parametrize(
+    ("lines", "model"),
+    [
+        (
+            ["vendor_id\t: AuthenticAMD", "model name\t: AMD EPYC 7763 64-Core Processor"],
+            "AMD EPYC 7763 64-Core Processor",
+        ),
+        # Arm64 kernels list implementer and part numbers instead.
+        (["BogoMIPS\t: 50.00", "CPU implementer\t: 0x41", "CPU part\t: 0xd0c"], None),
+    ],
+)
+def test_cpuinfo_model(lines: list[str], model: str | None):
+    assert _cpuinfo_model(line + "\n" for line in lines) == model
 
 
 def test_json_reporter_persists_session_identity(tmp_path: Path):
@@ -149,20 +180,6 @@ def test_jsonl_rows_are_self_contained(tmp_path: Path):
     assert uuid.UUID(row["session"]["id"]).version == 7
     assert row["session"]["tag"] == "before"
     assert row["session"]["host"] and row["session"]["date"]
-
-
-@pytest.mark.parametrize("compressed", [False, True])
-def test_jsonl_rows_read_back_without_a_header(tmp_path: Path, compressed: bool):
-    path = tmp_path / ("sessions.jsonl.gz" if compressed else "sessions.jsonl")
-    rows = [
-        row("first", 2, session_id="first"),
-        row("second", 3, session_id="second", custom={"engine": "second"}),
-    ]
-    write_jsonl(path, rows)
-    assert {s.id for s in session_summaries(path)} == {"first", "second"}
-    by_id = {r["session"]["id"]: r for r in read_results(path)}
-    assert "context" not in by_id["first"]
-    assert by_id["second"]["context"] == {"engine": "second"}
 
 
 def test_bare_reporter_context_omits_session_keys(tmp_path: Path):

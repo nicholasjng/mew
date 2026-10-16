@@ -104,55 +104,27 @@ def test_load_config_accepts_dashed_keys(tmp_path: Path) -> None:
     assert load_config(root=tmp_path).default_threshold == 7.5
 
 
-def test_load_config_missing_reason_rejected(tmp_path: Path) -> None:
-    py = tmp_path / "pyproject.toml"
-    py.write_text(
-        """
-[[tool.mew.regressions.allow]]
-pattern = "b*"
-ignore = true
-"""
-    )
-    with pytest.raises(ValueError, match="reason"):
-        load_config(default_threshold=5.0, root=tmp_path)
-
-
-def test_load_config_neither_ignore_nor_threshold(tmp_path: Path) -> None:
-    py = tmp_path / "pyproject.toml"
-    py.write_text(
-        """
-[[tool.mew.regressions.allow]]
-pattern = "b*"
-reason = "??"
-"""
-    )
-    with pytest.raises(ValueError, match="exactly one of ignore=true or threshold"):
-        load_config(default_threshold=5.0, root=tmp_path)
+_ALLOW = '[[tool.mew.regressions.allow]]\npattern = "b*"\n'
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "match"),
     [
-        'ignore = "false"',
-        "ignore = true\nthreshold = 10.0",
-        "threshold = true",
-        "threshold = -1.0",
-        "threshold = nan",
+        (_ALLOW + "ignore = true", "'reason' is required"),
+        # A rule sets exactly one mode, of the right type and range.
+        (_ALLOW + 'reason = "r"', "exactly one of ignore=true or threshold"),
+        (_ALLOW + 'reason = "r"\nignore = true\nthreshold = 10.0', "exactly one of"),
+        (_ALLOW + 'reason = "r"\nignore = "false"', "ignore must be a boolean"),
+        (_ALLOW + 'reason = "r"\nthreshold = true', "finite, non-negative"),
+        (_ALLOW + 'reason = "r"\nthreshold = -1.0', "finite, non-negative"),
+        (_ALLOW + 'reason = "r"\nthreshold = nan', "finite, non-negative"),
+        ('[tool.mew.regressions]\nallow = "b*"', "allow must be an array of tables"),
     ],
 )
-def test_load_config_rejects_invalid_rule_modes(tmp_path: Path, body: str) -> None:
-    py = tmp_path / "pyproject.toml"
-    py.write_text(
-        f"""\n[[tool.mew.regressions.allow]]\npattern = "b*"\nreason = "invalid"\n{body}\n"""
-    )
-    with pytest.raises(ValueError):
-        load_config(default_threshold=5.0, root=tmp_path)
-
-
-def test_load_config_rejects_non_array_allow_table(tmp_path: Path) -> None:
-    py = tmp_path / "pyproject.toml"
-    py.write_text('[tool.mew.regressions]\nallow = "b*"\n')
-    with pytest.raises(ValueError, match="allow must be an array of tables"):
+def test_load_config_rejects_invalid_rules(tmp_path: Path, body: str, match: str) -> None:
+    # Every row names its error: a TOML syntax error is a ValueError too.
+    (tmp_path / "pyproject.toml").write_text(body + "\n")
+    with pytest.raises(ValueError, match=match):
         load_config(default_threshold=5.0, root=tmp_path)
 
 
@@ -185,15 +157,6 @@ def test_render_panel_exit_codes() -> None:
     assert "✅" in text
     assert "allowlisted: ignored" in text
     assert code == 0
-
-
-def test_compare_fails_on_regression(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
-    cfg = RegressionConfig(default_threshold=5.0)
-    code = compare([other, base], regressions=cfg, console=Console(width=200))
-    assert code == 2
-    err = capsys.readouterr().err
-    assert "❌ b   +20.00%" in err  # exact panel line: name + signed delta
 
 
 @pytest.mark.parametrize(

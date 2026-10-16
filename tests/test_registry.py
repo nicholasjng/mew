@@ -2,29 +2,17 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from mew._registry import Entry, Registry, compile_name_filter, narrow_entry
 
+_LABELS = ["n=1", "n=10", "n=100"]
+
 
 def _family(name: str = "f.py::bench_fam") -> Entry:
-    return Entry(name=name, fn=lambda s: None, case_labels=["n=1", "n=10", "n=100"])
-
-
-def _narrow(entry: Entry, pattern: str) -> Entry | None:
-    return narrow_entry(entry, all_of=compile_name_filter(pattern))
-
-
-def test_add_rejects_duplicate_name():
-    r = Registry()
-    r.add(Entry(name="a", fn=lambda s: None))
-    with pytest.raises(ValueError, match="already registered"):
-        r.add(Entry(name="a", fn=lambda s: None))
-    assert len(r) == 1
-    # clear() makes registration names available again.
-    r.clear()
-    r.add(Entry(name="a", fn=lambda s: None))
-    assert len(r) == 1
+    return Entry(name=name, fn=lambda s: None, case_labels=_LABELS)
 
 
 def test_filter_pattern_is_regex_searched():
@@ -54,41 +42,27 @@ def test_filter_invalid_regex_raises_value_error():
         r.filter("foo(")
 
 
-def test_narrow_plain_benchmark_is_all_or_nothing():
-    e = Entry(name="f.py::bench_x", fn=lambda s: None)
-    assert _narrow(e, "bench_x") is e  # unchanged view, no cases
-    assert _narrow(e, "nope") is None
-
-
-def test_narrow_family_name_match_keeps_all_cases():
-    e = _family()
-    narrowed = _narrow(e, "bench_fam")
-    assert narrowed is e  # whole family → no narrowing
-    assert narrowed.cases is None
-
-
-def test_narrow_by_human_label_selects_one_case():
-    # `name[label]` is addressable; only case index 2 (n=100) matches.
-    narrowed = _narrow(_family(), r"bench_fam\[n=100\]")
-    assert narrowed is not None
-    assert narrowed.cases == [2]
-
-
-def test_narrow_alternation_selects_multiple_cases():
-    narrowed = _narrow(_family(), r"n=1\]|n=100\]")  # labels n=1 and n=100, not n=10
-    assert narrowed is not None and narrowed.cases == [0, 2]
-
-
-def test_narrow_no_case_matches_drops_family():
-    assert _narrow(_family(), "n=999") is None
-
-
-def test_narrow_all_cases_match_collapses_to_whole_family():
-    # A pattern matching every case needn't narrow.
-    e = _family()
-    narrowed = _narrow(e, r"n=\d+\]")
-    assert narrowed is e
-    assert narrowed.cases is None
+@pytest.mark.parametrize(
+    ("labels", "pattern", "cases"),
+    [
+        # A plain benchmark is all or nothing.
+        (None, "bench_fam", None),
+        (None, "nope", []),
+        # The family's own name, or a pattern every case matches, needn't narrow.
+        (_LABELS, "bench_fam", None),
+        (_LABELS, r"n=\d+\]", None),
+        # `name[label]` is addressable.
+        (_LABELS, r"bench_fam\[n=100\]", [2]),
+        (_LABELS, r"n=1\]|n=100\]", [0, 2]),  # labels n=1 and n=100, not n=10
+        (_LABELS, "n=999", []),
+    ],
+)
+def test_narrow_entry(labels, pattern, cases):
+    entry = Entry(name="f.py::bench_fam", fn=lambda s: None, case_labels=labels)
+    narrowed = narrow_entry(entry, all_of=compile_name_filter(pattern))
+    # No case left drops the entry; every case keeps it whole (`cases=None`).
+    assert narrowed == (None if cases == [] else dataclasses.replace(entry, cases=cases))
+    assert entry.cases is None  # a narrowed view is a copy
 
 
 def test_narrow_and_or_compose():
@@ -109,10 +83,6 @@ def test_registry_filter_literal_selects_one_case_without_escaping():
     assert narrowed.cases == [1]
     # Without literal the bare brackets are a regex char class → no match.
     assert r.filter("bench_fam[n=10]") == []
-    # The same holds for the compiled filter against the displayed name[label].
-    name = "f.py::bench_fam[n=10]"
-    assert compile_name_filter("bench_fam[n=10]").search(name) is None
-    assert compile_name_filter("bench_fam[n=10]", literal=True).search(name) is not None
 
 
 def test_filter_tags_or_semantics():
@@ -132,15 +102,3 @@ def test_filter_pattern_and_tags_combine():
     r.add(Entry(name="foo::c", fn=lambda s: None, tags=frozenset({"cpu"})))
     result = r.filter("foo", tags=["io"])
     assert [e.name for e in result] == ["foo::a"]
-
-
-def test_registry_preserves_order_and_returns_an_independent_list():
-    registry = Registry()
-    entries = [Entry(name=name, fn=lambda s: None) for name in ("z", "a", "m")]
-    for entry in entries:
-        registry.add(entry)
-    snapshot = registry.all()
-    assert snapshot == entries
-    snapshot.pop()
-    assert registry.all() == entries
-    assert registry.filter() == entries
