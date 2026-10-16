@@ -108,7 +108,7 @@ def _truncate_left(text: str, width: int) -> str:
 
 
 def _truncate_right(text: str, width: int) -> str:
-    """Keep the left side, appending an ellipsis. Also used by `RichReporter`."""
+    """Keep the left side, appending an ellipsis."""
     if len(text) <= width:
         return text
     if width <= 1:

@@ -87,7 +87,7 @@ class AllowRule:
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkVerdict:
-    """Per-benchmark gating outcome carried through the compare pipeline."""
+    """One benchmark's gating outcome."""
 
     name: str
     delta_pct: float
@@ -115,10 +115,7 @@ class RegressionConfig:
 
     def find_rule(self, name: str) -> AllowRule | None:
         """The first rule matching ``name``, or ``None`` if none do."""
-        for r in self.rules:
-            if r.matches(name):
-                return r
-        return None
+        return next((r for r in self.rules if r.matches(name)), None)
 
     def evaluate(
         self, name: str, delta_pct: float, *, higher_is_better: bool = False
@@ -148,13 +145,12 @@ class RegressionConfig:
         # iters (negative delta) for iterations.
         magnitude = -delta_pct if higher_is_better else delta_pct
         rule_threshold = rule.threshold if rule is not None else None
-        threshold = rule_threshold if rule_threshold is not None else self.default_threshold
-
+        threshold = self.default_threshold if rule_threshold is None else rule_threshold
         if magnitude > threshold:
             return BenchmarkVerdict(name, delta_pct, Verdict.REGRESSED, rule)
-        if rule_threshold is not None and magnitude > self.default_threshold:
-            return BenchmarkVerdict(name, delta_pct, Verdict.ALLOWED_OVER, rule)
-        return BenchmarkVerdict(name, delta_pct, Verdict.OK, rule)
+        # Past the default but within the threshold: only a looser rule allows that.
+        verdict = Verdict.ALLOWED_OVER if magnitude > self.default_threshold else Verdict.OK
+        return BenchmarkVerdict(name, delta_pct, verdict, rule)
 
 
 def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
@@ -282,8 +278,8 @@ def report(
 ) -> int:
     """Print the regression panel to stderr and return the exit code.
 
-    :func:`render_panel` with the side effect: stderr keeps the panel out of a
-    redirected comparison table.
+    Like :func:`render_panel`, but printed to stderr, which keeps the panel out
+    of a redirected comparison table.
 
     Parameters
     ----------

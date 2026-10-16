@@ -14,12 +14,11 @@ from typing import TYPE_CHECKING, Any
 from mew import _core
 from mew._capture import OutputCapture
 from mew._console import overflow
-from mew._options import parse_min_time
 from mew._registry import REGISTRY, Entry, case_names
 from mew._session import new_session_id
 from mew._typing import MemoryManager, ProfilerManager
 from mew.context import get_context
-from mew.machine import _gil_enabled, _silence_native_stderr, machine_context
+from mew.machine import gil_enabled, machine_context
 from mew.reporter import Fanout, Reporter, RichReporter
 
 if TYPE_CHECKING:
@@ -95,6 +94,26 @@ _DEFAULT_MIN_TIME = "0.5s"
 _DEFAULT_MEMORY_ITERATIONS = 16
 
 
+def parse_min_time(value: str | float) -> str:
+    """Validate seconds or a fixed iteration count and return Google Benchmark syntax."""
+    text = str(value).strip()
+    number = text[:-1] if text.endswith(("s", "x")) else text
+    try:
+        parsed = float(number)
+    except ValueError:
+        parsed = float("nan")
+    if not isfinite(parsed) or parsed <= 0 or (text.endswith("x") and not number.isdigit()):
+        raise ValueError(
+            f"min_time must be positive seconds or an iteration count like '100x', got {value!r}"
+        )
+    return text if text.endswith(("s", "x")) else text + "s"
+
+
+def _check_positive_int(value: int | None, name: str) -> None:
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+        raise ValueError(f"{name} must be an integer >= 1, got {value!r}")
+
+
 def _gb_argv(
     min_time: str | float | None,
     min_warmup_time: float | None,
@@ -102,11 +121,16 @@ def _gb_argv(
     random_interleaving: bool,
     memory_iterations: int | None = None,
 ) -> list[str]:
-    """Render the global run options as Google Benchmark flags.
+    """Validate the global run options and render them as Google Benchmark flags.
 
-    All values are emitted because Google Benchmark flags persist across runs
-    in the same process. Decorator options take precedence.
+    Pure, so :func:`run` calls it before the run has any side effects. All values
+    are emitted because Google Benchmark flags persist across runs in the same
+    process. Decorator options take precedence.
     """
+    _check_positive_int(repetitions, "repetitions")
+    _check_positive_int(memory_iterations, "memory_iterations")
+    if min_warmup_time is not None and (not isfinite(min_warmup_time) or min_warmup_time < 0):
+        raise ValueError(f"min_warmup_time must be a finite number >= 0, got {min_warmup_time!r}")
     mt = parse_min_time(min_time) if min_time is not None else _DEFAULT_MIN_TIME
     mi = memory_iterations if memory_iterations is not None else _DEFAULT_MEMORY_ITERATIONS
     return [
@@ -117,26 +141,6 @@ def _gb_argv(
         f"--benchmark_enable_random_interleaving={'true' if random_interleaving else 'false'}",
         f"--benchmark_memory_iterations={mi}",
     ]
-
-
-def _check_positive_int(value: int | None, name: str) -> None:
-    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
-        raise ValueError(f"{name} must be an integer >= 1, got {value!r}")
-
-
-def _validate_run_options(
-    min_time: str | float | None,
-    min_warmup_time: float | None,
-    repetitions: int | None,
-    memory_iterations: int | None,
-) -> None:
-    """Reject invalid global run options before the run has any side effects."""
-    _check_positive_int(repetitions, "repetitions")
-    _check_positive_int(memory_iterations, "memory_iterations")
-    if min_warmup_time is not None and (not isfinite(min_warmup_time) or min_warmup_time < 0):
-        raise ValueError(f"min_warmup_time must be a finite number >= 0, got {min_warmup_time!r}")
-    if min_time is not None:
-        parse_min_time(min_time)
 
 
 def run(
@@ -154,80 +158,72 @@ def run(
     profiler_manager: ProfilerManager | None = None,
     capture_output: bool = True,
 ) -> int:
-    """Run benchmarks via the C++ Google Benchmark backend.
+    """Run the registered benchmarks.
 
-    Each call is one *session*: a fresh time-ordered ``session_id`` is stamped into
-    the reporter context, so result files stay addressable when several runs land in
-    one archive.
+    Each call is one session, whose time-ordered ID every row carries, so
+    several runs can share a result file.
 
     Parameters
     ----------
     entries : Sequence[Entry], optional
-        Benchmarks to run. ``None`` runs the whole global registry; pass a filtered
-        subset (e.g. from :meth:`Registry.filter`) to scope a run.
+        Benchmarks to run, e.g. from :meth:`Registry.filter`; ``None`` runs every
+        registered benchmark.
     reporter : Reporter, Iterable[Reporter], or None, optional
-        A single reporter, an iterable of reporters (multiplexed via :class:`Fanout`),
-        or ``None`` (or an empty iterable) for mew's console table
+        One reporter or several; ``None``, or none, prints mew's console table
         (:class:`~mew.reporter.RichReporter`).
     min_time : str or float, optional
-        Global minimum time per benchmark: seconds (``0.5``) or a fixed
-        iteration count (``"100x"``). Per-benchmark ``min_time`` options win.
+        Minimum time per benchmark in seconds (``0.5``), or a fixed iteration
+        count (``"100x"``). A benchmark's own ``min_time`` wins.
     min_warmup_time : float, optional
-        Global warmup seconds per benchmark before measurement starts.
+        Seconds each benchmark warms up before it is measured.
     repetitions : int, optional
-        Repeat each benchmark this many times (variance metrics need >= 2).
+        Runs per benchmark; statistics across runs need at least 2.
     random_interleaving : bool, default False
-        Randomly interleave repetitions across benchmarks to decorrelate
-        thermal/load drift; effective with ``repetitions > 1``.
+        Shuffle repetitions across benchmarks, so drift in load or temperature
+        spreads over all of them. Needs ``repetitions > 1``.
     session_tag : str, optional
-        Human label for this session (e.g. ``"before"``), persisted next to
-        ``session_id`` in the reporter context.
+        A label for the session, e.g. ``"before"``, stored with its ID.
     strict : bool, default False
-        Govern what happens when threaded benchmarks (``threads``) are selected
-        on a GIL interpreter, where they can't run
-        (they would deadlock on Google Benchmark's start barrier). By default mew
-        warns and skips them (emitting a ``skipped`` row per benchmark) and runs
-        the rest, so a mixed suite still works on stock CPython. Set ``strict`` to
-        raise a :class:`RuntimeError` instead, e.g. in CI where the threaded
-        benchmarks are the point and a silent skip would mask a misconfiguration.
+        Raise when threaded benchmarks are selected on a GIL build, where they
+        can't run, instead of warning and reporting them as skipped: in CI, a
+        skip can hide a misconfiguration.
     memory_manager : MemoryManager, optional
-        A Google Benchmark memory manager (``start()`` / ``stop()``), e.g.
-        :class:`mew.memory.MemrayManager`. Registered for the duration of the run;
-        its figures land in each row's ``memory`` block.
+        Measures memory in an extra, untimed pass, e.g.
+        :class:`mew.memory.MemrayManager`; its figures land in each row's
+        ``memory`` block.
     memory_iterations : int, optional
-        Cap on the iterations run under ``memory_manager``; the single-threaded
-        pass runs ``min(memory_iterations, iterations)``. Defaults to 16. Raise it to
-        amortize one-time allocations in ``allocations_per_iteration``.
+        Iterations of the memory pass, at most the timed run's; 16 by default.
+        Raise it to amortize one-time allocations in
+        ``allocations_per_iteration``.
     profiler_manager : ProfilerManager, optional
-        A Google Benchmark profiler manager (``after_setup_start()`` /
-        ``before_teardown_stop()``, optionally ``get_result()`` and
-        ``pause()``/``resume()``), e.g. :class:`mew.cpu.TachyonManager`.
-        Registered for the duration of the run; its summary lands in each row's
-        ``cpu_profile`` block.
+        Profiles an extra, untimed pass, e.g. :class:`mew.cpu.TachyonManager`;
+        its summary lands in each row's ``cpu_profile`` block.
     capture_output : bool, default True
-        Capture what benchmarks write to stdout and stderr, including from native
-        code, and print it to stderr after the run, so it cannot interleave with
-        console rows or corrupt JSON streamed to stdout. Disable it to see output
-        live, e.g. when debugging a crash, which loses the captured output.
+        Hold back what benchmarks write to stdout and stderr, native code
+        included, and print it to stderr after the run, so it can't break up
+        the console table or JSON on stdout. Disable it to see output live,
+        e.g. when debugging a crash, which would lose what was held back.
 
     Returns
     -------
     int
-        Number of benchmarks Google Benchmark executed; ``0`` if none were selected.
+        How many benchmarks ran; ``0`` if none were selected.
 
     Raises
     ------
     ValueError
-        If a global timing or repetition option is outside its valid range.
+        If a run option is out of range.
+    RuntimeError
+        With ``strict``, if threaded benchmarks are selected on a GIL build.
     """
-    _validate_run_options(min_time, min_warmup_time, repetitions, memory_iterations)
+    cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, memory_iterations)
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
         return 0
 
     skipped_rows: list[BenchmarkResult] = []
     threaded = [e for e in selected if _is_threaded(e.options)]
-    if threaded and _gil_enabled():
+    if threaded and gil_enabled():
         names = ", ".join(e.name for e in threaded[:3])
         more = overflow(len(threaded), 3)
         reason = (
@@ -253,8 +249,16 @@ def run(
         selected = [e for e in selected if not _is_threaded(e.options)]
         threaded = []
 
-    rep = _to_single_reporter(reporter)
-    if rep is None:
+    # Anything with the reporter callbacks is a single reporter, even if iterable.
+    if isinstance(reporter, Reporter):
+        reps = [reporter]
+    else:
+        reps = list(reporter) if reporter is not None else []
+    if len(reps) > 1:
+        rep = Fanout(reps)
+    elif reps:
+        rep = reps[0]
+    else:
         rep = RichReporter(
             show_memory=memory_manager is not None,
             show_cpu=profiler_manager is not None,
@@ -272,7 +276,8 @@ def run(
     }
     if session_tag:
         session["tag"] = session_tag
-    # Machine context first so a suite's providers can override it.
+    # Machine context first so a suite's providers can override it. It also loads
+    # GB's CPU info, whose probes print to fd 2, silenced, before the run.
     session_context = {"session": session, "context": {**machine_context(), **get_context()}}
 
     if not selected:
@@ -287,8 +292,6 @@ def run(
             if fn := getattr(rep, "finalize", None):
                 fn()
         return 0
-
-    cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, memory_iterations)
 
     # Clear before registering so a second mew.run() in the same process
     # doesn't double-register entries.
@@ -309,10 +312,6 @@ def run(
     # stop-the-world pass that deadlocks GB's attaching workers; trigger it here.
     if threaded:
         _core.warmup_free_threading()
-    # Trigger GB's noisy system-info probes with fd 2 silenced, then run with
-    # stderr live so user output and GB run-time diagnostics get through.
-    with _silence_native_stderr():
-        _core.preload_system_info()
 
     # GB keeps a raw pointer per manager, so each registration needs its pairing:
     # one left registered would silently profile the next run() in this process.
@@ -328,20 +327,3 @@ def run(
             capture = OutputCapture(stack.enter_context(tempfile.TemporaryFile()))
             stack.callback(capture.close)
         return _core.run_benchmarks(cli, rep, session_context, skipped_rows, capture)
-
-
-def _to_single_reporter(
-    reporter: Reporter | Iterable[Reporter] | None,
-) -> Reporter | None:
-    """Normalize the reporter argument to a single :class:`Reporter` or ``None``."""
-    if reporter is None:
-        return None
-    # Anything with the reporter callbacks is a single reporter, even if iterable.
-    if isinstance(reporter, Reporter):
-        return reporter
-    reps = list(reporter)
-    if not reps:
-        return None
-    if len(reps) == 1:
-        return reps[0]
-    return Fanout(reps)

@@ -23,6 +23,7 @@ mew.update_context(
     "mew_version": "0.3.0"
   },
   "context": {
+    "cpu_model": "Apple M1 Pro",
     "num_cpus": 10,
     "cpu_scaling_enabled": false,
     "python": {"version": "3.15.0", "implementation": "cpython", "gil_enabled": true},
@@ -35,6 +36,9 @@ mew.update_context(
 
 Every row, in JSON and JSONL alike, carries both blocks as well; the JSON
 header repeats them for readers.
+
+`context.cpu_model` is the name the OS gives the CPU, or `null` where it gives
+none, as on Linux on Arm.
 
 `context.python` tells apart results from several interpreters in one archive,
 such as a suite run on 3.14 and on free-threaded 3.15t. `mew compare` labels

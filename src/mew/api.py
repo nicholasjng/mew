@@ -4,16 +4,10 @@ from __future__ import annotations
 
 import inspect
 import itertools
-import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Unpack, cast, overload
-
-if sys.version_info >= (3, 14):
-    from annotationlib import get_annotations
-else:
-    from inspect import get_annotations
 
 from mew._core import TimeUnit
 from mew._registry import REGISTRY, Entry
@@ -22,7 +16,7 @@ from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
 _REGISTERED_ATTR = "__mew_registered__"
 
 
-_OptionKeys = frozenset(get_annotations(BenchmarkOptions))
+_OptionKeys = BenchmarkOptions.__required_keys__ | BenchmarkOptions.__optional_keys__
 
 
 def _format_id_value(value: Any) -> str:
@@ -51,13 +45,6 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
             return f"{Path(file).name}::{qualname}"
     module = getattr(fn, "__module__", "<unknown>")
     return f"{module}::{qualname}"
-
-
-def _source_file(fn: BenchmarkFn) -> str | None:
-    try:
-        return inspect.getsourcefile(fn)
-    except TypeError:
-        return None
 
 
 def _check_options(options: Mapping[str, Any]) -> None:
@@ -130,14 +117,6 @@ def _normalize_tags(tags: Iterable[str] | str | None) -> frozenset[str]:
     return frozenset(tags)
 
 
-def _check_unregistered(fn: BenchmarkFn) -> None:
-    if getattr(fn, _REGISTERED_ATTR, False):
-        raise RuntimeError(
-            f"{fn.__qualname__} is already registered; apply only one of "
-            "@benchmark / @parametrize / @product."
-        )
-
-
 def _register(
     target: BenchmarkFn,
     fn: BenchmarkFn,
@@ -150,8 +129,15 @@ def _register(
     """Add ``target`` to the registry as ``fn`` and mark it registered."""
     # Guard before adding: a failed double-registration must not leave a
     # second entry in the registry.
-    _check_unregistered(target)
-    file = _source_file(target)
+    if getattr(target, _REGISTERED_ATTR, False):
+        raise RuntimeError(
+            f"{target.__qualname__} is already registered; apply only one of "
+            "@benchmark / @parametrize / @product."
+        )
+    try:
+        file = inspect.getsourcefile(target)
+    except TypeError:
+        file = None
     REGISTRY.add(
         Entry(
             name=name or _qualified_name(target, file),
@@ -166,26 +152,6 @@ def _register(
     # available for a corrected attempt.
     setattr(target, _REGISTERED_ATTR, True)
     return target
-
-
-def _make_family_trampoline(
-    fn: BenchmarkFn,
-    cases: list[dict[str, Any]],
-    labels: list[str],
-) -> BenchmarkFn:
-    """Wrap ``fn`` as a Google Benchmark family driven by an index axis (``state.range(0)``)."""
-
-    def trampoline(state, _fn=fn, _cases=cases, _labels=labels):
-        idx = state.range(0)
-        # A default the body may override; the registered name carries the case.
-        state.set_label(_labels[idx])
-        return _fn(state, **_cases[idx])
-
-    trampoline.__module__ = fn.__module__
-    trampoline.__doc__ = fn.__doc__
-    trampoline.__name__ = fn.__name__
-    trampoline.__qualname__ = fn.__qualname__
-    return trampoline
 
 
 @overload
@@ -207,37 +173,36 @@ def benchmark(
     tags: Iterable[str] | str | None = None,
     **options: Unpack[BenchmarkOptions],
 ) -> BenchmarkFn | Callable[[BenchmarkFn], BenchmarkFn]:
-    """Register a function as a single benchmark.
+    """Register a function as a benchmark.
 
-    Use :func:`parametrize` or :func:`product` for benchmark families.
+    Use :func:`parametrize` or :func:`product` for a family of cases.
 
     Parameters
     ----------
     fn : BenchmarkFn, optional
-        The benchmark function. Passed positionally (bare ``@benchmark``) registers
-        immediately; omit to apply options first (``@benchmark(min_time=...)``).
+        The function, when used bare (``@benchmark``); omitted when options are
+        given (``@benchmark(min_time=...)``).
     name : str, optional
-        Override the auto-derived ``path/to/file.py::qualname`` registration name.
-        Must not contain ``::``, ``[``/``]``, or newlines; these collide with
-        how names are addressed.
+        Replaces the default name, ``path/to/file.py::qualname``. It can't
+        contain ``::``, brackets or newlines, which mew's selectors use.
     tags : Iterable[str] or str, optional
-        Labels used by ``mew run --tag <name>`` for filtering. A single string is one tag.
+        Tags to select the benchmark by (``mew run --tag``); a string is one tag.
     **options
-        Google Benchmark options; see :class:`~mew._typing.BenchmarkOptions` for the keys.
+        Google Benchmark options; see :class:`~mew.api.BenchmarkOptions`.
 
     Returns
     -------
     BenchmarkFn or Callable[[BenchmarkFn], BenchmarkFn]
-        The original function (bare form), or a decorator (called form).
+        The function itself when used bare, otherwise a decorator.
 
     Raises
     ------
     TypeError
-        If ``options`` contains an unknown key or an out-of-range value.
+        If an option is unknown or out of range.
     ValueError
-        If ``name`` collides with mew's addressing grammar (see above).
+        If ``name`` contains ``::``, brackets or a newline.
     RuntimeError
-        If the same function is already registered via another decorator.
+        If another decorator already registered the function.
 
     Examples
     --------
@@ -261,15 +226,15 @@ def benchmark(
 
 def _register_family(
     target: BenchmarkFn,
-    variants: Sequence[dict[str, Any]],
+    cases: list[dict[str, Any]],
     *,
     name: str | None,
     ids: Sequence[str] | None,
     options: BenchmarkOptions,
     tags: frozenset[str],
 ) -> BenchmarkFn:
-    # Fresh dicts from parametrize/product, only ever unpacked by the trampoline.
-    cases = list(variants)
+    # `cases` holds fresh dicts from parametrize/product, only ever unpacked
+    # by the trampoline.
     labels = list(ids) if ids is not None else [_default_id(kw) for kw in cases]
     if len(labels) != len(cases):
         raise ValueError(f"ids has {len(labels)} entries but parameters has {len(cases)}")
@@ -289,7 +254,17 @@ def _register_family(
             "(non-scalar parameter values collapse to their type name)"
         )
 
-    trampoline = _make_family_trampoline(target, cases, labels)
+    # The runner registers each case on its own, its index as the arg (`state.range(0)`).
+    def trampoline(state, _fn=target, _cases=cases, _labels=labels):
+        idx = state.range(0)
+        # A default the body may override; the registered name carries the case.
+        state.set_label(_labels[idx])
+        return _fn(state, **_cases[idx])
+
+    trampoline.__module__ = target.__module__
+    trampoline.__doc__ = target.__doc__
+    trampoline.__name__ = target.__name__
+    trampoline.__qualname__ = target.__qualname__
     return _register(target, trampoline, name=name, options=options, tags=tags, case_labels=labels)
 
 
@@ -301,39 +276,40 @@ def parametrize(
     tags: Iterable[str] | str | None = None,
     **options: Unpack[BenchmarkOptions],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
-    """Register a parametrized benchmark family.
+    """Register a family of benchmark cases, one per parameter dict.
 
-    Registers one benchmark per item in ``parameters``; each variant binds its kwargs
-    into the wrapped function and appends a ``[label]`` suffix to the registration name.
+    Each case calls the function with its dict as keyword arguments, and is
+    named after the family plus ``[label]``.
 
     Parameters
     ----------
     parameters : Iterable[dict[str, Any]]
-        One dict of kwargs per variant. Snapshotted eagerly, so generators are fine.
+        One dict of keyword arguments per case; read once, so a generator works.
     name : str, optional
-        Override the auto-derived base name.
+        Replaces the family's default name.
     ids : Sequence[str], optional
-        Explicit labels (one per variant). Defaults to kwarg-derived labels
-        (e.g. ``n=10-algo=merge``).
+        One label per case, instead of labels made from the values
+        (``n=10-algo=merge``).
     tags : Iterable[str] or str, optional
-        Labels applied to every variant.
+        Tags for every case.
     **options
-        Google Benchmark options applied to every variant. Same keys as :func:`benchmark`.
+        Google Benchmark options for every case, as for :func:`benchmark`.
 
     Returns
     -------
     Callable[[BenchmarkFn], BenchmarkFn]
-        Decorator that registers the family and returns the original function unchanged.
+        A decorator that registers the family and returns the function unchanged.
 
     Raises
     ------
     ValueError
-        If ``ids`` length doesn't match ``parameters``, or a name/label
-        collides with mew's addressing grammar (``::``, ``[``/``]``, newlines).
+        If there are no cases, ``ids`` doesn't have one label per case, two
+        labels are equal, or a name or label contains ``::``, brackets or a
+        newline.
     TypeError
-        If ``options`` contains an unknown key or an out-of-range value.
+        If an option is unknown or out of range.
     RuntimeError
-        If the same function is already registered via another decorator.
+        If another decorator already registered the function.
 
     Examples
     --------
@@ -348,9 +324,9 @@ def parametrize(
     """
     norm_options = _normalize_options(options)
     norm_tags = _normalize_tags(tags)
-    variants = [dict(p) for p in parameters]  # snapshot, allow generators
+    cases = [dict(p) for p in parameters]  # snapshot, allow generators
     return lambda target: _register_family(
-        target, variants, name=name, ids=ids, options=norm_options, tags=norm_tags
+        target, cases, name=name, ids=ids, options=norm_options, tags=norm_tags
     )
 
 
@@ -371,50 +347,51 @@ def product(
     threads: int | Iterable[int] | None = None,
     **iterables: Iterable[Any],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
-    """Register a benchmark family from the cartesian product of iterables.
+    """Register a family of benchmark cases, one per combination of values.
 
-    Registers one benchmark per tuple in the cartesian product over ``**iterables``.
+    The cases are the cartesian product of ``**iterables``. The Google
+    Benchmark options are as for :func:`benchmark`, named here because
+    ``**iterables`` takes every other keyword argument.
 
     Parameters
     ----------
     name : str, optional
-        Override the auto-derived base name.
+        Replaces the family's default name.
     ids : Sequence[str], optional
-        Explicit labels (one per cartesian-product tuple).
+        One label per combination, instead of labels made from the values.
     tags : Iterable[str] or str, optional
-        Labels applied to every variant.
+        Tags for every case.
     min_time, min_warmup_time : float, optional
-        Per-variant Google Benchmark timing options.
+        Seconds to measure and to warm up each case.
     iterations, repetitions : int, optional
-        Per-variant Google Benchmark iteration controls. ``iterations`` cannot
-        be combined with ``min_time`` or ``min_warmup_time``.
+        A fixed iteration count, which excludes the two times above, and how
+        many runs per case.
     unit : str or TimeUnit, optional
-        Override Google Benchmark's reported time unit.
+        The time unit results are reported in.
     use_real_time, use_manual_time, measure_process_cpu_time : bool
-        Flag-style Google Benchmark options.
+        Which clock each case's time comes from.
     report_aggregates_only : bool
-        Suppress per-repetition rows when ``repetitions > 1``.
+        Report only the aggregates of repeated runs, not each run.
     threads : int or Iterable[int], optional
-        Run each case with this many threads, or once per count in the iterable.
-        Requires a free-threaded interpreter; on a GIL build :func:`mew.run`
-        warns and skips threaded benchmarks by default.
+        Threads per case, or one run per count. Needs a free-threaded build;
+        on a GIL build :func:`mew.run` skips threaded benchmarks.
     **iterables
-        Parameter name → iterable of values.
+        Each parameter's values, by name.
 
     Returns
     -------
     Callable[[BenchmarkFn], BenchmarkFn]
-        Decorator that registers the family and returns the original function unchanged.
+        A decorator that registers the family and returns the function unchanged.
 
     Raises
     ------
     TypeError
-        If no iterables are supplied, or an option value is illegal.
+        If no iterables are given, or an option is out of range.
     ValueError
-        If a name/label collides with mew's addressing grammar
-        (``::``, ``[``/``]``, newlines).
+        If two labels are equal, or a name or label contains ``::``, brackets
+        or a newline.
     RuntimeError
-        If the same function is already registered via another decorator.
+        If another decorator already registered the function.
 
     Examples
     --------
@@ -444,7 +421,7 @@ def product(
     norm_tags = _normalize_tags(tags)
     keys = list(iterables.keys())
     value_lists = [list(v) for v in iterables.values()]
-    variants = [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*value_lists)]
+    cases = [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*value_lists)]
     return lambda target: _register_family(
-        target, variants, name=name, ids=ids, options=options, tags=norm_tags
+        target, cases, name=name, ids=ids, options=options, tags=norm_tags
     )

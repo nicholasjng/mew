@@ -1,7 +1,7 @@
 """Machine context: what the benchmarks ran on.
 
 Unlike :func:`mew.vcs_context`, :func:`mew.run` applies this provider by default,
-so ``cpu_scaling_enabled`` is part of every reporter's context.
+so its fields are part of every run's context.
 """
 
 from __future__ import annotations
@@ -9,17 +9,27 @@ from __future__ import annotations
 import os
 import platform
 import sys
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from typing import Any
 
 from mew import _core
 
-__all__ = ["machine_context"]
+__all__ = ["gil_enabled", "machine_context"]
 
 
-def _gil_enabled() -> bool:
-    """True on a stock (GIL) interpreter, False on a free-threaded build."""
+def gil_enabled() -> bool:
+    """Return whether the GIL is enabled.
+
+    ``True`` on a stock interpreter. ``False`` on a free-threaded build, unless
+    something enabled the GIL at run time, such as importing an extension module
+    that doesn't declare free-threading support.
+
+    Returns
+    -------
+    bool
+        Whether the GIL is enabled right now.
+    """
     return getattr(sys, "_is_gil_enabled", lambda: True)()
 
 
@@ -42,27 +52,66 @@ def _silence_native_stderr() -> Generator[None]:
         os.close(devnull)
 
 
-def machine_context() -> dict[str, Any]:
-    """Return CPU count, frequency-scaling state and the interpreter.
+def _sysctl_string(name: bytes) -> str | None:
+    import ctypes
 
-    ``cpu_scaling_enabled`` is ``True`` only when scaling was positively
-    detected. ``python`` records the interpreter's ``version``, its
-    ``implementation`` and whether the GIL is enabled (``gil_enabled``), so
-    results from several interpreters stay apart.
+    libc = ctypes.CDLL(None)
+    size = ctypes.c_size_t()
+    if libc.sysctlbyname(name, None, ctypes.byref(size), None, 0):
+        return None
+    buf = ctypes.create_string_buffer(size.value)
+    if libc.sysctlbyname(name, buf, ctypes.byref(size), None, 0):
+        return None
+    return buf.value.decode() or None
+
+
+def _cpuinfo_model(lines: Iterable[str]) -> str | None:
+    """``model name`` from /proc/cpuinfo, which Arm64 kernels leave out."""
+    for line in lines:
+        key, _, value = line.partition(":")
+        if key.strip() == "model name":
+            return value.strip() or None
+    return None
+
+
+def _cpu_model() -> str | None:
+    """The name the OS gives the CPU, or ``None`` where it gives none."""
+    try:
+        if sys.platform == "darwin":
+            return _sysctl_string(b"machdep.cpu.brand_string")
+        if sys.platform == "win32":
+            import winreg
+
+            path = r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+                return str(winreg.QueryValueEx(key, "ProcessorNameString")[0]).strip() or None
+        with open("/proc/cpuinfo", encoding="utf-8") as f:
+            return _cpuinfo_model(f)
+    except OSError:
+        return None
+
+
+def machine_context() -> dict[str, Any]:
+    """Return what the benchmarks run on; :func:`mew.run` records it in every run.
 
     Returns
     -------
     dict[str, Any]
-        Machine metadata suitable for benchmark context.
+        ``cpu_model``, the name the OS gives the CPU, such as ``"Apple M2"``,
+        or ``None`` where it gives none, as on Linux on Arm; ``num_cpus``;
+        ``cpu_scaling_enabled``, ``True`` only when frequency scaling was
+        detected; and ``python``, the interpreter's ``version``,
+        ``implementation`` and ``gil_enabled``.
     """
     with _silence_native_stderr():
         info = _core.cpu_info()
     return {
+        "cpu_model": _cpu_model(),
         "num_cpus": info["num_cpus"],
-        "cpu_scaling_enabled": info["cpu_scaling"] == "enabled",
+        "cpu_scaling_enabled": info["cpu_scaling_enabled"],
         "python": {
             "version": platform.python_version(),
             "implementation": sys.implementation.name,
-            "gil_enabled": _gil_enabled(),
+            "gil_enabled": gil_enabled(),
         },
     }

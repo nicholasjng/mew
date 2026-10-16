@@ -4,7 +4,7 @@ Google Benchmark runs one extra, untimed pass per repetition with the sampler
 active from the first ``for _ in state`` to loop exit. :func:`manager` picks the
 sampler: Tachyon (:mod:`profiling.sampling`) on Python 3.15+, pyinstrument
 before. Its ``get_result()`` summary reaches reporters as the ``cpu_profile``
-block of a :class:`~mew._typing.BenchmarkResult`, a :class:`CpuProfile` with the
+block of a :class:`mew.BenchmarkResult`, a :class:`CpuProfile` with the
 same keys and types whichever sampler and interpreter wrote it.
 """
 
@@ -24,7 +24,7 @@ from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from mew.machine import _gil_enabled
+from mew.machine import gil_enabled
 
 if TYPE_CHECKING:
     from pyinstrument import Profiler
@@ -121,7 +121,7 @@ SAMPLERS = ("auto", "tachyon", "pyinstrument")
 def manager(
     interval: float = 1e-4, *, sampler: str = "auto", top_k: int = 5
 ) -> TachyonManager | PyinstrumentManager:
-    """Create a CPU profiler.
+    """Create the profiler manager for a CPU sampler.
 
     Parameters
     ----------
@@ -143,7 +143,7 @@ def manager(
     Raises
     ------
     ValueError
-        If ``sampler`` is not one of :data:`SAMPLERS`.
+        If ``sampler`` is none of the three above.
     SystemExit
         If the sampler can't run here: Tachyon before Python 3.15, or
         pyinstrument when missing or on a free-threaded build.
@@ -157,38 +157,21 @@ def manager(
     return PyinstrumentManager(interval)
 
 
-def require_pyinstrument() -> None:
-    """Check that pyinstrument is installed and safe for this interpreter."""
-    if not _gil_enabled():
-        raise SystemExit(
-            "pyinstrument does not support free-threaded Python: importing its "
-            "native sampler would enable the GIL. On Python 3.15+, mew samples "
-            "with Tachyon instead."
-        )
-    if find_spec("pyinstrument") is None:
-        raise SystemExit(
-            "pyinstrument is required for CPU profiling. Install it with: uv add 'mew-bench[cpu]'"
-        )
-
-
 class PyinstrumentManager:
-    """Google Benchmark profiler manager backed by pyinstrument.
+    """Profiler manager that samples with pyinstrument.
 
-    Sampling is scoped to the timing loop, so fixture/setup work is excluded, and
-    it runs outside the measured repetitions, so the figures never perturb the
-    reported times. ``state.pause()`` regions are excluded as well: the binding
-    calls :meth:`pause` / :meth:`resume` around them.
+    Sampling covers the timing loop minus ``state.pause()`` regions, in a pass
+    outside the measured repetitions, so it never changes the reported times.
 
     Parameters
     ----------
     interval : float, default 1e-4
-        Pyinstrument's sampling period in seconds.
+        Sampling period in seconds.
 
     Attributes
     ----------
     sessions : list[Session]
-        Every profiling session, kept only so :func:`write_html` can render one
-        combined report; the per-row summaries ride on the ``Run``.
+        Every pass's session, for :func:`write_html`.
 
     Raises
     ------
@@ -201,7 +184,17 @@ class PyinstrumentManager:
     def __init__(self, interval: float = 1e-4) -> None:
         if not isfinite(interval) or interval <= 0:
             raise ValueError(f"interval must be a positive finite number, got {interval!r}")
-        require_pyinstrument()
+        if not gil_enabled():
+            raise SystemExit(
+                "pyinstrument does not support free-threaded Python: importing its "
+                "native sampler would enable the GIL. On Python 3.15+, mew samples "
+                "with Tachyon instead."
+            )
+        if find_spec("pyinstrument") is None:
+            raise SystemExit(
+                "pyinstrument is required for CPU profiling. "
+                "Install it with: uv add 'mew-bench[cpu]'"
+            )
         self._interval = interval
         self._prof: Profiler | None = None
         self._session: Session | None = None
@@ -229,13 +222,10 @@ class PyinstrumentManager:
         self._prof = None
 
     def pause(self) -> None:
-        """Suspend sampling for a ``state.pause()`` region.
-
-        pyinstrument accumulates across ``stop()``/``start()`` and drops the gap.
-        The binding forwards only the outermost pause scope, and only during the
-        profiler pass, so each pause is resumed except one held open over the
-        end of the loop, which :meth:`before_teardown_stop` absorbs.
-        """
+        """Suspend sampling for a ``state.pause()`` region."""
+        # The session continues across stop() and start(), without the gap. A
+        # pause held open over the end of the loop is never resumed:
+        # before_teardown_stop() absorbs it.
         if self._prof is not None:
             self._prof.stop()
             self._paused = True
@@ -246,16 +236,11 @@ class PyinstrumentManager:
             self._paused = False
 
     def get_result(self) -> CpuProfile | None:
-        """Summarize the last session, or ``None`` when nothing was sampled.
-
-        A body too fast for the interval would otherwise report an empty
-        hottest frame on every row.
-        """
+        """Summarize the last pass, or ``None`` when nothing was sampled."""
         session = self._session
-        if session is None or session.sample_count == 0:
+        if session is None or (root := session.root_frame()) is None:
             return None
-        root = session.root_frame()
-        if root is None or (top := _hottest_frame(root)) is None:
+        if (top := _hottest_frame(root)) is None:
             return None
         return {
             "profiler": "pyinstrument",
@@ -304,7 +289,7 @@ def reads_instructions() -> bool:
     A GIL build is sampled only where the body hands over the GIL, so every
     sample would name a call or a loop jump.
     """
-    return sys.version_info >= (3, 15) and not _gil_enabled()
+    return sys.version_info >= (3, 15) and not gil_enabled()
 
 
 @functools.cache
@@ -387,37 +372,36 @@ def _summarize_instructions(
 
 
 class TachyonManager:
-    """Google Benchmark profiler manager backed by Tachyon (:mod:`profiling.sampling`).
+    """Profiler manager that samples with Tachyon (:mod:`profiling.sampling`).
 
     A background thread samples the benchmark's thread by reading this process's
-    memory, so the body runs uninstrumented. As with :class:`PyinstrumentManager`,
-    sampling covers the timing loop minus ``state.pause()`` regions, outside the
-    measured repetitions. On free-threaded builds the sampler runs beside the
-    body. On GIL builds it needs the GIL for every sample, so the pass lowers the
-    interpreter's switch interval to ``interval``, which makes the body hand over
-    the GIL that often. The body hands it over only at an eval-breaker check,
-    though, so a C call that holds the GIL holds off sampling until it returns.
-    Each sample therefore stands for the time since the previous one, not one
-    interval. That time still goes to where the body next checked, e.g. the
-    call's line or the loop's backward jump, so a short Python callback inside
-    such a C call can go unsampled.
+    memory, so the body runs uninstrumented. Sampling covers the timing loop
+    minus ``state.pause()`` regions, in a pass outside the measured repetitions.
+
+    Free-threaded builds sample beside the body. On a GIL build every sample
+    needs the GIL, so the pass lowers the switch interval to ``interval``; the
+    body still hands the GIL over only where the interpreter checks for a
+    switch, such as a loop jump. A C call that holds the GIL thus delays the
+    next sample until it returns, so each sample counts as the time since the
+    previous one, and a short Python callback inside such a call can go
+    unsampled.
 
     Parameters
     ----------
     interval : float, default 1e-4
         Sampling period in seconds.
     top_k : int, default 5
-        How many of the hottest bytecode instructions to report.
+        How many of the hottest bytecode instructions to report where
+        :func:`reads_instructions`.
 
     Attributes
     ----------
     flamegraph : profiling.sampling.stack_collector.FlamegraphCollector
-        Every pass's samples, cut at the benchmark body, kept only so
-        :func:`write_html` can render one flame graph; the per-row summaries
-        ride on the ``Run``. Its stacks carry ``<native>`` frames and, on
-        free-threaded builds, each frame's bytecode instructions.
+        Every pass's samples, cut at the benchmark body, for :func:`write_html`.
+        Its stacks carry ``<native>`` frames and, on free-threaded builds, each
+        frame's bytecode instructions.
     reads_instructions : bool
-        Whether summaries name the hottest bytecode instruction; see
+        Whether summaries list the hottest bytecode instructions; see
         :func:`reads_instructions`.
 
     Raises
@@ -426,12 +410,6 @@ class TachyonManager:
         If ``interval`` is not positive and finite, or ``top_k`` is below 1.
     SystemExit
         Before Python 3.15, or if the process cannot read its own memory.
-
-    Notes
-    -----
-    On free-threaded builds, each :class:`CpuProfile` also lists the ``top_k``
-    hottest bytecode instructions (``top_instructions``) and the share of time
-    in instructions that stayed generic (``unspecialized_share``).
     """
 
     def __init__(self, interval: float = 1e-4, *, top_k: int = 5) -> None:
@@ -481,7 +459,7 @@ class TachyonManager:
         self._seconds = defaultdict(float)
         self._result = None
         self._active = 0.0
-        if _gil_enabled():
+        if gil_enabled():
             self._switch_interval = sys.getswitchinterval()
             sys.setswitchinterval(min(self._interval, self._switch_interval))
         self._since = time.perf_counter()
@@ -536,11 +514,9 @@ class TachyonManager:
         self._record()
 
     def pause(self) -> None:
-        """Drop samples for a ``state.pause()`` region.
-
-        As with :meth:`PyinstrumentManager.pause`, a pause held open over the end
-        of the loop is never resumed; :meth:`before_teardown_stop` absorbs it.
-        """
+        """Drop samples for a ``state.pause()`` region."""
+        # A pause held open over the end of the loop is never resumed:
+        # before_teardown_stop() absorbs it.
         if self._thread is not None and not self._paused:
             self._active += time.perf_counter() - self._since
             self._paused = True
@@ -630,7 +606,8 @@ def write_html(manager: TachyonManager | PyinstrumentManager, path: Path) -> Non
     """Render ``manager``'s profiling passes as one HTML report.
 
     Tachyon writes a flame graph with one root per benchmark, pyinstrument one
-    combined call tree. Nothing is written when no pass collected samples.
+    combined call tree. When no pass collected samples, nothing is written and
+    a warning goes to stderr.
 
     Parameters
     ----------
@@ -640,17 +617,19 @@ def write_html(manager: TachyonManager | PyinstrumentManager, path: Path) -> Non
         Destination HTML file.
     """
     if isinstance(manager, TachyonManager):
-        # export() reports progress on stdout, which may carry a JSON result stream.
+        # export() reports progress on stdout, which may carry a JSON result
+        # stream, and returns whether it wrote the file.
         with contextlib.redirect_stdout(io.StringIO()):
-            manager.flamegraph.export(str(path))
-        return
+            written = manager.flamegraph.export(str(path))
+    elif written := any(session.sample_count for session in manager.sessions):
+        from pyinstrument.renderers import HTMLRenderer
+        from pyinstrument.session import Session
 
-    from functools import reduce
-
-    from pyinstrument.renderers import HTMLRenderer
-    from pyinstrument.session import Session
-
-    if not manager.sessions:
-        return
-    combined = reduce(Session.combine, manager.sessions)
-    path.write_text(HTMLRenderer().render(combined), encoding="utf-8")
+        combined = functools.reduce(Session.combine, manager.sessions)
+        path.write_text(HTMLRenderer().render(combined), encoding="utf-8")
+    if not written:
+        print(
+            "warning: no CPU samples collected; skipping the HTML report "
+            "(are the profiled passes shorter than the sampling interval?)",
+            file=sys.stderr,
+        )

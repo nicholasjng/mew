@@ -39,7 +39,7 @@ _HIGHER_IS_BETTER = frozenset({"iterations"})
 _KEYS = frozenset({"name", "func"})
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
-_CTX_SKEW_FIELDS = ("num_cpus", "cpu_scaling_enabled")
+_CTX_SKEW_FIELDS = ("cpu_model", "num_cpus", "cpu_scaling_enabled")
 
 
 def _label(path: Path, others: list[Path]) -> str:
@@ -353,51 +353,50 @@ def compare(
     regressions: RegressionConfig | None = None,
     console: Terminal | None = None,
 ) -> int:
-    """Compare benchmark result files and render a comparison table.
+    """Print a table comparing result files against the last, the baseline.
 
-    The last file is the baseline; earlier files show their value plus percent
-    delta and speedup against it.
+    Each other file's column shows its value, the delta and the speedup.
 
     Parameters
     ----------
     files : list[Path]
-        Result files (JSON, JSONL, or JSONL.gz); the last is treated as the
-        baseline (``mew compare head.json baseline.json`` reads like "compare
-        head against baseline"). A file holding several sessions contributes
-        its newest; ``path@latest`` says so explicitly and ``path@<tag>``
-        selects the session(s) run with that ``--session-tag``.
+        JSON, JSONL or gzipped JSONL result files, the baseline last:
+        ``mew compare head.json base.json`` compares head against base. A file
+        with several sessions contributes its newest; ``path@<tag>`` selects
+        the sessions run with that ``--session-tag``, and ``path@latest`` the
+        newest explicitly.
     metric : str, default "real_time"
-        Metric to compare.
-        One of ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or (for files
-        produced with ``--profile-memory``) ``"memory.peak_bytes"`` or
-        ``"memory.allocations_per_iteration"`` (the per-call allocation count,
-        comparable across engines regardless of speed).
+        ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or, for results with
+        memory figures, ``"memory.peak_bytes"`` or
+        ``"memory.allocations_per_iteration"``; the latter compares
+        implementations of different speed.
     key : str, default "name"
-        How benchmarks are matched across files: ``"name"`` uses the full
-        registered name; ``"func"`` strips the ``file.py::`` prefix so suites
-        in different files with matching function names line up (A/B suites).
+        How rows match across files: ``"name"`` by the full name, ``"func"``
+        without the ``file.py::`` prefix, so A/B suites in different files line up.
     pattern : str, optional
-        Regex (``re.search``) filter applied to benchmark names.
+        Regex searched for in benchmark names.
     literal : bool, default False
-        Match ``pattern`` as a literal string rather than a regex (e.g. to keep
-        a ``name[label]``'s brackets literal).
+        Match ``pattern`` as plain text, e.g. to keep a ``name[label]``'s brackets.
     show_stddev : bool, default False
-        Add per-file stddev columns when stddev data is present.
+        Add a stddev column per file, where results have repetitions.
     statistic : Callable[[list[float]], float], optional
-        Reducer over each benchmark's per-repetition values, used as the displayed
-        center and the regression-gate value (stddev is unaffected). Receives a
-        ``list[float]`` and returns a float-castable scalar; defaults to
-        ``statistics.median``. The CLI resolves ``--statistic`` to one of these via
-        :func:`mew._statistics.resolve_statistic`.
+        Reduces each benchmark's repetition values to the value shown and
+        gated; the median by default. Stddev is unaffected.
     regressions : RegressionConfig, optional
-        If given, gate the first file against the last (baseline) and append a regression panel.
-    console : mew._console.Terminal, optional
-        Output terminal; defaults to a fresh :class:`~mew._console.Terminal`.
+        Gate the first file against the baseline, and print a regression panel.
+    console : Terminal, optional
+        Where to print; defaults to stdout.
 
     Returns
     -------
     int
-        Exit code: ``0`` on success, ``1`` for no overlap, ``2`` if the regression gate fails.
+        ``0``; ``1`` when the files share no benchmark; ``2`` when the
+        regression gate fails.
+
+    Raises
+    ------
+    SystemExit
+        If a file can't be read, or holds no measurements.
     """
     if metric not in _METRICS:
         raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")

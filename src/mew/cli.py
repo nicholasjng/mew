@@ -23,8 +23,8 @@ from mew import (
     _discovery,
     run as _run,
 )
-from mew._options import parse_min_time
 from mew._registry import compile_name_filter
+from mew.runner import parse_min_time
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -36,21 +36,6 @@ def _load_config_or_exit() -> _config.Config:
     except ValueError as e:
         print(f"mew: invalid [tool.mew] config: {e}", file=sys.stderr)
         raise SystemExit(2) from e
-
-
-def _benchpath_selectors(cfg: _config.Config) -> list[_discovery.Selector]:
-    """Selectors for the config benchpaths, anchored at the project root.
-
-    Config paths are declared next to pyproject.toml, so they must resolve
-    against it, not the cwd, for `mew run`/`list` to work from a subdirectory.
-    """
-    root = cfg.project_root or Path.cwd()
-    selectors: list[_discovery.Selector] = []
-    for p in cfg.benchpaths:
-        sel = _discovery.parse(p)
-        sel.path = root / sel.path  # an absolute path replaces root
-        selectors.append(sel)
-    return selectors
 
 
 def _import_setup(cfg: _config.Config) -> None:
@@ -85,26 +70,34 @@ def _collect(
     Stdin lines are always literal. A path-less line (``mew list --names-only``
     output) filters names over the normal discovery, so it round-trips from any cwd.
     """
-    pairs: list[tuple[_discovery.Selector, bool]] = [(_discovery.parse(p), literal) for p in paths]
-    name_filters: list[str] = []
-    if stdin:
-        for line in sys.stdin.read().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if "::" in line:
-                pairs.append((_discovery.parse(line), True))
-            else:
-                name_filters.append(line)
-    # Files to import come from positional args and `::` stdin selectors, else
-    # benchpaths; an empty stdin pipe must select nothing, not the whole suite.
-    if not pairs and (name_filters or not stdin):
-        # A missing default benchpath means "nothing to discover" in a fresh
-        # project, not a hard error like a mistyped positional path.
-        pairs = [(s, literal) for s in _benchpath_selectors(cfg) if s.path.exists()]
+    lines = [line.strip() for line in sys.stdin.read().splitlines()] if stdin else []
+    name_filters = [line for line in lines if line and "::" not in line]
+    # Keep each filter attached to its discovery path. Otherwise selecting
+    # a.py::x and b.py::y also selects a.py::y and b.py::x. Compiled before any
+    # import, so a bad pattern fails before benchmark code runs.
+    try:
+        selectors = [_discovery.parse(p, literal=literal) for p in paths]
+        selectors += [_discovery.parse(line, literal=True) for line in lines if "::" in line]
+        # Files to import come from positional args and `::` stdin selectors, else
+        # benchpaths; an empty stdin pipe must select nothing, not the whole suite.
+        if not selectors and (name_filters or not stdin):
+            # Benchpaths resolve against pyproject.toml, not the cwd, so a subdirectory
+            # works. A missing one means "nothing to discover" in a fresh project, not
+            # a hard error like a mistyped positional path.
+            root = cfg.project_root or Path.cwd()
+            selectors = [
+                sel
+                for p in cfg.benchpaths
+                if (sel := _discovery.parse(p, root=root, literal=literal)).path.exists()
+            ]
+        names = [compile_name_filter(n, literal=True) for n in name_filters]
+        pattern_re = compile_name_filter(pattern, literal=literal) if pattern else None
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        raise SystemExit(2) from e
 
     try:
-        files = _discovery.collect_files([s for s, _ in pairs], file_patterns=cfg.python_files)
+        files = _discovery.collect_files(selectors, file_patterns=cfg.python_files)
     except FileNotFoundError as e:
         print(f"mew: path does not exist: {e.args[0]}", file=sys.stderr)
         raise SystemExit(2) from e
@@ -114,15 +107,6 @@ def _collect(
     for f in files:
         _discovery.import_file(f)
 
-    # Keep each filter attached to its discovery path. Otherwise selecting
-    # a.py::x and b.py::y also selects a.py::y and b.py::x.
-    try:
-        selectors = [_discovery.ResolvedSelector.resolve(s, literal=lit) for s, lit in pairs]
-        names = [compile_name_filter(n, literal=True) for n in name_filters]
-        pattern_re = compile_name_filter(pattern, literal=literal) if pattern else None
-    except ValueError as e:
-        print(e, file=sys.stderr)
-        raise SystemExit(2) from e
     candidates = [
         # abspath, not resolve(): a symlinked bench file inside a benchpath was
         # imported through the link and must stay inside that benchpath.
@@ -778,6 +762,10 @@ def _build_parser() -> argparse.ArgumentParser:
         # git-style, instead of argparse's `{list,ls,run,…} ...` enumeration.
         usage="mew [-h] [--version] <command> [<args>]",
     )
+    if sys.version_info >= (3, 14):
+        # argparse colors help itself, under the formatter's own color. Before
+        # add_subparsers, which hands the setting to each subcommand.
+        parser.color = False
     parser.add_argument("-h", "--help", action="help", help="Show this help.")
     parser.add_argument(
         "--version", action="version", version=_VERSION, help="Show version information."

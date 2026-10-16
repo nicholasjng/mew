@@ -13,7 +13,7 @@ from typing import Any, cast
 from mew._console import overflow
 from mew._statistics import Statistic
 from mew._typing import BenchmarkResult
-from mew.reporter import _ROW_STAMP_FIELDS, canonical_row_name
+from mew.reporter import _ROW_STAMP_FIELDS, _open_text, canonical_row_name
 
 _NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
 _TIME_METRICS = frozenset({"real_time", "cpu_time"})
@@ -41,21 +41,20 @@ _METRICS = frozenset({"real_time", "cpu_time", "iterations"}) | _MEMORY_METRICS
 
 @dataclass(frozen=True, slots=True)
 class Sample:
-    """A reduced benchmark measurement.
+    """One benchmark's measurement in one file, reduced over its repetitions.
 
     Attributes
     ----------
     name : str
-        Canonical ``file.py::func[label]`` name, re-keyed per the match key.
+        ``file.py::func[label]``, without ``file.py::`` when matching by function.
     value : float
-        Center across the benchmark's per-repetition rows (median by default).
+        The statistic over the repetitions, the median by default.
     stddev : float or None
         Sample stddev across repetitions; ``None`` for a single repetition.
     time_unit : str or None
-        Unit ``value`` is expressed in; ``None`` for unitless metrics.
+        The unit of ``value``; ``None`` for unitless metrics.
     values : tuple[float, ...]
-        Raw per-repetition values (same unit as ``value``), feeding the
-        Mann-Whitney significance marker. A single repetition has one value.
+        The per-repetition values, in ``value``'s unit, for the significance test.
     """
 
     name: str
@@ -104,12 +103,9 @@ def _rows_from_json(path: Path) -> list[dict[str, Any]]:
 
 def _rows_from_jsonl(path: Path) -> list[dict[str, Any]]:
     """Read the JSONL sink (plain or gzip): one self-contained row per line."""
-    import gzip
-
     rows: list[dict[str, Any]] = []
-    # Case-insensitive like `_read_rows`' dispatch, so `.JSONL.GZ` decompresses too.
     # Stream: a growing --append archive can be large.
-    with gzip.open(path, "rt") if path.name.lower().endswith(".gz") else path.open() as fh:
+    with _open_text(path) as fh:
         for lineno, line in enumerate(fh, start=1):
             if not line.strip():
                 continue
@@ -135,11 +131,7 @@ def _session_block(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _metric_value(row: dict[str, Any], metric: str) -> Any:
-    """Look up ``metric`` in a row; dotted metrics traverse one nested level.
-
-    Nested blocks (e.g. ``memory``) are already decoded to dicts at the read
-    boundary (see :func:`_read_rows`).
-    """
+    """Look up ``metric`` in a row; dotted metrics traverse one nested level."""
     head, sep, tail = metric.partition(".")
     value = row.get(head)
     if not sep:
@@ -150,7 +142,7 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
     """Per-repetition values in the first row's unit, dropping absent metrics."""
     # Appended sessions may declare different units.
-    unit_scale = _NS_PER_UNIT.get(rows[0].get("time_unit") or "ns", 1.0)
+    unit_scale = _to_ns(1.0, rows[0].get("time_unit"))
     return [
         _to_ns(float(v), r.get("time_unit")) / unit_scale if metric in _TIME_METRICS else float(v)
         for r in rows
@@ -236,25 +228,17 @@ def _samples_from_groups(
 
 
 def _group_by_session(
-    rows: list[dict[str, Any]],
+    rows: list[dict[str, Any]], *, measured_only: bool = True
 ) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
-    """Group successful measurement rows by session, oldest key first.
+    """Group rows by session, oldest key first; only successful measurements by default.
 
     ISO-8601 dates lead the key, so it sorts chronologically.
     """
     buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for r in rows:
-        if _is_measurement_row(r):
+        if not measured_only or _is_measurement_row(r):
             buckets.setdefault(_session_key(r), []).append(r)
     return dict(sorted(buckets.items()))
-
-
-def _group_by_name(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Bucket rows by canonical ``name[label]``, the unit both load paths aggregate over."""
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for r in rows:
-        groups.setdefault(canonical_row_name(r), []).append(r)
-    return groups
 
 
 def _split_selector(raw: str) -> tuple[Path, str | None]:
@@ -313,7 +297,11 @@ def _load(
     selected = _select_rows(path, by_session, selector)
     # The newest selected row speaks for the column's provenance.
     rep_row = max(selected, key=_session_key)
-    samples = _samples_from_groups(_group_by_name(selected), metric, statistic)
+    # Repetitions of one benchmark share its canonical `name[label]`.
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for r in selected:
+        groups.setdefault(canonical_row_name(r), []).append(r)
+    samples = _samples_from_groups(groups, metric, statistic)
     ctx = {k: rep_row[k] for k in _ROW_STAMP_FIELDS if k in rep_row}
     return _normalize_samples(samples, key, str(path)), ctx
 
@@ -336,11 +324,9 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
     ``rows`` counts every stored row of the session; ``benchmarks`` counts
     distinct measured benchmarks (aggregate and skipped rows excluded).
     """
-    buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-    for r in _read_rows(Path(path)):
-        buckets.setdefault(_session_key(r), []).append(r)
+    by_session = _group_by_session(_read_rows(Path(path)), measured_only=False)
     out: list[SessionSummary] = []
-    for (date, host, sid), session_rows in sorted(buckets.items(), reverse=True):
+    for (date, host, sid), session_rows in reversed(by_session.items()):
         measured = {canonical_row_name(r) for r in session_rows if _is_measurement_row(r)}
         out.append(
             SessionSummary(
