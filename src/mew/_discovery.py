@@ -21,31 +21,18 @@ _loaded_modules: list[str] = []
 _inserted_paths: list[str] = []
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class Selector:
-    """One CLI argument decomposed into a filesystem path and an optional filter.
+    """One CLI argument decomposed into a resolved path and an optional filter.
 
     The filter is a regex (``re.search``) matched against the full benchmark name,
-    e.g. ``benchmarks/bench_sort.py::quicksort``.
+    e.g. ``benchmarks/bench_sort.py::quicksort``. :func:`parse` resolves the path
+    and compiles the filter once.
     """
-
-    path: Path
-    filter: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedSelector:
-    """A selector with filesystem state and its name filter resolved once."""
 
     path: Path
     is_directory: bool
     pattern: re.Pattern[str] | None
-
-    @classmethod
-    def resolve(cls, selector: Selector, *, literal: bool = False) -> ResolvedSelector:
-        path = selector.path.resolve()
-        pattern = compile_name_filter(selector.filter, literal=literal) if selector.filter else None
-        return cls(path, path.is_dir(), pattern)
 
     def includes(self, source: Path) -> bool:
         return source == self.path or (self.is_directory and source.is_relative_to(self.path))
@@ -53,7 +40,7 @@ class ResolvedSelector:
 
 def select_entries(
     candidates: Iterable[tuple[Entry, Path | None]],
-    selectors: Sequence[ResolvedSelector],
+    selectors: Sequence[Selector],
     *,
     names: Sequence[re.Pattern[str]] = (),
     pattern: re.Pattern[str] | None = None,
@@ -86,9 +73,14 @@ def select_entries(
     return selected
 
 
-def parse(arg: str) -> Selector:
-    path, _, flt = arg.partition("::")
-    return Selector(Path(path), flt or None)
+def parse(arg: str, *, root: Path | None = None, literal: bool = False) -> Selector:
+    """Parse ``path[::filter]``; a relative path resolves against ``root``, else the cwd.
+
+    Raises :class:`ValueError` on a malformed filter.
+    """
+    raw, _, flt = arg.partition("::")
+    path = (root / raw if root is not None else Path(raw)).resolve()  # absolute replaces root
+    return Selector(path, path.is_dir(), compile_name_filter(flt, literal=literal) if flt else None)
 
 
 def collect_files(
@@ -97,31 +89,25 @@ def collect_files(
     file_patterns: Iterable[str],
 ) -> list[Path]:
     patterns = list(file_patterns)
-    seen: set[Path] = set()
-    out: list[Path] = []
+    out: dict[Path, None] = {}  # an ordered set: the first selector to reach a file wins
     for sel in selectors:
-        path = sel.path.resolve()
+        path = sel.path
         if not path.exists():
             raise FileNotFoundError(path)
-        candidates: list[Path]
         if path.is_file():
-            candidates = [path]
-        else:
-            candidates = []
-            for dirpath, _, filenames in os.walk(path):
-                reldir = os.path.relpath(dirpath, path)
-                for fname in filenames:
-                    rel = fname if reldir == os.curdir else os.path.join(reldir, fname)
-                    # Slash-separated for matching, so `/` patterns work on Windows.
-                    rel = rel.replace(os.sep, "/")
-                    if any(fnmatch.fnmatch(rel if "/" in pat else fname, pat) for pat in patterns):
-                        candidates.append(Path(dirpath, fname))
-            candidates.sort()
-        for p in candidates:
-            if p not in seen:
-                seen.add(p)
-                out.append(p)
-    return out
+            out[path] = None
+            continue
+        found: list[Path] = []
+        for dirpath, _, filenames in os.walk(path):
+            reldir = os.path.relpath(dirpath, path)
+            for fname in filenames:
+                rel = fname if reldir == os.curdir else os.path.join(reldir, fname)
+                # Slash-separated for matching, so `/` patterns work on Windows.
+                rel = rel.replace(os.sep, "/")
+                if any(fnmatch.fnmatch(rel if "/" in pat else fname, pat) for pat in patterns):
+                    found.append(Path(dirpath, fname))
+        out.update(dict.fromkeys(sorted(found)))
+    return list(out)
 
 
 def import_file(path: Path) -> None:

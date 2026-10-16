@@ -57,14 +57,14 @@ def _jj(cwd: Path | None) -> dict[str, Any] | None:
 
 
 def _git(cwd: Path | None) -> dict[str, Any] | None:
-    commit = _run(cwd, "git", "rev-parse", "HEAD")
-    if commit is None:
+    out = _run(cwd, "git", "rev-parse", "HEAD", "--abbrev-ref", "HEAD")
+    if out is None:
         return None
+    commit, _, branch = out.partition("\n")
     info: dict[str, Any] = {"backend": "git", "commit": commit}
     # Tracked changes only: untracked results or build artifacts don't change what
     # was benchmarked. Empty output (clean) comes back as None.
     info["dirty"] = _run(cwd, "git", "status", "--porcelain", "--untracked-files=no") is not None
-    branch = _run(cwd, "git", "rev-parse", "--abbrev-ref", "HEAD")
     # Detached HEAD reports the literal "HEAD", which names nothing.
     if branch and branch != "HEAD":
         info["branch"] = branch

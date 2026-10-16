@@ -94,7 +94,7 @@ For comparisons across processes, see {doc}`ab-comparison`.
 ## Don't compare across machines
 
 `compare` prints one provenance line per column and warns on stderr when files
-disagree on the session host, CPU count, or CPU scaling:
+disagree on the session host, CPU model, CPU count, or CPU scaling:
 
 ```console
 warning: result files differ in host (baseline: ci-runner-3, head: laptop);

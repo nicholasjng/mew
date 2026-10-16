@@ -19,7 +19,6 @@ class OutputCapture:
     def __init__(self, file: BinaryIO) -> None:
         self._file = file
         self._saved = (os.dup(1), os.dup(2))
-        self._active = False
         self.resume()
 
     def resume(self) -> None:
@@ -27,19 +26,17 @@ class OutputCapture:
         sys.stderr.flush()
         os.dup2(self._file.fileno(), 1)
         os.dup2(self._file.fileno(), 2)
-        self._active = True
 
     def suspend(self) -> None:
         sys.stdout.flush()
         sys.stderr.flush()
         os.dup2(self._saved[0], 1)
         os.dup2(self._saved[1], 2)
-        self._active = False
 
     def close(self) -> None:
         """Restore the streams, then print everything captured to stderr."""
-        if self._active:
-            self.suspend()
+        # Suspending again when already suspended is a no-op.
+        self.suspend()
         for fd in self._saved:
             os.close(fd)
         self._file.seek(0)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+import sysconfig
 import tempfile
 from contextlib import ExitStack
 from importlib.util import find_spec
@@ -11,7 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from mew._typing import MemoryMetrics
-from mew.machine import _gil_enabled
 
 if TYPE_CHECKING:
     from memray import Tracker
@@ -21,7 +21,7 @@ Frame = tuple[str, str, int]
 
 # Free-threaded CPython serves object allocations from mimalloc, which never
 # reaches the system allocator memray hooks by default, so track them separately.
-_TRACE_PYTHON_ALLOCATORS = not _gil_enabled()
+_TRACE_PYTHON_ALLOCATORS = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -44,34 +44,20 @@ class _RootedRecord:
         return self.stack
 
 
-def require_memray() -> None:
-    """Raise a SystemExit with install instructions if memray is missing."""
-    if find_spec("memray") is None:
-        raise SystemExit(
-            "memray is required for memory profiling. "
-            "Install it with: uv add --optional memory memray"
-        )
-
-
 class MemrayManager:
-    """Google Benchmark memory manager backed by memray.
+    """Memory manager that tracks allocations with memray.
 
-    One capture per (benchmark, repetition), scoped to the benchmark loop in
-    a separate, untimed pass. :meth:`start` opens the tracker and :meth:`stop`
-    closes it and records the capture.
+    It records one capture per benchmark and repetition, covering the timing
+    loop of an extra, untimed, single-threaded pass of at most
+    ``memory_iterations`` iterations (see :func:`mew.run`).
+    ``allocations_per_iteration`` divides by the iterations that ran, which a
+    batched loop can push past that cap.
 
     Parameters
     ----------
     tmpdir : Path
-        Directory for the intermediate capture files. One file per capture; the
-        caller owns the directory's lifetime (see :func:`manager`).
-
-    Notes
-    -----
-    The memory pass runs a single thread and requests
-    ``min(memory_iterations, iterations)`` iterations (16 by default; see
-    :func:`mew.run`). Batched loops can exceed this budget;
-    ``allocations_per_iteration`` uses the actual count.
+        Directory for the capture files, which the caller keeps alive; see
+        :func:`manager`.
     """
 
     def __init__(self, tmpdir: Path) -> None:
@@ -116,25 +102,32 @@ class MemrayManager:
 
 
 def manager(stack: ExitStack) -> MemrayManager:
-    """Create a memory manager whose temporary files are owned by ``stack``.
+    """Create a memray manager whose capture files live as long as ``stack``.
 
     Parameters
     ----------
     stack : ExitStack
-        Stack that keeps capture files alive through the benchmark run.
+        Keeps the capture files until it closes, after the run and any
+        :func:`write_flamegraph`.
 
     Returns
     -------
     MemrayManager
-        Manager ready to pass to :func:`mew.run`.
+        A manager to pass to :func:`mew.run`.
     """
-    require_memray()
+    if find_spec("memray") is None:
+        raise SystemExit(
+            "memray is required for memory profiling. "
+            "Install it with: uv add --optional memory memray"
+        )
     tmpdir = stack.enter_context(tempfile.TemporaryDirectory())
     return MemrayManager(Path(tmpdir))
 
 
 def write_flamegraph(manager: MemrayManager, path: Path) -> None:
-    """Render ``manager``'s captures into one HTML allocation flame graph.
+    """Render ``manager``'s captures as one HTML allocation flame graph.
+
+    When nothing was captured, nothing is written and a warning goes to stderr.
 
     Parameters
     ----------

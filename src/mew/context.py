@@ -39,14 +39,14 @@ def _set_nested(key: str, value: Any) -> None:
 
 
 def set_context(key: str, value: Any) -> None:
-    """Set a single value in the global benchmark context.
+    """Set one value in the context that every run records.
 
     Parameters
     ----------
     key : str
         Context key. Dotted names nest (``"dataset.size"`` → ``{"dataset": {"size": ...}}``).
     value : Any
-        Value to store. Reporters serialize this, so JSON-friendly values are preferred.
+        Stored as is; file reporters write it as JSON, falling back to ``str()``.
 
     Raises
     ------
@@ -57,17 +57,17 @@ def set_context(key: str, value: Any) -> None:
 
 
 def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
-    """Set many context values at once.
+    """Set several context values: the mappings in order, then ``kwargs``.
 
-    Positional dicts are applied first, then ``kwargs``.
-    Dotted keys nest in both forms; pass them via splat as ``update_context(**{"a.b": 1})``.
+    Dotted keys nest in both forms; pass them as keywords with
+    ``update_context(**{"a.b": 1})``.
 
     Parameters
     ----------
     *mapping : dict[str, Any]
-        Mappings whose items are applied in order.
+        Mappings to apply, in order.
     **kwargs
-        Additional key-value pairs applied after the positional mappings.
+        Values applied after the mappings.
 
     Raises
     ------
@@ -80,18 +80,18 @@ def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
 
 
 def get_context() -> dict[str, Any]:
-    """Return a deep copy of the current global benchmark context.
+    """Return a deep copy of the context.
 
     Returns
     -------
     dict[str, Any]
-        Independent snapshot; mutating it does not affect future runs.
+        A copy; changing it doesn't change what runs record.
     """
     return copy.deepcopy(_CONTEXT)
 
 
 def clear_context() -> None:
-    """Drop every entry from the global benchmark context."""
+    """Remove every context value."""
     _CONTEXT.clear()
 
 

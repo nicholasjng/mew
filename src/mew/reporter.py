@@ -15,19 +15,20 @@ from mew._typing import BenchmarkResult
 
 @runtime_checkable
 class Reporter(Protocol):
-    """Duck-typed reporter interface consumed by the C++ runner.
+    """What :func:`mew.run` hands results to.
 
-    ``report_context`` and ``report_runs`` are required; ``finalize`` is optional.
-    All callbacks run on the main thread with the GIL held. Raise to stop the run:
-    the exception aborts the remaining benchmarks and propagates out of :func:`mew.run`.
+    All callbacks run on the main thread. One that raises aborts the remaining
+    benchmarks, and the exception propagates out of :func:`mew.run`.
 
     Methods
     -------
     report_context(context)
-        Called once before any runs with the C++ context dict.
+        Called once before any results, with the run's ``session`` and
+        ``context`` blocks.
     report_runs(runs)
-        Called one or more times with a list of :class:`~mew._typing.BenchmarkResult`
-        dicts (runs projected from the C++ ``Run``).
+        Called as results arrive, with a list of :class:`mew.BenchmarkResult`.
+    finalize()
+        Optional; called once after the last result, also when the run aborts.
     """
 
     def report_context(self, context: dict[str, Any], /) -> None: ...
@@ -125,14 +126,19 @@ def _indent_block(text: str, spaces: int) -> str:
     return text.replace("\n", "\n" + " " * spaces)
 
 
+def _open_text(path: Path, mode: str = "r") -> TextIO:
+    """Open ``path`` as text, through gzip when its name ends in ``.gz`` in any case."""
+    if path.name.lower().endswith(".gz"):
+        import gzip
+
+        return cast(TextIO, gzip.open(path, mode + "t"))
+    return cast(TextIO, path.open(mode))
+
+
 def _open_sink(output: Path | TextIO | None, mode: str = "w") -> tuple[TextIO, bool]:
     """Resolve ``output`` to a stream and an ownership flag."""
     if isinstance(output, Path):
-        if output.name.endswith(".gz"):
-            import gzip
-
-            return cast(TextIO, gzip.open(output, mode + "t")), True
-        return cast(TextIO, output.open(mode)), True
+        return _open_text(output, mode), True
     if output is None:
         return sys.stdout, False
     return output, False
@@ -145,18 +151,18 @@ def _close_sink(fh: TextIO | None, owns_fh: bool) -> None:
 
 
 class JSONReporter:
-    """Stream one ``{"session": ..., "context": ..., "benchmarks": [...]}`` document.
+    """Write one ``{"session": ..., "context": ..., "benchmarks": [...]}`` document.
 
-    Rows carry ``session`` and ``context`` themselves, exactly as
-    :class:`JSONLReporter` writes them; the header repeats them for readers.
-    The document becomes valid JSON when :meth:`finalize` completes. Use
-    :class:`JSONLReporter` for an interruption-safe stream.
+    Each row carries ``session`` and ``context`` as :class:`JSONLReporter`
+    writes them; the top level repeats them. The document is valid JSON only
+    once the run finishes, so prefer :class:`JSONLReporter` where a run may be
+    interrupted.
 
     Parameters
     ----------
     output : Path, TextIO, or None, optional
-        Destination. A Path is opened and closed here; a stream is written directly;
-        ``None`` writes to ``sys.stdout``.
+        A path is opened for the run and closed after it; a stream is written
+        as is; ``None`` writes to ``sys.stdout``.
     """
 
     def __init__(self, *, output: Path | TextIO | None = None) -> None:
@@ -198,19 +204,19 @@ class JSONReporter:
 
 
 class JSONLReporter:
-    """Stream one self-contained JSON object per Run, one per line, flushed as runs land.
+    """Stream one JSON object per result row, a line each, flushed as rows arrive.
 
-    Append-only, so it works on pipes and survives interruption.
-    Plain NDJSON; see docs/guide/reporters.md for querying it.
+    Every line stands alone, so the file works on pipes and survives an
+    interrupted run.
 
     Parameters
     ----------
     output : Path, TextIO, or None, optional
-        Destination. A Path is opened and closed here (gzip for ``.gz``); a stream
-        is written directly; ``None`` writes to ``sys.stdout``.
+        A path is opened for the run and closed after it, gzip-compressed for
+        ``.gz``; a stream is written as is; ``None`` writes to ``sys.stdout``.
     append : bool, default False
-        Open a Path sink in append mode, adding this run's rows as a new session.
-        Ignored for stream / stdout sinks.
+        Append to a path instead of replacing it, adding the run as a new
+        session.
     """
 
     def __init__(
@@ -242,26 +248,30 @@ class JSONLReporter:
         self._owns_fh = False
 
 
-class RichReporter:
-    """Stream one row per benchmark to a terminal as runs complete.
+# RichReporter columns whose cells pad on the right; the rest are right-aligned numbers.
+_LEFT_ALIGNED = frozenset({"Benchmark", "Label", "Hottest Frame", "Hottest Instruction"})
 
-    The header prints before any results land, so optional-column flags are passed up front.
+
+class RichReporter:
+    """Print mew's console table, a row per result as it arrives.
+
+    The header prints before the first result, so the optional columns are
+    chosen up front.
 
     Parameters
     ----------
-    terminal : mew._console.Terminal, optional
-        Terminal to print to. Defaults to a fresh one (stdout).
+    terminal : Terminal, optional
+        Where to print; defaults to stdout, colored when it is a terminal.
     show_memory : bool, default False
         Add a ``Peak Mem`` column.
     show_cpu : bool, default False
         Add ``Samples`` / ``Hottest Frame`` columns.
     show_instructions : bool, default False
-        Add a ``Hottest Instruction`` column, e.g. ``BINARY_OP 62% · 62% generic``.
-        Pass with ``show_cpu`` where the sampler reads bytecode instructions; see
-        :func:`mew.cpu.reads_instructions`.
+        Add a ``Hottest Instruction`` column, e.g. ``BINARY_OP 62% · 62% generic``,
+        with ``show_cpu`` where :func:`mew.cpu.reads_instructions`.
     show_label : bool, default False
-        Add a ``Label`` column (the parametrize case id). Pass for families, where
-        the case is otherwise indistinguishable from the truncated name.
+        Add a ``Label`` column with each family case's label, which a truncated
+        name can hide.
     """
 
     def __init__(
@@ -278,141 +288,101 @@ class RichReporter:
         self._show_cpu = show_cpu
         self._show_instructions = show_instructions
         self._show_label = show_label
-        self._context: dict[str, Any] = {}
+        # Column header -> width, in display order; set once the terminal width is known.
         self._widths: dict[str, int] = {}
 
     def report_context(self, context: dict[str, Any]) -> None:
-        self._context = dict(context)
-        self._print_banner()
-        self._compute_widths()
-        self._print_header()
+        self._print_banner(context)
+        widths = {"Label": 20} if self._show_label else {}
+        widths |= {"Iters": 12, "Real": 14, "CPU": 14}
+        if self._show_memory:
+            widths["Peak Mem"] = 10
+        if self._show_cpu:
+            widths |= {"Samples": 9, "Hottest Frame": 30}
+        if self._show_instructions:
+            widths["Hottest Instruction"] = 30
+        # Name column takes whatever's left; floor at 30 even if it overflows.
+        spare = self._term.width - sum(widths.values()) - len(widths) * len(_COL_SEP)
+        self._widths = {"Benchmark": max(30, spare), **widths}
+        line = self._join(list(self._widths))
+        color = self._term.color
+        self._term.print(sgr(line, "bold", enabled=color))
+        self._term.print(sgr("─" * len(line), "dim", enabled=color))
 
     def report_runs(self, runs: list[BenchmarkResult]) -> None:
         for row in runs:
             self._print_row(row)
 
-    def _print_banner(self) -> None:
-        session = self._context.get("session", {})
-        context = self._context.get("context", {})
-        host = session.get("host") or "?"
-        cpus = context.get("num_cpus", "?")
-        scaling_enabled = context.get("cpu_scaling_enabled")
-        scaling = (
-            "enabled"
-            if scaling_enabled is True
-            else "disabled"
-            if scaling_enabled is False
-            else "?"
-        )
+    def _print_banner(self, context: dict[str, Any]) -> None:
+        session = context.get("session", {})
+        machine = context.get("context", {})
+        scaling = machine.get("cpu_scaling_enabled")
+        fields = {
+            "host": session.get("host") or "?",
+            "cpus": machine.get("num_cpus", "?"),
+            "scaling": "enabled" if scaling is True else "disabled" if scaling is False else "?",
+        }
         color = self._term.color
-
-        def cy(v: object) -> str:
-            return sgr(str(v), "cyan", enabled=color)
-
         self._term.print(
             f"{sgr('mew', 'bold', enabled=color)} {sgr('·', 'dim', enabled=color)} "
-            f"host={cy(host)} cpus={cy(cpus)} scaling={cy(scaling)}"
+            + " ".join(f"{k}={sgr(str(v), 'cyan', enabled=color)}" for k, v in fields.items())
         )
 
-    def _compute_widths(self) -> None:
-        fixed: dict[str, int] = {
-            "iters": 12,
-            "real": 14,
-            "cpu": 14,
-        }
-        if self._show_label:
-            fixed["label"] = 20
-        if self._show_memory:
-            fixed["peak"] = 10
-        if self._show_cpu:
-            fixed["samples"] = 9
-            fixed["hottest_frame"] = 30
-        if self._show_instructions:
-            fixed["hottest_instruction"] = 30
-        n_cols = len(fixed) + 1  # +1 for the name column
-        spacing = (n_cols - 1) * len(_COL_SEP)
-        # Name column takes whatever's left; floor at 30 even if it overflows.
-        name_w = max(30, self._term.width - sum(fixed.values()) - spacing)
-        self._widths = {"name": name_w, **fixed}
-
-    def _print_header(self) -> None:
-        w = self._widths
-        cells = ["Benchmark".ljust(w["name"])]
-        if self._show_label:
-            cells.append("Label".ljust(w["label"]))
-        cells += [
-            "Iters".rjust(w["iters"]),
-            "Real".rjust(w["real"]),
-            "CPU".rjust(w["cpu"]),
+    def _join(self, cells: list[str]) -> str:
+        """Pad each cell to its column; a cell past the last column (counters) runs free."""
+        padded = [
+            cell.ljust(width) if header in _LEFT_ALIGNED else cell.rjust(width)
+            for cell, (header, width) in zip(cells, self._widths.items(), strict=False)
         ]
-        if self._show_memory:
-            cells.append("Peak Mem".rjust(w["peak"]))
-        if self._show_cpu:
-            cells.append("Samples".rjust(w["samples"]))
-            cells.append("Hottest Frame".ljust(w["hottest_frame"]))
-        if self._show_instructions:
-            cells.append("Hottest Instruction".ljust(w["hottest_instruction"]))
-        line = _COL_SEP.join(cells)
-        color = self._term.color
-        self._term.print(sgr(line, "bold", enabled=color))
-        self._term.print(sgr("─" * len(line), "dim", enabled=color))
+        return _COL_SEP.join(padded + cells[len(self._widths) :])
 
     def _print_row(self, row: BenchmarkResult) -> None:
         w = self._widths
-        unit = row["time_unit"]
-        label = row["label"]
-        # Canonical `file.py::f[label]` form, matching `mew compare`.
-        name = canonical_row_name(row)
-        # Left-ellipsize to keep the disambiguating tail.
-        name = _truncate_left(name, w["name"])
+        # Canonical `file.py::f[label]` form, matching `mew compare`, left-ellipsized
+        # to keep the disambiguating tail.
+        name = _truncate_left(canonical_row_name(row), w["Benchmark"])
 
         # Skipped rows carry no timing, so show the dimmed reason instead.
         if row["skipped"]:
             reason = row["skip_message"] or "skipped"
-            line = f"{name.ljust(w['name'])}{_COL_SEP}{reason}"
+            line = f"{name.ljust(w['Benchmark'])}{_COL_SEP}{reason}"
             self._term.print(sgr(line, "dim", enabled=self._term.color))
             return
 
-        cells = [name.ljust(w["name"])]
+        cells = [name]
         if self._show_label:
-            label = _truncate_right(label, w["label"])
-            cells.append(label.ljust(w["label"]))
+            cells.append(_truncate_right(row["label"], w["Label"]))
         if row.get("aggregate_unit") == "percentage":
             # A ratio such as `cv`, shown as a percentage like GB's console.
-            real, cpu = f"{row['real_time']:.2%}", f"{row['cpu_time']:.2%}"
+            real, cpu_time = f"{row['real_time']:.2%}", f"{row['cpu_time']:.2%}"
         else:
-            real, cpu = f"{row['real_time']:.2f} {unit}", f"{row['cpu_time']:.2f} {unit}"
-        cells += [
-            f"{row['iterations']:,}".rjust(w["iters"]),
-            real.rjust(w["real"]),
-            cpu.rjust(w["cpu"]),
-        ]
+            unit = row["time_unit"]
+            real, cpu_time = f"{row['real_time']:.2f} {unit}", f"{row['cpu_time']:.2f} {unit}"
+        cells += [f"{row['iterations']:,}", real, cpu_time]
         if self._show_memory:
             mem = row.get("memory")
-            cells.append((_fmt_bytes(mem["peak_bytes"]) if mem else "-").rjust(w["peak"]))
+            cells.append(_fmt_bytes(mem["peak_bytes"]) if mem else "-")
+        cpu = row.get("cpu_profile")
         if self._show_cpu:
-            cpu = row.get("cpu_profile")
-            cells.append((f"{cpu['sample_count']:,}" if cpu else "-").rjust(w["samples"]))
-            top = _truncate_right(_fmt_function(cpu), w["hottest_frame"])
-            cells.append(top.ljust(w["hottest_frame"]))
+            cells.append(f"{cpu['sample_count']:,}" if cpu else "-")
+            cells.append(_truncate_right(_fmt_function(cpu), w["Hottest Frame"]))
         if self._show_instructions:
-            width = w["hottest_instruction"]
-            cells.append(_fmt_instruction(row.get("cpu_profile"), width).ljust(width))
+            cells.append(_fmt_instruction(cpu, w["Hottest Instruction"]))
         if row["counters"]:
             cells.append(_fmt_counters(row))
-        self._term.print(_COL_SEP.join(cells))
+        self._term.print(self._join(cells))
 
 
 class Fanout:
-    """Broadcast reporter callbacks to a list of underlying reporters.
+    """Pass every callback on to several reporters, in order.
 
-    Used by :func:`mew.run` to multiplex multiple reporters. A child that raises
-    stops the run, so the strictest sub-reporter wins.
+    :func:`mew.run` wraps a list of reporters in one. A reporter that raises
+    stops the run, as it would alone.
 
     Parameters
     ----------
     reporters : list[Reporter]
-        Underlying reporters, called in iteration order.
+        The reporters, called in list order.
     """
 
     def __init__(self, reporters: list[Reporter]) -> None:

@@ -20,12 +20,11 @@ TimeUnitStr = Literal["ns", "us", "ms", "s"]
 
 
 class SessionInfo(TypedDict):
-    """Which run a result came from: what :mod:`mew.compare` orders and selects by.
+    """Which run a result came from.
 
     ``mew compare`` reads a file's newest session unless ``path@<tag>`` names
-    one; runs sharing a ``tag`` are pooled as repetitions. ``mew_version`` is
-    the mew that wrote the rows, and so their format; files written before
-    0.3.0 lack it.
+    one, and pools sessions that share a ``tag`` as repetitions. ``mew_version``
+    is the mew that wrote the rows, and so their format.
     """
 
     id: str
@@ -36,9 +35,9 @@ class SessionInfo(TypedDict):
 
 
 class BenchmarkResult(TypedDict):
-    """Serialized benchmark row consumed by reporters and result readers.
+    """One result row, as reporters receive it and result files store it.
 
-    Measurement keys are always present. The blocks below are optional.
+    Every key is present except those marked optional.
 
     Attributes
     ----------
@@ -55,8 +54,8 @@ class BenchmarkResult(TypedDict):
     session : SessionInfo, optional
         Identity of the run that produced this result.
     context : dict, optional
-        Provenance: :func:`mew.set_context` values alongside whatever providers
-        contributed (:func:`mew.machine_context`, :func:`mew.vcs_context`).
+        Provenance: :func:`mew.machine_context`, plus what was set with
+        :func:`mew.set_context` or :func:`mew.update_context`.
     counters : list of dict
         The run's counters in name order, each with a ``name``, a ``value``
         (Google Benchmark has already applied the counter's flags) and, if the
@@ -65,13 +64,12 @@ class BenchmarkResult(TypedDict):
         ``inverted`` (an inverted rate, shown in seconds) and ``exponent``
         (exponent notation).
     memory : dict, optional
-        Google Benchmark's memory-manager figures for this run
-        (``peak_bytes``, ``total_allocations``, ``iterations``,
-        ``allocations_per_iteration``, and optionally ``total_bytes`` and
-        ``net_heap_growth``); present under ``--profile-memory``.
+        The memory manager's figures (``peak_bytes``, ``total_allocations``,
+        ``iterations``, ``allocations_per_iteration``, and optionally
+        ``total_bytes`` and ``net_heap_growth``), when one ran.
     cpu_profile : dict, optional
-        The profiler manager's summary for this run, with its JSON types;
-        present under ``--sample``, where it is a :class:`mew.cpu.CpuProfile`.
+        The profiler manager's summary, when it returned one; a
+        :class:`mew.cpu.CpuProfile` under ``--sample``.
     """
 
     name: str
@@ -187,11 +185,7 @@ class PausableProfiler(Protocol):
 
 @runtime_checkable
 class State(Protocol):
-    """Structural state passed into benchmark targets.
-
-    Matched by the C++ ``_core.State``. Covers iteration, timing, counters, labels,
-    and range/thread accessors.
-    """
+    """What a benchmark function receives first: iterate it to run the timed loop."""
 
     range_size: int
     threads: int
@@ -227,12 +221,8 @@ class State(Protocol):
 
 @runtime_checkable
 class BenchmarkFn(Protocol):
-    """A callable benchmark target.
-
-    Bound to Google Benchmark via the ``@benchmark`` / ``@parametrize`` / ``@product``
-    decorators. The first positional argument is a :class:`State`; parametrized families
-    bind additional kwargs at variant construction time.
-    """
+    """A benchmark function: a :class:`State` first, then a family case's parameters
+    as keyword arguments."""
 
     __name__: str
     __qualname__: str

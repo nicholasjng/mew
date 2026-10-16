@@ -22,10 +22,9 @@ class Config:
     python_files : list[str]
         Glob patterns identifying benchmark files during discovery.
     setup : str or None
-        Python file imported once before any benchmark file, relative to
-        ``project_root``. Runs whatever the project needs set up run-wide --
-        typically context providers, so provenance does not depend on which
-        benchmark files a given invocation happens to select.
+        A Python file, relative to ``project_root``, imported before any
+        benchmark file: the place for context every run should record, whichever
+        benchmarks it selects.
     statistic : str or None
         Default ``mew compare`` reducer; ``None`` keeps the median.
     capture : str or None
