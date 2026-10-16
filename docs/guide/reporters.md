@@ -8,11 +8,16 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
 
 {class}`~mew.RichReporter`
 : Streams one row per run as a formatted, colorized table. The default for
-  `mew run` when no `-o` is given, and for `mew.run()` without a `reporter`. Optional columns: `Peak Mem`
-  (via `show_memory=True`), `Samples` / `Hottest Frame`
-  (via `show_cpu=True`) and `Hottest Instruction` (via
-  `show_instructions=True`, for Tachyon on free-threaded builds). The CLI
-  exposes those options via `--profile-memory` / `--sample`.
+  `mew run` when no `-o` is given, and for `mew.run()` without a `reporter`.
+  It is as wide as `COLUMNS`, or else the terminal found through stdout, stderr
+  or the controlling terminal, or else 80 columns; CI has no terminal, so set
+  `COLUMNS` there for a wider log. The name column is as wide as its longest
+  name: `mew run` and `mew.run()` pass it as `name_width`. Times are scaled to
+  a readable unit, and `show_memory=True` adds a `Peak Mem` column. Below a
+  row, an indented line lists what has no column: a label the benchmark set,
+  its counters and, with `show_cpu=True`, its sample count, hottest function
+  and, on free-threaded 3.15+, hottest bytecode instruction. The CLI sets these
+  with `--profile-memory` and `--sample`.
 
 {class}`~mew.JSONReporter`
 : Streams one `{"session": ..., "context": ..., "benchmarks": [...]}` document

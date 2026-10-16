@@ -28,10 +28,10 @@ Note: `memray` is not available on Windows.
 
 ```console
 $ mew run --profile-memory
-mew · host=laptop cpus=10 …
-Benchmark         │  Iters │ Real │ Peak Mem
-────────────────────────────────────────────
-bench_alloc_list  │ 50,000 │ 8 µs │  3.2 MB
+mew · host=laptop cpus=10 scaling=enabled
+Benchmark            │        Iters │       Real │        CPU │   Peak Mem
+──────────────────────────────────────────────────────────────────────────
+bench_alloc_list     │       50,000 │    8.01 us │    7.99 us │     3.2 MB
 ```
 
 Write a flame graph:

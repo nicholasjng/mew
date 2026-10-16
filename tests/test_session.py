@@ -39,6 +39,9 @@ def _isolated_vcs(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
         monkeypatch.setenv(var, "t")
     for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL", "JJ_EMAIL"):
         monkeypatch.setenv(var, "t@t")
+    # Under scripts/sanitizer-pytest.sh, git and jj would each start the sanitizer
+    # runtime they don't need, about a second per process under TSAN.
+    monkeypatch.delenv("DYLD_INSERT_LIBRARIES", raising=False)
 
 
 def test_new_session_id_is_a_version7_uuid():

@@ -108,6 +108,16 @@ def test_list_selects_and_expands(mew_cli, benchdir, tmp_path, args, expected):
     assert res.stdout.splitlines() == expected
 
 
+def test_run_sizes_the_console_name_column_to_the_longest_row(
+    mew_cli, benchdir, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("COLUMNS", "200")
+    res = mew_cli("run", str(benchdir), "--min-time", "1x", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    names = [line.split(" │ ")[0] for line in res.stdout.splitlines()[1:] if " │ " in line]
+    assert len(names[0]) == max(len(name.rstrip()) for name in names[1:])
+
+
 @pytest.mark.parametrize("args", [("-h",), ("run", "-h")])
 def test_help_is_plain_terminal_text(mew_cli, tmp_path, args):
     res = mew_cli(*args, cwd=tmp_path)
@@ -501,9 +511,11 @@ def test_run_profiling_flags_write_the_report_and_annotate_rows(mew_cli, tmp_pat
         assert "spin" in top["function"]
         assert f"{top['function']} ({top['file']}" in res.stdout
         # Only free-threaded Tachyon reads bytecode instructions.
-        assert ("Hottest Instruction" in res.stdout) is reads_instructions()
-        assert bool(row["cpu_profile"]["top_instructions"]) is reads_instructions()
-        assert len(row["cpu_profile"]["top_instructions"]) <= 2
+        instructions = row["cpu_profile"]["top_instructions"]
+        assert bool(instructions) is reads_instructions()
+        assert len(instructions) <= 2
+        if instructions:
+            assert f"{instructions[0]['instruction']} " in res.stdout
 
 
 @pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon runs here")
@@ -545,7 +557,7 @@ def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
     assert "spin" in row["cpu_profile"]["top_function"]["function"]
     # pyinstrument reads no instructions, whatever --sample-top-k says.
     assert row["cpu_profile"]["top_instructions"] == []
-    assert "Hottest Instruction" not in res.stdout
+    assert "%" not in res.stdout  # no instruction share on the console either
 
 
 # --- mew compare: --regression-threshold / --exit-non-zero-on-regression ---

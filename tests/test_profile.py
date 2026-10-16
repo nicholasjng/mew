@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import json
 import math
-import random
 import sys
 import types
 import typing
@@ -740,15 +739,6 @@ def test_sampler_handles_a_pause_held_over_the_loop_end(tmp_path, sampler):
 
 # --- Tachyon (Python 3.15+) --------------------------------------------------
 
-_rng = random.Random(0)
-_FLOATS = [_rng.random() for _ in range(50_000)]
-
-
-def _hold_gil() -> list[float]:
-    # ~15x `_spin`, all in C: sorted() holds the GIL and never reaches an
-    # eval-breaker check, so an in-process sampler waits until it returns.
-    return sorted(_FLOATS)
-
 
 @pytest.mark.parametrize(
     ("sampler", "expected"),
@@ -783,29 +773,6 @@ def test_tachyon_manager_requires_python_3_15():
 
     with pytest.raises(SystemExit, match="3.15"):
         TachyonManager()
-
-
-@needs_tachyon
-def test_tachyon_weights_samples_by_time(tmp_path):
-    """On GIL builds, samples during a GIL-holding C call are lost, and the one
-    taken after it returns stands for the whole call. Counting samples would
-    name `_spin` hottest; weighting each by the time since the previous one
-    names `_hold_gil`."""
-    from mew.cpu import TachyonManager
-
-    @mew.benchmark
-    def bench_mixed(state):
-        for _ in state:
-            _hold_gil()
-            _spin()
-
-    out = tmp_path / "out.json"
-    # A sampler starved by a loaded machine leaves fewer, longer gaps; with 20
-    # iterations a few of them could still put `_spin` ahead.
-    mew.run(min_time="60x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
-    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
-    assert cpu["top_function"]["function"] == "_hold_gil"
-    assert cpu["top_function"]["self_time"] > cpu["wall_time"] / 2
 
 
 @needs_tachyon

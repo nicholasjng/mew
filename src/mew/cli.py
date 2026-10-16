@@ -24,7 +24,7 @@ from mew import (
     run as _run,
 )
 from mew._registry import compile_name_filter
-from mew.runner import parse_min_time
+from mew.runner import longest_row_name, parse_min_time
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -163,8 +163,7 @@ def _build_reporters(
     stdout_format: str = "rich",
     show_memory: bool = False,
     show_cpu: bool = False,
-    show_instructions: bool = False,
-    show_label: bool = False,
+    name_width: int | None = None,
     append: bool = False,
 ) -> list[Reporter]:
     """Resolve ``-o`` sinks into reporters; file format follows the extension.
@@ -177,12 +176,7 @@ def _build_reporters(
             return JSONReporter(output=None)
         if stdout_format == "jsonl":
             return JSONLReporter(output=None)
-        return RichReporter(
-            show_memory=show_memory,
-            show_cpu=show_cpu,
-            show_instructions=show_instructions,
-            show_label=show_label,
-        )
+        return RichReporter(show_memory=show_memory, show_cpu=show_cpu, name_width=name_width)
 
     if append and not any(raw.lower().endswith((".jsonl", ".jsonl.gz")) for raw in outputs):
         print("--append requires a .jsonl or .jsonl.gz output sink", file=sys.stderr)
@@ -267,8 +261,6 @@ def run(
     cfg = _load_config_or_exit()
     with _discovery.discovered():
         entries = _collect(paths, cfg=cfg, pattern=pattern, tags=tag, literal=literal, stdin=stdin)
-        # Before the reporters: whether the console shows instructions depends on
-        # the sampler.
         profiler_manager = None
         if sample:
             from mew import cpu as _cpu
@@ -282,9 +274,7 @@ def run(
             stdout_format=format,
             show_memory=profile_memory,
             show_cpu=sample,
-            show_instructions=getattr(profiler_manager, "reads_instructions", False),
-            # Label column distinguishes family case rows from the truncated name.
-            show_label=any(e.case_labels for e in entries),
+            name_width=longest_row_name(entries, repetitions),
             append=append,
         )
 

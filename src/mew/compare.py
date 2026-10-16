@@ -12,26 +12,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from mew._console import Span, Table, Terminal, overflow, sgr
+from mew._console import Span, Table, Terminal, fill, overflow, sgr
 from mew._registry import compile_name_filter
 from mew._results import (
     _MEMORY_METRICS,
     _METRICS,
-    _NS_PER_UNIT,
     _TIME_METRICS,
     Sample,
     SessionSummary,
     _load,
     _read_rows,
     _split_selector,
-    _to_ns,
     read_results,
     session_summaries,
 )
 from mew._significance import mannwhitney_p
 from mew._statistics import Statistic
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
-from mew.reporter import _fmt_bytes
+from mew.reporter import _NS_PER_UNIT, _fmt_bytes, _fmt_time, _scale_time, _to_ns
 
 __all__ = ["Sample", "SessionSummary", "compare", "read_results", "session_summaries"]
 
@@ -61,8 +59,8 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def _ctx_summary(ctx: dict[str, Any], *, exclude: Collection[str]) -> str:
-    """Build one provenance line per comparison column.
+def _ctx_summary(ctx: dict[str, Any], *, exclude: Collection[str]) -> list[str]:
+    """The ``key=value`` parts of a comparison column's provenance line.
 
     ``exclude`` omits user-context keys already shown in the column label.
     """
@@ -81,7 +79,7 @@ def _ctx_summary(ctx: dict[str, Any], *, exclude: Collection[str]) -> str:
         if k in exclude:
             continue
         parts.append(f"{k}={v}")
-    return " ".join(parts)
+    return parts
 
 
 def _warn_context_skew(columns: list[_Column]) -> None:
@@ -111,17 +109,6 @@ def _custom_diffs(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{k: f.get(k) for k in differing if k in f} for f in flats]
 
 
-def _scale_time(value: float, unit: str | None) -> tuple[float, str]:
-    """Rescale a raw ``(value, unit)`` pair to whichever of s/ms/us/ns keeps the
-    mantissa >= 1, e.g. ``(6995135790.99, "ns")`` -> ``(7.00, "s")``. Display-only.
-    """
-    ns = _to_ns(value, unit)
-    for threshold, out_unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):
-        if abs(ns) >= threshold:
-            return ns / threshold, out_unit
-    return ns, "ns"
-
-
 def _fmt_value(sample: Sample, metric: str) -> str:
     if metric == "memory.allocations_per_iteration":  # fractional per-call count
         return f"{sample.value:,.1f}"
@@ -129,8 +116,7 @@ def _fmt_value(sample: Sample, metric: str) -> str:
         return f"{int(sample.value):,}"
     if metric in _MEMORY_METRICS:  # remaining memory metrics are byte-valued
         return _fmt_bytes(int(sample.value))
-    scaled, unit = _scale_time(sample.value, sample.time_unit)
-    return f"{scaled:.2f} {unit}"
+    return _fmt_time(sample.value, sample.time_unit)
 
 
 def _fmt_stddev(sample: Sample, metric: str) -> str:
@@ -272,13 +258,14 @@ def _render(
     term = console or Terminal()
     for label, c, diff in zip(annotated_labels, columns, diffs, strict=True):
         if c.context:
-            summary = _ctx_summary(c.context, exclude=diff.keys())
-            term.print(sgr(f"{label}: {summary}", "dim", enabled=term.color))
+            parts = [f"{label}:", *_ctx_summary(c.context, exclude=diff.keys())]
+            for line in fill(parts, term.width, indent="", hang="  ", sep=" "):
+                term.print(sgr(line, "dim", enabled=term.color))
 
     labels = [c.label for c in columns]
-    table = Table(title=f"Comparison ({metric})")
+    table = Table(title=f"Comparison ({metric}, baseline {labels[0]})")
     table.add_column("Benchmark", flex=True)
-    table.add_column(f"{labels[0]} (baseline)", justify="right")
+    table.add_column(labels[0], justify="right")
     if show_stddev:
         table.add_column("± stddev", justify="right")
     for lbl in labels[1:]:

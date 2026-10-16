@@ -52,10 +52,11 @@ free-threaded builds the hottest instructions. The `profiler` key and
 
 ```console
 $ mew run --sample
-mew · host=laptop cpus=10 …
-Benchmark         │   Iters │   Real │ Samples │ Hottest Frame
-─────────────────────────────────────────────────────────────────
-bench_sort_quick  │ 100,000 │ 24 µs  │  12,341 │ _quicksort (bench.py:18)
+mew · host=laptop cpus=10 scaling=enabled
+Benchmark            │        Iters │       Real │        CPU
+─────────────────────────────────────────────────────────────
+bench_sort_quick     │      100,000 │   24.10 us │   24.05 us
+  12,341 samples · hottest _quicksort (bench.py:18)
 ```
 
 Write a self-contained HTML report:
@@ -128,21 +129,23 @@ detail beneath it. That flat frame is the signal to switch to
 ## Hottest instruction
 
 On free-threaded 3.15+, each row also names the bytecode instruction that took
-the most time, and the console adds a column for it:
+the most time, last on the line below it:
 
 ```console
 $ mew run --sample
-Benchmark        │ … │ Samples │ Hottest Frame                  │ Hottest Instruction
-──────────────────────────────────────────────────────────────────────────────────────────────
-bench_small_ints │ … │   7,793 │ bench_small_ints (bench.py:18) │ BINARY_OP_ADD_INT 48%
-bench_big_ints   │ … │   8,145 │ bench_big_ints (bench.py:25)   │ BINARY_OP 61% · 61% generic
+Benchmark            │        Iters │       Real │        CPU
+─────────────────────────────────────────────────────────────
+bench_small_ints     │      100,000 │   15.60 us │   15.58 us
+  7,793 samples · hottest bench_small_ints (bench.py:18) · BINARY_OP_ADD_INT 48%
+bench_big_ints       │       20,000 │   61.20 us │   61.15 us
+  8,145 samples · hottest bench_big_ints (bench.py:25) · BINARY_OP 61%, 61% generic
 ```
 
 Both loops run `total += i`. In the second, `total` is too large for the
 small-int fast path, so the addition stays generic. The first percentage is the
 instruction's share of the body's time. `generic` is the share of the body's
 time spent in any instruction the interpreter can specialize but ran
-unspecialized; the column leaves it out when it rounds to 0%.
+unspecialized; the console leaves it out when it rounds to 0%.
 
 JSON rows carry the `--sample-top-k` hottest instructions (default 5) in
 `cpu_profile.top_instructions`, hottest first, plus `unspecialized_share`; see
