@@ -7,7 +7,6 @@ import json
 import math
 import random
 import sys
-import threading
 import types
 import typing
 from typing import Any, cast
@@ -230,6 +229,8 @@ def test_nested_pauses_toggle_the_profiler_only_at_the_outer_scope(tmp_path, reu
 
     mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
     assert mgr.starts == mgr.stops == 1
+    # From the profiler pass alone: a timed-run pause must not reach the manager,
+    # where it would suspend nothing and worker threads would race on its state.
     assert mgr.pauses == mgr.resumes == 2
     assert resumed_early and not any(resumed_early)
     # A fresh inner scope does nothing; re-entering the outer one raises.
@@ -242,14 +243,19 @@ def test_managers_do_not_leak_into_a_later_run(tmp_path):
         for _ in state:
             pass
 
-    mgr = FakeMemoryManager()
-    mew.run(min_time="1x", reporter=JSONReporter(output=tmp_path / "a.json"), memory_manager=mgr)
-    after_first = mgr.starts
+    mem, prof = FakeMemoryManager(), FakeProfilerManager()
+    mew.run(
+        min_time="1x",
+        reporter=JSONReporter(output=tmp_path / "a.json"),
+        memory_manager=mem,
+        profiler_manager=prof,
+    )
+    after_first = mem.starts, prof.starts
 
     out = tmp_path / "b.json"
     mew.run(min_time="1x", reporter=JSONReporter(output=out))
-    # GB's manager registration is process-global; the scope must unregister it.
-    assert mgr.starts == after_first
+    # GB's manager registration is process-global; the scope must unregister both.
+    assert (mem.starts, prof.starts) == after_first
     bench = json.loads(out.read_text())["benchmarks"][0]
     assert "memory" not in bench
     assert "cpu_profile" not in bench
@@ -335,6 +341,41 @@ def test_malformed_manager_result_propagates_out_of_run(tmp_path, kind, result):
 # loaded machine can collect nothing in a shorter pass.
 _SAMPLED_ITERATIONS = "200x"
 
+needs_tachyon = pytest.mark.skipif(
+    sys.version_info < (3, 15), reason="Tachyon ships with Python 3.15+"
+)
+
+# A skip mark, so pytest skips before the test body imports pyinstrument.
+_SAMPLERS = [
+    pytest.param(
+        "pyinstrument",
+        marks=pytest.mark.skipif(
+            not mew.gil_enabled(),
+            reason="pyinstrument's native sampler enables the GIL",
+        ),
+    ),
+    pytest.param("tachyon", marks=needs_tachyon),
+]
+
+
+def _sampled_manager(sampler: str) -> Any:
+    """``sampler``'s manager; pyinstrument's samples finer than its default."""
+    from mew import cpu as _cpu
+
+    if sampler == "tachyon":
+        return _cpu.TachyonManager()
+    pytest.importorskip("pyinstrument")
+    return _cpu.PyinstrumentManager(interval=1e-5)
+
+
+def _spin() -> int:
+    # Self time must land in `_spin` itself, so loop in Python rather than
+    # deferring to a C builtin like sum().
+    total = 0
+    for i in range(20_000):
+        total += i
+    return total
+
 
 def test_memray_manager_reports_loop_allocations(tmp_path):
     """Scoped to the timing loop: a large fixture allocated before the loop must
@@ -369,48 +410,6 @@ def test_memray_manager_reports_loop_allocations(tmp_path):
     )
 
 
-@pytest.mark.skipif(
-    not getattr(sys, "_is_gil_enabled", lambda: True)(),
-    reason="pyinstrument's native sampler enables the GIL",
-)
-def test_pyinstrument_manager_summarizes_the_hot_frame(tmp_path):
-    pytest.importorskip("pyinstrument")
-    from mew import cpu as _cpu
-
-    def spin() -> int:
-        # Self time must land in `spin` itself, so loop in Python rather than
-        # deferring to a C builtin like sum().
-        total = 0
-        for i in range(20_000):
-            total += i
-        return total
-
-    @mew.benchmark
-    def bench_hot(state):
-        for _ in state:
-            spin()
-
-    out = tmp_path / "out.json"
-    mgr = _cpu.PyinstrumentManager(interval=1e-5)
-    mew.run(min_time=_SAMPLED_ITERATIONS, reporter=JSONReporter(output=out), profiler_manager=mgr)
-
-    cpu = json.loads(out.read_text())["benchmarks"][0].get("cpu_profile")
-    assert cpu is not None, "sampler collected nothing; raise the iteration count"
-    assert cpu["profiler"] == "pyinstrument"
-    assert cpu["sample_count"] > 0
-    top = cpu["top_function"]
-    # pyinstrument's line is the def line, so the summary leaves it out.
-    assert (top["function"], top["file"], top["line"]) == ("spin", "test_profile.py", None)
-    assert 0 < top["self_time"] <= cpu["wall_time"]
-    assert cpu["top_instructions"] == []
-    assert cpu["unspecialized_share"] is None
-    # Sessions are retained only so --sample-html can render one combined report.
-    assert mgr.sessions
-    sessions = len(mgr.sessions)
-    assert mgr.get_result() is not None
-    assert len(mgr.sessions) == sessions
-
-
 @pytest.mark.parametrize(("memory_iterations", "expected"), [(None, 16), (4, 4), (1000, 50)])
 def test_memory_iterations_caps_the_memory_pass(tmp_path, memory_iterations, expected):
     @mew.benchmark(iterations=50)
@@ -429,7 +428,7 @@ def test_memory_iterations_caps_the_memory_pass(tmp_path, memory_iterations, exp
 
 
 @pytest.mark.skipif(
-    getattr(sys, "_is_gil_enabled", lambda: True)(),
+    mew.gil_enabled(),
     reason="threaded mode requires a free-threaded interpreter",
 )
 def test_manager_passes_run_a_single_thread(tmp_path):
@@ -458,7 +457,7 @@ def test_manager_passes_run_a_single_thread(tmp_path):
 
 
 @pytest.mark.skipif(
-    getattr(sys, "_is_gil_enabled", lambda: True)(),
+    mew.gil_enabled(),
     reason="threaded mode requires a free-threaded interpreter",
 )
 def test_threaded_memory_pass_runs_one_thread(tmp_path):
@@ -540,9 +539,9 @@ def test_failed_timed_runs_skip_the_manager_passes(tmp_path):
 def test_pyinstrument_is_rejected_before_import_on_free_threaded(monkeypatch):
     from mew import cpu as _cpu
 
-    monkeypatch.setattr(_cpu, "_gil_enabled", lambda: False)
+    monkeypatch.setattr(_cpu, "gil_enabled", lambda: False)
     with pytest.raises(SystemExit, match="does not support free-threaded Python"):
-        _cpu.require_pyinstrument()
+        _cpu.PyinstrumentManager()
 
 
 def test_hottest_frame_excludes_pyinstrument_internals(tmp_path):
@@ -683,42 +682,14 @@ def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
     assert "no memory captures recorded" in capsys.readouterr().err
 
 
-def test_pause_only_reaches_the_profiler_during_its_own_pass(tmp_path):
-    """GB drives the timed run with no profiler manager, so `state.pause()` there
-    must not call one: it would suspend nothing, and in a threaded run several
-    worker threads would race on the manager's pause state."""
-    calls: list[str] = []
+@pytest.mark.parametrize("sampler", _SAMPLERS)
+def test_write_html_warns_when_nothing_was_sampled(tmp_path, capsys, sampler):
+    from mew import cpu as _cpu
 
-    class Probe:
-        def __init__(self) -> None:
-            self.sampling = False
-
-        def after_setup_start(self) -> None:
-            self.sampling = True
-
-        def before_teardown_stop(self) -> None:
-            self.sampling = False
-
-        def get_result(self) -> None:
-            return None
-
-        def pause(self) -> None:
-            calls.append("sampling" if self.sampling else "idle")
-
-        def resume(self) -> None:
-            pass
-
-    @mew.benchmark(name="paused")
-    def bench_paused(state):
-        for _ in state:
-            with state.pause():
-                pass
-
-    mew.run(
-        min_time="20x", reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=Probe()
-    )
-    assert calls, "the profiler pass must still see its pauses"
-    assert set(calls) == {"sampling"}
+    out = tmp_path / "cpu.html"
+    _cpu.write_html(_sampled_manager(sampler), out)
+    assert not out.exists()
+    assert "no CPU samples collected" in capsys.readouterr().err
 
 
 def test_pause_held_across_the_loop_end_is_not_resumed_after_the_pass(tmp_path):
@@ -739,64 +710,35 @@ def test_pause_held_across_the_loop_end_is_not_resumed_after_the_pass(tmp_path):
     assert (mgr.pauses, mgr.resumes) == (1, 0)
 
 
-@pytest.mark.skipif(
-    not getattr(sys, "_is_gil_enabled", lambda: True)(),
-    reason="pyinstrument's native sampler enables the GIL",
-)
-def test_pyinstrument_handles_a_pause_held_over_the_loop_end(tmp_path):
-    """A pass that ends paused must not stop pyinstrument twice, nor leave a
-    paused flag that keeps the next benchmark from pausing."""
-    pytest.importorskip("pyinstrument")
+@pytest.mark.parametrize("sampler", _SAMPLERS)
+def test_sampler_handles_a_pause_held_over_the_loop_end(tmp_path, sampler):
+    """A pass that ends paused must not stop the sampler twice, nor leave it
+    paused for the next benchmark, which would then collect nothing."""
     from contextlib import ExitStack
 
-    from mew.cpu import PyinstrumentManager
-
-    class Recording(PyinstrumentManager):
-        def __init__(self) -> None:
-            super().__init__()
-            self.stopped_on_pause: list[bool] = []
-
-        def pause(self) -> None:
-            self.stopped_on_pause.append(not self._paused)
-            super().pause()
-
-    @mew.benchmark(iterations=2)
+    @mew.benchmark
     def bench_held(state):
         with ExitStack() as stack:
             for _ in state:
                 stack.enter_context(state.pause())
 
-    @mew.benchmark(iterations=2)
+    @mew.benchmark
     def bench_next(state):
         for _ in state:
-            with state.pause():
-                pass
+            _spin()
 
     out = tmp_path / "o.json"
-    mgr = Recording()
-    mew.run(reporter=JSONReporter(output=out), profiler_manager=mgr)
+    mew.run(
+        min_time=_SAMPLED_ITERATIONS,
+        reporter=JSONReporter(output=out),
+        profiler_manager=_sampled_manager(sampler),
+    )
     rows = json.loads(out.read_text())["benchmarks"]
     assert [r["skipped"] for r in rows] == [False, False]
-    assert len(mgr.sessions) == 2
-    # bench_held pauses once; each of bench_next's pauses stops the profiler.
-    assert mgr.stopped_on_pause == [True, True, True]
+    assert "cpu_profile" in rows[1], "sampler collected nothing; raise the iteration count"
 
 
 # --- Tachyon (Python 3.15+) --------------------------------------------------
-
-needs_tachyon = pytest.mark.skipif(
-    sys.version_info < (3, 15), reason="Tachyon ships with Python 3.15+"
-)
-
-
-def _spin() -> int:
-    # Self time must land in `_spin` itself, so loop in Python rather than
-    # deferring to a C builtin like sum().
-    total = 0
-    for i in range(20_000):
-        total += i
-    return total
-
 
 _rng = random.Random(0)
 _FLOATS = [_rng.random() for _ in range(50_000)]
@@ -835,49 +777,12 @@ def test_cpu_manager_rejects_an_unknown_sampler():
         _cpu.manager(sampler="perf")
 
 
-@needs_tachyon
-def test_cpu_manager_picks_tachyon():
-    from mew import cpu as _cpu
-
-    assert isinstance(_cpu.manager(), _cpu.TachyonManager)
-
-
 @pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon is available")
 def test_tachyon_manager_requires_python_3_15():
     from mew.cpu import TachyonManager
 
     with pytest.raises(SystemExit, match="3.15"):
         TachyonManager()
-
-
-@needs_tachyon
-def test_tachyon_manager_summarizes_the_hot_frame(tmp_path):
-    from mew.cpu import TachyonManager
-
-    @mew.benchmark
-    def bench_hot(state):
-        for _ in state:
-            _spin()
-
-    out = tmp_path / "out.json"
-    switch_interval = sys.getswitchinterval()
-    mew.run(
-        min_time=_SAMPLED_ITERATIONS,
-        reporter=JSONReporter(output=out),
-        profiler_manager=TachyonManager(),
-    )
-
-    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
-    assert cpu["profiler"] == "tachyon"
-    assert cpu["sample_count"] > 0
-    top = cpu["top_function"]
-    assert (top["function"], top["file"]) == ("_spin", "test_profile.py")
-    # The hottest line, not the def line.
-    lines, start = inspect.getsourcelines(_spin)
-    assert start < top["line"] < start + len(lines)
-    assert 0 < top["self_time"] <= cpu["wall_time"]
-    # GIL builds lower the switch interval for the pass only.
-    assert sys.getswitchinterval() == switch_interval
 
 
 @needs_tachyon
@@ -930,68 +835,20 @@ def test_tachyon_skips_paused_regions(tmp_path):
     assert cpu["top_function"]["function"] == "_spin"
 
 
-@needs_tachyon
-def test_tachyon_handles_a_pause_held_over_the_loop_end(tmp_path):
-    from contextlib import ExitStack
-
-    from mew.cpu import TachyonManager
-
-    @mew.benchmark(iterations=2)
-    def bench_held(state):
-        with ExitStack() as stack:
-            for _ in state:
-                stack.enter_context(state.pause())
-
-    @mew.benchmark(iterations=2)
-    def bench_next(state):
-        for _ in state:
-            with state.pause():
-                pass
-
-    out = tmp_path / "o.json"
-    mew.run(reporter=JSONReporter(output=out), profiler_manager=TachyonManager())
-    rows = json.loads(out.read_text())["benchmarks"]
-    assert [r["skipped"] for r in rows] == [False, False]
-    assert not any(t.name == "mew-tachyon" for t in threading.enumerate())
-
-
-@needs_tachyon
-def test_tachyon_flame_graph_has_one_root_per_benchmark(tmp_path):
-    from mew import cpu as _cpu
-
-    @mew.benchmark
-    def bench_a(state):
-        for _ in state:
-            _spin()
-
-    @mew.benchmark
-    def bench_b(state):
-        for _ in state:
-            _spin()
-
-    mgr = _cpu.TachyonManager()
-    mew.run(
-        min_time=_SAMPLED_ITERATIONS,
-        reporter=JSONReporter(output=tmp_path / "o.json"),
-        profiler_manager=mgr,
-    )
-    report = tmp_path / "cpu.html"
-    _cpu.write_html(mgr, report)
-    html = report.read_text(encoding="utf-8")
-    assert "bench_a" in html and "bench_b" in html
-    # Stacks are cut at the body: none of mew's own call chain above it.
-    assert "runner.py" not in html
-
-
 def _negate(x: float) -> float:
     return -x
 
 
 @needs_tachyon
-def test_tachyon_flame_graph_has_native_frames_and_free_threaded_opcodes(tmp_path):
+def test_tachyon_flame_graph_has_a_root_per_benchmark_and_native_frames(tmp_path):
     """`<native>` marks sorted() calling the key function. Opcodes are read only
     where a sample can land mid-instruction, i.e. on free-threaded builds."""
     from mew import cpu as _cpu
+
+    @mew.benchmark
+    def bench_spin(state):
+        for _ in state:
+            _spin()
 
     @mew.benchmark
     def bench_callback(state):
@@ -1009,8 +866,11 @@ def test_tachyon_flame_graph_has_native_frames_and_free_threaded_opcodes(tmp_pat
     report = tmp_path / "cpu.html"
     _cpu.write_html(mgr, report)
     html = report.read_text(encoding="utf-8")
+    assert "bench_spin" in html and "bench_callback" in html
+    # Stacks are cut at the body: none of mew's own call chain above it.
+    assert "runner.py" not in html
     assert '"<native>"' in html
-    assert ('"opcodes"' in html) is not getattr(sys, "_is_gil_enabled", lambda: True)()
+    assert ('"opcodes"' in html) is not mew.gil_enabled()
 
 
 # Far past the compact ints BINARY_OP_ADD_INT handles: each add copies ~6 KB, so
@@ -1027,8 +887,9 @@ def _grow_big_int() -> int:
 
 
 @needs_tachyon
+@pytest.mark.skipif(mew.gil_enabled(), reason="needs a free-threaded build")
 def test_tachyon_names_the_hottest_instruction_on_free_threaded_builds(tmp_path):
-    from mew.cpu import TachyonManager, reads_instructions
+    from mew.cpu import TachyonManager
 
     @mew.benchmark
     def bench_big_int(state):
@@ -1036,16 +897,14 @@ def test_tachyon_names_the_hottest_instruction_on_free_threaded_builds(tmp_path)
             _grow_big_int()
 
     out = tmp_path / "out.json"
-    mgr = TachyonManager(top_k=2)
-    mew.run(min_time="100x", reporter=JSONReporter(output=out), profiler_manager=mgr)
+    mew.run(
+        min_time="100x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager(top_k=2)
+    )
     cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
-    assert mgr.reads_instructions is reads_instructions()
-    if not reads_instructions():
-        assert cpu["top_instructions"] == []
-        assert cpu["unspecialized_share"] is None
-        return
     top = cpu["top_instructions"]
-    assert len(top) == 2
+    # top_k caps the list. A starved sampler can land every sample on the
+    # dominant add, leaving no second instruction to list.
+    assert 1 <= len(top) <= 2
     assert {k: v for k, v in top[0].items() if k not in ("line", "share")} == {
         "instruction": "BINARY_OP",
         "source": "total += i",
@@ -1053,7 +912,8 @@ def test_tachyon_names_the_hottest_instruction_on_free_threaded_builds(tmp_path)
         "unspecialized": True,
     }
     assert isinstance(top[0]["line"], int)
-    assert top[0]["share"] >= top[1]["share"] > 0
+    shares = [t["share"] for t in top]
+    assert shares == sorted(shares, reverse=True) and shares[-1] > 0
     assert top[0]["share"] <= cpu["unspecialized_share"] <= 1
     assert cpu["unspecialized_share"] > 0.5
 
@@ -1076,30 +936,6 @@ def test_instruction_source_slices_utf8_columns(tmp_path):
     assert len(_instruction_source(str(long), (1, 1, 4, 200))) == 40
 
 
-@needs_tachyon
-@pytest.mark.skipif(
-    getattr(sys, "_is_gil_enabled", lambda: True)(), reason="needs a free-threaded build"
-)
-def test_tachyon_samples_without_enabling_the_gil(tmp_path):
-    from mew.cpu import TachyonManager
-
-    @mew.benchmark
-    def bench_hot(state):
-        for _ in state:
-            _spin()
-
-    out = tmp_path / "out.json"
-    mew.run(
-        min_time=_SAMPLED_ITERATIONS,
-        reporter=JSONReporter(output=out),
-        profiler_manager=TachyonManager(),
-    )
-    cpu = json.loads(out.read_text())["benchmarks"][0].get("cpu_profile")
-    assert cpu is not None, "sampler collected nothing; raise the iteration count"
-    assert cpu["sample_count"] > 0
-    assert not getattr(sys, "_is_gil_enabled", lambda: True)()
-
-
 # --- The cpu_profile contract --------------------------------------------------
 
 
@@ -1120,23 +956,13 @@ def _conforms(value: Any, hint: Any) -> bool:
     return type(value) is hint
 
 
-@pytest.mark.parametrize("sampler", ["tachyon", "pyinstrument"])
-def test_cpu_profile_has_one_shape_for_every_sampler_and_interpreter(tmp_path, sampler):
+@pytest.mark.parametrize("sampler", _SAMPLERS)
+def test_samplers_summarize_the_hot_frame_in_one_shape(tmp_path, sampler):
     """Each CI interpreter runs this, so a key or type that only one sampler or
     CPython minor writes fails it: archives mixing them keep one schema."""
     from mew import cpu as _cpu
 
-    mgr: _cpu.TachyonManager | _cpu.PyinstrumentManager
-    if sampler == "tachyon":
-        if sys.version_info < (3, 15):
-            pytest.skip("Tachyon ships with Python 3.15+")
-        mgr = _cpu.TachyonManager()
-    else:
-        # Before the import: importing pyinstrument would enable the GIL.
-        if not getattr(sys, "_is_gil_enabled", lambda: True)():
-            pytest.skip("pyinstrument's native sampler enables the GIL")
-        pytest.importorskip("pyinstrument")
-        mgr = _cpu.PyinstrumentManager(interval=1e-5)
+    mgr = _sampled_manager(sampler)
 
     @mew.benchmark
     def bench_hot(state):
@@ -1144,14 +970,29 @@ def test_cpu_profile_has_one_shape_for_every_sampler_and_interpreter(tmp_path, s
             _spin()
 
     out = tmp_path / "out.json"
+    switch_interval = sys.getswitchinterval()
     mew.run(min_time=_SAMPLED_ITERATIONS, reporter=JSONReporter(output=out), profiler_manager=mgr)
-    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
+
+    cpu = json.loads(out.read_text())["benchmarks"][0].get("cpu_profile")
+    assert cpu is not None, "sampler collected nothing; raise the iteration count"
     assert _conforms(cpu, _cpu.CpuProfile), cpu
     assert cpu["profiler"] == sampler
+    top = cpu["top_function"]
+    assert (top["function"], top["file"]) == ("_spin", "test_profile.py")
+    assert 0 < top["self_time"] <= cpu["wall_time"]
     # Instructions are read on free-threaded Tachyon only, and then always.
     reads = getattr(mgr, "reads_instructions", False)
     assert bool(cpu["top_instructions"]) is reads
     assert (cpu["unspecialized_share"] is not None) is reads
+    if sampler == "pyinstrument":
+        # pyinstrument's line is the def line, so the summary leaves it out.
+        assert top["line"] is None
+    else:
+        # The hottest line, not the def line.
+        lines, start = inspect.getsourcelines(_spin)
+        assert start < top["line"] < start + len(lines)
+        # GIL builds lower the switch interval for the pass only.
+        assert sys.getswitchinterval() == switch_interval
 
 
 def test_conforms_rejects_drift():

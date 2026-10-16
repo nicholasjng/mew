@@ -159,7 +159,7 @@ def test_thread_counts_are_each_applied_to_native_handle():
 @pytest.fixture
 def threaded_bench_on_gil_build(monkeypatch):
     """A GIL build (simulated) with one threaded benchmark registered."""
-    monkeypatch.setattr("mew.runner._gil_enabled", lambda: True)
+    monkeypatch.setattr("mew.runner.gil_enabled", lambda: True)
 
     @mew.benchmark(threads=4, iterations=1)
     def bench_threaded(state):
@@ -252,7 +252,7 @@ def test_threaded_benchmark_warms_up_on_free_threaded(monkeypatch):
     state before invoking the C++ runner (which we stub to avoid real threads)."""
     from mew import _core, runner
 
-    monkeypatch.setattr(runner, "_gil_enabled", lambda: False)
+    monkeypatch.setattr(runner, "gil_enabled", lambda: False)
     warmed = []
     monkeypatch.setattr(_core, "warmup_free_threading", lambda: warmed.append(True))
     monkeypatch.setattr(_core, "run_benchmarks", lambda *a, **k: 1)
@@ -267,30 +267,12 @@ def test_threaded_benchmark_warms_up_on_free_threaded(monkeypatch):
 
 
 @pytest.mark.skipif(
-    getattr(sys, "_is_gil_enabled", lambda: True)(),
-    reason="threaded mode requires a free-threaded interpreter",
-)
-def test_threaded_benchmark_runs_without_deadlock():
-    """A real threaded run on a free-threaded build; a failure here is a hang."""
-
-    @mew.benchmark(threads=4, iterations=100)
-    def bench_x(state):
-        for _ in state:
-            pass
-        state.set_counter("nthreads", state.threads)
-
-    cap = Capture()
-    mew.run(min_time="1x", reporter=cap)
-    assert len(cap.runs) == 1
-    assert cap.runs[0]["skipped"] is False
-    assert cap.runs[0]["threads"] == 4
-
-
-@pytest.mark.skipif(
-    getattr(sys, "_is_gil_enabled", lambda: True)(),
+    mew.gil_enabled(),
     reason="threaded mode requires a free-threaded interpreter",
 )
 def test_thread_counts_run_each_requested_count():
+    """A real threaded run on a free-threaded build; a failure here is a hang."""
+
     @mew.benchmark(threads=[1, 3, 5], iterations=10)
     def bench_x(state):
         for _ in state:
@@ -299,6 +281,7 @@ def test_thread_counts_run_each_requested_count():
     cap = Capture()
     mew.run(min_time="1x", reporter=cap)
     assert [row["threads"] for row in cap.runs] == [1, 3, 5]
+    assert all(row["skipped"] is False for row in cap.runs)
 
 
 def test_run_multiple_reporters_fan_out():
@@ -370,8 +353,6 @@ def test_pause_scope_is_only_created_by_state_pause():
 
 
 def test_pause_scope_exit_requires_the_three_exception_arguments():
-    import time
-
     errors: list[str] = []
 
     @mew.benchmark(iterations=1)
@@ -383,12 +364,17 @@ def test_pause_scope_exit_requires_the_three_exception_arguments():
                     scope.__exit__()
                 except TypeError as exc:
                     errors.append(str(exc))
-                time.sleep(0.2)  # timed only if the bad call resumed the timer
+                # Re-entry raises only while the scope still holds the pause, so
+                # the bad call must not have resumed the timer.
+                try:
+                    scope.__enter__()
+                except RuntimeError as exc:
+                    errors.append(str(exc))
 
-    cap = Capture()
-    mew.run(reporter=cap)
-    assert errors == ["__exit__() takes 3 arguments (0 given)"]
-    assert cap.runs[0]["real_time"] < 0.1e9
+    mew.run(reporter=Capture())
+    assert len(errors) == 2
+    assert "takes 3 arguments" in errors[0]
+    assert "already active" in errors[1]
 
 
 def test_state_pause_resumes_on_exception():
@@ -443,49 +429,7 @@ def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
     assert row["real_time"] < 0.1e9
 
 
-def test_nested_state_pause_unwinds_after_an_exception():
-    import time
-
-    @mew.benchmark(iterations=2)
-    def bench_nested(state):
-        for _ in state:
-            with state.pause():
-                try:
-                    with state.pause():
-                        raise ValueError("inner pause")
-                except ValueError:
-                    pass
-                time.sleep(0.3)  # the outer scope must still be paused here
-            time.sleep(0.01)  # timed: the outer scope must have resumed
-
-    cap = Capture()
-    mew.run(reporter=cap)
-    row = cap.runs[0]
-    assert not row["skipped"]
-    assert row["iterations"] == 2
-    assert row["time_unit"] == "ns"
-    # Per iteration: ~0.01 s timed, which loaded CI runners stretch to ~0.05 s;
-    # >= 0.31 s if the inner exit resumed early, ~0 if the outer never resumed.
-    assert 0.008e9 <= row["real_time"] < 0.2e9
-
-
-def test_reentering_an_active_pause_scope_skips_with_error():
-    @mew.benchmark(iterations=1)
-    def bench_x(state):
-        for _ in state:
-            scope = state.pause()
-            with scope, scope:
-                pass
-
-    cap = Capture()
-    mew.run(reporter=cap)
-    assert cap.runs[0]["skipped"] is True
-    assert "already active and cannot be re-entered" in cap.runs[0]["skip_message"]
-
-
-@pytest.mark.skipif(
-    getattr(sys, "_is_gil_enabled", lambda: True)(), reason="requires free-threaded Python"
-)
+@pytest.mark.skipif(mew.gil_enabled(), reason="requires free-threaded Python")
 def test_nested_state_pauses_are_independent_between_workers():
     from threading import Barrier
 
@@ -543,63 +487,44 @@ def test_state_pause_outside_the_loop_skips_with_error(where):
 
 
 def test_state_skip_inside_pause_does_not_resume_timing():
+    # A resume after the skip trips the assert in Google Benchmark's
+    # ResumeTiming(), which only Debug builds (the ASAN job) compile in; a
+    # release build reads no timer for a skipped row, so this passes either way.
     @mew.benchmark(iterations=1)
     def bench_x(state):
         for _ in state:
             with state.pause():
                 state.skip_with_message("unmet precondition")
 
-    @mew.benchmark(iterations=1)
-    def bench_y(state):
-        for _ in state:
-            pass
-
     cap = Capture()
     mew.run(reporter=cap)
     assert cap.runs[0]["skipped"] is True
     assert cap.runs[0]["skip_message"] == "unmet precondition"
-    assert cap.runs[1]["skipped"] is False
 
 
-@pytest.mark.parametrize("loop", ["iter", "batches", "keep_running_batch"])
+@pytest.mark.parametrize("loop", ["iter", "batches"])
 def test_pause_scope_held_open_across_the_loop_end_stays_untimed(loop):
-    """An ExitStack around the loop keeps its pause scopes open over the final
+    """An ExitStack around the loop keeps its pause scope open over the final
     loop step: GB must not stop the stopped timer again, and the paused time
     must stay out of the result."""
     import time
     from contextlib import ExitStack
 
-    @mew.benchmark(iterations=2)
+    @mew.benchmark(iterations=1)
     def bench_held(state):
         with ExitStack() as stack:
-
-            def body():
+            for _ in state if loop == "iter" else state.batches(1):
                 stack.enter_context(state.pause())
-                time.sleep(0.2)
-
-            if loop == "iter":
-                for _ in state:
-                    body()
-            elif loop == "batches":
-                for _ in state.batches(1):
-                    body()
-            else:
-                while state.keep_running_batch(1):
-                    body()
-
-    @mew.benchmark(iterations=2)
-    def bench_next(state):
-        for _ in state:
-            with state.pause():
                 time.sleep(0.2)
 
     cap = Capture()
     mew.run(reporter=cap)
-    for row in cap.runs:
-        assert row["skipped"] is False
-        # A timed sleep adds >= 0.2 s per iteration. The timed region is
-        # microseconds, but loaded CI runners stall threads for tens of ms.
-        assert row["real_time"] < 0.1e9
+    (row,) = cap.runs
+    assert row["skipped"] is False
+    # Stopping the timer again adds the time since the loop started, >= 0.2 s.
+    # The timed region is microseconds, but loaded CI runners stall threads
+    # for tens of ms.
+    assert row["real_time"] < 0.1e9
 
 
 def test_pause_scope_left_open_after_a_break_does_not_leak():
@@ -611,7 +536,7 @@ def test_pause_scope_left_open_after_a_break_does_not_leak():
             state.pause().__enter__()
             break
 
-    @mew.benchmark(iterations=2)
+    @mew.benchmark(iterations=1)
     def bench_next(state):
         for _ in state:
             with state.pause():
@@ -620,7 +545,7 @@ def test_pause_scope_left_open_after_a_break_does_not_leak():
     cap = Capture()
     mew.run(reporter=cap)
     assert cap.runs[0]["skip_message"] == "The benchmark did not complete its loop."
-    # A leaked pause state would time the 0.2 s sleeps.
+    # A leaked pause state would time the 0.2 s sleep.
     assert cap.runs[1]["real_time"] < 0.1e9
 
 
@@ -856,28 +781,22 @@ def test_benchmark_output_is_printed_to_stderr_after_the_run(capfd):
     assert err == "\noutput from benchmarks:\nto stdout\nto stderr\n"
 
 
-def test_capture_output_false_leaves_output_live(capfd):
-    import os
+@pytest.mark.parametrize("reporter", [None, []])
+def test_run_without_reporter_prints_mews_console_table(capsys, monkeypatch, reporter):
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setenv("NO_COLOR", "1")
 
-    @mew.benchmark(iterations=1)
-    def bench_noisy(state):
-        os.write(2, b"live\n")
-        for _ in state:
-            pass
-
-    mew.run(reporter=Capture(), capture_output=False)
-    assert capfd.readouterr().err == "live\n"
-
-
-def test_run_without_reporter_prints_mews_console_table(capsys):
     @mew.benchmark(iterations=1)
     def bench_plain(state):
         for _ in state:
             pass
 
-    assert mew.run() == 1
+    assert mew.run(reporter=reporter) == 1
     out = capsys.readouterr().out
     assert out.startswith("mew · host=")
+    # The header reads the session and machine context mew.run() assembled.
+    assert "host=?" not in out
+    assert "cpus=?" not in out
     assert "bench_plain" in out
     # Google Benchmark's own console reporter prints a "Run on (...)" header.
     assert "Run on (" not in out

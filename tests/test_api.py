@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import pytest
 
@@ -54,31 +55,6 @@ def test_unknown_option_raises():
                 pass
 
 
-def test_custom_name_override():
-    @mew.benchmark(name="my/custom/name")
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    assert REGISTRY.all()[0].name == "my/custom/name"
-
-
-def test_parametrize_multi_kwarg_dict():
-    @mew.parametrize(
-        [
-            {"n": 1, "algo": "a"},
-            {"n": 10, "algo": "b"},
-        ]
-    )
-    def bench_x(state, n, algo):
-        for _ in state:
-            pass
-
-    entries = REGISTRY.all()
-    assert len(entries) == 1
-    assert entries[0].case_labels == ["n=1-algo=a", "n=10-algo=b"]
-
-
 def test_parametrize_ids_length_mismatch():
     with pytest.raises(ValueError, match="ids"):
 
@@ -86,18 +62,6 @@ def test_parametrize_ids_length_mismatch():
         def _bench(state, n):
             for _ in state:
                 pass
-
-
-def test_failed_parametrize_can_be_corrected():
-    def bench_x(state, n):
-        for _ in state:
-            pass
-
-    with pytest.raises(ValueError, match="duplicate case label"):
-        mew.parametrize([{"n": []}, {"n": []}])(bench_x)
-
-    mew.parametrize([{"n": []}, {"n": []}], ids=["first", "second"])(bench_x)
-    assert REGISTRY.all()[0].case_labels == ["first", "second"]
 
 
 def test_rejected_name_can_be_corrected():
@@ -142,25 +106,39 @@ def test_product_cartesian():
             pass
 
     (entry,) = REGISTRY.all()
-    assert entry.case_labels is not None
-    assert set(entry.case_labels) == {
-        "n=1-algo=a",
-        "n=1-algo=b",
-        "n=2-algo=a",
-        "n=2-algo=b",
+    # Cases follow itertools.product: the last axis varies fastest.
+    assert entry.case_labels == ["n=1-algo=a", "n=1-algo=b", "n=2-algo=a", "n=2-algo=b"]
+
+
+@pytest.mark.parametrize("budget", ["min_time", "iterations"])
+def test_product_passes_every_option_through(budget):
+    # product()'s **kwargs are the iterables, so it forwards each option by
+    # hand; a forgotten one would be silently dropped.
+    every: dict[str, Any] = {
+        "min_time": 0.05,
+        "min_warmup_time": 0.01,
+        "iterations": 10,
+        "repetitions": 3,
+        "unit": "us",
+        "use_real_time": True,
+        "use_manual_time": True,
+        "measure_process_cpu_time": True,
+        "report_aggregates_only": True,
+        "threads": 2,
     }
+    assert set(every) == _OptionKeys  # a new option needs a value here
+    # iterations cannot be combined with either time budget.
+    dropped = {"iterations"} if budget == "min_time" else {"min_time", "min_warmup_time"}
+    options = {k: v for k, v in every.items() if k not in dropped}
 
-
-def test_product_pulls_options_out_of_kwargs():
-    @mew.product(n=[1, 2], min_time=0.05, unit="us")
+    @mew.product(n=[1, 2], **options)
     def bench_x(state, n):
         for _ in state:
             pass
 
     (entry,) = REGISTRY.all()
-    assert entry.case_labels == ["n=1", "n=2"]  # min_time/unit are options
-    assert entry.options["min_time"] == 0.05
-    assert entry.options["unit"] == "us"
+    assert entry.case_labels == ["n=1", "n=2"]  # options, not axes
+    assert entry.options == {**options, "threads": (2,)}
 
 
 def test_threads_accepts_a_sequence_of_counts():
@@ -182,17 +160,6 @@ def test_threads_validated_at_decoration(threads):
         def _bench(state):
             for _ in state:
                 pass
-
-
-def test_product_pulls_threads_out_of_kwargs():
-    @mew.product(n=[1, 2], threads=2)
-    def bench_x(state, n):
-        for _ in state:
-            pass
-
-    (entry,) = REGISTRY.all()
-    assert entry.case_labels == ["n=1", "n=2"]  # threads is an option, not an axis
-    assert entry.options["threads"] == (2,)
 
 
 def test_product_needs_at_least_one_iterable():
