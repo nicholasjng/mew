@@ -45,10 +45,10 @@ file prefixes do not matter. Differing context values (`engine=…`) are shown
 next to each file's label on its context line above the table.
 
 ```console
-                       Comparison (real_time)
-Benchmark │ alpha (baseline) │    beta │                Δ% │ speedup
-────────────────────────────────────────────────────────────────────
-scan      │          1.79 us │ 3.28 us │ +83.41% (signif.) │  ×0.545
+Comparison (real_time, baseline alpha)
+Benchmark │   alpha │    beta │                Δ% │ speedup
+───────────────────────────────────────────────────────────
+scan      │ 1.79 us │ 3.28 us │ +83.41% (signif.) │  ×0.545
 ```
 
 To keep both sides in one archive instead, give each run a `--session-tag` and

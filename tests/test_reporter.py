@@ -176,82 +176,67 @@ def test_rich_reporter_streams_header_before_first_run():
     assert "Iters" in out
 
 
-def test_rich_reporter_profile_flags_add_columns():
+def _rich(width: int = 200, **flags) -> tuple[io.StringIO, RichReporter]:
     from mew._console import Terminal
 
     buf = io.StringIO()
-    rep = RichReporter(
-        terminal=Terminal(file=buf, width=200, color=False),
-        show_memory=True,
-        show_cpu=True,
-    )
+    rep = RichReporter(terminal=Terminal(file=buf, width=width, color=False), **flags)
     rep.report_context(
         {"session": {"host": "h"}, "context": {"num_cpus": 1, "cpu_scaling_enabled": False}}
     )
-    out = buf.getvalue()
-    assert "Peak Mem" in out
-    assert "Samples" in out
-    assert "Hottest Frame" in out
+    return buf, rep
 
-    # The header alone never exercises row formatting (`_fmt_bytes`, the "-"
-    # fallback), so feed real rows too.
+
+@pytest.mark.parametrize(
+    ("name_width", "column"),
+    [
+        (25, 25),  # the longest name to come
+        (None, 159),  # unknown: all the width the numbers leave
+        (500, 159),  # never past the terminal
+        (5, 20),  # never below the floor
+    ],
+)
+def test_rich_reporter_sizes_the_name_column(name_width, column):
+    buf, _ = _rich(width=200, name_width=name_width)
+    header = buf.getvalue().splitlines()[1]
+    assert len(header.split(" │ ")[0]) == column
+
+
+def test_rich_reporter_scales_times_to_a_readable_unit():
+    buf, rep = _rich()
+    row = _fake_row("bench.py::bench_x")
+    row["real_time"], row["cpu_time"] = 305_028_333.33, 24_763.67
+    rep.report_runs([row])
+    cells = [c.strip() for c in buf.getvalue().splitlines()[-1].split(" │ ")]
+    assert cells[2:] == ["305.03 ms", "24.76 us"]
+
+
+def test_rich_reporter_memory_column_and_profile_line():
+    buf, rep = _rich(show_memory=True, show_cpu=True)
+    header = buf.getvalue().splitlines()[1]
+    assert header.split(" │ ")[-1].strip() == "Peak Mem"
+
     row = _fake_row("bench.py::bench_x")
     row["memory"] = {"peak_bytes": 2 * (1 << 20)}  # 2.0 MB
     row["cpu_profile"] = {
-        "sample_count": 42,
+        "sample_count": 4200,
         "top_function": {"function": "hot_fn", "file": "mod.py", "line": 10, "self_time": 0.1},
     }
-    rep.report_runs([row])
-    out = buf.getvalue()
-    assert "2.0 MB" in out
-    assert "42" in out
-    assert "42.0" not in out  # sample_count renders as an integer
-    assert "hot_fn (mod.py:10)" in out
-
-    rep.report_runs([_fake_row("bench.py::bench_y")])
-    cells = buf.getvalue().splitlines()[-1].split(" │ ")
-    # name, iters, real, cpu, [peak, samples, hottest_frame]
-    peak, samples, hottest_frame = cells[-3:]
-    assert peak.strip() == "-"
-    assert samples.strip() == "-"
-    assert hottest_frame.strip() == "-"
+    rep.report_runs([row, _fake_row("bench.py::bench_y")])
+    lines = buf.getvalue().splitlines()[-4:]
+    assert lines[0].split(" │ ")[-1].strip() == "2.0 MB"
+    assert lines[1] == "  4,200 samples · hottest hot_fn (mod.py:10)"
+    # A row whose pass sampled nothing says so rather than leaving a gap.
+    assert lines[2].split(" │ ")[-1].strip() == "-"
+    assert lines[3] == "  no samples"
 
 
-def test_rich_reporter_left_ellipsizes_long_names():
-    from mew._console import Terminal
-
-    name = "benchmarks/some/deeply/nested/path/bench_module/bench_the_actual_function"
-
-    @mew.benchmark(name=name)
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    buf = io.StringIO()
-    # Narrow width forces truncation; the meaningful function suffix must survive.
-    rep = RichReporter(terminal=Terminal(file=buf, width=60, color=False))
-    mew.run(min_time="1x", reporter=rep)
-    out = buf.getvalue()
-    assert "…" in out
-    assert "bench_the_actual_function" in out
-
-
-def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
-    """Unlike the name column, the fixed-width label and hottest-frame columns
-    keep their left prefix."""
-    from mew._console import Terminal
-
-    buf = io.StringIO()
-    rep = RichReporter(
-        terminal=Terminal(file=buf, width=200, color=False),
-        show_label=True,
-        show_cpu=True,
-    )
-    rep.report_context(
-        {"session": {"host": "h"}, "context": {"num_cpus": 1, "cpu_scaling_enabled": False}}
-    )
-
-    row = _fake_row("bench.py::bench_x", label="a-very-long-case-label-well-past-twenty-chars")
+def test_rich_reporter_lists_what_has_no_column_below_the_row():
+    """A label the body set, the counters and the profile go below the row,
+    filled to the terminal width without splitting a part."""
+    buf, rep = _rich(width=64, show_cpu=True)
+    row = _fake_row("bench.py::bench_x", label="warm-cache")
+    row["counters"] = [{"name": "items_per_second", "value": 2.5e8, "format": {"rate": True}}]
     row["cpu_profile"] = {
         "sample_count": 1,
         "top_function": {
@@ -261,13 +246,36 @@ def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
             "self_time": 0.1,
         },
     }
-    rep.report_runs([row])
-    out = buf.getvalue()
+    # A family case's own label is already in its name, so it isn't repeated.
+    case = _fake_row("bench.py::bench_x[n=1]", label="n=1")
+    rep.report_runs([row, case])
+    lines = buf.getvalue().splitlines()[3:]
+    assert lines[1:3] == [
+        "  warm-cache · items_per_second=250M/s · 1 sample",
+        # A part too long for a line of its own is cut, not split.
+        "    hottest a_very_long_function_name_that_exceeds_thirty_chara…",
+    ]
+    assert all(len(line) <= 64 for line in lines)
+    assert lines[-1] == "  no samples"  # the case row: no label repeated
 
-    assert "Label" in out
-    # Fixed widths from `RichReporter.report_context`: Label=20, Hottest Frame=30.
-    assert "a-very-long-case-la…" in out  # left prefix of label survives, truncated
-    assert "a_very_long_function_name_tha…" in out  # left prefix of hottest frame
+
+def test_rich_reporter_wraps_a_skip_message_without_losing_any_of_it():
+    buf, rep = _rich(width=60)
+    path = "/a/very/long/path/" + "x" * 50 + "/bench.py"
+    row = _fake_row("bench.py::bench_x")
+    row["skipped"] = True
+    row["skip_message"] = (
+        f'Traceback (most recent call last):\n  File "{path}", line 6\nValueError: boom'
+    )
+    rep.report_runs([row])
+    lines = buf.getvalue().splitlines()[3:]
+    assert all(len(line) <= 60 for line in lines)
+    # The reason fills the timing columns: past the 20-column name and the separator.
+    body = [line[23:] for line in lines]
+    assert body[0] == "Traceback (most recent call last):"
+    assert body[1].startswith('  File "/a/very')  # the traceback's own indent stays
+    assert "".join(body[1:-1]).replace(" ", "") == f'File"{path}",line6'
+    assert body[-1] == "ValueError: boom"
 
 
 @pytest.mark.parametrize(
@@ -282,29 +290,15 @@ def test_rich_reporter_right_ellipsizes_overlong_label_and_hottest_frame():
     ],
 )
 def test_rich_reporter_renders_the_hottest_frame(top, shown):
-    from mew._console import Terminal
-
-    buf = io.StringIO()
-    rep = RichReporter(terminal=Terminal(file=buf, width=200, color=False), show_cpu=True)
-    rep.report_context({"session": {"host": "h"}, "context": {}})
+    buf, rep = _rich(show_cpu=True)
     row = _fake_row("bench.py::bench_x")
     row["cpu_profile"] = {"sample_count": 1, "top_function": top}
     rep.report_runs([row])
-    assert buf.getvalue().splitlines()[-1].split(" │ ")[-1].strip() == shown
+    assert buf.getvalue().splitlines()[-1] == f"  1 sample · hottest {shown}"
 
 
-def test_rich_reporter_instruction_column_keeps_the_shares():
-    from mew._console import Terminal
-
-    buf = io.StringIO()
-    rep = RichReporter(
-        terminal=Terminal(file=buf, width=200, color=False), show_cpu=True, show_instructions=True
-    )
-    rep.report_context(
-        {"session": {"host": "h"}, "context": {"num_cpus": 1, "cpu_scaling_enabled": False}}
-    )
-    assert "Hottest Instruction" in buf.getvalue()
-
+def test_rich_reporter_lists_the_hottest_instruction_with_its_shares():
+    buf, rep = _rich(show_cpu=True)
     profiles = [
         ("BINARY_OP", 0.62, 0.62),
         ("LOAD_ATTR_INSTANCE_VALUE", 0.32, 0.0),
@@ -323,15 +317,12 @@ def test_rich_reporter_instruction_column_keeps_the_shares():
             "unspecialized_share": generic,
         }
         rep.report_runs([row])
-    rep.report_runs([_fake_row("bench.py::bench_y")])
 
-    cells = [line.split(" │ ")[-1].rstrip() for line in buf.getvalue().splitlines()[-4:]]
-    assert cells == [
-        "BINARY_OP 62% · 62% generic",
+    lines = buf.getvalue().splitlines()[4::2]
+    assert [line.split(" · ")[-1] for line in lines] == [
+        "BINARY_OP 62%, 62% generic",
         "LOAD_ATTR_INSTANCE_VALUE 32%",
-        # Width 30: the name is cut, the shares are not.
-        "CALL_METHOD… 40% · 10% generic",
-        "-",
+        "CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS 40%, 10% generic",
     ]
 
 
@@ -563,6 +554,6 @@ def test_rich_reporter_shows_counters_like_google_benchmark():
     rep = RichReporter(terminal=Terminal(file=buf, width=200, color=False))
     rep.report_context({"session": {"host": "h"}, "context": {}})
     rep.report_runs([row, cv])
-    plain, ratio = buf.getvalue().splitlines()[-2:]
-    assert plain.endswith(" │ bytes_per_second=1.2Gi/s hits=42 latency=200ns")
-    assert ratio.endswith(" │ hits=5.00%")
+    plain, ratio = buf.getvalue().splitlines()[-3::2]
+    assert plain == "  bytes_per_second=1.2Gi/s · hits=42 · latency=200ns"
+    assert ratio == "  hits=5.00%"

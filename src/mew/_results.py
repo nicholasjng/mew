@@ -13,19 +13,9 @@ from typing import Any, cast
 from mew._console import overflow
 from mew._statistics import Statistic
 from mew._typing import BenchmarkResult
-from mew.reporter import _ROW_STAMP_FIELDS, _open_text, canonical_row_name
+from mew.reporter import _ROW_STAMP_FIELDS, _open_text, _to_ns, canonical_row_name
 
-_NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
 _TIME_METRICS = frozenset({"real_time", "cpu_time"})
-
-
-def _to_ns(value: float, unit: str | None) -> float:
-    """Normalize a ``(value, unit)`` pair to nanoseconds.
-
-    Compared files can declare different units (e.g. ``--benchmark_time_unit=us``),
-    so delta/speedup math must go through this, not raw ``sample.value``.
-    """
-    return value * _NS_PER_UNIT.get(unit or "ns", 1.0)
 
 
 # Totals scale with the iteration count, so only peak and per-iteration memory

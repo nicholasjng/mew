@@ -30,7 +30,7 @@ change between minor releases.
   its line, its share of time and whether it stayed unspecialized, and gives the
   share of time spent in such unspecialized instructions
   (`unspecialized_share`). `--sample-top-k` sets how many (default 5). The
-  console shows the hottest in a `Hottest Instruction` column.
+  console names the hottest below the row.
 - A profiler manager's `get_result()` may return any JSON-serializable values,
   `None`, lists and dicts included. They reach `cpu_profile` with their JSON
   types.
@@ -49,13 +49,25 @@ change between minor releases.
   included, and prints it to stderr after the run, so library warnings no longer
   break up the console table or corrupt JSON on stdout. `--capture=no`,
   `[tool.mew] capture = "no"` or `capture_output=False` shows it live instead.
-- The console shows counters after the timing columns, formatted like Google
+- The console shows counters below each row, formatted like Google
   Benchmark's console (`bytes_per_second=1.2Gi/s`): SI or binary prefixes
   (`one_k`) and `/s` for rates. A counter carries this in an optional `format`.
   `CounterFlags.kStringifyExponent` is exposed for exponent notation.
 
 ### Changed
 
+- The console table fits the terminal. Its name column is as wide as the
+  longest name the run will show, not all the width there is, and times are
+  scaled to a readable unit (`305.03 ms`, not `305028333.33 ns`), as
+  `mew compare` already did. What has no column, such as counters, a label the
+  benchmark set and, under `--sample`, the sample count and hottest function,
+  goes on an indented line below the row, filled to the terminal width instead
+  of cut off; a skipped row's reason, such as a traceback, wraps within the
+  timing columns. The `Label` column is gone, since a case's label is part of
+  its name, and with it `RichReporter`'s `show_label` parameter.
+- `mew compare` names the baseline in the table's title instead of its column
+  header, wraps each file's provenance line to the terminal width, and keeps at
+  least 20 columns of a benchmark's name.
 - `mew.cpu.write_html()` takes the profiler manager instead of its pyinstrument
   sessions, like `mew.memory.write_flamegraph()`.
 - A row's `counters` is a list of `{"name", "value"}` records, plus the optional
@@ -145,6 +157,9 @@ change between minor releases.
 - `mew compare` shows `×1.000` instead of `×inf` when both sides are zero, and
   scales the `memory.peak_bytes` stddev column like its values.
 - The memory flame graph's header totals cover every benchmark, not the first.
+- Piped console output, as in `mew run | tee run.log`, is as wide as the
+  terminal it ends up on, instead of 80 columns: when stdout is not a terminal,
+  mew asks stderr and then the controlling terminal for the width.
 - An output path ending in `.GZ` or `.Gz` is gzip-compressed, as reading it back
   assumes, instead of written as plain text.
 - Benchmark files symlinked into a benchpath are selected by `mew list` and

@@ -5,11 +5,12 @@ from __future__ import annotations
 import contextlib
 import json
 import sys
+import textwrap
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol, TextIO, cast, runtime_checkable
 
-from mew._console import _COL_SEP, Terminal, _truncate_left, _truncate_right, sgr
+from mew._console import _COL_SEP, Terminal, _truncate_left, fill, sgr
 from mew._typing import BenchmarkResult
 
 
@@ -35,6 +36,34 @@ class Reporter(Protocol):
     def report_runs(self, runs: list[BenchmarkResult], /) -> None: ...
 
 
+_NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
+
+
+def _to_ns(value: float, unit: str | None) -> float:
+    """Normalize a ``(value, unit)`` pair to nanoseconds.
+
+    Compared files can declare different units (e.g. ``--benchmark_time_unit=us``),
+    so delta/speedup math must go through this, not raw ``sample.value``.
+    """
+    return value * _NS_PER_UNIT.get(unit or "ns", 1.0)
+
+
+def _scale_time(value: float, unit: str | None) -> tuple[float, str]:
+    """Rescale a raw ``(value, unit)`` pair to whichever of s/ms/us/ns keeps the
+    mantissa >= 1, e.g. ``(6995135790.99, "ns")`` -> ``(7.00, "s")``. Display-only.
+    """
+    ns = _to_ns(value, unit)
+    for threshold, out_unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):
+        if abs(ns) >= threshold:
+            return ns / threshold, out_unit
+    return ns, "ns"
+
+
+def _fmt_time(value: float, unit: str | None) -> str:
+    scaled, out_unit = _scale_time(value, unit)
+    return f"{scaled:.2f} {out_unit}"
+
+
 def _fmt_bytes(n: int) -> str:
     for threshold, unit in ((1 << 30, "GB"), (1 << 20, "MB"), (1 << 10, "KB")):
         if n >= threshold:
@@ -42,25 +71,28 @@ def _fmt_bytes(n: int) -> str:
     return f"{n} B"
 
 
-def _fmt_function(cpu: Mapping[str, Any] | None) -> str:
+def _fmt_function(top: object) -> str:
     """``work (bench.py:6)`` from a :class:`~mew.cpu.TopFunction`, as far as it goes."""
-    top = cpu.get("top_function") if cpu else None
     if not isinstance(top, Mapping):  # A custom profiler's summary.
-        return str(top) if top else "-"
+        return str(top)
     where = ":".join(str(part) for part in (top["file"], top["line"]) if part is not None)
     return f"{top['function']} ({where})" if where else top["function"]
 
 
-def _fmt_instruction(cpu: Mapping[str, Any] | None, width: int) -> str:
-    """``BINARY_OP 62% · 62% generic``, cutting the opcode name to keep the shares."""
-    if not cpu or not cpu.get("top_instructions"):
-        return "-"
-    top = cpu["top_instructions"][0]
-    name = top["instruction"]
-    shares = f" {top['share']:.0%}"
-    if (generic := cpu.get("unspecialized_share") or 0.0) >= 0.005:
-        shares += f" · {generic:.0%} generic"
-    return _truncate_right(name, max(1, width - len(shares))) + shares
+def _fmt_profile(cpu: Mapping[str, Any] | None) -> list[str]:
+    """``42 samples``, ``hottest work (bench.py:6)`` and ``BINARY_OP 62%, 62% generic``."""
+    if not cpu:
+        return ["no samples"]
+    parts = []
+    if (count := cpu.get("sample_count")) is not None:
+        parts.append(f"{count:,} sample{'' if count == 1 else 's'}")
+    if top := cpu.get("top_function"):
+        parts.append(f"hottest {_fmt_function(top)}")
+    if instructions := cpu.get("top_instructions"):
+        parts.append(f"{instructions[0]['instruction']} {instructions[0]['share']:.0%}")
+        if (generic := cpu.get("unspecialized_share") or 0.0) >= 0.005:
+            parts[-1] += f", {generic:.0%} generic"
+    return parts
 
 
 _BIG_SI = ("k", "M", "G", "T", "P", "E", "Z", "Y")
@@ -93,8 +125,8 @@ def _human_readable(value: float, one_k: int, exponent: bool) -> str:
     return mantissa + (_SMALL_SI[-power - 1] if power < 0 else "")
 
 
-def _fmt_counters(row: BenchmarkResult) -> str:
-    """Counters as Google Benchmark's console shows them: ``name=1.2Gi/s ...``."""
+def _fmt_counters(row: BenchmarkResult) -> list[str]:
+    """Counters as Google Benchmark's console shows them: ``name=1.2Gi/s``."""
     ratio = row.get("aggregate_unit") == "percentage"
     parts = []
     for counter in row["counters"]:
@@ -106,7 +138,7 @@ def _fmt_counters(row: BenchmarkResult) -> str:
             if fmt.get("rate"):
                 text += "s" if fmt.get("inverted") else "/s"
         parts.append(f"{counter['name']}={text}")
-    return " ".join(parts)
+    return parts
 
 
 def canonical_row_name(row: Mapping[str, Any]) -> str:
@@ -248,15 +280,12 @@ class JSONLReporter:
         self._owns_fh = False
 
 
-# RichReporter columns whose cells pad on the right; the rest are right-aligned numbers.
-_LEFT_ALIGNED = frozenset({"Benchmark", "Label", "Hottest Frame", "Hottest Instruction"})
-
-
 class RichReporter:
     """Print mew's console table, a row per result as it arrives.
 
-    The header prints before the first result, so the optional columns are
-    chosen up front.
+    The header prints before the first result, so the columns are chosen up
+    front. Below a row, an indented line lists what has no column: a label the
+    benchmark set, its counters and, with ``show_cpu``, its CPU profile.
 
     Parameters
     ----------
@@ -265,13 +294,11 @@ class RichReporter:
     show_memory : bool, default False
         Add a ``Peak Mem`` column.
     show_cpu : bool, default False
-        Add ``Samples`` / ``Hottest Frame`` columns.
-    show_instructions : bool, default False
-        Add a ``Hottest Instruction`` column, e.g. ``BINARY_OP 62% · 62% generic``,
-        with ``show_cpu`` where :func:`mew.cpu.reads_instructions`.
-    show_label : bool, default False
-        Add a ``Label`` column with each family case's label, which a truncated
-        name can hide.
+        List each row's sample count, hottest function and, where
+        :func:`mew.cpu.reads_instructions`, hottest bytecode instruction.
+    name_width : int, optional
+        Width of the name column, such as the longest name the run will report;
+        by default all the width the other columns leave.
     """
 
     def __init__(
@@ -280,30 +307,26 @@ class RichReporter:
         terminal: Terminal | None = None,
         show_memory: bool = False,
         show_cpu: bool = False,
-        show_instructions: bool = False,
-        show_label: bool = False,
+        name_width: int | None = None,
     ) -> None:
         self._term = terminal or Terminal()
         self._show_memory = show_memory
         self._show_cpu = show_cpu
-        self._show_instructions = show_instructions
-        self._show_label = show_label
+        self._name_width = name_width
         # Column header -> width, in display order; set once the terminal width is known.
         self._widths: dict[str, int] = {}
 
     def report_context(self, context: dict[str, Any]) -> None:
         self._print_banner(context)
-        widths = {"Label": 20} if self._show_label else {}
-        widths |= {"Iters": 12, "Real": 14, "CPU": 14}
+        widths = {"Iters": 12, "Real": 10, "CPU": 10}
         if self._show_memory:
             widths["Peak Mem"] = 10
-        if self._show_cpu:
-            widths |= {"Samples": 9, "Hottest Frame": 30}
-        if self._show_instructions:
-            widths["Hottest Instruction"] = 30
-        # Name column takes whatever's left; floor at 30 even if it overflows.
+        # The name takes what's left, or what its longest name needs, but at least
+        # 20 columns even if rows then overflow.
         spare = self._term.width - sum(widths.values()) - len(widths) * len(_COL_SEP)
-        self._widths = {"Benchmark": max(30, spare), **widths}
+        if self._name_width is not None:
+            spare = min(spare, self._name_width)
+        self._widths = {"Benchmark": max(20, spare), **widths}
         line = self._join(list(self._widths))
         color = self._term.color
         self._term.print(sgr(line, "bold", enabled=color))
@@ -329,48 +352,60 @@ class RichReporter:
         )
 
     def _join(self, cells: list[str]) -> str:
-        """Pad each cell to its column; a cell past the last column (counters) runs free."""
+        """Pad the name on the right and the numbers on the left, to their columns."""
+        widths = self._widths.values()
         padded = [
-            cell.ljust(width) if header in _LEFT_ALIGNED else cell.rjust(width)
-            for cell, (header, width) in zip(cells, self._widths.items(), strict=False)
+            cell.ljust(width) if i == 0 else cell.rjust(width)
+            for i, (cell, width) in enumerate(zip(cells, widths, strict=True))
         ]
-        return _COL_SEP.join(padded + cells[len(self._widths) :])
+        return _COL_SEP.join(padded)
 
     def _print_row(self, row: BenchmarkResult) -> None:
-        w = self._widths
+        width = self._widths["Benchmark"]
+        color = self._term.color
         # Canonical `file.py::f[label]` form, matching `mew compare`, left-ellipsized
         # to keep the disambiguating tail.
-        name = _truncate_left(canonical_row_name(row), w["Benchmark"])
+        full_name = canonical_row_name(row)
+        name = _truncate_left(full_name, width)
 
-        # Skipped rows carry no timing, so show the dimmed reason instead.
+        # Skipped rows carry no timing, so the dimmed reason fills the timing
+        # columns. Its lines (a traceback has several) wrap, keeping their indent
+        # and every character, since a cut path would no longer locate anything.
         if row["skipped"]:
-            reason = row["skip_message"] or "skipped"
-            line = f"{name.ljust(w['Benchmark'])}{_COL_SEP}{reason}"
-            self._term.print(sgr(line, "dim", enabled=self._term.color))
+            lead = name.ljust(width) + _COL_SEP
+            avail = max(10, self._term.width - len(lead))
+            lines: list[str] = []
+            for text in (row["skip_message"] or "skipped").splitlines():
+                body = text.lstrip(" ")
+                pad = text[: len(text) - len(body)][: avail // 2]
+                lines += textwrap.wrap(
+                    body, avail, initial_indent=pad, subsequent_indent=pad, break_on_hyphens=False
+                ) or [""]
+            for i, line in enumerate(lines):
+                prefix = " " * len(lead) if i else lead
+                self._term.print(sgr(prefix + line, "dim", enabled=color))
             return
 
-        cells = [name]
-        if self._show_label:
-            cells.append(_truncate_right(row["label"], w["Label"]))
         if row.get("aggregate_unit") == "percentage":
             # A ratio such as `cv`, shown as a percentage like GB's console.
             real, cpu_time = f"{row['real_time']:.2%}", f"{row['cpu_time']:.2%}"
         else:
             unit = row["time_unit"]
-            real, cpu_time = f"{row['real_time']:.2f} {unit}", f"{row['cpu_time']:.2f} {unit}"
-        cells += [f"{row['iterations']:,}", real, cpu_time]
+            real, cpu_time = _fmt_time(row["real_time"], unit), _fmt_time(row["cpu_time"], unit)
+        cells = [name, f"{row['iterations']:,}", real, cpu_time]
         if self._show_memory:
             mem = row.get("memory")
             cells.append(_fmt_bytes(mem["peak_bytes"]) if mem else "-")
-        cpu = row.get("cpu_profile")
-        if self._show_cpu:
-            cells.append(f"{cpu['sample_count']:,}" if cpu else "-")
-            cells.append(_truncate_right(_fmt_function(cpu), w["Hottest Frame"]))
-        if self._show_instructions:
-            cells.append(_fmt_instruction(cpu, w["Hottest Instruction"]))
-        if row["counters"]:
-            cells.append(_fmt_counters(row))
         self._term.print(self._join(cells))
+
+        # A family case's own label is part of its name already.
+        label = row["label"]
+        details = [label] if label and f"[{label}]" not in full_name else []
+        details += _fmt_counters(row)
+        if self._show_cpu:
+            details += _fmt_profile(row.get("cpu_profile"))
+        for line in fill(details, self._term.width, indent="  ", hang="    ", sep=" · "):
+            self._term.print(sgr(line, "dim", enabled=color))
 
 
 class Fanout:

@@ -3,7 +3,8 @@
 Scope is only what mew renders: the streamed results table (:class:`~mew.reporter.RichReporter`),
 the comparison table, and colorized ``--help``. There is no markup language; a cell carries
 its style out of band, so ``[label]`` needs no escaping. Long cells in the one flexible column
-are left-ellipsized; there is no wrapping or East-Asian width handling.
+are left-ellipsized; :func:`fill` lays out lines of parts, such as a row's counters, that
+never split. There is no East-Asian width handling.
 """
 
 from __future__ import annotations
@@ -21,11 +22,29 @@ Span = tuple[str, str | None]
 Cell = str | list[Span]
 
 _COL_SEP = " │ "
+# Fewest columns a narrowed name keeps: below that it no longer identifies anything.
+_FLEX_FLOOR = 20
 
 
 def overflow(total: int, shown: int) -> str:
     """`` (+N more)`` when a message previewed only ``shown`` of ``total`` items."""
     return f" (+{total - shown} more)" if total > shown else ""
+
+
+def fill(parts: list[str], width: int, *, indent: str, hang: str, sep: str) -> list[str]:
+    """Lay ``parts`` out on lines no wider than ``width``, never splitting one.
+
+    The first line starts with ``indent``, the others with ``hang``; a part too
+    long for a line of its own is right-ellipsized.
+    """
+    lines: list[str] = []
+    for part in parts:
+        if lines and len(lines[-1]) + len(sep) + len(part) <= width:
+            lines[-1] += sep + part
+        else:
+            lead = hang if lines else indent
+            lines.append(lead + _truncate_right(part, max(1, width - len(lead))))
+    return lines
 
 
 def sgr(text: str, *styles: str | None, enabled: bool = True) -> str:
@@ -47,6 +66,29 @@ def color_enabled(stream: TextIO) -> bool:
         return stream.isatty()
     except (AttributeError, ValueError):
         return False
+
+
+def _terminal_width() -> int:
+    """``COLUMNS``, else the width of the terminal on stdout, stderr or ``/dev/tty``,
+    so that piped output (``mew run | tee run.log``) still fits the screen, else 80."""
+    import shutil
+
+    if columns := shutil.get_terminal_size((0, 0)).columns:  # COLUMNS, else stdout
+        return columns
+    try:
+        return os.get_terminal_size(2).columns or 80
+    except OSError:
+        pass
+    try:
+        fd = os.open("/dev/tty", os.O_RDONLY)
+    except OSError:  # no controlling terminal, as in CI, or on Windows
+        return 80
+    try:
+        return os.get_terminal_size(fd).columns or 80
+    except OSError:
+        return 80
+    finally:
+        os.close(fd)
 
 
 class Terminal:
@@ -75,11 +117,7 @@ class Terminal:
 
     @property
     def width(self) -> int:
-        if self._width is not None:
-            return self._width
-        import shutil
-
-        return shutil.get_terminal_size((80, 24)).columns
+        return self._width if self._width is not None else _terminal_width()
 
     @property
     def color(self) -> bool:
@@ -131,8 +169,9 @@ class Table:
     """A simple column table: fixed columns sized to content, one flexible column.
 
     The flexible column (``flex=True``, e.g. the benchmark name) absorbs leftover
-    width and is left-ellipsized when narrowed; fixed columns are sized to their
-    widest cell and right/left justified.
+    width and is left-ellipsized when narrowed, but keeps ``_FLEX_FLOOR`` columns
+    even if the table then overflows; fixed columns are sized to their widest cell
+    and right/left justified.
     """
 
     def __init__(self, title: str | None = None) -> None:
@@ -160,8 +199,9 @@ class Table:
         if flex is not None:
             overhead = (len(self._headers) - 1) * len(_COL_SEP)
             fixed = sum(w for i, w in enumerate(widths) if i != flex)
-            avail = max(1, width - fixed - overhead)
-            widths[flex] = max(len(self._headers[flex]), min(widths[flex], avail))
+            avail = width - fixed - overhead
+            floor = min(widths[flex], max(len(self._headers[flex]), _FLEX_FLOOR))
+            widths[flex] = max(floor, min(widths[flex], avail))
 
         lines: list[str] = []
         if self.title:

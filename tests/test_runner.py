@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 import sys
+import time
 
 import pytest
 from _helpers import Capture
@@ -377,9 +378,16 @@ def test_pause_scope_exit_requires_the_three_exception_arguments():
     assert "already active" in errors[1]
 
 
-def test_state_pause_resumes_on_exception():
-    import time
+def _burn(seconds: float) -> None:
+    """Spend ``seconds`` of this thread's CPU time. The tests bound the CPU time a
+    timer counted, which, unlike real time, can't grow while the OS stalls the
+    thread, so only the timer's state decides the result."""
+    end = time.thread_time() + seconds
+    while time.thread_time() < end:
+        pass
 
+
+def test_state_pause_resumes_on_exception():
     @mew.benchmark(iterations=1)
     def bench_raises(state):
         for _ in state:
@@ -388,20 +396,18 @@ def test_state_pause_resumes_on_exception():
                     raise RuntimeError("boom")
             except RuntimeError:
                 pass
-            time.sleep(0.05)  # timed only if __exit__ resumed the timer
+            _burn(0.05)  # timed only if __exit__ resumed the timer
 
     cap = Capture()
     mew.run(reporter=cap)
     row = cap.runs[0]
     assert row["iterations"] == 1
     assert row["time_unit"] == "ns"
-    assert row["real_time"] >= 0.04e9
+    assert row["cpu_time"] >= 0.04e9
 
 
 @pytest.mark.parametrize("reuse_scope", [False, True])
 def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
-    import time
-
     errors: list[str] = []
 
     @mew.benchmark(iterations=1)
@@ -415,7 +421,7 @@ def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
                 except RuntimeError as exc:
                     errors.append(str(exc))
                 # Exiting the inner scope must not resume timing yet.
-                time.sleep(0.2)
+                _burn(0.2)
 
     cap = Capture()
     mew.run(reporter=cap)
@@ -424,9 +430,8 @@ def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
     # A fresh inner scope does nothing; re-entering the outer one raises.
     reentry = "this pause scope is already active and cannot be re-entered"
     assert errors == ([reentry] if reuse_scope else [])
-    # A resumed timer adds the whole sleep, >= 0.2 s. The timed region is
-    # microseconds, but loaded CI runners stall threads for tens of ms.
-    assert row["real_time"] < 0.1e9
+    # A resumed timer counts the whole burn, >= 0.2 s.
+    assert row["cpu_time"] < 0.1e9
 
 
 @pytest.mark.skipif(mew.gil_enabled(), reason="requires free-threaded Python")
@@ -507,7 +512,6 @@ def test_pause_scope_held_open_across_the_loop_end_stays_untimed(loop):
     """An ExitStack around the loop keeps its pause scope open over the final
     loop step: GB must not stop the stopped timer again, and the paused time
     must stay out of the result."""
-    import time
     from contextlib import ExitStack
 
     @mew.benchmark(iterations=1)
@@ -515,21 +519,17 @@ def test_pause_scope_held_open_across_the_loop_end_stays_untimed(loop):
         with ExitStack() as stack:
             for _ in state if loop == "iter" else state.batches(1):
                 stack.enter_context(state.pause())
-                time.sleep(0.2)
+                _burn(0.2)
 
     cap = Capture()
     mew.run(reporter=cap)
     (row,) = cap.runs
     assert row["skipped"] is False
     # Stopping the timer again adds the time since the loop started, >= 0.2 s.
-    # The timed region is microseconds, but loaded CI runners stall threads
-    # for tens of ms.
-    assert row["real_time"] < 0.1e9
+    assert row["cpu_time"] < 0.1e9
 
 
 def test_pause_scope_left_open_after_a_break_does_not_leak():
-    import time
-
     @mew.benchmark(iterations=2)
     def bench_breaks(state):
         for _ in state:
@@ -540,23 +540,21 @@ def test_pause_scope_left_open_after_a_break_does_not_leak():
     def bench_next(state):
         for _ in state:
             with state.pause():
-                time.sleep(0.2)
+                _burn(0.2)
 
     cap = Capture()
     mew.run(reporter=cap)
     assert cap.runs[0]["skip_message"] == "The benchmark did not complete its loop."
-    # A leaked pause state would time the 0.2 s sleep.
-    assert cap.runs[1]["real_time"] < 0.1e9
+    # A leaked pause state would time the 0.2 s burn.
+    assert cap.runs[1]["cpu_time"] < 0.1e9
 
 
 def test_second_loop_over_a_finished_state_adds_no_time():
-    import time
-
     @mew.benchmark(iterations=5)
     def bench_x(state):
         for _ in state:
             pass
-        time.sleep(0.2)  # untimed, unless the second loop stops the timer again
+        _burn(0.2)  # untimed, unless the second loop stops the timer again
         for _ in state:
             pass
 
@@ -564,9 +562,8 @@ def test_second_loop_over_a_finished_state_adds_no_time():
     mew.run(reporter=cap)
     row = cap.runs[0]
     assert row["time_unit"] == "ns"
-    # Stopping the timer again adds the sleep, >= 0.2 s in total. Five empty
-    # iterations take microseconds, but loaded CI runners stall threads for tens of ms.
-    assert row["real_time"] * row["iterations"] < 0.1e9
+    # Stopping the timer again adds the burn, >= 0.2 s in total.
+    assert row["cpu_time"] * row["iterations"] < 0.1e9
 
 
 def test_run_with_no_entries_returns_zero():
@@ -779,6 +776,45 @@ def test_benchmark_output_is_printed_to_stderr_after_the_run(capfd):
     out, err = capfd.readouterr()
     assert out == "reporter row\n"
     assert err == "\noutput from benchmarks:\nto stdout\nto stderr\n"
+
+
+def test_longest_row_name_covers_cases_threads_and_aggregates():
+    from mew._registry import Entry
+    from mew.runner import longest_row_name
+
+    def entry(name, **kwargs):
+        return Entry(name=name, fn=lambda s: None, **kwargs)
+
+    plain = entry("f.py::bench_a")
+    family = entry("f.py::bench_b", case_labels=["n=1", "n=1000"])
+    assert longest_row_name([plain], None) == len("f.py::bench_a")
+    assert longest_row_name([family], None) == len("f.py::bench_b[n=1000]")
+    # Only the selected cases, `/threads:N` for the largest count, aggregate rows.
+    narrowed = entry("f.py::bench_b", case_labels=["n=1", "n=1000"], cases=[0])
+    assert longest_row_name([narrowed], None) == len("f.py::bench_b[n=1]")
+    threaded = entry("f.py::bench_c", options={"threads": (1, 16)})
+    assert longest_row_name([threaded], None) == len("f.py::bench_c/threads:16")
+    assert longest_row_name([plain], 3) == len("f.py::bench_a_median")
+    # A benchmark's own repetitions win over the run's.
+    once = entry("f.py::bench_a", options={"repetitions": 1})
+    assert longest_row_name([once], 3) == len("f.py::bench_a")
+
+
+def test_run_sizes_the_console_name_column_to_the_longest_row(capsys, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setenv("NO_COLOR", "1")
+
+    @mew.parametrize([{"n": 1}, {"n": 1000}], iterations=1, repetitions=2)
+    def bench_family(state, n):
+        for _ in state:
+            pass
+
+    mew.run()
+    lines = capsys.readouterr().out.splitlines()
+    names = [line.split(" │ ")[0] for line in lines[1:] if " │ " in line]
+    # The column is just wide enough for the longest name, an aggregate row's.
+    assert len(names[0]) == max(len(name.rstrip()) for name in names[1:])
+    assert any(name.rstrip().endswith("[n=1000]_median") for name in names[1:])
 
 
 @pytest.mark.parametrize("reporter", [None, []])

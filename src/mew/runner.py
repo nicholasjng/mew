@@ -90,6 +90,25 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
             handle.threads(n)
 
 
+# The longest suffix of Google Benchmark's default aggregates: mean, median, stddev, cv.
+_AGGREGATE_SUFFIX = len("_median")
+
+
+def longest_row_name(entries: Iterable[Entry], repetitions: int | None) -> int:
+    """The longest name the console shows for these benchmarks' rows, so it can
+    size its name column before the first row arrives."""
+    longest = 0
+    for entry in entries:
+        cases = [n for i, n in case_names(entry) if entry.cases is None or i in entry.cases]
+        width = max(map(len, cases or [entry.name]))
+        if entry.options.get("threads") is not None:
+            width += len(f"/threads:{max(_thread_counts(entry.options))}")
+        if (entry.options.get("repetitions") or repetitions or 1) > 1:
+            width += _AGGREGATE_SUFFIX
+        longest = max(longest, width)
+    return longest
+
+
 _DEFAULT_MIN_TIME = "0.5s"
 _DEFAULT_MEMORY_ITERATIONS = 16
 
@@ -259,11 +278,13 @@ def run(
     elif reps:
         rep = reps[0]
     else:
+        # A threaded benchmark skipped above shows its plain name.
+        widths = [longest_row_name(selected, repetitions)]
+        widths += [len(row["benchmark"]) for row in skipped_rows]
         rep = RichReporter(
             show_memory=memory_manager is not None,
             show_cpu=profiler_manager is not None,
-            show_instructions=getattr(profiler_manager, "reads_instructions", False),
-            show_label=any(e.case_labels for e in selected),
+            name_width=max(widths),
         )
 
     from mew import __version__  # deferred: mew imports this module
