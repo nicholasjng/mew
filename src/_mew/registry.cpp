@@ -39,9 +39,6 @@ void register_registry(nb::module_& m) {
         .def("report_aggregates_only", &benchmark::Benchmark::ReportAggregatesOnly,
              "value"_a = true, nb::rv_policy::reference,
              "Emit only the aggregate rows, suppressing per-repetition ones.")
-        .def("dense_range", &benchmark::Benchmark::DenseRange, "start"_a, "limit"_a, "step"_a = 1,
-             nb::rv_policy::reference,
-             "Register one case per value in `[start, limit]`, readable via `State.range`.")
         .def("threads", &benchmark::Benchmark::Threads, "n"_a, nb::rv_policy::reference,
              "Run the benchmark with `n` threads, each with its own State and timer.\n"
              "Repeat to run once per thread count. Requires a free-threaded "
@@ -49,8 +46,7 @@ void register_registry(nb::module_& m) {
         .def("arg", &benchmark::Benchmark::Arg, "value"_a, nb::rv_policy::reference,
              "Register one case with a single range argument, readable via `State.range`.")
         .def("arg_name", &benchmark::Benchmark::ArgName, "name"_a, nb::rv_policy::reference,
-             "Name the first range argument; appears in the reported benchmark name.")
-        .def_prop_ro("name", &benchmark::Benchmark::GetName, "The registered benchmark name.");
+             "Name the first range argument; appears in the reported benchmark name.");
 
     m.def(
         "register_benchmark",

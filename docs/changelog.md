@@ -38,6 +38,11 @@ change between minor releases.
   `implementation`, `gil_enabled`) and the mew that wrote it in
   `session.mew_version`, so an archive that mixes interpreters or mew releases
   can be split by them.
+- Every run records the CPU model in `context.cpu_model`, such as `"Apple M2"`,
+  or `null` where the OS doesn't name the CPU, as on Linux on Arm. `mew compare`
+  warns when the compared files' models differ, as it does for the CPU count.
+- `mew.gil_enabled()` tells whether the GIL is enabled right now: `False` on a
+  free-threaded build, unless an extension module enabled it on import.
 - Python 3.15 support. CI tests 3.15 and free-threaded 3.15t, and releases
   include a `cp315t` wheel; the stable-ABI wheel already covers 3.15.
 - `mew run` captures what benchmarks write to stdout and stderr, native writes
@@ -71,6 +76,12 @@ change between minor releases.
   as a NumPy integer, fails the run at any depth; 0.2.0 converted top-level
   numbers to floats.
 - Google Benchmark is pinned to `e662de9` (v1.9.5-144).
+- On macOS, the thread CPU clock is read with `clock_gettime` instead of
+  `thread_info`, which Google Benchmark kept for macOS 10.11: a read costs about
+  110 ns instead of 510, and resolves 42 ns instead of 1 µs.
+- On Apple Silicon Macs, `mew run` starts about a second sooner. macOS doesn't
+  report the CPU frequency there, and Google Benchmark estimated it by
+  busy-looping for a second; mew never reported it.
 - `mew --version` and `mew.BENCHMARK_VERSION` report Google Benchmark as
   `v1.9.5-144-ge662de9a+mew` instead of with a `-dirty` suffix caused by
   mew's own patches.
@@ -111,6 +122,11 @@ change between minor releases.
 - Benchmarks whose timed run fails or is skipped no longer get memory and CPU
   profiling passes, so they add nothing to flame graphs or CPU HTML reports. A
   pass that ends early, for example on Ctrl-C, still stops its profiler.
+- `--sample-html` and `mew.cpu.write_html()` warn on stderr when no profiling
+  pass collected a sample, like `--flamegraph`, instead of writing no report
+  without a word.
+- On a free-threaded build run with the GIL enabled (`PYTHON_GIL=1`),
+  `--profile-memory` records Python's allocations instead of none.
 - The memory pass's `iterations` includes the overshoot of batched loops
   (`state.batches()`), so `allocations_per_iteration` is no longer inflated.
 - A second `for _ in state:` loop after the first has finished no longer adds
@@ -129,6 +145,8 @@ change between minor releases.
 - `mew compare` shows `×1.000` instead of `×inf` when both sides are zero, and
   scales the `memory.peak_bytes` stddev column like its values.
 - The memory flame graph's header totals cover every benchmark, not the first.
+- An output path ending in `.GZ` or `.Gz` is gzip-compressed, as reading it back
+  assumes, instead of written as plain text.
 - Benchmark files symlinked into a benchpath are selected by `mew list` and
   `mew run`.
 - An invalid `--statistic` or a missing `[tool.mew] setup` file exits with the
@@ -136,6 +154,9 @@ change between minor releases.
 - A decorator rejected for a duplicate `name=` leaves the function free for a
   corrected registration, and `min_time` / `min_warmup_time` reject NaN.
 - `--help` honors `FORCE_COLOR`, and shell completions no longer show `%%`.
+- On Python 3.14+, argparse no longer colors `--help` under mew's own colors,
+  which mixed two color schemes and colored redirected help when
+  `PYTHON_COLORS` was set.
 
 ## Version 0.2.0 (September 24, 2026)
 

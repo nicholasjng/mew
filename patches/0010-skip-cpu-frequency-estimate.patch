@@ -1,0 +1,49 @@
+diff --git a/src/sysinfo.cc b/src/sysinfo.cc
+index a291e10..90109ab 100644
+--- a/src/sysinfo.cc
++++ b/src/sysinfo.cc
+@@ -832,40 +832,10 @@ double GetCPUCyclesPerSecond(CPUInfo::Scaling scaling) {
+   // QuRT doesn't provide any API to query Hexagon frequency.
+   return 1000000000;
+ #endif
+-  // If we've fallen through, attempt to roughly estimate the CPU clock rate.
+-
+-  // Make sure to use the same cycle counter when starting and stopping the
+-  // cycle timer. We just pin the current thread to a cpu in the previous
+-  // affinity set.
+-  ThreadAffinityGuard affinity_guard;
+-
+-  static constexpr double estimate_time_s = 1.0;
+-  const double start_time = ChronoClockNow();
+-  const auto start_ticks = cycleclock::Now();
+-
+-  // Impose load instead of calling sleep() to make sure the cycle counter
+-  // works.
+-  using PRNG = std::minstd_rand;
+-  using Result = PRNG::result_type;
+-  PRNG rng(static_cast<Result>(start_ticks));
+-
+-  Result state = 0;
+-
+-  do {
+-    static constexpr size_t batch_size = 10000;
+-    rng.discard(batch_size);
+-    state += rng();
+-
+-  } while (ChronoClockNow() - start_time < estimate_time_s);
+-
+-  DoNotOptimize(state);
+-
+-  const auto end_ticks = cycleclock::Now();
+-  const double end_time = ChronoClockNow();
+-
+-  return static_cast<double>(end_ticks - start_ticks) / (end_time - start_time);
+-  // Reset the affinity of current thread when the lifetime of affinity_guard
+-  // ends.
++  // Fallen through: report the rate as unknown. Google Benchmark estimated it
++  // by busy-looping for a second (on every Apple Silicon Mac, which has no
++  // hw.cpufrequency), and mew reports no CPU frequency.
++  return -1;
+ }
+ 
+ std::vector<double> GetLoadAvg() {
