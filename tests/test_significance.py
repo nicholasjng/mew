@@ -11,9 +11,16 @@ import pytest
 from mew._significance import mannwhitney_p
 
 
-def test_mannwhitney_identical_groups_is_not_significant() -> None:
-    p = mannwhitney_p([10.0, 11.0, 9.0, 10.5, 9.5], [10.0, 11.0, 9.0, 10.5, 9.5])
-    assert p == 1.0
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ([10.0, 11.0, 9.0, 10.5, 9.5], [10.0, 11.0, 9.0, 10.5, 9.5]),  # identical
+        ([5.0, 5.0], [5.0, 5.0]),  # all tied: no rank spread at all
+        ([1.0], [2.0]),  # one observation per group can't show a difference
+    ],
+)
+def test_mannwhitney_without_evidence_is_one(a: list[float], b: list[float]) -> None:
+    assert mannwhitney_p(a, b) == 1.0
 
 
 def test_mannwhitney_clearly_separated_groups_is_significant() -> None:
@@ -33,12 +40,3 @@ def test_mannwhitney_corrects_the_variance_for_ties() -> None:
 def test_mannwhitney_empty_group_returns_none() -> None:
     assert mannwhitney_p([], [1.0, 2.0]) is None
     assert mannwhitney_p([1.0, 2.0], []) is None
-
-
-def test_mannwhitney_all_tied_returns_one() -> None:
-    assert mannwhitney_p([5.0, 5.0], [5.0, 5.0]) == 1.0
-
-
-def test_mannwhitney_handles_tiny_samples_without_error() -> None:
-    # One observation per group can't show a difference.
-    assert mannwhitney_p([1.0], [2.0]) == 1.0

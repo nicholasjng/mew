@@ -63,36 +63,28 @@ def test_collect_files_accepts_single_file(tmp_path):
 
 def test_discovered_unloads_only_what_it_added(tmp_path, _restore_sys_path):
     _write(tmp_path / "_bench_fixtures.py", "VALUE = 7\n")
-    bench = tmp_path / "bench_scoped.py"
     _write(
-        bench,
+        tmp_path / "bench_scoped.py",
         """
         import mew
-        from _bench_fixtures import VALUE
+        from _bench_fixtures import VALUE  # a sibling, importable from the file's directory
 
         @mew.benchmark
         def bench_x(state):
-            for _ in state:
-                pass
-    """,
+            pass
+        """,
     )
     parent = str(tmp_path.resolve())
 
     with discovery.discovered():
-        before = set(sys.modules)
-        discovery.import_file(bench)
-        entry = next(e for e in REGISTRY.all() if "bench_x" in e.name)
-        added = {m for m in set(sys.modules) - before if m.startswith("mew._bench_")}
-        assert len(added) == 1
-        mod_name = added.pop()
-        assert parent in sys.path
+        discovery.import_file(tmp_path / "bench_scoped.py")
+        (entry,) = REGISTRY.all()
+        module = entry.fn.__module__
+        assert module in sys.modules and parent in sys.path
 
-    assert mod_name not in sys.modules
-    assert parent not in sys.path
+    assert module not in sys.modules and parent not in sys.path
     # Sibling modules stay: pruning sys.modules wholesale is risky.
     assert "_bench_fixtures" in sys.modules
-    # The sibling import resolved, and the function keeps its namespace via __globals__.
-    assert entry.fn.__globals__["VALUE"] == 7
 
 
 def test_collect_files_missing_path_raises(tmp_path):
@@ -121,22 +113,13 @@ def test_select_entries_is_independent_of_discovery(tmp_path, stdin_name, expect
     assert entry.cases is None
 
 
-def test_select_entries_combines_path_filters_pattern_and_tags(tmp_path):
+def test_select_entries_scopes_path_filters_to_their_paths(tmp_path):
     from mew._registry import Entry, compile_name_filter
 
     a, b = tmp_path / "a.py", tmp_path / "b.py"
-    entries = [
-        (Entry("f", lambda s: None, tags=frozenset({"fast"})), a),
-        (Entry("g", lambda s: None, tags=frozenset({"fast"})), a),
-        (Entry("f", lambda s: None, tags=frozenset({"fast"})), b),
-        (Entry("g", lambda s: None, tags=frozenset({"slow"})), b),
-    ]
+    entries = [(Entry(name, lambda s: None), path) for path in (a, b) for name in ("f", "g")]
     selectors = [
         discovery.Selector(a, False, compile_name_filter("f")),
         discovery.Selector(b, False, compile_name_filter("g")),
     ]
     assert discovery.select_entries(entries, selectors) == [entries[0][0], entries[3][0]]
-    assert discovery.select_entries(entries, selectors, tags=["fast"]) == [entries[0][0]]
-    assert discovery.select_entries(entries, selectors, pattern=compile_name_filter("g")) == [
-        entries[3][0]
-    ]

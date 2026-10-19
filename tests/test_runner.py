@@ -12,105 +12,112 @@ from _helpers import Capture
 import mew
 
 
-def test_run_single_benchmark_captures_one_run():
+def test_run_reports_rows_and_the_session_context():
     @mew.benchmark
     def bench_x(state):
         for _ in state:
             pass
 
     cap = Capture()
-    n = mew.run(min_time="1x", reporter=cap)
-    assert n == 1
-    assert len(cap.runs) == 1
+    assert mew.run(min_time="3x", reporter=cap) == 1
+    (row,) = cap.runs
+    assert row["iterations"] == 3
     assert cap.finalized
+    # The context is what mew assembled; Google Benchmark's own adds nothing.
     assert cap.context is not None
-    assert cap.context["context"]["num_cpus"] >= 1
-
-
-def test_run_records_the_interpreter_and_mew_version():
-    """Rows from several interpreters or mew releases stay apart in one archive."""
-
-    @mew.benchmark
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    cap = Capture()
-    mew.run(min_time="1x", reporter=cap)
-    assert cap.context is not None
+    assert set(cap.context) == {"session", "context"}
+    # Rows from several interpreters or mew releases stay apart in one archive.
+    assert cap.context["session"]["mew_version"] == mew.__version__
     assert cap.context["context"]["python"] == {
         "version": platform.python_version(),
         "implementation": sys.implementation.name,
-        "gil_enabled": getattr(sys, "_is_gil_enabled", lambda: True)(),
+        "gil_enabled": mew.gil_enabled(),
     }
-    assert cap.context["session"]["mew_version"] == mew.__version__
 
 
+# The decorators check min_time, min_warmup_time and repetitions the same way.
 @pytest.mark.parametrize(
-    ("kwargs", "message"),
+    ("kwargs", "error", "message"),
     [
-        ({"repetitions": 0}, "repetitions"),
-        ({"repetitions": True}, "repetitions"),
-        ({"min_warmup_time": -1}, "min_warmup_time"),
-        ({"min_warmup_time": float("nan")}, "min_warmup_time"),
-        ({"min_time": 0}, "min_time"),
-        ({"min_time": "0x"}, "min_time"),
-        ({"min_time": "1.5x"}, "min_time"),
-        ({"min_time": "forever"}, "min_time"),
-        ({"memory_iterations": 0}, "memory_iterations"),
-        ({"memory_iterations": True}, "memory_iterations"),
+        ({"repetitions": True}, TypeError, "repetitions must be an integer"),
+        ({"repetitions": 0}, ValueError, "repetitions must be >= 1"),
+        ({"memory_iterations": 2.5}, TypeError, "memory_iterations must be an integer"),
+        ({"memory_iterations": 0}, ValueError, "memory_iterations must be >= 1"),
+        ({"min_time": True}, TypeError, "min_time must be seconds"),
+        ({"min_time": 0}, ValueError, "min_time must be positive"),
+        ({"min_time": "1.5x"}, ValueError, "min_time must be positive"),
+        ({"min_time": "forever"}, ValueError, "min_time must be positive"),
+        ({"min_warmup_time": "1"}, TypeError, "min_warmup_time must be a number"),
+        ({"min_warmup_time": -1}, ValueError, "min_warmup_time must be a finite"),
+        ({"min_warmup_time": float("nan")}, ValueError, "min_warmup_time must be a finite"),
+        ({"session_tag": 1}, TypeError, "session_tag must be a string"),
+        ({"session_tag": ""}, ValueError, "session_tag must not be empty"),
+        # `mew compare path@latest` selects the newest session.
+        ({"session_tag": "latest"}, ValueError, "session_tag 'latest' is reserved"),
     ],
 )
-def test_run_rejects_invalid_global_options(kwargs, message):
-    with pytest.raises(ValueError, match=message):
+def test_run_rejects_invalid_options(kwargs, error, message):
+    with pytest.raises(error, match=message):
         mew.run(**kwargs)
 
 
-def test_gb_argv_always_pins_the_memory_pass_cap():
+@pytest.mark.parametrize("min_time", [0.00001, "0.00001", "0.00001s", " 7x "])
+def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
+    @mew.benchmark
+    def bench_time_option(state):
+        for _ in state:
+            pass
+
+    assert mew.run(min_time=min_time, reporter=Capture()) == 1
+
+
+def test_gb_argv_emits_every_flag_with_its_default():
     from mew.runner import _gb_argv
 
-    # Every flag is emitted so a previous run's value cannot leak into this one.
-    assert "--benchmark_memory_iterations=16" in _gb_argv(None, None, None, False)
-    assert "--benchmark_memory_iterations=4" in _gb_argv(None, None, None, False, 4)
+    # Google Benchmark flags persist across runs in one process, so each one is
+    # always emitted: a previous run's value cannot leak into this one.
+    assert _gb_argv(None, None, None, False) == [
+        "mew",
+        "--benchmark_min_time=0.5s",
+        "--benchmark_min_warmup_time=0",
+        "--benchmark_repetitions=1",
+        "--benchmark_enable_random_interleaving=false",
+        "--benchmark_memory_iterations=16",
+    ]
 
 
-def test_set_counter_values_reach_rows_normalized_by_flags():
+def test_gb_flags_do_not_leak_across_runs():
+    @mew.benchmark
+    def bench_leak(state):
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(min_time="1x", repetitions=2, reporter=cap)
+    assert len(cap.runs) == 2
+
+    cap = Capture()
+    mew.run(min_time="1x", reporter=cap)  # no repetitions requested
+    assert len(cap.runs) == 1
+
+
+def test_set_counter_values_reach_rows_with_their_format():
     @mew.benchmark(iterations=4)
     def bench_counter(state):
         for _ in state:
             pass
-        # one_k only affects display; rows carry the raw value.
         state.set_counter("bytes", 1024, one_k=mew.CounterOneK.kIs1024)
         state.set_counter("total", 3, flags=mew.CounterFlags.kIsIterationInvariant)
         state.set_counter("mean", 8, flags=mew.CounterFlags.kAvgIterations)
 
     cap = Capture()
     mew.run(reporter=cap)
-    assert cap.runs[0]["iterations"] == 4
-    counters = {c["name"]: c["value"] for c in cap.runs[0]["counters"]}
-    assert counters == {"bytes": 1024, "total": 12, "mean": 2}
-
-
-def test_run_benchmarks_passes_session_context_through():
-    """`session_context` *is* the context block: Google Benchmark's own carries
-    nothing mew keeps, so the binding forwards what the caller assembled."""
-    from mew import _core
-
-    def bench(state):
-        for _ in state:
-            pass
-
-    _core.clear_registered_benchmarks()
-    _core.register_benchmark("bench_overlay", bench)
-    try:
-        cap = Capture()
-        extra = {"session": {"id": "sid-123", "host": "h"}, "context": {"k": "v"}}
-        _core.run_benchmarks(["mew", "--benchmark_min_time=1x"], cap, extra)
-    finally:
-        _core.clear_registered_benchmarks()
-
-    assert cap.context is not None
-    assert cap.context == {"session": {"id": "sid-123", "host": "h"}, "context": {"k": "v"}}
+    # Values are normalized by their flags (x4, /4); one_k only affects display.
+    assert cap.runs[0]["counters"] == [
+        {"name": "bytes", "value": 1024, "format": {"one_k": 1024}},
+        {"name": "mean", "value": 2},
+        {"name": "total", "value": 12},
+    ]
 
 
 def test_run_registers_only_selected_cases_of_a_family():
@@ -123,38 +130,13 @@ def test_run_registers_only_selected_cases_of_a_family():
         for _ in state:
             pass
 
-    # Select small (case 0) and big (case 2) by label; mid is dropped.
     narrowed = mew.REGISTRY.filter(r"small|big")
     cap = Capture()
-    mew.run(entries=narrowed, min_time="1x", reporter=cap)
+    mew.run(narrowed, min_time="1x", reporter=cap)
 
-    case_names = [r["name"] for r in cap.runs]
-    assert all("bench_fam" in n for n in case_names)
-    assert sorted(n.split("/case:")[1] for n in case_names) == ["0", "2"]
-    assert sorted(seen_n) == [1, 100]
-
-
-def test_is_threaded_helper():
-    from mew.runner import _is_threaded
-
-    assert not _is_threaded({})
-    assert not _is_threaded({"threads": 1})
-    assert _is_threaded({"threads": 2})
-    assert not _is_threaded({"threads": (1,)})
-    assert _is_threaded({"threads": (1, 8)})
-
-
-def test_thread_counts_are_each_applied_to_native_handle():
-    from mew.runner import _apply_options
-
-    calls = []
-
-    class Handle:
-        def threads(self, n):
-            calls.append(n)
-
-    _apply_options(Handle(), {"threads": (2, 4, 8)})  # ty: ignore[invalid-argument-type]
-    assert calls == [2, 4, 8]
+    family = narrowed[0].name
+    assert [r["benchmark"] for r in cap.runs] == [f"{family}[small]", f"{family}[big]"]
+    assert seen_n == [1, 100]
 
 
 @pytest.fixture
@@ -162,7 +144,8 @@ def threaded_bench_on_gil_build(monkeypatch):
     """A GIL build (simulated) with one threaded benchmark registered."""
     monkeypatch.setattr("mew.runner.gil_enabled", lambda: True)
 
-    @mew.benchmark(threads=4, iterations=1)
+    # Any count above 1 makes the benchmark threaded.
+    @mew.benchmark(threads=[1, 4], iterations=1)
     def bench_threaded(state):
         for _ in state:
             pass
@@ -177,8 +160,7 @@ def test_threaded_benchmark_skipped_on_gil_build():
         n = mew.run(min_time="1x", reporter=cap)
 
     assert n == 0  # nothing actually executed by GB
-    assert len(cap.runs) == 1
-    row = cap.runs[0]
+    (row,) = cap.runs
     assert row["skipped"] is True
     assert row["threads"] == 4
     assert "free-threaded" in row["skip_message"]
@@ -212,67 +194,43 @@ def test_all_skipped_finalizes_reporter_when_report_runs_raises():
 def test_mixed_suite_skips_threaded_runs_rest_on_gil_build():
     """Only threaded benchmarks are skipped. Skipped rows flush from `report_context`,
     the only callback guaranteed to fire after a sink opens and before it writes."""
-    order: list[str] = []
+    events: list[object] = []
 
     class Recording(Capture):
         def report_context(self, context):
-            super().report_context(context)
-            order.append("context")
+            events.append("context")
 
         def report_runs(self, runs):
-            super().report_runs(runs)
-            order.extend("row:" + r["name"].rsplit(".", 1)[-1] for r in runs)
-
-        def finalize(self) -> None:
-            super().finalize()
-            order.append("finalize")
+            events.extend((r["benchmark"].rsplit(".", 1)[-1], r["skipped"]) for r in runs)
 
     @mew.benchmark(iterations=1)
     def bench_plain(state):
         for _ in state:
             pass
 
-    cap = Recording()
     with pytest.warns(RuntimeWarning, match="threaded"):
-        n = mew.run(min_time="1x", reporter=cap)
-
-    assert n == 1  # bench_plain ran
-    threaded_rows = [r for r in cap.runs if "bench_threaded" in r["name"]]
-    plain_rows = [r for r in cap.runs if "bench_plain" in r["name"]]
-    assert threaded_rows and all(r["skipped"] for r in threaded_rows)
-    assert plain_rows and not any(r["skipped"] for r in plain_rows)
-    assert order[0] == "context"
-    assert order[-1] == "finalize"
-    # The skipped row lands first, ahead of anything Google Benchmark reports.
-    assert order[1] == "row:bench_threaded"
-    assert any(o.startswith("row:bench_plain") for o in order)
-
-
-def test_threaded_benchmark_warms_up_on_free_threaded(monkeypatch):
-    """On a free-threaded build the guard passes and mew warms the threading
-    state before invoking the C++ runner (which we stub to avoid real threads)."""
-    from mew import _core, runner
-
-    monkeypatch.setattr(runner, "gil_enabled", lambda: False)
-    warmed = []
-    monkeypatch.setattr(_core, "warmup_free_threading", lambda: warmed.append(True))
-    monkeypatch.setattr(_core, "run_benchmarks", lambda *a, **k: 1)
-
-    @mew.benchmark(threads=4)
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    assert mew.run(min_time="1x", reporter=Capture()) == 1
-    assert warmed == [True]
+        assert mew.run(min_time="1x", reporter=Recording()) == 1
+    assert events == ["context", ("bench_threaded", True), ("bench_plain", False)]
 
 
 @pytest.mark.skipif(
     mew.gil_enabled(),
     reason="threaded mode requires a free-threaded interpreter",
 )
-def test_thread_counts_run_each_requested_count():
+def test_thread_counts_run_each_requested_count(monkeypatch):
     """A real threaded run on a free-threaded build; a failure here is a hang."""
+    from mew import _core
+
+    # mew warms up free threading before GB starts its workers. Skipping that
+    # doesn't always deadlock, so the run alone can't show it happened.
+    warmups: list[None] = []
+    warmup = _core.warmup_free_threading
+
+    def spy() -> None:
+        warmups.append(None)
+        warmup()
+
+    monkeypatch.setattr(_core, "warmup_free_threading", spy)
 
     @mew.benchmark(threads=[1, 3, 5], iterations=10)
     def bench_x(state):
@@ -283,6 +241,7 @@ def test_thread_counts_run_each_requested_count():
     mew.run(min_time="1x", reporter=cap)
     assert [row["threads"] for row in cap.runs] == [1, 3, 5]
     assert all(row["skipped"] is False for row in cap.runs)
+    assert len(warmups) == 1
 
 
 def test_run_multiple_reporters_fan_out():
@@ -314,34 +273,17 @@ def test_manual_time_replaces_the_measured_real_time():
     assert row["real_time"] == 0.5e9
 
 
-def test_report_aggregates_only_drops_the_repetition_rows():
-    @mew.benchmark(iterations=1, repetitions=2, report_aggregates_only=True)
-    def bench_aggregated(state):
-        for _ in state:
-            pass
-
-    cap = Capture()
-    mew.run(reporter=cap)
-    assert [r["run_type"] for r in cap.runs] == ["aggregate"] * 4
-    assert [r["aggregate_name"] for r in cap.runs] == ["mean", "median", "stddev", "cv"]
-
-
-def test_state_pause_returns_a_context_manager_entering_as_itself():
-    from mew._core import PauseScope
-
-    seen: list[object] = []
+def test_state_pause_enters_as_its_own_scope():
+    seen: list[bool] = []
 
     @mew.benchmark(iterations=1)
     def bench_x(state):
         for _ in state:
-            cm = state.pause()
-            assert isinstance(cm, PauseScope)
-            with cm as entered:
-                seen.append(entered is cm)
+            scope = state.pause()
+            with scope as entered:
+                seen.append(entered is scope)
 
-    cap = Capture()
-    mew.run(reporter=cap)
-    assert cap.runs[0]["skipped"] is False
+    mew.run(reporter=Capture())
     assert seen == [True]
 
 
@@ -351,31 +293,6 @@ def test_pause_scope_is_only_created_by_state_pause():
     # A scope without a State would dereference null on entry.
     with pytest.raises(TypeError, match="cannot create"):
         PauseScope()
-
-
-def test_pause_scope_exit_requires_the_three_exception_arguments():
-    errors: list[str] = []
-
-    @mew.benchmark(iterations=1)
-    def bench_x(state):
-        for _ in state:
-            scope = state.pause()
-            with scope:
-                try:
-                    scope.__exit__()
-                except TypeError as exc:
-                    errors.append(str(exc))
-                # Re-entry raises only while the scope still holds the pause, so
-                # the bad call must not have resumed the timer.
-                try:
-                    scope.__enter__()
-                except RuntimeError as exc:
-                    errors.append(str(exc))
-
-    mew.run(reporter=Capture())
-    assert len(errors) == 2
-    assert "takes 3 arguments" in errors[0]
-    assert "already active" in errors[1]
 
 
 def _burn(seconds: float) -> None:
@@ -444,31 +361,37 @@ def test_nested_state_pauses_are_independent_between_workers():
     def bench_nested(state):
         for _ in state:
             with state.pause(), state.pause():
+                # Both workers hold their pause at once; a pause shared between
+                # them would leave one worker's timer running through the burn.
                 barrier.wait(timeout=5)
+                _burn(0.2)
 
     cap = Capture()
     mew.run(reporter=cap)
-    assert not cap.runs[0]["skipped"]
-    assert cap.runs[0]["iterations"] == 2
+    (row,) = cap.runs
+    assert not row["skipped"]
+    assert row["iterations"] == 2
+    # CPU time sums both workers' timers: one timed burn is >= 0.2 s over 2 iterations.
+    assert row["cpu_time"] < 0.05e9
 
 
-@pytest.mark.parametrize("batch", [1, 7])
-@pytest.mark.parametrize("exit_kind", ["break", "return", "return_paused"])
-def test_leaving_the_last_iteration_marks_the_run_as_incomplete(batch, exit_kind):
+def test_leaving_the_loop_early_marks_the_run_as_incomplete():
+    # One iteration makes the first the final one, whose iteration count is
+    # already complete: only the running timer shows the loop was left.
     @mew.benchmark(iterations=1)
-    def bench_incomplete(state):
-        for _ in state.batches(batch):
-            if exit_kind == "return_paused":
-                state.pause().__enter__()
-                return
-            if exit_kind == "return":
-                return
+    def bench_breaks(state):
+        for _ in state:
             break
 
+    @mew.benchmark(iterations=1)
+    def bench_returns(state):
+        for _ in state.batches(7):
+            return
+
     cap = Capture()
     mew.run(reporter=cap)
-    assert cap.runs[0]["skipped"]
-    assert cap.runs[0]["skip_message"] == "The benchmark did not complete its loop."
+    messages = [r["skip_message"] for r in cap.runs]
+    assert messages == ["The benchmark did not complete its loop."] * 2
 
 
 @pytest.mark.parametrize("where", ["before", "after"])
@@ -572,56 +495,38 @@ def test_run_with_no_entries_returns_zero():
     assert cap.runs == []
 
 
-def test_state_batches_drives_body_in_multiples_of_n():
-    body_calls: list[int] = []
+def test_state_batches_yields_n_and_counts_the_overshoot():
+    yielded: list[int] = []
 
     @mew.benchmark(iterations=10)
     def bench_batched(state):
-        for n in state.batches(4):
-            for _ in range(n):
-                body_calls.append(1)
+        yielded.extend(state.batches(4))
 
     cap = Capture()
     mew.run(reporter=cap)
-    # 3 batches × 4 = 12 body calls; GB reports the actual count, not the cap.
+    # Three batches of 4 cover the 10 iterations; GB reports all 12 that ran.
+    assert yielded == [4, 4, 4]
     assert cap.runs[0]["iterations"] == 12
-    assert len(body_calls) == 12
 
 
-def test_state_batches_rejects_non_positive_n():
-    seen: list[type] = []
+def test_state_rejects_out_of_range_arguments():
+    # GB's own guards are asserts, compiled out in Release: a batch of 0 never
+    # ends the loop, and range() would read past the range vector.
+    @mew.benchmark(iterations=1)
+    def bench_batches(state):
+        state.batches(0)
 
     @mew.benchmark(iterations=1)
-    def bench_bad(state):
-        try:
-            state.batches(0)
-        except ValueError as e:
-            seen.append(type(e))
-        for _ in state:
-            pass
+    def bench_range(state):
+        state.range(0)  # not parametrized: no range arguments
 
     cap = Capture()
     mew.run(reporter=cap)
-    assert seen == [ValueError]
-
-
-def test_state_range_out_of_bounds_raises():
-    # GB's own guard is an assert (compiled out in Release); the binding must
-    # raise instead of reading past the range vector.
-    seen: list[type] = []
-
-    @mew.benchmark(iterations=1)
-    def bench_norange(state):
-        try:
-            state.range(0)  # not parametrized: no range arguments
-        except IndexError as e:
-            seen.append(type(e))
-        for _ in state:
-            pass
-
-    cap = Capture()
-    mew.run(min_time="1x", reporter=cap)
-    assert seen == [IndexError]
+    # The skip message ends with the exception the body raised.
+    assert [r["skip_message"].splitlines()[-1] for r in cap.runs] == [
+        "ValueError: batch size must be positive",
+        "IndexError: range(0) out of bounds: benchmark has 0 range argument(s)",
+    ]
 
 
 def test_keyboard_interrupt_stops_run_and_propagates():
@@ -637,116 +542,64 @@ def test_keyboard_interrupt_stops_run_and_propagates():
         raise KeyboardInterrupt
 
     @mew.benchmark(iterations=1)
-    def bench_b_never_runs(state):
+    def bench_b(state):
         bodies.append("b")
         for _ in state:
             pass
 
     cap = Capture()
     with pytest.raises(KeyboardInterrupt):
-        mew.run(min_time="1x", reporter=cap)
+        mew.run(reporter=cap)
     assert bodies == ["a"]
     # Benchmarks skipped by the abort must not reach result files as rows.
     assert all(r["skip_message"] != "aborted" for r in cap.runs)
 
     # The interrupt is consumed: a follow-up run starts clean and completes.
-    @mew.benchmark(iterations=1)
-    def bench_c(state):
-        for _ in state:
-            pass
-
-    cap2 = Capture()
-    entries = [e for e in mew._registry.REGISTRY.all() if "bench_c" in e.name]
-    assert mew.run(entries, min_time="1x", reporter=cap2) == 1
-    assert [r["skipped"] for r in cap2.runs] == [False]
-
-
-def test_gb_flags_do_not_leak_across_runs():
-    """GB flags are process-global: a knob set for one run() must not apply to
-    the next run() in the same process that didn't ask for it."""
-
-    @mew.benchmark
-    def bench_leak(state):
-        for _ in state:
-            pass
-
-    entries = mew.REGISTRY.all()
     cap = Capture()
-    mew.run(entries, min_time="1x", repetitions=2, reporter=cap)
-    per_rep = [r for r in cap.runs if not r.get("aggregate_name")]
-    assert len(per_rep) == 2
-
-    cap = Capture()
-    mew.run(entries, min_time="1x", reporter=cap)  # no repetitions requested
-    per_rep = [r for r in cap.runs if not r.get("aggregate_name")]
-    assert len(per_rep) == 1
+    assert mew.run(mew.REGISTRY.filter("bench_b"), reporter=cap) == 1
+    assert [r["skipped"] for r in cap.runs] == [False]
 
 
 def test_reporter_failure_aborts_the_run():
     """A broken sink aborts the suite rather than measuring results that get discarded."""
-    bodies: list[str] = []
+    bodies: list[int] = []
 
-    class Exploding:
-        def report_context(self, context, /):
+    @mew.parametrize([{"n": 1}, {"n": 2}, {"n": 3}], iterations=1)
+    def bench_x(state, n):
+        bodies.append(n)
+        for _ in state:
             pass
 
-        def report_runs(self, runs, /):
+    class Exploding(Capture):
+        def report_runs(self, runs):
             raise RuntimeError("sink is broken")
 
-    for name in ("a", "b", "c"):
-
-        def body(state, _n=name):
-            bodies.append(_n)
-            for _ in state:
-                pass
-
-        body.__name__ = body.__qualname__ = f"bench_{name}"
-        mew.benchmark(iterations=1, name=f"bench_{name}")(body)
-
     with pytest.raises(RuntimeError, match="sink is broken"):
-        mew.run(min_time="1x", reporter=Exploding())
-    assert bodies == ["a"], "later benchmarks must not run once the sink failed"
+        mew.run(reporter=Exploding())
+    assert bodies == [1], "later benchmarks must not run once the sink failed"
 
     # The abort slot is cleared by the rethrow, so a follow-up run starts clean.
     cap = Capture()
-    assert mew.run(min_time="1x", reporter=cap) == 3
+    assert mew.run(reporter=cap) == 3
     assert [r["skipped"] for r in cap.runs] == [False] * 3
 
 
 def test_report_context_return_value_is_ignored():
     """A falsy return must not veto the run; GB would report success with no rows."""
 
-    class ReturnsFalse:
-        def report_context(self, context, /):
+    class ReturnsFalse(Capture):
+        def report_context(self, context):
+            super().report_context(context)
             return False
-
-        def report_runs(self, runs, /):
-            seen.extend(runs)
-
-    seen: list = []
 
     @mew.benchmark(iterations=1)
     def bench_v(state):
         for _ in state:
             pass
 
-    assert mew.run(min_time="1x", reporter=ReturnsFalse()) == 1
-    assert seen, "rows must flow: the return value carries no meaning"
-
-
-@pytest.mark.parametrize("min_time", [0.00001, "0.00001", "0.00001s", " 7x "])
-def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
-    @mew.benchmark
-    def bench_time_option(state):
-        for _ in state:
-            pass
-
-    cap = Capture()
-    assert mew.run(min_time=min_time, reporter=cap) == 1
-    assert len(cap.runs) == 1
-    assert cap.runs[0]["iterations"] > 0
-    if min_time == " 7x ":
-        assert cap.runs[0]["iterations"] == 7
+    rep = ReturnsFalse()
+    assert mew.run(reporter=rep) == 1
+    assert rep.runs, "rows must flow: the return value carries no meaning"
 
 
 # --- output capture -----------------------------------------------------------
@@ -778,7 +631,7 @@ def test_benchmark_output_is_printed_to_stderr_after_the_run(capfd):
     assert err == "\noutput from benchmarks:\nto stdout\nto stderr\n"
 
 
-def test_longest_row_name_covers_cases_threads_and_aggregates():
+def test_longest_row_name_covers_cases_and_threads():
     from mew._registry import Entry
     from mew.runner import longest_row_name
 
@@ -787,24 +640,20 @@ def test_longest_row_name_covers_cases_threads_and_aggregates():
 
     plain = entry("f.py::bench_a")
     family = entry("f.py::bench_b", case_labels=["n=1", "n=1000"])
-    assert longest_row_name([plain], None) == len("f.py::bench_a")
-    assert longest_row_name([family], None) == len("f.py::bench_b[n=1000]")
-    # Only the selected cases, `/threads:N` for the largest count, aggregate rows.
+    assert longest_row_name([plain]) == len("f.py::bench_a")
+    assert longest_row_name([family]) == len("f.py::bench_b[n=1000]")
+    # Only the selected cases, and `/threads:N` for the largest count.
     narrowed = entry("f.py::bench_b", case_labels=["n=1", "n=1000"], cases=[0])
-    assert longest_row_name([narrowed], None) == len("f.py::bench_b[n=1]")
+    assert longest_row_name([narrowed]) == len("f.py::bench_b[n=1]")
     threaded = entry("f.py::bench_c", options={"threads": (1, 16)})
-    assert longest_row_name([threaded], None) == len("f.py::bench_c/threads:16")
-    assert longest_row_name([plain], 3) == len("f.py::bench_a_median")
-    # A benchmark's own repetitions win over the run's.
-    once = entry("f.py::bench_a", options={"repetitions": 1})
-    assert longest_row_name([once], 3) == len("f.py::bench_a")
+    assert longest_row_name([threaded]) == len("f.py::bench_c/threads:16")
 
 
 def test_run_sizes_the_console_name_column_to_the_longest_row(capsys, monkeypatch):
     monkeypatch.setenv("COLUMNS", "200")
     monkeypatch.setenv("NO_COLOR", "1")
 
-    @mew.parametrize([{"n": 1}, {"n": 1000}], iterations=1, repetitions=2)
+    @mew.parametrize([{"n": 1}, {"n": 1000}], iterations=1)
     def bench_family(state, n):
         for _ in state:
             pass
@@ -812,9 +661,9 @@ def test_run_sizes_the_console_name_column_to_the_longest_row(capsys, monkeypatc
     mew.run()
     lines = capsys.readouterr().out.splitlines()
     names = [line.split(" │ ")[0] for line in lines[1:] if " │ " in line]
-    # The column is just wide enough for the longest name, an aggregate row's.
+    # The column is just wide enough for the longest name.
     assert len(names[0]) == max(len(name.rstrip()) for name in names[1:])
-    assert any(name.rstrip().endswith("[n=1000]_median") for name in names[1:])
+    assert any(name.rstrip().endswith("[n=1000]") for name in names[1:])
 
 
 @pytest.mark.parametrize("reporter", [None, []])

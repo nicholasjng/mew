@@ -2,87 +2,100 @@
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import inspect
-import json
-import math
 import sys
-import types
-import typing
+import time
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from _helpers import Capture
 
 import mew
-from mew.reporter import JSONReporter
+from mew.cpu import _opcode_tables
+
+_MEMORY = {"peak_bytes": 1024, "total_bytes": 2048, "total_allocations": 5, "net_heap_growth": 512}
+_REQUIRED_MEMORY = {"peak_bytes": 1024, "total_allocations": 5}
+_PROFILE = {
+    "profiler": "fake",
+    "wall_time": 0.5,
+    "sample_count": 500,
+    "top_function": {"function": "foo", "file": "bar.py", "line": None, "self_time": 0.3},
+    "top_instructions": [],
+    "unspecialized_share": None,
+}
 
 
 class FakeMemoryManager:
-    """Memory manager returning fixed figures, so the stamp path is testable
-    without memray installed."""
+    """Memory manager returning ``result`` from stop(), so the stamp path is
+    testable without memray. ``calls`` logs each hook."""
 
-    def __init__(self, **figures: int) -> None:
-        self._figures = figures or {
-            "peak_bytes": 1024,
-            "total_bytes": 2048,
-            "total_allocations": 5,
-        }
-        self.starts = 0
-        self.stops = 0
+    def __init__(self, result: Any = _MEMORY) -> None:
+        self.result = result
+        self.calls: list[str] = []
 
     def start(self) -> None:
-        self.starts += 1
+        self.calls.append("start")
 
-    def stop(self) -> mew.MemoryMetrics:
-        self.stops += 1
-        return cast(mew.MemoryMetrics, self._figures.copy())
+    def stop(self) -> Any:
+        self.calls.append("stop")
+        return self.result
 
 
 class FakeProfilerManager:
-    """Profiler manager returning a fixed summary, standing in for pyinstrument."""
+    """Profiler manager returning ``result`` from get_result(), standing in for a
+    sampler. ``calls`` logs each hook."""
 
-    _DEFAULT = {  # ruff: ignore[RUF012]
-        "profiler": "pyinstrument",
-        "wall_time": 0.5,
-        "sample_count": 500,
-        "top_function": {"function": "foo", "file": "bar.py", "line": None, "self_time": 0.3},
-        "top_instructions": [],
-        "unspecialized_share": None,
-    }
-
-    def __init__(self, result: dict | None = _DEFAULT) -> None:
-        # Default sentinel, not `None`: `result=None` means "report nothing".
-        self._result = result
-        self.starts = 0
-        self.stops = 0
-        self.pauses = 0
-        self.resumes = 0
+    def __init__(self, result: Any = _PROFILE) -> None:
+        self.result = result
+        self.calls: list[str] = []
 
     def after_setup_start(self) -> None:
-        self.starts += 1
+        self.calls.append("start")
 
     def before_teardown_stop(self) -> None:
-        self.stops += 1
+        self.calls.append("stop")
 
     def pause(self) -> None:
-        self.pauses += 1
+        self.calls.append("pause")
 
     def resume(self) -> None:
-        self.resumes += 1
+        self.calls.append("resume")
 
-    def get_result(self) -> dict | None:
-        return self._result
+    def get_result(self) -> Any:
+        return self.result
 
 
-def test_registering_a_manager_replaces_the_previous_one(tmp_path):
-    """Matches upstream GB, where registration is a plain replace."""
-    from mew import _core
+class _RequiredHooksOnly:
+    """A profiler manager without the optional get_result(), pause() and resume()."""
 
-    @mew.benchmark(iterations=2)
-    def bench_x(state):
+    def after_setup_start(self) -> None:
+        pass
+
+    def before_teardown_stop(self) -> None:
+        pass
+
+
+def _register_noop(**options: Any) -> None:
+    """Register a benchmark that does nothing, for tests about the passes around it."""
+
+    def bench_noop(state):
         for _ in state:
             pass
 
+    mew.benchmark(**options)(bench_noop)
+
+
+# --- manager registration and the Run stamp ----------------------------------
+
+
+def test_registering_a_manager_replaces_the_previous_one():
+    """Matches upstream GB, where registration is a plain replace."""
+    from mew import _core
+
+    _register_noop(iterations=2)
     first_mem, second_mem = FakeMemoryManager(), FakeMemoryManager()
     first_prof, second_prof = FakeProfilerManager(), FakeProfilerManager()
     _core.register_memory_manager(first_mem)
@@ -90,248 +103,258 @@ def test_registering_a_manager_replaces_the_previous_one(tmp_path):
     try:
         _core.register_memory_manager(second_mem)
         _core.register_profiler_manager(second_prof)
-        mew.run(reporter=JSONReporter(output=tmp_path / "o.json"))
+        mew.run(reporter=Capture())
     finally:
         _core.unregister_memory_manager()
         _core.unregister_profiler_manager()
-    assert first_mem.starts == first_prof.starts == 0
-    assert second_mem.starts == second_mem.stops == 1
-    assert second_prof.starts == second_prof.stops == 1
+    assert first_mem.calls == first_prof.calls == []
+    assert second_mem.calls == second_prof.calls == ["start", "stop"]
 
 
-# --- manager registration and the Run stamp ----------------------------------
+@pytest.mark.parametrize(
+    ("metrics", "block"),
+    [
+        (_MEMORY, {**_MEMORY, "iterations": 1, "allocations_per_iteration": 5.0}),
+        # Optional keys the manager leaves out stay out of the row.
+        (_REQUIRED_MEMORY, {**_REQUIRED_MEMORY, "iterations": 1, "allocations_per_iteration": 5.0}),
+        # Nothing measured: no block rather than one of zeros.
+        (None, None),
+    ],
+    ids=["all-keys", "required-keys", "none"],
+)
+def test_memory_manager_is_driven_and_stamped_onto_rows(metrics, block):
+    _register_noop(iterations=1)
+    mgr = FakeMemoryManager(metrics)
+    rep = Capture()
+    mew.run(reporter=rep, memory_manager=mgr)
+
+    assert mgr.calls == ["start", "stop"]
+    # The pass's iterations come from Google Benchmark, and the per-iteration
+    # rate is derived from them.
+    assert rep.runs[0].get("memory") == block
 
 
-def test_memory_manager_is_driven_and_stamped_onto_rows(tmp_path):
-    @mew.benchmark
-    def bench_mem(state):
+@pytest.mark.parametrize("summary", [_PROFILE, {}], ids=["summary", "empty"])
+def test_profiler_manager_is_driven_and_stamped_onto_rows(summary):
+    """An empty summary is a summary too; only None leaves the block out."""
+    _register_noop(iterations=1)
+    mgr = FakeProfilerManager(summary)
+    rep = Capture()
+    mew.run(reporter=rep, profiler_manager=mgr)
+
+    assert mgr.calls == ["start", "stop"]
+    assert rep.runs[0]["cpu_profile"] == summary
+
+
+def test_profiler_manager_result_keeps_its_json_types():
+    """The summary crosses Google Benchmark as JSON text, so an int stays an int
+    at any depth, where 0.2.0 turned numbers into floats."""
+    result = {"sample_count": 3, "flag": True, "missing": None, "top": [{"line": 7, "x": 0.5}]}
+    _register_noop(iterations=1)
+    rep = Capture()
+    mew.run(reporter=rep, profiler_manager=FakeProfilerManager(result))
+
+    cpu = rep.runs[0]["cpu_profile"]
+    assert cpu == result
+    assert type(cpu["sample_count"]) is type(cpu["top"][0]["line"]) is int
+    assert cpu["flag"] is True
+
+
+@pytest.mark.parametrize(
+    "manager",
+    [FakeProfilerManager(None), _RequiredHooksOnly()],
+    ids=["returns-none", "required-hooks-only"],
+)
+def test_profiler_manager_without_a_result_leaves_row_unannotated(manager):
+    @mew.benchmark(iterations=2)
+    def bench_paused(state):
         for _ in state:
-            pass
-
-    mgr = FakeMemoryManager()
-    out = tmp_path / "out.json"
-    mew.run(min_time="1x", reporter=JSONReporter(output=out), memory_manager=mgr)
-
-    assert mgr.starts == mgr.stops == 1
-    bench = json.loads(out.read_text())["benchmarks"][0]
-    assert bench["memory"]["peak_bytes"] == 1024
-    assert bench["memory"]["total_bytes"] == 2048
-    assert bench["memory"]["total_allocations"] == 5
-    # memory_iterations is GB's own min(16, iters), and the per-iteration rate
-    # is derived from it rather than supplied by the manager.
-    assert bench["memory"]["iterations"] == 1
-    assert bench["memory"]["allocations_per_iteration"] == pytest.approx(
-        5 / bench["memory"]["iterations"]
-    )
-
-
-def test_profiler_manager_is_driven_and_stamped_onto_rows(tmp_path):
-    @mew.benchmark
-    def bench_cpu(state):
-        for _ in state:
-            pass
-
-    mgr = FakeProfilerManager()
-    out = tmp_path / "out.json"
-    mew.run(min_time="1x", reporter=JSONReporter(output=out), profiler_manager=mgr)
-
-    assert mgr.starts == mgr.stops == 1
-    bench = json.loads(out.read_text())["benchmarks"][0]
-    assert bench["cpu_profile"] == FakeProfilerManager._DEFAULT
-
-
-def test_profiler_manager_result_keeps_its_json_types(tmp_path):
-    """The summary crosses Google Benchmark as JSON text, so every value comes
-    back as json.loads(json.dumps(value)) would return it."""
-    result = {
-        "profiler": "fake · ünïcode",
-        "sample_count": 2**70,
-        "share": 0.1,
-        "flag": True,
-        "missing": None,
-        "nan": float("nan"),
-        "top": [{"name": "a", "line": 7, "share": 0.5, "flag": False, "none": None}],
-        "record": {"k": ["v", 1], "nested": {"deep": [[1, 2], []]}},
-        "pair": (1, "a"),
-    }
-
-    @mew.benchmark
-    def bench_structured(state):
-        for _ in state:
-            pass
+            with state.pause():  # pause() and resume() are optional hooks too
+                pass
 
     rep = Capture()
-    mew.run(min_time="1x", reporter=rep, profiler_manager=FakeProfilerManager(result=result))
-    cpu = rep.runs[0]["cpu_profile"]
-    assert math.isnan(cpu.pop("nan"))
-    assert cpu == {**{k: v for k, v in result.items() if k != "nan"}, "pair": [1, "a"]}
-    assert type(cpu["sample_count"]) is int
-    assert cpu["flag"] is True
-    assert cpu["missing"] is None
-
-
-def test_profiler_manager_returning_none_leaves_row_unannotated(tmp_path):
-    @mew.benchmark
-    def bench_nosamples(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "out.json"
-    mew.run(
-        min_time="1x",
-        reporter=JSONReporter(output=out),
-        profiler_manager=FakeProfilerManager(result=None),
-    )
-    assert "cpu_profile" not in json.loads(out.read_text())["benchmarks"][0]
-
-
-def test_profiler_manager_get_result_is_optional(tmp_path):
-    class MinimalProfilerManager:
-        def after_setup_start(self) -> None:
-            pass
-
-        def before_teardown_stop(self) -> None:
-            pass
-
-    @mew.benchmark
-    def bench_minimal(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "out.json"
-    mew.run(
-        min_time="1x",
-        reporter=JSONReporter(output=out),
-        profiler_manager=MinimalProfilerManager(),
-    )
-    assert "cpu_profile" not in json.loads(out.read_text())["benchmarks"][0]
+    mew.run(reporter=rep, profiler_manager=manager)
+    assert "cpu_profile" not in rep.runs[0]
 
 
 @pytest.mark.parametrize("reuse_scope", [False, True])
-def test_nested_pauses_toggle_the_profiler_only_at_the_outer_scope(tmp_path, reuse_scope):
+def test_nested_pauses_toggle_the_profiler_only_at_the_outer_scope(reuse_scope):
+    """A fresh inner scope does nothing; re-entering the outer one raises (see
+    test_runner) without touching the profiler."""
     mgr = FakeProfilerManager()
-    errors: list[str] = []
-    resumed_early: list[bool] = []
 
     @mew.benchmark(iterations=2)
     def bench_nested(state):
         for _ in state:
             outer = state.pause()
             with outer:
-                resumes = mgr.resumes
-                try:
-                    with outer if reuse_scope else state.pause():
-                        pass
-                except RuntimeError as exc:
-                    errors.append(str(exc))
-                resumed_early.append(mgr.resumes != resumes)
+                inner = outer if reuse_scope else state.pause()
+                with contextlib.suppress(RuntimeError), inner:
+                    pass
+                mgr.calls.append("inner done")
 
-    mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
-    assert mgr.starts == mgr.stops == 1
-    # From the profiler pass alone: a timed-run pause must not reach the manager,
-    # where it would suspend nothing and worker threads would race on its state.
-    assert mgr.pauses == mgr.resumes == 2
-    assert resumed_early and not any(resumed_early)
-    # A fresh inner scope does nothing; re-entering the outer one raises.
-    assert len(errors) == (len(resumed_early) if reuse_scope else 0)
+    mew.run(reporter=Capture(), profiler_manager=mgr)
+    # The timed run's pauses never reach the manager: there it would suspend
+    # nothing, and worker threads would race on its state.
+    timed, profiled = ["inner done"] * 2, ["pause", "inner done", "resume"] * 2
+    assert mgr.calls == [*timed, "start", *profiled, "stop"]
 
 
-def test_managers_do_not_leak_into_a_later_run(tmp_path):
-    @mew.benchmark
-    def bench_leak(state):
-        for _ in state:
-            pass
+def test_pause_held_across_the_loop_end_is_resumed_before_teardown():
+    """mew resumes the profiler before stopping it, so a manager sees pause()
+    and resume() in pairs; the scope's exit after the loop must not resume a
+    manager whose pass is over."""
+    mgr = FakeProfilerManager()
 
+    @mew.benchmark(iterations=3)
+    def bench_held(state):
+        with contextlib.ExitStack() as stack:
+            for _ in state:
+                stack.enter_context(state.pause())
+
+    mew.run(reporter=Capture(), profiler_manager=mgr)
+    assert mgr.calls == ["start", "pause", "resume", "stop"]
+
+
+def test_managers_do_not_leak_into_a_later_run():
+    _register_noop(iterations=1)
     mem, prof = FakeMemoryManager(), FakeProfilerManager()
-    mew.run(
-        min_time="1x",
-        reporter=JSONReporter(output=tmp_path / "a.json"),
-        memory_manager=mem,
-        profiler_manager=prof,
-    )
-    after_first = mem.starts, prof.starts
+    mew.run(reporter=Capture(), memory_manager=mem, profiler_manager=prof)
+    rep = Capture()
+    mew.run(reporter=rep)
 
-    out = tmp_path / "b.json"
-    mew.run(min_time="1x", reporter=JSONReporter(output=out))
-    # GB's manager registration is process-global; the scope must unregister both.
-    assert (mem.starts, prof.starts) == after_first
-    bench = json.loads(out.read_text())["benchmarks"][0]
-    assert "memory" not in bench
-    assert "cpu_profile" not in bench
+    # GB's manager registration is process-global; the run must unregister both.
+    assert mem.calls == prof.calls == ["start", "stop"]
+    assert "memory" not in rep.runs[0]
+    assert "cpu_profile" not in rep.runs[0]
 
 
-def test_memory_manager_stop_exception_propagates_out_of_run(tmp_path):
+def test_memory_manager_stop_exception_propagates_out_of_run():
     class Exploding(FakeMemoryManager):
         def stop(self):
             raise RuntimeError("capture unreadable")
 
-    @mew.benchmark(iterations=1)
-    def bench_complete(state):
-        for _ in state:
-            pass
-
+    _register_noop(iterations=1)
     with pytest.raises(RuntimeError, match="capture unreadable"):
-        mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), memory_manager=Exploding())
-
-
-def test_memory_manager_extra_keys_are_ignored(tmp_path):
-    class Annotated(FakeMemoryManager):
-        def stop(self):
-            return {"peak_bytes": 1024, "backend": "custom"}
-
-    @mew.benchmark(iterations=1)
-    def bench_annotated(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "o.json"
-    mew.run(reporter=JSONReporter(output=out), memory_manager=Annotated())
-    mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
-    assert mem["peak_bytes"] == 1024
-    assert "backend" not in mem
+        mew.run(reporter=Capture(), memory_manager=Exploding())
 
 
 @pytest.mark.parametrize(
     ("kind", "result"),
     [
-        ("memory", {"peak_bytes": "not an integer"}),
+        ("memory", {"peak_bytes": 1024}),  # total_allocations is required
+        ("memory", {**_MEMORY, "backend": "custom"}),
+        ("memory", {**_REQUIRED_MEMORY, "peak_bytes": 1024.0}),
+        ("memory", {**_REQUIRED_MEMORY, "total_bytes": "2048"}),  # optional keys too
         ("memory", [("peak_bytes", 1)]),
-        ("profiler", {"sample_count": object()}),
-        ("profiler", {"top": [object()]}),
-        ("profiler", {1: 2.0}),
+        ("profiler", {"top": [object()]}),  # json.dumps rejects it, at any depth
+        ("profiler", {1: 2.0}),  # json.dumps would turn the key into "1"
         ("profiler", [("sample_count", 1)]),
     ],
 )
-def test_malformed_manager_result_propagates_out_of_run(tmp_path, kind, result):
+def test_malformed_manager_result_propagates_out_of_run(kind, result):
     """A wrong-shaped manager result fails the run instead of being dropped silently."""
+    _register_noop(iterations=1)
+    fake = FakeMemoryManager if kind == "memory" else FakeProfilerManager
+    kwargs: dict[str, Any] = {f"{kind}_manager": fake(result)}
+    with pytest.raises(TypeError, match="must return"):
+        mew.run(reporter=Capture(), **kwargs)
 
-    @mew.benchmark
-    def bench_bad_result(state):
+
+@pytest.mark.parametrize(("memory_iterations", "expected"), [(None, 16), (4, 4), (1000, 50)])
+def test_memory_iterations_caps_the_memory_pass(memory_iterations, expected):
+    _register_noop(iterations=50)
+    rep = Capture()
+    mew.run(reporter=rep, memory_manager=FakeMemoryManager(), memory_iterations=memory_iterations)
+    assert rep.runs[0]["memory"]["iterations"] == expected
+
+
+def test_memory_pass_counts_batch_overshoot():
+    @mew.benchmark(iterations=20)
+    def bench_batch(state):
+        for _ in state.batches(10):
+            pass
+
+    rep = Capture()
+    mew.run(
+        reporter=rep,
+        memory_manager=FakeMemoryManager({"peak_bytes": 0, "total_allocations": 10}),
+        memory_iterations=4,
+    )
+    mem = rep.runs[0]["memory"]
+    assert (mem["iterations"], mem["allocations_per_iteration"]) == (10, 1.0)
+
+
+@pytest.mark.skipif(
+    mew.gil_enabled(),
+    reason="threaded mode requires a free-threaded interpreter",
+)
+def test_manager_passes_run_a_single_thread():
+    """As in Google Benchmark, the memory and profiler passes run thread 0 alone,
+    and `state.threads` says so: a barrier sized by it must not wait for absent
+    workers."""
+    import threading
+
+    seen: list[tuple[int, int]] = []
+    # One barrier per reported thread count, as a body sized by it would build.
+    barriers = {n: threading.Barrier(n) for n in (1, 2)}
+
+    @mew.benchmark(threads=2, iterations=10)
+    def bench_x(state):
+        seen.append((state.thread_index, state.threads))
+        barriers[state.threads].wait(timeout=10)
         for _ in state:
             pass
 
-    kwargs: dict[str, Any]
-    if kind == "memory":
+    prof, rep = FakeProfilerManager(), Capture()
+    mew.run(
+        reporter=rep,
+        memory_manager=FakeMemoryManager({"peak_bytes": 0, "total_allocations": 4}),
+        memory_iterations=4,
+        profiler_manager=prof,
+    )
+    # Timed run: both threads see 2. Each pass: thread 0 alone sees 1.
+    assert sorted(seen[:2]) == [(0, 2), (1, 2)]
+    assert seen[2:] == [(0, 1), (0, 1)]
+    assert prof.calls == ["start", "stop"]
+    mem = rep.runs[0]["memory"]
+    assert (mem["iterations"], mem["allocations_per_iteration"]) == (4, 1.0)
 
-        class BadMemory(FakeMemoryManager):
-            def stop(self):
-                return result
 
-        kwargs = {"memory_manager": BadMemory()}
-    else:
+@pytest.mark.parametrize("kind", ["memory", "profiler"])
+def test_interrupted_pass_still_stops_the_manager(kind):
+    calls = 0
 
-        class BadProfiler(FakeProfilerManager):
-            def get_result(self):
-                return result
+    @mew.benchmark(iterations=4)
+    def bench_interrupted(state):
+        nonlocal calls
+        calls += 1
+        for _ in state:
+            if calls == 2:  # the manager pass, after the timed run
+                raise KeyboardInterrupt
 
-        kwargs = {"profiler_manager": BadProfiler()}
+    manager = FakeMemoryManager() if kind == "memory" else FakeProfilerManager()
+    kwargs: dict[str, Any] = {f"{kind}_manager": manager}
+    with pytest.raises(KeyboardInterrupt):
+        mew.run(reporter=Capture(), **kwargs)
+    assert manager.calls == ["start", "stop"]
 
-    with pytest.raises(TypeError, match="must return"):
-        mew.run(
-            min_time="1x",
-            reporter=JSONReporter(output=tmp_path / "bad.json"),
-            **kwargs,
-        )
+
+def test_failed_timed_runs_skip_the_manager_passes():
+    @mew.benchmark(iterations=4)
+    def bench_raises(state):
+        for _ in state:
+            raise ValueError("boom")
+
+    _register_noop(iterations=4)
+    mem, prof, rep = FakeMemoryManager(), FakeProfilerManager(), Capture()
+    mew.run(reporter=rep, memory_manager=mem, profiler_manager=prof)
+
+    # Only bench_noop gets memory and profiler passes.
+    assert mem.calls == prof.calls == ["start", "stop"]
+    raises, ok = rep.runs
+    assert "memory" not in raises and "cpu_profile" not in raises
+    assert "memory" in ok and "cpu_profile" in ok
 
 
 # --- the real backends -------------------------------------------------------
@@ -376,171 +399,212 @@ def _spin() -> int:
     return total
 
 
-def test_memray_manager_reports_loop_allocations(tmp_path):
-    """Scoped to the timing loop: a large fixture allocated before the loop must
-    not appear in the tracked figures."""
+def test_memray_captures_the_loop_and_roots_its_flame_graph_at_the_body(tmp_path):
+    """Setup allocations stay out of the figures. The flame graph puts back the
+    body frame memray drops from a loop-scoped capture, which body-level
+    allocations otherwise lack entirely."""
     pytest.importorskip("memray")
-    from contextlib import ExitStack
-
     from mew import memory as _memory
 
     setup_bytes = 50_000_000
 
+    def nested_alloc_helper() -> bytearray:
+        return bytearray(600_000)  # allocated one frame below the body
+
     @mew.benchmark
-    def bench_setup_heavy(state):
+    def bench_rooted(state):
         fixture = bytearray(setup_bytes)  # setup: outside the capture window
-        data = None
         for _ in state:
-            data = bytearray(10_000)
-        del fixture, data
+            nested = nested_alloc_helper()
+            inline = bytearray(400_000)  # allocated directly in the body frame
+            del inline, nested
+        del fixture
 
-    out = tmp_path / "out.json"
-    with ExitStack() as stack:
-        mew.run(
-            min_time="20x",
-            reporter=JSONReporter(output=out),
-            memory_manager=_memory.manager(stack),
-        )
-    mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
+    rep, out = Capture(), tmp_path / "flame.html"
+    with contextlib.ExitStack() as stack:
+        manager = _memory.manager(stack)
+        mew.run(min_time="20x", reporter=rep, memory_manager=manager)
+        # Tagged with the user's benchmark frame, not a mew internal.
+        assert [root[0] for _, root in manager.captures] == ["bench_rooted"]
+        _memory.write_flamegraph(manager, out)
+
+    mem = rep.runs[0]["memory"]
     assert mem["peak_bytes"] < setup_bytes / 10
-    assert "total_bytes" not in mem
-    assert mem["allocations_per_iteration"] == pytest.approx(
-        mem["total_allocations"] / mem["iterations"]
+    assert "total_bytes" not in mem  # read from the capture's metadata alone
+    html = out.read_text()
+    assert "bench_rooted" in html
+    # A multi-frame stack renders through memray's real reporter, which pins the
+    # attributes `_RootedRecord` must duck-type from `AllocationRecord`.
+    assert "nested_alloc_helper" in html
+
+
+def test_flamegraph_header_covers_every_capture(tmp_path, monkeypatch):
+    """The combined report's header totals span all captures, not the first."""
+    pytest.importorskip("memray")
+    from memray.reporters.flamegraph import FlameGraphReporter
+
+    from mew import memory as _memory
+
+    @mew.benchmark(iterations=2)
+    def bench_small(state):
+        for _ in state:
+            buf = bytearray(1_000)
+            del buf
+
+    @mew.benchmark(iterations=2)
+    def bench_large(state):
+        for _ in state:
+            buf = bytearray(5_000_000)
+            del buf
+
+    rendered = {}
+    monkeypatch.setattr(
+        FlameGraphReporter, "render", lambda self, f, *, metadata, **kw: rendered.update(m=metadata)
     )
+    rep = Capture()
+    with contextlib.ExitStack() as stack:
+        manager = _memory.manager(stack)
+        mew.run(reporter=rep, memory_manager=manager)
+        _memory.write_flamegraph(manager, tmp_path / "flame.html")
 
-
-@pytest.mark.parametrize(("memory_iterations", "expected"), [(None, 16), (4, 4), (1000, 50)])
-def test_memory_iterations_caps_the_memory_pass(tmp_path, memory_iterations, expected):
-    @mew.benchmark(iterations=50)
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "out.json"
-    mew.run(
-        reporter=JSONReporter(output=out),
-        memory_manager=FakeMemoryManager(),
-        memory_iterations=memory_iterations,
+    # Each row's figures are its capture's header.
+    small, large = (row["memory"] for row in rep.runs)
+    assert (
+        rendered["m"].total_allocations == small["total_allocations"] + large["total_allocations"]
     )
-    mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
-    assert mem["iterations"] == expected
+    assert rendered["m"].peak_memory == large["peak_bytes"] > small["peak_bytes"]
 
 
-@pytest.mark.skipif(
-    mew.gil_enabled(),
-    reason="threaded mode requires a free-threaded interpreter",
-)
-def test_manager_passes_run_a_single_thread(tmp_path):
-    """As in Google Benchmark, the profiler pass runs thread 0 alone, and
-    `state.threads` says so: a barrier sized by it must not wait for absent
-    workers."""
-    import threading
+def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
+    pytest.importorskip("memray")
+    from mew import memory as _memory
 
-    seen: list[tuple[int, int]] = []
-    # One barrier per reported thread count, as a body sized by it would build.
-    barriers = {n: threading.Barrier(n) for n in (1, 2)}
-
-    @mew.benchmark(threads=2, iterations=10)
-    def bench_x(state):
-        seen.append((state.thread_index, state.threads))
-        barriers[state.threads].wait(timeout=10)
-        for _ in state:
-            pass
-
-    mgr = FakeProfilerManager()
-    mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
-    assert mgr.starts == 1 and mgr.stops == 1
-    # Timed run: both threads see 2. Profiler pass: thread 0 alone sees 1.
-    assert sorted(seen[:2]) == [(0, 2), (1, 2)]
-    assert seen[2:] == [(0, 1)]
+    out = tmp_path / "flame.html"
+    with contextlib.ExitStack() as stack:
+        _memory.write_flamegraph(_memory.manager(stack), out)
+    assert not out.exists()
+    assert "no memory captures recorded" in capsys.readouterr().err
 
 
-@pytest.mark.skipif(
-    mew.gil_enabled(),
-    reason="threaded mode requires a free-threaded interpreter",
-)
-def test_threaded_memory_pass_runs_one_thread(tmp_path):
-    @mew.benchmark(threads=2, iterations=10)
-    def bench_x(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "out.json"
-    mew.run(
-        reporter=JSONReporter(output=out),
-        memory_manager=FakeMemoryManager(total_allocations=4),
-        memory_iterations=4,
-    )
-    mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
-    # 4 iterations on the pass's single thread.
-    assert mem["iterations"] == 4
-    assert mem["allocations_per_iteration"] == 1.0
-
-
-def test_memory_pass_counts_batch_overshoot(tmp_path):
-    @mew.benchmark(iterations=20)
-    def bench_batch(state):
-        for _ in state.batches(10):
-            pass
-
-    out = tmp_path / "out.json"
-    mew.run(
-        reporter=JSONReporter(output=out),
-        memory_manager=FakeMemoryManager(total_allocations=10),
-        memory_iterations=4,
-    )
-    mem = json.loads(out.read_text())["benchmarks"][0]["memory"]
-    assert mem["iterations"] == 10
-    assert mem["allocations_per_iteration"] == 1.0
-
-
-@pytest.mark.parametrize("kind", ["memory", "profiler"])
-def test_interrupted_pass_still_stops_the_manager(tmp_path, kind):
-    calls = 0
-
-    @mew.benchmark(iterations=4)
-    def bench_interrupted(state):
-        nonlocal calls
-        calls += 1
-        for _ in state:
-            if calls == 2:  # the manager pass, after the timed run
-                raise KeyboardInterrupt
-
-    manager = FakeMemoryManager() if kind == "memory" else FakeProfilerManager()
-    kwargs: dict[str, Any] = {f"{kind}_manager": manager}
-    with pytest.raises(KeyboardInterrupt):
-        mew.run(reporter=JSONReporter(output=tmp_path / "out.json"), **kwargs)
-    assert manager.starts == manager.stops == 1
-
-
-def test_failed_timed_runs_skip_the_manager_passes(tmp_path):
-    @mew.benchmark(iterations=4)
-    def bench_raises(state):
-        for _ in state:
-            raise ValueError("boom")
-
-    @mew.benchmark(iterations=4)
-    def bench_ok(state):
-        for _ in state:
-            pass
-
-    mem, prof = FakeMemoryManager(), FakeProfilerManager()
-    out = tmp_path / "out.json"
-    mew.run(reporter=JSONReporter(output=out), memory_manager=mem, profiler_manager=prof)
-    # Only bench_ok gets memory and profiler passes.
-    assert (mem.starts, mem.stops) == (1, 1)
-    assert (prof.starts, prof.stops) == (1, 1)
-    raises, ok = json.loads(out.read_text())["benchmarks"]
-    assert "memory" not in raises and "cpu_profile" not in raises
-    assert "memory" in ok and "cpu_profile" in ok
-
-
-def test_pyinstrument_is_rejected_before_import_on_free_threaded(monkeypatch):
+@pytest.mark.parametrize("sampler", _SAMPLERS)
+def test_write_html_warns_when_nothing_was_sampled(tmp_path, capsys, sampler):
     from mew import cpu as _cpu
 
-    monkeypatch.setattr(_cpu, "gil_enabled", lambda: False)
-    with pytest.raises(SystemExit, match="does not support free-threaded Python"):
-        _cpu.PyinstrumentManager()
+    out = tmp_path / "cpu.html"
+    _cpu.write_html(_sampled_manager(sampler), out)
+    assert not out.exists()
+    assert "no CPU samples collected" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("sampler", _SAMPLERS)
+def test_sampler_handles_a_pause_held_over_the_loop_end(sampler):
+    """mew resumes the held pause before teardown, so the sampler stops once
+    and leaves the paused time out of wall_time."""
+
+    @mew.benchmark(iterations=2)
+    def bench_held(state):
+        with contextlib.ExitStack() as stack:
+            for _ in state:
+                stack.enter_context(state.pause())
+                time.sleep(0.01)
+
+    rep = Capture()
+    mew.run(reporter=rep, profiler_manager=_sampled_manager(sampler))
+    # A sleep never ends early, so counting the paused time would reach 20 ms;
+    # only the step into the first pause ran unpaused.
+    assert rep.runs[0]["cpu_profile"]["wall_time"] < 0.02
+
+
+def _sampling_nothing(sampler: str) -> Any:
+    from mew import cpu as _cpu
+
+    if sampler == "tachyon":
+        mgr = _cpu.TachyonManager()
+        mgr._unwinder = SimpleNamespace(get_stack_trace=list)  # finds no thread
+        return mgr
+    pytest.importorskip("pyinstrument")
+    return _cpu.PyinstrumentManager(interval=60)  # its first sample is a minute away
+
+
+@pytest.mark.parametrize("sampler", _SAMPLERS)
+def test_sampler_reports_a_pass_without_samples(sampler):
+    """A pass too short to sample keeps its row's cpu_profile, with zero samples
+    and no hottest function."""
+    mgr = _sampling_nothing(sampler)
+    assert mgr.get_result() is None  # before the first pass
+
+    _register_noop(iterations=2)
+    rep = Capture()
+    mew.run(reporter=rep, profiler_manager=mgr)
+    cpu = rep.runs[0]["cpu_profile"]
+    assert type(cpu.pop("wall_time")) is float
+    assert cpu == {
+        "profiler": sampler,
+        "sample_count": 0,
+        "top_function": None,
+        "top_instructions": [],
+        "unspecialized_share": None,
+    }
+
+
+@pytest.mark.parametrize("sampler", _SAMPLERS)
+def test_pass_that_skips_before_its_loop_has_no_profile(sampler):
+    """Not the profile of the benchmark before it, which the sampler last made."""
+    _register_noop(iterations=2)
+    calls = 0
+
+    @mew.benchmark(iterations=2)
+    def bench_skips_when_profiled(state):
+        nonlocal calls
+        calls += 1
+        if calls > 1:  # the profiling pass, after the timed run
+            state.skip_with_message("not when profiled")
+            return
+        for _ in state:
+            pass
+
+    rep = Capture()
+    mew.run(reporter=rep, profiler_manager=_sampling_nothing(sampler))
+    assert ["cpu_profile" in row for row in rep.runs] == [True, False]
+
+
+def test_write_html_rejects_other_profiler_managers(tmp_path):
+    from mew import cpu as _cpu
+
+    with pytest.raises(TypeError, match="TachyonManager or PyinstrumentManager"):
+        _cpu.write_html(cast("Any", FakeProfilerManager()), tmp_path / "cpu.html")
+
+
+@pytest.mark.skipif(mew.gil_enabled(), reason="needs a free-threaded build with the GIL disabled")
+def test_pyinstrument_is_rejected_before_import_on_free_threaded():
+    """Importing pyinstrument would enable the GIL, which `_gil_stays_disabled`
+    in conftest.py turns into a failure."""
+    from mew.cpu import PyinstrumentManager
+
+    with pytest.raises(RuntimeError, match="does not support free-threaded Python"):
+        PyinstrumentManager()
+
+
+@pytest.mark.parametrize(
+    ("module", "create"),
+    [
+        pytest.param(
+            "cpu",
+            lambda mod: mod.PyinstrumentManager(),
+            marks=pytest.mark.skipif(
+                not mew.gil_enabled(), reason="pyinstrument is rejected before the lookup"
+            ),
+        ),
+        ("memory", lambda mod: mod.manager(contextlib.ExitStack())),
+    ],
+)
+def test_missing_profiler_package_raises_import_error(monkeypatch, module, create):
+    """An exception with the install hint rather than an exit, so a caller such
+    as the CLI picks the exit code."""
+    mod = importlib.import_module(f"mew.{module}")
+    monkeypatch.setattr(mod, "find_spec", lambda name: None)
+    with pytest.raises(ImportError, match="Install it with"):
+        create(mod)
 
 
 def test_hottest_frame_excludes_pyinstrument_internals(tmp_path):
@@ -574,170 +638,27 @@ def test_hottest_frame_excludes_pyinstrument_internals(tmp_path):
     assert _hottest_frame(cast("Any", Frame("_start_sampling", sampler.file_path, 1.0))) is None
 
 
-@pytest.mark.parametrize("manager", ["PyinstrumentManager", "TachyonManager"])
-@pytest.mark.parametrize("interval", [0, -1, float("nan"), float("inf")])
-def test_cpu_managers_reject_invalid_interval(manager, interval):
+@pytest.mark.parametrize(
+    ("factory", "kwargs"),
+    [
+        ("PyinstrumentManager", {"interval": 0}),
+        ("PyinstrumentManager", {"interval": float("nan")}),
+        ("TachyonManager", {"interval": 0}),
+        ("TachyonManager", {"interval": float("nan")}),
+        ("TachyonManager", {"top_k": 0}),
+        ("TachyonManager", {"top_k": 2.5}),
+        ("manager", {"sampler": "perf"}),
+        # Checked for pyinstrument too, which reads no instructions.
+        ("manager", {"top_k": 0, "sampler": "pyinstrument"}),
+    ],
+)
+def test_cpu_profiling_rejects_invalid_arguments(factory, kwargs):
+    """Checked before the sampler is needed, so on every interpreter."""
     from mew import cpu as _cpu
 
-    with pytest.raises(ValueError, match="interval"):
-        getattr(_cpu, manager)(interval=interval)
-
-
-def test_tachyon_manager_rejects_top_k_below_one():
-    from mew.cpu import TachyonManager
-
-    with pytest.raises(ValueError, match="top_k"):
-        TachyonManager(top_k=0)
-
-
-def test_flamegraph_is_rooted_at_the_benchmark_and_loop_scoped(tmp_path):
-    """The graph names each benchmark and covers the same region as the table.
-
-    Re-rooting puts back the frame memray drops from a loop-scoped capture,
-    including for body-level allocations, which otherwise carry no stack."""
-    pytest.importorskip("memray")
-    from contextlib import ExitStack
-
-    from mew import memory as _memory
-
-    def nested_alloc_helper() -> bytearray:
-        return bytearray(600_000)  # allocated one frame below the body
-
-    @mew.benchmark
-    def bench_rooted(state):
-        fixture = bytearray(30_000_000)  # setup: excluded from the loop scope
-        for _ in state:
-            nested = nested_alloc_helper()
-            inline = bytearray(400_000)  # allocated directly in the body frame
-            del inline, nested
-        del fixture
-
-    out = tmp_path / "flame.html"
-    with ExitStack() as stack:
-        manager = _memory.manager(stack)
-        mew.run(min_time="20x", reporter=None, memory_manager=manager)
-        assert manager.captures, "no capture recorded"
-        # Each capture is tagged with the user's benchmark frame, not a mew internal.
-        assert all(root[0] == "bench_rooted" for _, root in manager.captures)
-        _memory.write_flamegraph(manager, out)
-
-    html = out.read_text()
-    assert "bench_rooted" in html
-    # A multi-frame stack renders through memray's real reporter, which pins the
-    # attributes `_RootedRecord` must duck-type from `AllocationRecord`.
-    assert "nested_alloc_helper" in html
-
-
-def test_flamegraph_header_covers_every_capture(tmp_path, monkeypatch):
-    """The combined report's header totals span all captures, not the first."""
-    pytest.importorskip("memray")
-    from contextlib import ExitStack
-
-    import memray
-    from memray.reporters.flamegraph import FlameGraphReporter
-
-    from mew import memory as _memory
-
-    @mew.benchmark(iterations=2)
-    def bench_small(state):
-        for _ in state:
-            buf = bytearray(1_000)
-            del buf
-
-    @mew.benchmark(iterations=2)
-    def bench_large(state):
-        for _ in state:
-            buf = bytearray(5_000_000)
-            del buf
-
-    rendered = {}
-    monkeypatch.setattr(
-        FlameGraphReporter, "render", lambda self, f, *, metadata, **kw: rendered.update(m=metadata)
-    )
-    with ExitStack() as stack:
-        manager = _memory.manager(stack)
-        mew.run(reporter=None, memory_manager=manager)
-        metas = []
-        for capture, _ in manager.captures:
-            with memray.FileReader(capture) as reader:
-                metas.append(reader.metadata)
-        _memory.write_flamegraph(manager, tmp_path / "flame.html")
-
-    assert len(metas) == 2
-    assert rendered["m"].total_allocations == sum(m.total_allocations for m in metas)
-    assert rendered["m"].peak_memory == max(m.peak_memory for m in metas)
-
-
-def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
-    pytest.importorskip("memray")
-    from contextlib import ExitStack
-
-    from mew import memory as _memory
-
-    out = tmp_path / "flame.html"
-    with ExitStack() as stack:
-        _memory.write_flamegraph(_memory.manager(stack), out)
-    assert not out.exists()
-    assert "no memory captures recorded" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize("sampler", _SAMPLERS)
-def test_write_html_warns_when_nothing_was_sampled(tmp_path, capsys, sampler):
-    from mew import cpu as _cpu
-
-    out = tmp_path / "cpu.html"
-    _cpu.write_html(_sampled_manager(sampler), out)
-    assert not out.exists()
-    assert "no CPU samples collected" in capsys.readouterr().err
-
-
-def test_pause_held_across_the_loop_end_is_not_resumed_after_the_pass(tmp_path):
-    """The profiler stops while still paused; the scope's exit after the loop
-    must not resume a manager whose pass is over."""
-    from contextlib import ExitStack
-
-    mgr = FakeProfilerManager()
-
-    @mew.benchmark(iterations=3)
-    def bench_held(state):
-        with ExitStack() as stack:
-            for _ in state:
-                stack.enter_context(state.pause())
-
-    mew.run(reporter=JSONReporter(output=tmp_path / "o.json"), profiler_manager=mgr)
-    assert mgr.starts == mgr.stops == 1
-    assert (mgr.pauses, mgr.resumes) == (1, 0)
-
-
-@pytest.mark.parametrize("sampler", _SAMPLERS)
-def test_sampler_handles_a_pause_held_over_the_loop_end(tmp_path, sampler):
-    """A pass that ends paused must not stop the sampler twice, nor leave it
-    paused for the next benchmark, which would then collect nothing."""
-    from contextlib import ExitStack
-
-    @mew.benchmark
-    def bench_held(state):
-        with ExitStack() as stack:
-            for _ in state:
-                stack.enter_context(state.pause())
-
-    @mew.benchmark
-    def bench_next(state):
-        for _ in state:
-            _spin()
-
-    out = tmp_path / "o.json"
-    mew.run(
-        min_time=_SAMPLED_ITERATIONS,
-        reporter=JSONReporter(output=out),
-        profiler_manager=_sampled_manager(sampler),
-    )
-    rows = json.loads(out.read_text())["benchmarks"]
-    assert [r["skipped"] for r in rows] == [False, False]
-    assert "cpu_profile" in rows[1], "sampler collected nothing; raise the iteration count"
-
-
-# --- Tachyon (Python 3.15+) --------------------------------------------------
+    name = next(iter(kwargs))  # the invalid one
+    with pytest.raises(ValueError, match=name):
+        getattr(_cpu, factory)(**kwargs)
 
 
 @pytest.mark.parametrize(
@@ -751,32 +672,43 @@ def test_sampler_handles_a_pause_held_over_the_loop_end(tmp_path, sampler):
 def test_cpu_manager_creates_the_chosen_sampler(monkeypatch, sampler, expected):
     from mew import cpu as _cpu
 
-    made: list[tuple[str, tuple, dict]] = []
+    made: list[tuple[str, float, dict]] = []
     for name in ("TachyonManager", "PyinstrumentManager"):
-        monkeypatch.setattr(_cpu, name, lambda *a, _name=name, **kw: made.append((_name, a, kw)))
+        monkeypatch.setattr(
+            _cpu, name, lambda interval, _name=name, **kw: made.append((_name, interval, kw))
+        )
     _cpu.manager(2e-4, sampler=sampler, top_k=3)
     # pyinstrument reads no instructions, so it takes no top_k.
     kwargs = {"top_k": 3} if expected == "TachyonManager" else {}
-    assert made == [(expected, (2e-4,), kwargs)]
+    assert made == [(expected, 2e-4, kwargs)]
 
 
-def test_cpu_manager_rejects_an_unknown_sampler():
-    from mew import cpu as _cpu
-
-    with pytest.raises(ValueError, match="sampler must be one of"):
-        _cpu.manager(sampler="perf")
+# --- Tachyon (Python 3.15+) --------------------------------------------------
 
 
 @pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon is available")
 def test_tachyon_manager_requires_python_3_15():
     from mew.cpu import TachyonManager
 
-    with pytest.raises(SystemExit, match="3.15"):
+    with pytest.raises(RuntimeError, match="3.15"):
         TachyonManager()
 
 
 @needs_tachyon
-def test_tachyon_skips_paused_regions(tmp_path):
+def test_tachyon_raises_when_it_cannot_read_the_process(monkeypatch):
+    from mew import cpu as _cpu
+
+    def unreadable(pid):
+        raise OSError("operation not permitted")
+
+    monkeypatch.setattr(_cpu, "_unwinder", unreadable)
+    with pytest.raises(RuntimeError, match="cannot sample this process") as info:
+        _cpu.TachyonManager()
+    assert isinstance(info.value.__cause__, OSError)
+
+
+@needs_tachyon
+def test_tachyon_skips_paused_regions():
     from mew.cpu import TachyonManager
 
     def paused_work() -> int:
@@ -792,97 +724,66 @@ def test_tachyon_skips_paused_regions(tmp_path):
                 paused_work()  # 3x the work of _spin, but never sampled
             _spin()
 
-    out = tmp_path / "out.json"
-    mew.run(
-        min_time=_SAMPLED_ITERATIONS,
-        reporter=JSONReporter(output=out),
-        profiler_manager=TachyonManager(),
-    )
-    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
-    assert cpu["top_function"]["function"] == "_spin"
-
-
-def _negate(x: float) -> float:
-    return -x
+    rep = Capture()
+    mew.run(min_time=_SAMPLED_ITERATIONS, reporter=rep, profiler_manager=TachyonManager())
+    assert rep.runs[0]["cpu_profile"]["top_function"]["function"] == "_spin"
 
 
 @needs_tachyon
-def test_tachyon_flame_graph_has_a_root_per_benchmark_and_native_frames(tmp_path):
-    """`<native>` marks sorted() calling the key function. Opcodes are read only
-    where a sample can land mid-instruction, i.e. on free-threaded builds."""
+def test_tachyon_flame_graph_has_a_root_per_benchmark(tmp_path):
+    """Stacks are cut at the body, so none of mew's own call chain above it shows."""
     from mew import cpu as _cpu
 
     @mew.benchmark
-    def bench_spin(state):
+    def bench_first(state):
         for _ in state:
             _spin()
 
     @mew.benchmark
-    def bench_callback(state):
+    def bench_second(state):
         for _ in state:
-            # Already ordered, so the key calls take most of the time. On GIL
-            # builds a short key phase before a long sort is never sampled.
-            sorted(range(5_000), key=_negate)
+            _spin()
 
     mgr = _cpu.TachyonManager()
-    mew.run(
-        min_time=_SAMPLED_ITERATIONS,
-        reporter=JSONReporter(output=tmp_path / "o.json"),
-        profiler_manager=mgr,
-    )
+    mew.run(min_time=_SAMPLED_ITERATIONS, reporter=Capture(), profiler_manager=mgr)
     report = tmp_path / "cpu.html"
     _cpu.write_html(mgr, report)
     html = report.read_text(encoding="utf-8")
-    assert "bench_spin" in html and "bench_callback" in html
-    # Stacks are cut at the body: none of mew's own call chain above it.
+    assert "bench_first" in html and "bench_second" in html
     assert "runner.py" not in html
-    assert '"<native>"' in html
-    assert ('"opcodes"' in html) is not mew.gil_enabled()
 
 
-# Far past the compact ints BINARY_OP_ADD_INT handles: each add copies ~6 KB, so
-# `total += i` takes nearly all the time. Its lead must survive a starved sampler,
-# whose few samples each stand for a long gap.
-_BIG = 2**50_000
+@pytest.mark.skipif(
+    _opcode_tables() is None, reason="this interpreter has no table of specialized opcodes"
+)
+def test_instruction_summary_ranks_names_and_flags_instructions(tmp_path):
+    """From fixed self times: on free-threaded builds, sampling and the
+    specializer decide which instructions lead, so a sampled run can't pin this."""
+    import opcode
 
+    from mew.cpu import _summarize_instructions
 
-def _grow_big_int() -> int:
-    total = _BIG
-    for i in range(1_000):
-        total += i
-    return total
-
-
-@needs_tachyon
-@pytest.mark.skipif(mew.gil_enabled(), reason="needs a free-threaded build")
-def test_tachyon_names_the_hottest_instruction_on_free_threaded_builds(tmp_path):
-    from mew.cpu import TachyonManager
-
-    @mew.benchmark
-    def bench_big_int(state):
-        for _ in state:
-            _grow_big_int()
-
-    out = tmp_path / "out.json"
-    mew.run(
-        min_time="100x", reporter=JSONReporter(output=out), profiler_manager=TachyonManager(top_k=2)
+    src = tmp_path / "mod.py"
+    src.write_text("total += i\nx = y.z\n", encoding="utf-8")
+    file, first, second = str(src), (1, 1, 0, 10), (2, 2, 4, 7)
+    add_int = opcode._specialized_opmap["BINARY_OP_ADD_INT"]  # ty: ignore[unresolved-attribute]
+    top, unspecialized = _summarize_instructions(
+        {
+            (file, second, opcode.opmap["LOAD_ATTR"]): 0.2,  # past top_k
+            (file, first, opcode.opmap["BINARY_OP"]): 0.3,
+            (file, first, add_int): 0.5,
+        },
+        total=2.0,  # the body's self time, of which instructions are a part
+        top_k=2,
     )
-    cpu = json.loads(out.read_text())["benchmarks"][0]["cpu_profile"]
-    top = cpu["top_instructions"]
-    # top_k caps the list. A starved sampler can land every sample on the
-    # dominant add, leaving no second instruction to list.
-    assert 1 <= len(top) <= 2
-    assert {k: v for k, v in top[0].items() if k not in ("line", "share")} == {
-        "instruction": "BINARY_OP",
-        "source": "total += i",
-        "file": "test_profile.py",
-        "unspecialized": True,
-    }
-    assert isinstance(top[0]["line"], int)
-    shares = [t["share"] for t in top]
-    assert shares == sorted(shares, reverse=True) and shares[-1] > 0
-    assert top[0]["share"] <= cpu["unspecialized_share"] <= 1
-    assert cpu["unspecialized_share"] > 0.5
+    row = {"source": "total += i", "file": "mod.py", "line": 1}
+    assert top == [
+        {"instruction": "BINARY_OP_ADD_INT", **row, "share": 0.25, "unspecialized": False},
+        {"instruction": "BINARY_OP", **row, "share": 0.15, "unspecialized": True},
+    ]
+    # Every generic instruction counts, also those past top_k.
+    assert unspecialized == pytest.approx(0.25)
+    assert _summarize_instructions({}, 1.0, 5) == ([], None)
 
 
 def test_instruction_source_slices_utf8_columns(tmp_path):
@@ -906,25 +807,8 @@ def test_instruction_source_slices_utf8_columns(tmp_path):
 # --- The cpu_profile contract --------------------------------------------------
 
 
-def _conforms(value: Any, hint: Any) -> bool:
-    """Whether JSON-decoded ``value`` has the type ``hint``, a TypedDict key for key."""
-    if typing.is_typeddict(hint):
-        fields = typing.get_type_hints(hint)
-        return (
-            isinstance(value, dict)
-            and value.keys() == fields.keys()
-            and all(_conforms(value[k], t) for k, t in fields.items())
-        )
-    if typing.get_origin(hint) in (typing.Union, types.UnionType):
-        return any(_conforms(value, t) for t in typing.get_args(hint))
-    if typing.get_origin(hint) is list:
-        (item,) = typing.get_args(hint)
-        return isinstance(value, list) and all(_conforms(v, item) for v in value)
-    return type(value) is hint
-
-
 @pytest.mark.parametrize("sampler", _SAMPLERS)
-def test_samplers_summarize_the_hot_frame_in_one_shape(tmp_path, sampler):
+def test_samplers_summarize_the_hot_frame_in_one_shape(sampler):
     """Each CI interpreter runs this, so a key or type that only one sampler or
     CPython minor writes fails it: archives mixing them keep one schema."""
     from mew import cpu as _cpu
@@ -936,21 +820,25 @@ def test_samplers_summarize_the_hot_frame_in_one_shape(tmp_path, sampler):
         for _ in state:
             _spin()
 
-    out = tmp_path / "out.json"
+    rep = Capture()
     switch_interval = sys.getswitchinterval()
-    mew.run(min_time=_SAMPLED_ITERATIONS, reporter=JSONReporter(output=out), profiler_manager=mgr)
+    mew.run(min_time=_SAMPLED_ITERATIONS, reporter=rep, profiler_manager=mgr)
 
-    cpu = json.loads(out.read_text())["benchmarks"][0].get("cpu_profile")
-    assert cpu is not None, "sampler collected nothing; raise the iteration count"
-    assert _conforms(cpu, _cpu.CpuProfile), cpu
-    assert cpu["profiler"] == sampler
+    cpu = rep.runs[0]["cpu_profile"]
     top = cpu["top_function"]
-    assert (top["function"], top["file"]) == ("_spin", "test_profile.py")
+    assert top is not None, "sampler collected nothing; raise the iteration count"
+    assert cpu.keys() == _cpu.CpuProfile.__required_keys__
+    assert top.keys() == _cpu.TopFunction.__required_keys__
+    assert type(cpu["sample_count"]) is int
+    assert type(cpu["wall_time"]) is type(top["self_time"]) is float
+    assert (cpu["profiler"], top["function"], top["file"]) == (sampler, "_spin", "test_profile.py")
     assert 0 < top["self_time"] <= cpu["wall_time"]
     # Instructions are read on free-threaded Tachyon only, and then always.
     reads = getattr(mgr, "reads_instructions", False)
     assert bool(cpu["top_instructions"]) is reads
     assert (cpu["unspecialized_share"] is not None) is reads
+    for instruction in cpu["top_instructions"]:
+        assert instruction.keys() == _cpu.TopInstruction.__required_keys__
     if sampler == "pyinstrument":
         # pyinstrument's line is the def line, so the summary leaves it out.
         assert top["line"] is None
@@ -960,22 +848,3 @@ def test_samplers_summarize_the_hot_frame_in_one_shape(tmp_path, sampler):
         assert start < top["line"] < start + len(lines)
         # GIL builds lower the switch interval for the pass only.
         assert sys.getswitchinterval() == switch_interval
-
-
-def test_conforms_rejects_drift():
-    from mew.cpu import CpuProfile
-
-    good = {
-        "profiler": "tachyon",
-        "wall_time": 0.5,
-        "sample_count": 3,
-        "top_function": {"function": "f", "file": None, "line": None, "self_time": 0.1},
-        "top_instructions": [],
-        "unspecialized_share": None,
-    }
-    assert _conforms(good, CpuProfile)
-    assert not _conforms({**good, "extra": 1}, CpuProfile)
-    assert not _conforms({k: v for k, v in good.items() if k != "unspecialized_share"}, CpuProfile)
-    assert not _conforms({**good, "sample_count": 3.0}, CpuProfile)
-    assert not _conforms({**good, "top_function": "f (b.py:1)"}, CpuProfile)
-    assert not _conforms({**good, "top_instructions": [{"instruction": "NOP"}]}, CpuProfile)

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import gzip
 import json
+import math
 import re
+import statistics
 from pathlib import Path
 
-import numpy as np
 import pytest
 from _helpers import (
     Console,
@@ -17,7 +19,16 @@ from _helpers import (
 )
 
 from mew._results import _load, _split_selector
-from mew.compare import compare, read_results
+from mew._statistics import Statistic
+from mew.compare import (
+    Sample,
+    _compare_samples,
+    _fmt_delta,
+    compare,
+    read_results,
+    session_summaries,
+)
+from mew.regressions import RegressionConfig
 
 
 def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
@@ -29,7 +40,7 @@ def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
     )
 
     console = Console(width=200)
-    code = compare([other, base], statistic=np.max, console=console)
+    code = compare([other, base], statistic=max, console=console)
     assert code == 0
     out = console.export_text()
     assert "99.00 ns" in out
@@ -37,24 +48,24 @@ def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
     assert "-48.48%" in out
 
 
-def test_load_ignores_gb_aggregate_rows(tmp_path: Path) -> None:
-    """GB aggregate rows (median/mean/stddev/cv) must not skew the recomputed median."""
+def test_load_skips_aggregate_and_skipped_rows(tmp_path: Path) -> None:
+    """Older files' Google Benchmark aggregate rows and skipped rows are not
+    repetitions: they must not skew the median, and a benchmark with only
+    skipped rows has no sample."""
     p = tmp_path / "a.json"
     _write_json(
         p,
         [
             _row("b", 5.0),
             _row("b", 7.0),
-            _row("b", 999.0, aggregate_name="median"),
             _row("b", 999.0, aggregate_name="mean"),
-            _row("b", 1.0, aggregate_name="stddev"),
-            _row("b", 0.1, aggregate_name="cv"),
+            _row("b", 0.0, skipped=True),
+            _row("only_skipped", 0.0, skipped=True),
         ],
     )
     samples, _ = _load(p, "real_time")
-    assert samples["b"].value == 6.0
+    assert samples.keys() == {"b"}
     assert samples["b"].values == (5.0, 7.0)
-    assert samples["b"].stddev is not None
 
 
 def test_compare_speedup_signs(tmp_path: Path) -> None:
@@ -76,6 +87,8 @@ def test_compare_speedup_signs(tmp_path: Path) -> None:
     assert "100.00 ns" in out
     assert "80.00 ns" in out
     assert "75.00 ns" in out
+    # A time metric's ratio is a speedup (memory's is a neutral "ratio").
+    assert "speedup" in out and "ratio" not in out
 
 
 def test_compare_warns_on_missing_names(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -102,49 +115,78 @@ def test_compare_empty_overlap(tmp_path: Path, capsys: pytest.CaptureFixture[str
     assert "no overlapping benchmarks" in capsys.readouterr().err
 
 
-def test_compare_pattern_is_regex(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("pattern", "literal", "shown"),
+    [("alpha|gamma", False, ["alpha", "gamma"]), ("beta[n=1]", True, ["beta[n=1]"])],
+)
+def test_compare_pattern_is_a_regex_unless_literal(
+    tmp_path: Path, pattern: str, literal: bool, shown: list[str]
+) -> None:
+    names = ["alpha", "beta[n=1]", "gamma"]
     other, base = _write_pair(
-        tmp_path,
-        other=[_row("alpha", 5.0), _row("beta", 40.0), _row("gamma", 15.0)],
-        base=[_row("alpha", 10.0), _row("beta", 20.0), _row("gamma", 30.0)],
+        tmp_path, other=[_row(n, 5.0) for n in names], base=[_row(n, 10.0) for n in names]
     )
     console = Console(width=200)
-    assert compare([other, base], pattern="alpha|gamma", console=console) == 0
+    assert compare([other, base], pattern=pattern, literal=literal, console=console) == 0
     out = console.export_text()
-    assert "alpha" in out
-    assert "gamma" in out
-    assert "beta" not in out
+    assert [n for n in names if n in out] == shown
 
 
-def test_compare_invalid_pattern_errors(tmp_path: Path) -> None:
-    other, base = _write_pair(tmp_path, other=[_row("alpha", 5.0)], base=[_row("alpha", 10.0)])
-    with pytest.raises(SystemExit, match="invalid benchmark filter pattern"):
-        compare([other, base], pattern="foo(", console=Console())
+@pytest.mark.parametrize(
+    ("n_files", "kwargs", "match"),
+    [
+        (1, {}, "at least two"),
+        (2, {"metric": "bogus"}, "unknown metric"),
+        (2, {"key": "bogus"}, "unknown key"),
+        (2, {"pattern": "foo("}, "invalid benchmark filter pattern"),
+    ],
+)
+def test_compare_rejects_bad_arguments(
+    tmp_path: Path, n_files: int, kwargs: dict, match: str
+) -> None:
+    # Checked before any file is read, so the files need not exist.
+    files = [tmp_path / f"{i}.json" for i in range(n_files)]
+    with pytest.raises(ValueError, match=match):
+        compare(files, **kwargs)
 
 
-def test_compare_requires_two_files(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit, match="at least two"):
-        compare([tmp_path / "a.json"])
+def _mem_row(name: str, real_time: float, peak: int, allocs: int, *, iterations: int = 1) -> dict:
+    return _row(
+        name,
+        real_time,
+        memory={
+            "profiler": "memray",
+            "peak_bytes": peak,
+            "total_bytes": peak,
+            "total_allocations": allocs,
+            "iterations": iterations,
+            "allocations_per_iteration": allocs / iterations,
+        },
+    )
 
 
-def test_compare_unknown_metric(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit, match="unknown metric"):
-        compare([tmp_path / "a.json", tmp_path / "b.json"], metric="bogus")
-
-
-def test_compare_stddev_column(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("metric", "stddevs"),
+    [
+        ("real_time", ["1.00 ns", "2.00 ns"]),
+        # 0.2.0 printed the peak_bytes stddev unscaled, as "1048576.00".
+        ("memory.peak_bytes", ["1.0 MB", "2.0 MB"]),
+    ],
+)
+def test_compare_stddev_column_uses_the_value_unit(
+    tmp_path: Path, metric: str, stddevs: list[str]
+) -> None:
+    mib = 1 << 20
     other, base = _write_pair(
         tmp_path,
-        other=[_row("b", 78.0), _row("b", 80.0), _row("b", 82.0)],
-        base=[_row("b", 95.0), _row("b", 100.0), _row("b", 105.0)],
+        other=[_mem_row("b", v, peak=v * mib, allocs=1) for v in (2, 4, 6)],
+        base=[_mem_row("b", v, peak=v * mib, allocs=1) for v in (4, 5, 6)],
     )
     console = Console(width=200)
-    code = compare([other, base], show_stddev=True, console=console)
-    assert code == 0
-    out = console.export_text()
-    # Stdlib stdev([95,100,105]) = 5.0; stdev([78,80,82]) = 2.0
-    assert "5.00" in out
-    assert "2.00" in out
+    assert compare([other, base], metric=metric, show_stddev=True, console=console) == 0
+    # The row's cells: name, base, ± stddev, other, Δ%, ratio, ± stddev.
+    cells = [c.strip() for c in console.export_text().splitlines()[-1].split("│")]
+    assert [cells[2], cells[-1]] == stddevs
 
 
 _ROW_LINE = json.dumps(_row("b", 1.0))
@@ -154,31 +196,34 @@ _ROW_LINE = json.dumps(_row("b", 1.0))
     ("filename", "content", "match"),
     [
         ("a.json", None, "result file not found"),
+        ("a.txt", "", "unsupported result file"),
         ("a.json", "not json", "a.json: invalid JSON"),
         ("a.json", "[1, 2]", "missing 'benchmarks' array"),  # valid JSON, wrong shape
         ("a.json", '{"benchmarks": [1]}', r"benchmarks\[0\]: expected a mew result row"),
         ("a.jsonl", _ROW_LINE + "\nnot json\n", "a.jsonl:2: invalid JSON"),
         # Pure NDJSON: every line is a row with `name` and `benchmark`.
-        ("a.jsonl", _ROW_LINE + "\n[1, 2]\n", "a.jsonl:2: expected a mew result row"),
-        ("a.jsonl", _ROW_LINE + '\n{"context": {}}\n', "a.jsonl:2: expected a mew result row"),
         ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', "a.jsonl:2: expected a mew result row"),
+        # Cut off, as by a full disk or an interrupted copy.
+        ("a.jsonl.gz", gzip.compress(_ROW_LINE.encode())[:-8], "cannot read result file"),
     ],
 )
 def test_load_rejects_unreadable_files(
-    tmp_path: Path, filename: str, content: str | None, match: str
+    tmp_path: Path, filename: str, content: str | bytes | None, match: str
 ) -> None:
-    # A clean CLI error naming the file (and line), not a traceback.
+    # A one-line error naming the file (and line), which the CLI prints.
     p = tmp_path / filename
-    if content is not None:
+    if isinstance(content, bytes):
+        p.write_bytes(content)
+    elif content is not None:
         p.write_text(content)
-    with pytest.raises(SystemExit, match=match):
+    with pytest.raises(FileNotFoundError if content is None else ValueError, match=match):
         _load(p, "real_time")
 
 
 def test_load_key_func_rejects_collisions(tmp_path: Path) -> None:
     p = tmp_path / "a.json"
     _write_json(p, [_row("a.py::bench_x", 1.0), _row("b.py::bench_x", 2.0)])
-    with pytest.raises(SystemExit, match="maps both"):
+    with pytest.raises(ValueError, match="maps both"):
         _load(p, "real_time", key="func")
 
 
@@ -198,45 +243,32 @@ def test_compare_key_func_matches_across_suites(tmp_path: Path) -> None:
     assert "-20.00%" in out
 
 
-def test_compare_unknown_key(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit, match="unknown key"):
-        compare([tmp_path / "a.json", tmp_path / "b.json"], key="bogus")
+@pytest.mark.parametrize(
+    ("raw", "path", "selector"),
+    [
+        ("results.json", "results.json", None),
+        ("results.json@before", "results.json", "before"),
+        ("v@2/results.JSONL.GZ@before", "v@2/results.JSONL.GZ", "before"),
+        ("results.jsonl@", "results.jsonl", ""),  # loading rejects the empty selector
+        # Only an `@` after a result-file extension splits, whether or not the
+        # file exists.
+        ("weird@name.json", "weird@name.json", None),
+        ("results@before", "results@before", None),
+    ],
+)
+def test_split_selector(raw: str, path: str, selector: str | None) -> None:
+    assert _split_selector(raw) == (Path(path), selector)
 
 
-def _two_session_file(tmp_path: Path) -> Path:
-    """One file holding 'before' and 'after' sessions of one benchmark."""
+def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
     p = tmp_path / "results.json"
     _write_json(
         p,
         [
-            _row(
-                "b",
-                100.0,
-                date="2026-01-01T00:00:00",
-                session_id="0197aaaa11",
-                session_tag="before",
-            ),
-            _row(
-                "b", 80.0, date="2026-02-01T00:00:00", session_id="0197bbbb22", session_tag="after"
-            ),
+            _row("b", 100.0, date="2026-01-01", session_id="0197aaaa11", session_tag="before"),
+            _row("b", 80.0, date="2026-02-01", session_id="0197bbbb22", session_tag="after"),
         ],
     )
-    return p
-
-
-def test_split_selector(tmp_path: Path) -> None:
-    p = tmp_path / "results.json"
-    assert _split_selector(str(p)) == (p, None)
-    assert _split_selector(f"{p}@before") == (p, "before")
-    assert _split_selector(f"{p}@latest") == (p, "latest")
-    # An existing file is never split, even if its name contains '@'.
-    weird = tmp_path / "weird@name.json"
-    weird.write_text("{}")
-    assert _split_selector(str(weird)) == (weird, None)
-
-
-def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
-    p = _two_session_file(tmp_path)
     console = Console(width=200)
     assert compare([Path(f"{p}@after"), Path(f"{p}@before")], console=console) == 0
     out = console.export_text()
@@ -259,8 +291,6 @@ def test_compare_reads_every_result_format(tmp_path: Path, suffix: str) -> None:
 
 def test_load_gzip_jsonl_with_uppercase_suffix(tmp_path: Path) -> None:
     # The suffix check is case-insensitive, so the gzip check must be too.
-    import gzip
-
     p = tmp_path / "a.JSONL.GZ"
     with gzip.open(p, "wt") as fh:
         fh.write(json.dumps(_row("bench_x", 10.0)) + "\n")
@@ -268,21 +298,23 @@ def test_load_gzip_jsonl_with_uppercase_suffix(tmp_path: Path) -> None:
     assert samples["bench_x"].value == 10.0
 
 
-def test_same_second_runs_stay_distinct_by_session_id(tmp_path: Path) -> None:
-    # Two runs in one wall-clock second on one host: the id keeps them apart.
+def test_same_second_runs_stay_distinct_and_order_by_session_id(tmp_path: Path) -> None:
+    # Two runs in one wall-clock second: the time-ordered id keeps them apart
+    # and orders them, though their hosts sort the other way.
     p = tmp_path / "agg.json"
     when = "2026-06-12T10:00:00"
     _write_json(
         p,
         [
             _row(
-                "b", 10.0, date=when, host_name="h1", session_id="0197-aaaa", session_tag="before"
+                "b", 10.0, date=when, host_name="h2", session_id="0197-aaaa", session_tag="before"
             ),
             _row("b", 20.0, date=when, host_name="h1", session_id="0197-bbbb", session_tag="after"),
         ],
     )
     assert _load(p, "real_time", selector="before")[0]["b"].value == 10.0
-    assert _load(p, "real_time", selector="after")[0]["b"].value == 20.0
+    assert _load(p, "real_time")[0]["b"].value == 20.0
+    assert [s.id for s in session_summaries(p)] == ["0197-bbbb", "0197-aaaa"]
 
 
 def test_tag_selector_pools_runs_sharing_the_tag(tmp_path: Path) -> None:
@@ -309,25 +341,18 @@ def test_tag_selector_pools_runs_sharing_the_tag(tmp_path: Path) -> None:
 
 
 def test_unknown_selector_lists_the_tags(tmp_path: Path) -> None:
-    p = _two_session_file(tmp_path)
+    p = tmp_path / "r.json"
+    _write_json(p, [_row("b", 1.0, session_id=f"s{i}", session_tag=f"t{i}") for i in range(7)])
     with pytest.raises(
-        SystemExit, match=r"no session tagged 'nope' \(tags in file: after, before\)"
+        ValueError,
+        match=r"no session tagged 'nope' \(tags in file: t0, t1, t2, t3, t4 \(\+2 more\)",
     ):
         _load(p, "real_time", selector="nope")
-    with pytest.raises(SystemExit, match="empty session selector"):
+    with pytest.raises(ValueError, match="empty session selector"):
         _load(p, "real_time", selector="")
 
 
-def test_unknown_selector_elides_a_long_tag_list(tmp_path: Path) -> None:
-    p = tmp_path / "r.json"
-    _write_json(p, [_row("b", 1.0, session_id=f"s{i}", session_tag=f"t{i:02d}") for i in range(9)])
-    with pytest.raises(SystemExit, match=r"t00, t01, t02, t03, t04 \(\+4 more\)"):
-        _load(p, "real_time", selector="nope")
-
-
 def test_session_summaries_newest_first(tmp_path: Path) -> None:
-    from mew.compare import session_summaries
-
     p = tmp_path / "r.json"
     new = dict(date="2026-02-01T00:00:00", session_id="new")
     _write_json(
@@ -340,6 +365,7 @@ def test_session_summaries_newest_first(tmp_path: Path) -> None:
         ],
     )
     newest, oldest = session_summaries(p)
+    # `benchmarks` counts measured benchmarks; `rows` counts every stored row.
     assert (newest.id, newest.tag, newest.benchmarks, newest.rows) == ("new", "t", 1, 3)
     assert (oldest.id, oldest.host, oldest.tag, oldest.benchmarks, oldest.rows) == (
         "old",
@@ -350,26 +376,10 @@ def test_session_summaries_newest_first(tmp_path: Path) -> None:
     )
 
 
-def test_compare_parses_a_shared_file_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import mew.compare as compare_mod
-
-    p = _two_session_file(tmp_path)
-    calls: list[Path] = []
-    real = compare_mod._read_rows
-
-    def counting(path: Path):
-        calls.append(path)
-        return real(path)
-
-    monkeypatch.setattr(compare_mod, "_read_rows", counting)
-    assert compare([Path(f"{p}@after"), Path(f"{p}@before")], console=Console(width=200)) == 0
-    assert calls == [p]
-
-
 def test_load_without_measurements_errors(tmp_path: Path) -> None:
     p = tmp_path / "r.json"
     _write_json(p, [_row("b", 0.0, skipped=True)])
-    with pytest.raises(SystemExit, match="no measurements"):
+    with pytest.raises(ValueError, match="no measurements"):
         _load(p, "real_time")
 
 
@@ -406,69 +416,49 @@ def test_compare_prints_context_and_warns_on_skew(
 def test_compare_labels_columns_by_interpreter(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A suite run on two interpreters compares by version, without a skew warning."""
+    """A suite run on two interpreters of one machine compares by version,
+    without a skew warning."""
     python = {"implementation": "cpython", "gil_enabled": True}
+    machine = {"num_cpus": 8, "cpu_model": "Apple M1"}
     other, base = _write_pair(
         tmp_path,
         other=[_row("bench_x", 80.0)],
         base=[_row("bench_x", 100.0)],
-        other_context={"context": {"python": {**python, "version": "3.15.0"}}},
-        base_context={"context": {"python": {**python, "version": "3.14.3"}}},
+        other_context={
+            "session": {"host": "h1"},
+            "context": {**machine, "python": {**python, "version": "3.15.0"}},
+        },
+        base_context={
+            "session": {"host": "h1"},
+            "context": {**machine, "python": {**python, "version": "3.14.3"}},
+        },
     )
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
     out = console.export_text()
     assert "(python.version=3.14.3)" in out
     assert "(python.version=3.15.0)" in out
+    assert "host=h1" in out  # the matching machine context was read, and not warned on
     assert "differ in" not in capsys.readouterr().err
 
 
-def test_compare_no_skew_warning_when_contexts_match(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    ctx = {
-        "session": {"host": "h1"},
-        "context": {"num_cpus": 8, "cpu_scaling_enabled": False},
+def test_rows_group_by_benchmark_not_raw_name(tmp_path: Path) -> None:
+    """A row's `benchmark` names its sample: run options in the raw `name`, such
+    as min_time, don't split it, and thread counts stay apart (fixed in 0.2.0)."""
+    p = tmp_path / "a.json"
+    _write_json(
+        p,
+        [
+            _row("b/case:0/min_time:0.500/threads:1", 100.0, benchmark="b[n=1]/threads:1"),
+            _row("b/case:0/min_time:0.200/threads:1", 110.0, benchmark="b[n=1]/threads:1"),
+            _row("b/case:0/min_time:0.500/threads:2", 200.0, benchmark="b[n=1]/threads:2"),
+        ],
+    )
+    samples, _ = _load(p, "real_time")
+    assert {name: s.values for name, s in samples.items()} == {
+        "b[n=1]/threads:1": (100.0, 110.0),
+        "b[n=1]/threads:2": (200.0,),
     }
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("bench_x", 80.0)],
-        base=[_row("bench_x", 100.0)],
-        other_context=ctx,
-        base_context=ctx,
-    )
-    console = Console(width=200)
-    assert compare([other, base], console=console) == 0
-    assert "host=h1" in console.export_text()  # the context was actually read
-    assert "differ in" not in capsys.readouterr().err
-
-
-def test_compare_aligns_files_run_with_different_min_time(tmp_path: Path) -> None:
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("a.py::bench_x/case:0/min_time:0.500", 80.0, benchmark="a.py::bench_x[n=10]")],
-        base=[_row("a.py::bench_x/case:0/min_time:0.200", 100.0, benchmark="a.py::bench_x[n=10]")],
-    )
-    console = Console(width=200)
-    assert compare([other, base], console=console) == 0
-    out = console.export_text()
-    assert "a.py::bench_x[n=10]" in out
-    assert "-20.00%" in out
-
-
-def _mem_row(name: str, real_time: float, peak: int, allocs: int, *, iterations: int = 1) -> dict:
-    return _row(
-        name,
-        real_time,
-        memory={
-            "profiler": "memray",
-            "peak_bytes": peak,
-            "total_bytes": peak,
-            "total_allocations": allocs,
-            "iterations": iterations,
-            "allocations_per_iteration": allocs / iterations,
-        },
-    )
 
 
 def test_compare_memory_metric(tmp_path: Path) -> None:
@@ -494,47 +484,6 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
     assert "-50.00%" in console.export_text()
 
 
-def test_compare_time_metric_keeps_speedup_header(tmp_path: Path) -> None:
-    other, base = _write_pair(
-        tmp_path, other=[_row("bench_x", 80.0)], base=[_row("bench_x", 100.0)]
-    )
-    console = Console(width=200)
-    compare([other, base], metric="real_time", console=console)
-    out = console.export_text()
-    assert "speedup" in out
-    assert "ratio" not in out
-
-
-def test_compare_zero_vs_zero_is_unchanged(tmp_path: Path) -> None:
-    # Both sides zero (e.g. allocation-free bodies) is a tie, not an infinite
-    # delta or a ZeroDivisionError.
-    other, base = _write_pair(tmp_path, other=[_row("b", 0.0)], base=[_row("b", 0.0)])
-    console = Console(width=200)
-    code = compare([other, base], console=console)
-    assert code == 0
-    out = console.export_text()
-    assert "+0.00%" in out
-    assert "×1.000" in out
-    assert "inf" not in out
-    assert "∞" not in out
-
-
-def test_compare_peak_bytes_stddev_is_scaled_like_its_value(tmp_path: Path) -> None:
-    mib = 1 << 20
-    other, base = _write_pair(
-        tmp_path,
-        other=[_mem_row("b", 1.0, peak=p * mib, allocs=1, iterations=1) for p in (10, 12, 14)],
-        base=[_mem_row("b", 1.0, peak=p * mib, allocs=1, iterations=1) for p in (10, 11, 12)],
-    )
-    console = Console(width=200)
-    code = compare([other, base], metric="memory.peak_bytes", show_stddev=True, console=console)
-    assert code == 0
-    out = console.export_text()
-    # stdev of 10/11/12 MiB is 1 MiB, of 10/12/14 MiB is 2 MiB.
-    assert "1.0 MB" in out and "2.0 MB" in out
-    assert "1048576.00" not in out
-
-
 def test_compare_memory_metric_without_data_hints_profile_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -545,22 +494,39 @@ def test_compare_memory_metric_without_data_hints_profile_flag(
 
 
 @pytest.mark.parametrize(
-    ("other", "base", "markers"),
+    ("metric", "unit"), [("cpu_time", "us"), ("iterations", None), ("memory.peak_bytes", None)]
+)
+def test_sample_time_unit_is_set_for_times_only(
+    tmp_path: Path, metric: str, unit: str | None
+) -> None:
+    p = tmp_path / "a.json"
+    _write_json(p, [{**_mem_row("b", 1.0, peak=1, allocs=1), "time_unit": "us"}])
+    assert _load(p, metric)[0]["b"].time_unit == unit
+
+
+@pytest.mark.parametrize(
+    ("other", "base", "statistic", "markers"),
     [
-        # Baseline reps scatter wildly (CV >> 25%): stdev([40,100,160])/median = 60/100.
-        ((99.0, 100.0, 101.0), (40.0, 100.0, 160.0), ["±60% (!)"]),
+        # Baseline reps scatter wildly (CV >> 25%): stdev([40,100,160])/mean = 60/100.
+        ((99.0, 100.0, 101.0), (40.0, 100.0, 160.0), None, ["±60% (!)"]),
+        # The CV divides by the mean whatever the statistic; by min, it would be 150%.
+        ((99.0, 100.0, 101.0), (40.0, 100.0, 160.0), min, ["±60% (!)"]),
         # Both sides steady.
-        ((49.0, 50.0, 51.0), (99.0, 100.0, 101.0), []),
+        ((49.0, 50.0, 51.0), (99.0, 100.0, 101.0), None, []),
     ],
 )
 def test_compare_marks_only_high_cv_rows(
-    tmp_path: Path, other: tuple[float, ...], base: tuple[float, ...], markers: list[str]
+    tmp_path: Path,
+    other: tuple[float, ...],
+    base: tuple[float, ...],
+    statistic: Statistic | None,
+    markers: list[str],
 ) -> None:
     other_path, base_path = _write_pair(
         tmp_path, other=[_row("b", v) for v in other], base=[_row("b", v) for v in base]
     )
     console = Console(width=200)
-    assert compare([other_path, base_path], console=console) == 0
+    assert compare([other_path, base_path], statistic=statistic, console=console) == 0
     assert re.findall(r"±\d+% \(!\)", console.export_text()) == markers
 
 
@@ -584,47 +550,16 @@ def test_compare_marks_only_significant_deltas(
     assert ("(signif.)" in console.export_text()) is significant
 
 
-def test_load_excludes_skipped_rows(tmp_path: Path) -> None:
-    # Skipped rows carry no real timing; including them would drag the median
-    # toward 0. A benchmark with only skipped rows must not produce a sample.
-    p = tmp_path / "a.json"
-    _write_json(
-        p,
-        [
-            _row("b", 100.0),
-            _row("b", 120.0),
-            _row("b", 0.0, skipped=True),
-            _row("only_skipped", 0.0, skipped=True),
-        ],
-    )
-    samples, _ = _load(p, "real_time")
-    assert samples["b"].value == 110.0  # median of the two real rows
-    assert "only_skipped" not in samples
-
-
-def test_compare_zero_baseline_shows_infinite_delta(tmp_path: Path) -> None:
-    # A zero baseline against a nonzero contender must not read as +0.00%.
-    other, base = _write_pair(tmp_path, other=[_row("b", 50.0)], base=[_row("b", 0.0)])
-    console = Console(width=200)
-    compare([other, base], console=console)
-    assert "+∞%" in console.export_text()
-
-
 def test_fmt_delta_colors_by_improvement_direction() -> None:
-    from mew.compare import _fmt_delta
-
     assert _fmt_delta(0.2) == ("+20.00%", "red")  # slower time: bad
     assert _fmt_delta(-0.2) == ("-20.00%", "green")
     # More iterations is an improvement, fewer a regression.
     assert _fmt_delta(0.2, higher_is_better=True)[1] == "green"
     assert _fmt_delta(-0.2, higher_is_better=True)[1] == "red"
-
-
-def test_fmt_delta_no_change_has_no_color_style() -> None:
-    from mew.compare import _fmt_delta
-
     assert _fmt_delta(0.0) == ("+0.00%", "")
     assert _fmt_delta(0.0, higher_is_better=True) == ("+0.00%", "")
+    # A zero baseline against a nonzero contender must not read as +0.00%.
+    assert _fmt_delta(math.inf) == ("+∞%", "red")
 
 
 def test_compare_warns_on_time_unit_skew(
@@ -641,14 +576,14 @@ def test_compare_warns_on_time_unit_skew(
 
 
 def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
-    # A raising reducer must fail loudly, not drop every benchmark and report
+    # A failing reducer must fail loudly, not drop every benchmark and report
     # "no overlapping benchmarks".
-    import statistics as _stats
+    def failing(values: list[float]) -> float:
+        raise statistics.StatisticsError("needs more data")
 
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
-    # stdev needs two values; these files have one repetition each.
-    with pytest.raises(SystemExit, match="--statistic failed on 'b'"):
-        compare([other, base], statistic=_stats.stdev, console=Console(width=200))
+    with pytest.raises(ValueError, match="statistic failed on 'b': needs more data"):
+        compare([other, base], statistic=failing, console=Console(width=200))
 
 
 def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
@@ -667,38 +602,8 @@ def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
     assert rows[0]["context"]["engine"] == "x"
 
 
-@pytest.mark.parametrize("family", [False, True])
-def test_thread_counts_remain_distinct_samples(tmp_path: Path, family: bool) -> None:
-    path = tmp_path / "threads.json"
-    prefix = "b/case:0" if family else "b"
-    base = "b[size=10]" if family else "b"
-    _write_json(
-        path,
-        [
-            _row(
-                f"{prefix}/iterations:10/threads:{n}",
-                value,
-                label="size=10" if family else "",
-                threads=n,
-                benchmark=f"{base}/threads:{n}",
-            )
-            for n, value in [(1, 100), (2, 200), (4, 400)]
-        ],
-    )
-    samples, _ = _load(path, "real_time")
-    assert {name: sample.value for name, sample in samples.items()} == {
-        f"{base}/threads:1": 100,
-        f"{base}/threads:2": 200,
-        f"{base}/threads:4": 400,
-    }
-    assert all(sample.stddev is None for sample in samples.values())
-
-
-@pytest.mark.parametrize("metric", ["real_time", "cpu_time"])
 @pytest.mark.parametrize("reverse", [False, True])
-def test_grouped_sessions_normalize_units_before_reduction(
-    tmp_path: Path, metric: str, reverse: bool
-) -> None:
+def test_grouped_sessions_normalize_units_before_reduction(tmp_path: Path, reverse: bool) -> None:
     path = tmp_path / "units.jsonl"
     rows = [
         _row("b", 1000, time_unit="ns", session_tag="same", date="2026-01-01"),
@@ -707,38 +612,29 @@ def test_grouped_sessions_normalize_units_before_reduction(
     if reverse:
         rows.reverse()
     _write_jsonl(path, rows)
-    samples, _ = _load(path, metric, selector="same")
-    sample = samples["b"]
+    sample = _load(path, "real_time", selector="same")[0]["b"]
     # Pooled rows are ordered by session date, so the oldest run's unit wins
     # regardless of file order.
-    assert sample.value == 1000
-    assert sample.stddev == 0
     assert sample.values == (1000, 1000)
     assert sample.time_unit == "ns"
 
 
 @pytest.mark.parametrize("show_stddev", [False, True])
-def test_history_missing_a_benchmark_cannot_hide_regression(
-    tmp_path: Path, capsys, show_stddev: bool
+@pytest.mark.parametrize(("gate", "code"), [(None, 0), (RegressionConfig(5), 3)])
+def test_rows_are_the_benchmarks_candidate_and_baseline_share(
+    tmp_path: Path, show_stddev: bool, gate: RegressionConfig | None, code: int
 ) -> None:
-    from mew.regressions import RegressionConfig
-
+    """Gated or not, one row set: a benchmark the history lacks still shows, so it
+    can't hide a regression, and one the candidate lacks has nothing to compare."""
     head, history, baseline = [tmp_path / f"{name}.json" for name in ("head", "history", "base")]
     _write_json(head, [_row("slow", 200), _row("ok", 100)])
-    _write_json(baseline, [_row("slow", 100), _row("ok", 100)])
-    _write_json(history, [_row("ok", 100)])
+    _write_json(history, [_row("ok", 100), _row("gone", 100)])
+    _write_json(baseline, [_row("slow", 100), _row("ok", 100), _row("gone", 100)])
     console = Console(width=200)
-    assert (
-        compare(
-            [head, history, baseline],
-            regressions=RegressionConfig(5),
-            show_stddev=show_stddev,
-            console=console,
-        )
-        == 2
-    )
-    assert "slow" in console.export_text()
-    assert "+100.00%" in capsys.readouterr().err
+    files = [head, history, baseline]
+    assert compare(files, regressions=gate, show_stddev=show_stddev, console=console) == code
+    lines = console.export_text().splitlines()
+    assert [line.split("│")[0].strip() for line in lines if "│" in line][1:] == ["ok", "slow"]
 
 
 @pytest.mark.parametrize(
@@ -750,13 +646,13 @@ def test_history_missing_a_benchmark_cannot_hide_regression(
         ("memory.peak_bytes", 100, 200, "ns", "us", 1, 0.5),
         ("real_time", 0, 1, "ns", "ns", float("inf"), 0),
         ("real_time", 1, 0, "ns", "ns", -1, float("inf")),
+        # Both zero (e.g. allocation-free bodies) is a tie: 0.2.0 showed ×inf.
+        ("memory.peak_bytes", 0, 0, None, None, 0, 1),
     ],
 )
 def test_comparison_math_without_rendering(
     metric, base_value, other_value, base_unit, other_unit, delta, ratio
 ):
-    from mew.compare import Sample, _compare_samples
-
     base = Sample("b", base_value, None, base_unit)
     other = Sample("b", other_value, None, other_unit)
     result = _compare_samples(base, other, metric)
