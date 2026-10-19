@@ -1,7 +1,7 @@
 # Configuration
 
 `mew` reads `[tool.mew]` from the nearest `pyproject.toml`. All keys are optional.
-Both kebab-case and snake_case spellings are accepted.
+Both kebab-case and snake_case spellings are accepted, but not both for one key.
 
 ```toml
 [tool.mew]
@@ -23,13 +23,28 @@ setup = "benchmarks/conf.py"
 capture = "fd"
 ```
 
+`mew run`, `mew list`, and `mew compare` check the table before they start and
+stop with exit code 2 on an error. An unknown key is an error, so a typo such as
+`benchpath` does not silently leave the default in place:
+
+```console
+$ mew list
+mew: invalid config: unknown key 'benchpath' in [tool.mew]; did you mean 'benchpaths'?
+```
+
+An invalid `statistic` also stops `mew run`, not only `mew compare`. When
+`mew compare` gates on regressions, it checks `[tool.mew.regressions]` and its
+allowlist rules in the same way (see {doc}`regressions`).
+
 ## Where measurement settings live
 
 The config file holds project settings such as discovery paths and regression
 rules. Configure measurements in decorators or CLI flags:
 
 - **Per benchmark** — decorator options (`min_time=`, `repetitions=`,
-  `iterations=`, `unit=`, …). These take precedence over global flags.
+  `iterations=`, `unit=`, …). These take precedence over global flags, except
+  that a fixed iteration count such as `--min-time 100x` also replaces a
+  decorator's `min_time` in seconds.
 - **Per invocation** — `mew run` flags (`--min-time`, `--min-warmup-time`,
   `--repetitions`, `--random-interleaving`). Use a task runner or CI
   configuration for persistent invocation defaults.
