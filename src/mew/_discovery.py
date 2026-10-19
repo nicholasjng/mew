@@ -43,21 +43,17 @@ def select_entries(
     selectors: Sequence[Selector],
     *,
     names: Sequence[re.Pattern[str]] = (),
-    pattern: re.Pattern[str] | None = None,
-    tags: Iterable[str] = (),
 ) -> list[Entry]:
-    """Select entries without filesystem access, imports, or registry mutation.
+    """Scope entries to path selectors without filesystem access, imports, or registry mutation.
 
-    Each candidate pairs an entry with its resolved source path. Path selectors
-    and stdin names form an OR group; the global pattern and tags narrow it.
-    An unfiltered path selects everything beneath it unless stdin names restrict
-    that discovery path. Family filters produce views without changing entries.
+    Each candidate pairs an entry, already selected by ``-k`` and ``--tag`` through
+    :meth:`Registry.filter`, with its resolved source path. The filters of the path
+    selectors that include it and the stdin names form an OR group. An unfiltered
+    path selects everything beneath it unless stdin names restrict that discovery
+    path. Family filters produce views without changing entries.
     """
-    wanted = set(tags)
     selected = []
     for entry, source in candidates:
-        if wanted and not wanted.intersection(entry.tags):
-            continue
         applicable = [
             selector.pattern
             for selector in selectors
@@ -65,10 +61,11 @@ def select_entries(
         ]
         if not applicable:
             continue
-        unrestricted = None in applicable and not names
-        filters = [] if unrestricted else [rx for rx in applicable if rx is not None] + list(names)
-        narrowed = narrow_entry(entry, any_of=filters, all_of=pattern)
-        if narrowed is not None:
+        if None in applicable and not names:
+            selected.append(entry)
+            continue
+        filters = [f for f in applicable if f is not None] + list(names)
+        if (narrowed := narrow_entry(entry, filters)) is not None:
             selected.append(narrowed)
     return selected
 

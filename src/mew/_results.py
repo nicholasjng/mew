@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import statistics
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any, cast
 from mew._console import overflow
 from mew._statistics import Statistic
 from mew._typing import BenchmarkResult
-from mew.reporter import _ROW_STAMP_FIELDS, _open_text, _to_ns, canonical_row_name
+from mew.reporter import _ROW_STAMP_FIELDS, _open_text, _to_ns
 
 _TIME_METRICS = frozenset({"real_time", "cpu_time"})
 
@@ -42,7 +43,8 @@ class Sample:
     stddev : float or None
         Sample stddev across repetitions; ``None`` for a single repetition.
     time_unit : str or None
-        The unit of ``value``; ``None`` for unitless metrics.
+        The unit of ``value`` for ``real_time`` and ``cpu_time``, e.g. ``"ns"``;
+        ``None`` for the other metrics, which are counts or bytes.
     values : tuple[float, ...]
         The per-repetition values, in ``value``'s unit, for the significance test.
     """
@@ -55,10 +57,16 @@ class Sample:
 
     @property
     def cv(self) -> float | None:
-        """Coefficient of variation, or None without repetition data."""
-        if self.stddev is None or not self.value:
+        """Coefficient of variation: ``stddev`` over the mean of ``values``.
+
+        Uses the mean whatever statistic ``value`` holds, so the choice of
+        statistic does not move the noise marker. ``None`` without repetitions
+        or for a zero mean.
+        """
+        if self.stddev is None or not self.values:
             return None
-        return self.stddev / abs(self.value)
+        mean = statistics.fmean(self.values)
+        return self.stddev / abs(mean) if mean else None
 
 
 def _is_measurement_row(row: dict[str, Any]) -> bool:
@@ -113,9 +121,13 @@ def _rows_from_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _session_key(row: dict[str, Any]) -> tuple[str, str, str]:
-    """Return ``(date, host, id)`` for a result row."""
+    """Return ``(date, id, host)`` for a result row.
+
+    Sorts oldest first: the ISO-8601 date leads, and the time-ordered UUIDv7 id
+    breaks ties between equal dates.
+    """
     sess = _session_block(row)
-    return (str(sess.get("date") or ""), str(sess.get("host") or ""), str(sess.get("id") or ""))
+    return (str(sess.get("date") or ""), str(sess.get("id") or ""), str(sess.get("host") or ""))
 
 
 def _session_block(row: dict[str, Any]) -> dict[str, Any]:
@@ -166,7 +178,7 @@ def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dic
     for full, sample in samples.items():
         short = full.rsplit("::", 1)[-1]
         if short in renamed:
-            raise SystemExit(
+            raise ValueError(
                 f"{source}: --key {key} maps both {origin[short]!r} and {full!r} "
                 f"to {short!r}; disambiguate or use the default --key name"
             )
@@ -176,23 +188,27 @@ def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dic
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
-    """Read a result file's rows, raising a one-line ``SystemExit`` on failure."""
+    """Read a result file's rows.
+
+    Errors carry a one-line message naming the file: :class:`ValueError` for an
+    unsupported extension or malformed contents, :class:`OSError` (of the
+    original subclass) if the file can't be read.
+    """
     name = path.name.lower()
     if name.endswith(".json"):
         reader = _rows_from_json
     elif name.endswith((".jsonl", ".jsonl.gz")):
         reader = _rows_from_jsonl
     else:
-        raise SystemExit(f"unsupported result file: {path} (use .json, .jsonl, or .jsonl.gz)")
+        raise ValueError(f"unsupported result file: {path} (use .json, .jsonl, or .jsonl.gz)")
     try:
         return reader(path)
     except FileNotFoundError as e:
-        raise SystemExit(f"result file not found: {path}") from e
+        raise FileNotFoundError(f"result file not found: {path}") from e
     except OSError as e:
-        raise SystemExit(f"cannot read result file {path}: {e.strerror or e}") from e
-    except ValueError as e:
-        # _rows_from_* messages already carry path (and line) context.
-        raise SystemExit(str(e)) from e
+        raise type(e)(f"cannot read result file {path}: {e.strerror or e}") from e
+    except (EOFError, zlib.error) as e:  # a truncated or corrupt archive
+        raise ValueError(f"cannot read result file {path}: {e}") from e
 
 
 def _samples_from_groups(
@@ -209,13 +225,13 @@ def _samples_from_groups(
         try:
             center, stddev = _aggregate_values(values, statistic)
         except statistics.StatisticsError as e:
-            # E.g. gmean with zero timings; fail rather than drop the benchmark.
-            raise SystemExit(f"--statistic failed on {name!r}: {e}") from e
+            # E.g. gmean over a zero before Python 3.13; fail rather than drop the benchmark.
+            raise ValueError(f"statistic failed on {name!r}: {e}") from e
         samples[name] = Sample(
             name=name,
             value=center,
             stddev=stddev,
-            time_unit=group[0].get("time_unit"),
+            time_unit=group[0].get("time_unit") if metric in _TIME_METRICS else None,
             values=tuple(values),
         )
     return samples
@@ -236,13 +252,15 @@ def _group_by_session(
 
 
 def _split_selector(raw: str) -> tuple[Path, str | None]:
-    """Split ``path@selector``, preserving existing paths that contain ``@``."""
-    if Path(raw).exists():
-        return Path(raw), None
+    """Split ``path@selector`` at the last ``@``, if a result-file extension precedes it.
+
+    Otherwise the whole argument is the path, so ``a@b.json`` names a file.
+    Decided by name alone, so an argument means the same whichever files exist.
+    """
     base, sep, selector = raw.rpartition("@")
-    if not sep or not base:
-        return Path(raw), None
-    return Path(base), selector
+    if sep and base.lower().endswith((".json", ".jsonl", ".jsonl.gz")):
+        return Path(base), selector
+    return Path(raw), None
 
 
 def _select_rows(
@@ -252,16 +270,17 @@ def _select_rows(
 ) -> list[dict[str, Any]]:
     """Pick the rows a ``path@selector`` names.
 
-    ``None`` and ``latest`` select the newest session. Any other selector is a
-    session tag; every session carrying it is selected, so repeated runs under
-    one tag pool as repetitions. ``mew sessions`` lists what a file holds.
+    ``None`` and ``latest`` select the newest session; :func:`mew.run` rejects
+    ``latest`` as a session tag. Any other selector is a session tag; every
+    session carrying it is selected, so repeated runs under one tag pool as
+    repetitions. ``mew sessions`` lists what a file holds.
     """
     if not by_session:
-        raise SystemExit(f"{path}: no measurements in file")
+        raise ValueError(f"{path}: no measurements in file")
     if selector is None or selector == "latest":
         return by_session[max(by_session)]
     if not selector:
-        raise SystemExit(f"{path}: empty session selector after '@'")
+        raise ValueError(f"{path}: empty session selector after '@'")
     tagged = [
         rows for rows in by_session.values() if _session_block(rows[0]).get("tag") == selector
     ]
@@ -271,7 +290,7 @@ def _select_rows(
         )
         shown = ", ".join(tags[:5]) + overflow(len(tags), 5)
         hint = f" (tags in file: {shown})" if tags else " (no tagged sessions in file)"
-        raise SystemExit(f"{path}: no session tagged {selector!r}{hint}; see `mew sessions {path}`")
+        raise ValueError(f"{path}: no session tagged {selector!r}{hint}; see `mew sessions {path}`")
     return [r for rows in tagged for r in rows]
 
 
@@ -291,7 +310,7 @@ def _load(
     selected = _select_rows(path, by_session, selector)
     # The newest selected row speaks for the column's provenance.
     rep_row = max(selected, key=_session_key)
-    # Repetitions of one benchmark share its canonical `name[label]`.
+    # Repetitions of one benchmark share its `name[label]`.
     groups: dict[str, list[dict[str, Any]]] = {}
     for r in selected:
         groups.setdefault(r["benchmark"], []).append(r)
@@ -317,11 +336,29 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
 
     ``rows`` counts every stored row of the session; ``benchmarks`` counts
     distinct measured benchmarks (aggregate and skipped rows excluded).
+
+    Parameters
+    ----------
+    path : str or Path
+        Result file to read: ``.json``, ``.jsonl``, or ``.jsonl.gz``.
+
+    Returns
+    -------
+    list[SessionSummary]
+        One summary per session; sessions with the same date are ordered by
+        their time-ordered id.
+
+    Raises
+    ------
+    ValueError
+        If the file has another extension or is not a mew result file.
+    OSError
+        If the file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
     by_session = _group_by_session(_read_rows(Path(path)), measured_only=False)
     out: list[SessionSummary] = []
-    for (date, host, sid), session_rows in reversed(by_session.items()):
-        measured = {canonical_row_name(r) for r in session_rows if _is_measurement_row(r)}
+    for (date, sid, host), session_rows in reversed(by_session.items()):
+        measured = {r["benchmark"] for r in session_rows if _is_measurement_row(r)}
         out.append(
             SessionSummary(
                 id=sid or None,
@@ -350,5 +387,12 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
     -------
     list[BenchmarkResult]
         Stored rows, including aggregate and skipped rows.
+
+    Raises
+    ------
+    ValueError
+        If the file has another extension or is not a mew result file.
+    OSError
+        If the file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
     return cast("list[BenchmarkResult]", _read_rows(Path(path)))

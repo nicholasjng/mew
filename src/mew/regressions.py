@@ -18,6 +18,8 @@ from enum import Enum
 from pathlib import Path
 from typing import cast
 
+from mew.config import _read_table
+
 
 class Verdict(Enum):
     """How one benchmark's delta was classified by the gate."""
@@ -27,7 +29,7 @@ class Verdict(Enum):
 
     REGRESSED = "regressed"
     """Slower than the active threshold (a rule-supplied one when a rule matches,
-    the default otherwise). Fails the gate (exit code 2)."""
+    the default otherwise). Fails the gate (exit code 3)."""
 
     ALLOWED_OVER = "allowed_over"
     """Over the default threshold but inside a rule-supplied one; soft warning."""
@@ -153,16 +155,18 @@ class RegressionConfig:
         return BenchmarkVerdict(name, delta_pct, verdict, rule)
 
 
-def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
+def _coerce_rule(raw: Mapping[str, object]) -> AllowRule:
+    raw = _read_table(
+        raw, ("pattern", "reason", "ignore", "threshold"), "[[tool.mew.regressions.allow]]"
+    )
     pattern = raw.get("pattern")
     if not isinstance(pattern, str) or not pattern:
-        raise ValueError(f"{source}: allow rule missing 'pattern'")
+        raise ValueError("allow rule missing 'pattern'")
 
     reason = raw.get("reason")
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError(
-            f"{source}: allow rule {pattern!r}: 'reason' is required "
-            "(document why this is allowlisted)"
+            f"allow rule {pattern!r}: 'reason' is required (document why this is allowlisted)"
         )
 
     try:
@@ -174,7 +178,7 @@ def _coerce_rule(raw: Mapping[str, object], *, source: Path | str) -> AllowRule:
         )
     except (TypeError, ValueError) as e:
         # The model owns validation; the loader adds configuration context.
-        raise ValueError(f"{source}: allow rule {pattern!r}: {e}") from e
+        raise ValueError(f"allow rule {pattern!r}: {e}") from e
 
 
 def load_config(
@@ -196,6 +200,13 @@ def load_config(
     -------
     RegressionConfig
         Parsed threshold and ordered allowlist rules.
+
+    Raises
+    ------
+    ValueError
+        If a key is unknown, such as a snake_case spelling of a dashed key, or
+        has an invalid value, in ``[tool.mew.regressions]`` or in one of its
+        ``allow`` rules.
     """
     threshold = default_threshold if default_threshold is not None else 5.0
     source = root / "pyproject.toml" if root is not None else None
@@ -204,16 +215,18 @@ def load_config(
 
     with source.open("rb") as fh:
         doc = tomllib.load(fh)
-    # Dashed keys (TOML idiom) map onto snake_case, as in `[tool.mew]`.
-    raw_table = doc.get("tool", {}).get("mew", {}).get("regressions", {})
-    table = {k.replace("-", "_"): v for k, v in raw_table.items()}
-    if default_threshold is None:
-        threshold = table.get("default_threshold", threshold)
-    allow = table.get("allow", [])
-    if not isinstance(allow, list) or not all(isinstance(r, dict) for r in allow):
-        raise ValueError(f"{source}: [tool.mew.regressions] allow must be an array of tables")
-    rules = tuple(_coerce_rule(raw, source=source) for raw in allow)
     try:
+        table = _read_table(
+            doc.get("tool", {}).get("mew", {}).get("regressions", {}),
+            ("default-threshold", "allow"),
+            "[tool.mew.regressions]",
+        )
+        if default_threshold is None:
+            threshold = table.get("default_threshold", threshold)
+        allow = table.get("allow", [])
+        if not isinstance(allow, list) or not all(isinstance(r, dict) for r in allow):
+            raise ValueError("[tool.mew.regressions] allow must be an array of tables")
+        rules = tuple(_coerce_rule(raw) for raw in allow)
         return RegressionConfig(default_threshold=threshold, rules=rules)
     except ValueError as e:
         raise ValueError(f"{source}: {e}") from e
@@ -237,7 +250,7 @@ def render_panel(
     -------
     (text, exit_code) : tuple[str, int]
         Panel body (empty if nothing to report) and the exit code.
-        ``exit_code`` is 2 if any verdict is :attr:`Verdict.REGRESSED`, else 0.
+        ``exit_code`` is 3 if any verdict is :attr:`Verdict.REGRESSED`, else 0.
     """
     regressed = [v for v in verdicts if v.verdict is Verdict.REGRESSED]
     allowed_over = [v for v in verdicts if v.verdict is Verdict.ALLOWED_OVER]
@@ -268,7 +281,8 @@ def render_panel(
     )
     lines.append("")
     lines.append(summary)
-    return "\n".join(lines), (2 if regressed else 0)
+    # 3 keeps a failed gate apart from 1 (nothing to compare) and 2 (usage errors).
+    return "\n".join(lines), (3 if regressed else 0)
 
 
 def report(
@@ -291,7 +305,7 @@ def report(
     Returns
     -------
     int
-        ``2`` if any benchmark regressed, else ``0``. Nothing is printed when
+        ``3`` if any benchmark regressed, else ``0``. Nothing is printed when
         there is nothing to report.
     """
     text, code = render_panel(verdicts, default_threshold=default_threshold)
