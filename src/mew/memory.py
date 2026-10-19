@@ -114,11 +114,15 @@ def manager(stack: ExitStack) -> MemrayManager:
     -------
     MemrayManager
         A manager to pass to :func:`mew.run`.
+
+    Raises
+    ------
+    ImportError
+        If memray is not installed.
     """
     if find_spec("memray") is None:
-        raise SystemExit(
-            "memray is required for memory profiling. "
-            "Install it with: uv add --optional memory memray"
+        raise ImportError(
+            "memray is required for memory profiling. Install it with: uv add 'mew-bench[memory]'"
         )
     tmpdir = stack.enter_context(tempfile.TemporaryDirectory())
     return MemrayManager(Path(tmpdir))

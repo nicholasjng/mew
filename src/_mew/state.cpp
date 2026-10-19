@@ -166,13 +166,6 @@ void register_state(nb::module_& m) {
                                  "Active microbenchmark state.\n"
                                  "Iterate with `for _ in state:` to time the body.")
         .def(
-            "keep_running_batch",
-            [](benchmark::State& self, int64_t n) {
-                if (n <= 0) throw nb::value_error("batch size must be positive");
-                return self.KeepRunningBatch(n);
-            },
-            "n"_a, "Advance by `n` iterations and return whether another batch should run.")
-        .def(
             "batches",
             [](benchmark::State& self, int64_t n) {
                 if (n <= 0) throw nb::value_error("batch size must be positive");

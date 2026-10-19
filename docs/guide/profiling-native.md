@@ -58,12 +58,6 @@ class State:
             self._i += n
             yield n
 
-    def keep_running_batch(self, n: int) -> bool:
-        if self._i >= self._n:
-            return False
-        self._i += n
-        return True
-
     def range(self, pos: int = 0) -> int:
         return self._case
 

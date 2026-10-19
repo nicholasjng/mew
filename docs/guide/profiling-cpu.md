@@ -24,6 +24,11 @@ On free-threaded Python, `--sample` needs 3.15t and Tachyon. Pyinstrument's
 native sampler would enable the GIL, so mew rejects pyinstrument on
 free-threaded builds rather than letting the import change what is measured.
 
+A sampler that is missing or can't run here stops `mew run` with exit code 2
+before any benchmark runs. From Python, {func}`mew.cpu.manager` raises
+`ImportError` for a missing pyinstrument and `RuntimeError` for a sampler the
+interpreter rejects.
+
 ## Choosing a sampler
 
 | `--sampler`      | Python 3.11–3.14 | Python 3.15+ | Free-threaded 3.15t |
@@ -76,7 +81,7 @@ $ mew run --sample-html cpu.html
 | Flag                  | Default | Notes                                     |
 | --------------------- | ------- | ----------------------------------------- |
 | `--sample-interval F` | `1e-4`  | Smaller = more samples = higher overhead. |
-| `--sample-top-k K`    | `5`     | Instructions per row; see below. pyinstrument ignores it. |
+| `--sample-top-k K`    | `5`     | Instructions per row; see below. Must be at least 1, also for pyinstrument, which reads none. |
 
 The profiling pass is **separate** from the timing pass, so profiler overhead doesn't pollute timing numbers.
 It repeats the iteration count selected by the timing pass; don't read timings out
@@ -198,10 +203,15 @@ can't measure empty:
 | `profiler`            | `"tachyon"` or `"pyinstrument"`.                                           |
 | `wall_time`           | Seconds sampled: the timing loop minus `state.pause()` regions.            |
 | `sample_count`        | Samples taken. Each sampler counts differently, so compare times instead.  |
-| `top_function`        | The function with the most self time; `line` is `null` under pyinstrument. |
+| `top_function`        | The function with the most self time; `line` is `null` under pyinstrument, the whole key `null` without a sample. |
 | `top_instructions`    | The hottest bytecode instructions; empty unless free-threaded 3.15+.       |
 | `unspecialized_share` | Share of time in generic instructions; `null` unless free-threaded 3.15+.  |
 
 A synthetic frame such as `<GC>` has `null` for `file` and `line`.
 {class}`mew.cpu.CpuProfile` types the block. `context.python` records which
 interpreter wrote a row; see {doc}`context`.
+
+A pass shorter than the sampling interval can end without a sample. Its row
+still has a `cpu_profile`, with `sample_count` 0, `top_function` `null`,
+`top_instructions` empty and `unspecialized_share` `null`, and the console
+shows `0 samples`. Raise `--min-time` or lower `--sample-interval` to sample it.
