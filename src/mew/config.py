@@ -13,9 +13,8 @@ from mew._statistics import resolve_statistic
 # `mew run --capture` values; also accepted as `[tool.mew] capture`.
 CAPTURE_MODES = ("fd", "no")
 
-# `[tool.mew]` keys in snake_case; `regressions` is the table that
-# `mew.regressions.load_config` reads.
-_KEYS = ("benchpaths", "python_files", "setup", "statistic", "capture", "regressions")
+# `[tool.mew]` keys; `regressions` is the table that `mew.regressions.load_config` reads.
+_KEYS = ("benchpaths", "python-files", "setup", "statistic", "capture", "regressions")
 
 
 @dataclass(slots=True)
@@ -55,20 +54,14 @@ def _read_table(raw: Mapping[str, Any], known: Sequence[str], table: str) -> dic
     """Return a config table with its dashed keys (the TOML idiom) in snake_case.
 
     A key not in ``known`` raises, because a typo would otherwise load the
-    default silently, and so does a key set in both spellings.
+    default silently; a snake_case spelling of a dashed key is one too.
     """
-    spelled: dict[str, str] = {}
     for key in raw:
-        name = key.replace("-", "_")
-        if name not in known:
-            spellings = [*known, *(k.replace("_", "-") for k in known)]
-            close = difflib.get_close_matches(key, spellings, n=1)
+        if key not in known:
+            close = difflib.get_close_matches(key, known, n=1)
             hint = f"; did you mean {close[0]!r}?" if close else ""
             raise ValueError(f"unknown key {key!r} in {table}{hint}")
-        if name in spelled:
-            raise ValueError(f"{table} sets both {spelled[name]!r} and {key!r}; keep one")
-        spelled[name] = key
-    return {name: raw[key] for name, key in spelled.items()}
+    return {key.replace("-", "_"): value for key, value in raw.items()}
 
 
 def _parse_str_list(raw: Any, key: str) -> list[str]:
@@ -110,8 +103,8 @@ def load(start: Path | None = None) -> Config:
     Raises
     ------
     ValueError
-        If a key is unknown, is set in both its dashed and snake_case spelling,
-        or has an invalid value.
+        If a key is unknown, such as a snake_case spelling of a dashed key, or
+        has an invalid value.
     """
     import tomllib
 

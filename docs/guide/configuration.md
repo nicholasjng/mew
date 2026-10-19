@@ -1,7 +1,7 @@
 # Configuration
 
 `mew` reads `[tool.mew]` from the nearest `pyproject.toml`. All keys are optional.
-Both kebab-case and snake_case spellings are accepted, but not both for one key.
+Keys are spelled with dashes, as TOML has it: `python-files`, not `python_files`.
 
 ```toml
 [tool.mew]
