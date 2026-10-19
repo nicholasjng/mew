@@ -47,8 +47,8 @@ $ mew compare head.json baseline.json --stddev
 
 `compare` reduces each benchmark's per-repetition rows itself — median by
 default, or `--statistic` for `mean`, `p95`, or `gmean` — and
-computes the coefficient of variation (stddev / median). Any row above **25%** is
-flagged red as `±N% (!)`:
+computes the coefficient of variation (stddev / mean, whatever the statistic).
+Any row above **25%** is flagged red as `±N% (!)`:
 
 ```text
 Benchmark    │ baseline │ ± stddev │            head │      Δ% │ speedup
@@ -58,12 +58,6 @@ bench_parse  │  1.20 us │  0.31 us │ 1.44 us ±26% (!) │ +20.00% │  ×
 
 Treat a flagged row as inconclusive. Improve the environment or collect more
 repetitions before interpreting its delta.
-
-:::{warning}
-Do not use `report_aggregates_only=True` for files passed to `mew compare`.
-Comparison statistics require per-repetition rows; Google Benchmark's aggregate
-rows are discarded.
-:::
 
 ## Tell a real delta from noise
 
@@ -115,6 +109,7 @@ $ mew compare head.json baseline.json \
       --regression-threshold 5% --exit-non-zero-on-regression
 ```
 
-The gate exits 2 when a benchmark regresses past the threshold. See
-{doc}`regressions` for per-benchmark thresholds and the allowlist that keeps
-known-noisy benchmarks from failing the build.
+The gate exits with code 3 when a benchmark regresses past the threshold, and
+with 1 or 2 when there is nothing to compare or the command is wrong (see
+[](cli.md#exit-codes)). See {doc}`regressions` for per-benchmark thresholds and
+the allowlist that keeps known-noisy benchmarks from failing the build.

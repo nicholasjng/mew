@@ -64,16 +64,15 @@ around work that takes much longer than that.
 ## Repetitions vs iterations
 
 - **Iterations** are the inner-loop count. Google Benchmark chooses it to reach
-  `min_time`; setting it explicitly disables auto-tuning, so `iterations` cannot
-  be combined with `min_time` or `min_warmup_time` (that raises `TypeError`).
-- **Repetitions** rerun the benchmark, including warm-up, and produce aggregate rows.
-
-Use `report_aggregates_only=True` to hide per-repetition rows.
-
-:::{warning}
-Do not use aggregates-only output with `mew compare`: it discards Google
-Benchmark aggregates and needs the per-repetition rows.
-:::
+  `min_time`; setting it explicitly, with `iterations=100` or
+  `min_time="100x"`, disables auto-tuning, so it cannot be combined with
+  `min_time` in seconds or `min_warmup_time` (that raises `ValueError`).
+- **Repetitions** rerun the benchmark, including warm-up. Result files keep
+  every repetition, which `mew compare` reduces to their median. The console
+  lists every repetition too and, when the run ends, sums up each repeated
+  benchmark in a second table: the median real and CPU time, and the real
+  time's stddev and cv. `mew run --summary-only` leaves out the repetitions and
+  prints only that table; result files still keep every repetition.
 
 ## Real vs. CPU time
 
@@ -128,4 +127,6 @@ anything that depends on the thread count from `state.threads`.
 
 Some benchmarks need their own clock, e.g. GPU work where the CPU launches the kernel and waits asynchronously.
 Set `use_manual_time=True` and call the state's manual-time setter inside the loop.
+The time you set replaces the measured real time, so `use_manual_time` can't be
+combined with `use_real_time` (that raises `ValueError`).
 See the Google Benchmark docs for the exact contract.

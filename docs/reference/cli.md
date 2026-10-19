@@ -3,6 +3,10 @@
 Auto-generated from `mew … --help`. For an introduction and examples,
 see [](../guide/cli.md).
 
+Every command exits with 0 on success, 1 when nothing matched, and 2 on a usage
+or environment error; `mew compare --exit-non-zero-on-regression` exits with 3 on
+a regression. See [](../guide/cli.md#exit-codes).
+
 (cli-root)=
 ## `mew`
 

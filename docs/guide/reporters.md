@@ -17,7 +17,10 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
   row, an indented line lists what has no column: a label the benchmark set,
   its counters and, with `show_cpu=True`, its sample count, hottest function
   and, on free-threaded 3.15+, hottest bytecode instruction. The CLI sets these
-  with `--profile-memory` and `--sample`.
+  with `--profile-memory` and `--sample`. When the run ends, a second table sums
+  up each repeated benchmark, as `mew compare` reduces it; with
+  `show_repetitions=False` (`mew run --summary-only`), repeated benchmarks
+  appear only there.
 
 {class}`~mew.JSONReporter`
 : Streams one `{"session": ..., "context": ..., "benchmarks": [...]}` document
@@ -45,7 +48,7 @@ from mew.compare import read_results, session_summaries
 newest = session_summaries("results.jsonl")[0]
 rows = [
     r for r in read_results("results.jsonl")
-    if r["session"]["id"] == newest.id and not r["aggregate_name"] and not r["skipped"]
+    if r["session"]["id"] == newest.id and not r["skipped"]
 ]
 for name in sorted({r["benchmark"] for r in rows}):
     print(name, median(r["real_time"] for r in rows if r["benchmark"] == name))
@@ -90,7 +93,7 @@ class MetricsExporter:
 ```
 
 Base measurement keys, `benchmark` included, are always present; `session`,
-`context`, `aggregate_unit`, `memory`, and `cpu_profile` are conditional.
+`context`, `memory`, and `cpu_profile` are conditional.
 `benchmark` is the benchmark as
 mew addresses it (`file.py::func[label]`, plus `/threads:N` for threaded runs),
 shared by all rows of one benchmark, so queries group on it without parsing
