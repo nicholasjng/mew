@@ -26,32 +26,37 @@ def _check_key(key: str) -> list[str]:
 def _set_nested(key: str, value: Any) -> None:
     parts = _check_key(key)
     cur: dict[str, Any] = _CONTEXT
-    for i, part in enumerate(parts[:-1]):
-        cur = cur.setdefault(part, {})
-        if isinstance(cur, dict):
-            continue
-        path = ".".join(parts[: i + 1])
-        raise ValueError(
-            f"cannot set context key {key!r}: existing value at {path!r} "
-            f"is not a dict ({type(cur).__name__})"
-        )
-    cur[parts[-1]] = value
+    for part in parts[:-1]:
+        # The last write wins, so a non-dict value on the path, None included,
+        # gives way to a dict.
+        if not isinstance(cur.get(part), dict):
+            cur[part] = {}
+        cur = cur[part]
+    # A copy, so neither the caller's later changes nor a later dotted write
+    # under this key reach the other side.
+    cur[parts[-1]] = copy.deepcopy(value)
 
 
 def set_context(key: str, value: Any) -> None:
     """Set one value in the context that every run records.
+
+    The last write wins: setting ``"dataset"`` replaces everything nested under
+    it, and setting ``"dataset.size"`` replaces a ``"dataset"`` value that is not
+    a dict, ``None`` included, with a new dict.
 
     Parameters
     ----------
     key : str
         Context key. Dotted names nest (``"dataset.size"`` → ``{"dataset": {"size": ...}}``).
     value : Any
-        Stored as is; file reporters write it as JSON, falling back to ``str()``.
+        Stored as a deep copy: changing the object afterwards doesn't change
+        what runs record, and later writes to the context don't change the
+        object. File reporters write it as JSON, falling back to ``str()``.
 
     Raises
     ------
     ValueError
-        If ``key`` is empty, has an empty path segment, or traverses through a non-dict value.
+        If ``key`` is empty or has an empty path segment.
     """
     _set_nested(key, value)
 
@@ -59,8 +64,8 @@ def set_context(key: str, value: Any) -> None:
 def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
     """Set several context values: the mappings in order, then ``kwargs``.
 
-    Dotted keys nest in both forms; pass them as keywords with
-    ``update_context(**{"a.b": 1})``.
+    Each value is set as by :func:`set_context`, so dotted keys nest in both
+    forms; pass them as keywords with ``update_context(**{"a.b": 1})``.
 
     Parameters
     ----------
@@ -72,7 +77,7 @@ def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
     Raises
     ------
     ValueError
-        Same conditions as :func:`set_context`.
+        If a key is empty or has an empty path segment.
     """
     for m in (*mapping, kwargs):
         for k, v in m.items():

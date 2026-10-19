@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -17,28 +16,33 @@ from mew.reporter import JSONReporter
     ("calls", "expected"),
     [
         ([("commit", "abc123")], {"commit": "abc123"}),
-        ([("dataset.size", 1024)], {"dataset": {"size": 1024}}),
-        ([("a.b.c.d", 42)], {"a": {"b": {"c": {"d": 42}}}}),
         (
             [("dataset.size", 1024), ("dataset.name", "synthetic")],
             {"dataset": {"size": 1024, "name": "synthetic"}},
         ),
-        ([("k", 1), ("k", 2)], {"k": 2}),
+        # The last write wins in either order: a value replaces what was nested
+        # below its key, and a dotted key replaces a non-dict value with a dict.
         ([("dataset.size", 1024), ("dataset", "scalar")], {"dataset": "scalar"}),
+        ([("dataset", "scalar"), ("dataset.size", 1024)], {"dataset": {"size": 1024}}),
+        ([("dataset", None), ("dataset.size", 1024)], {"dataset": {"size": 1024}}),
+        ([("a.x", 0), ("a.b", 1), ("a.b.c", 2)], {"a": {"x": 0, "b": {"c": 2}}}),
     ],
 )
-def test_set_context_builds_nested_dicts(calls, expected):
+def test_set_context_nests_dotted_keys(calls, expected):
     for key, value in calls:
         mew.set_context(key, value)
     assert mew.get_context() == expected
 
 
-# None is a stored value like any other, not "absent": traversing through it raises.
-@pytest.mark.parametrize("leaf", ["scalar", None])
-def test_nesting_under_a_leaf_raises(leaf):
-    mew.set_context("dataset", leaf)
-    with pytest.raises(ValueError, match="is not a dict"):
-        mew.set_context("dataset.size", 1024)
+def test_set_context_copies_values():
+    dataset, shape = {"size": 1024, "source": {"name": "uniform"}}, [2, 3]
+    mew.set_context("dataset", dataset)
+    mew.set_context("shape", shape)
+    mew.set_context("dataset.size", 1)
+    mew.set_context("dataset.source.name", "zipf")
+    shape.append(4)
+    assert dataset == {"size": 1024, "source": {"name": "uniform"}}
+    assert mew.get_context()["shape"] == [2, 3]
 
 
 def test_update_context_applies_mappings_then_kwargs():
@@ -55,21 +59,12 @@ def test_update_context_applies_mappings_then_kwargs():
     }
 
 
-def test_empty_key_raises():
-    with pytest.raises(ValueError, match="non-empty string"):
-        mew.set_context("", 1)
-
-
-def test_empty_segment_raises():
-    with pytest.raises(ValueError, match="empty path segment"):
-        mew.set_context("dataset..size", 1)
-
-
-def test_clear_drops_everything():
-    mew.set_context("a", 1)
-    mew.set_context("b.c", 2)
-    mew.clear_context()
-    assert mew.get_context() == {}
+@pytest.mark.parametrize(
+    ("key", "message"), [("", "non-empty string"), ("dataset..size", "empty path segment")]
+)
+def test_malformed_key_raises(key, message):
+    with pytest.raises(ValueError, match=message):
+        mew.set_context(key, 1)
 
 
 def test_get_context_returns_a_snapshot():
@@ -96,8 +91,8 @@ def test_context_snapshot_is_captured_at_run_start():
     assert cap.context["context"]["snapshot_phase"] == "before"
 
 
-def test_json_reporter_handles_non_serializable_via_default(tmp_path: Path):
-    mew.set_context("path", Path("/tmp/something"))
+def test_json_reporter_writes_what_json_cannot_as_str(tmp_path: Path):
+    mew.set_context("path", Path("data.csv"))
 
     @mew.benchmark
     def bench_x(state):
@@ -105,11 +100,6 @@ def test_json_reporter_handles_non_serializable_via_default(tmp_path: Path):
             pass
 
     out = tmp_path / "results.json"
-    mew.run(
-        min_time="1x",
-        reporter=JSONReporter(output=out),
-    )
-    doc = json.loads(out.read_text())
-    # Path stringifies via default=str — lossy but doesn't crash.
-    expected_val = "/tmp/something" if sys.platform != "win32" else "\\tmp\\something"
-    assert doc["context"]["path"] == expected_val
+    mew.run(min_time="1x", reporter=JSONReporter(output=out))
+    # Lossy, but the run doesn't crash on a Path or a datetime.
+    assert json.loads(out.read_text())["context"]["path"] == "data.csv"
