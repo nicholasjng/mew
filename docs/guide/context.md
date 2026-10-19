@@ -50,7 +50,8 @@ the mew that wrote the rows, and so their format.
 Every run gets a time-ordered UUIDv7 session ID, stored on each row.
 
 Set `session.tag` with `--session-tag` or `session_tag=`; `mew compare` can
-select a session in a multi-session file by it (`results.jsonl@before`).
+select a session in a multi-session file by it (`results.jsonl@before`). The tag
+`latest` is reserved: `results.jsonl@latest` selects the newest session.
 Benchmark selection tags (`-t`) are unrelated.
 
 ## Applying context to every run
@@ -86,6 +87,12 @@ mew.set_context("dataset.size", 1000)
 mew.set_context("dataset.kind", "uniform")
 # -> {"dataset": {"size": 1000, "kind": "uniform"}}
 ```
+
+The last write wins. Setting `dataset` replaces everything nested under it, and
+setting `dataset.size` replaces a `dataset` value that is not a dict, `None`
+included, with a new dict. Values are copied when you set them, so changing a
+dict or list you passed changes neither the context nor, through later writes
+to the context, your own object.
 
 A DuckDB query on the resulting run data might look like:
 
