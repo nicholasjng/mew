@@ -94,10 +94,12 @@ class CpuProfile(TypedDict):
     wall_time : float
         Seconds sampled: the timing loop minus ``state.pause()`` regions.
     sample_count : int
-        Samples taken. Each sampler counts differently, so compare
-        ``wall_time`` and ``self_time`` across samplers instead.
-    top_function : TopFunction
-        The function with the most self time.
+        Samples taken, 0 for a pass shorter than the sampling interval. Each
+        sampler counts differently, so compare ``wall_time`` and ``self_time``
+        across samplers instead.
+    top_function : TopFunction or None
+        The function with the most self time; ``None`` when no sample caught
+        the body running, as in a pass shorter than the sampling interval.
     top_instructions : list of TopInstruction
         The ``top_k`` hottest bytecode instructions, hottest first; empty
         unless :func:`reads_instructions`.
@@ -109,7 +111,7 @@ class CpuProfile(TypedDict):
     profiler: str
     wall_time: float
     sample_count: int
-    top_function: TopFunction
+    top_function: TopFunction | None
     top_instructions: list[TopInstruction]
     unspecialized_share: float | None
 
@@ -133,7 +135,9 @@ def manager(
         interpreter versions; free-threaded builds need Tachyon.
     top_k : int, default 5
         How many of the hottest bytecode instructions Tachyon reports where
-        :func:`reads_instructions`; pyinstrument ignores it.
+        :func:`reads_instructions`. pyinstrument reads no instructions, but
+        ``top_k`` is checked for it too, so a bad value fails on every
+        interpreter.
 
     Returns
     -------
@@ -143,18 +147,34 @@ def manager(
     Raises
     ------
     ValueError
-        If ``sampler`` is none of the three above.
-    SystemExit
-        If the sampler can't run here: Tachyon before Python 3.15, or
-        pyinstrument when missing or on a free-threaded build.
+        If ``sampler`` is none of the three above, ``interval`` is not positive
+        and finite, or ``top_k`` is not an integer of at least 1. All three are
+        checked before the sampler is chosen.
+    ImportError
+        If the sampler is pyinstrument and it is not installed.
+    RuntimeError
+        If the sampler can't run here: Tachyon before Python 3.15 or in a
+        process it cannot read, pyinstrument on a free-threaded build.
     """
     if sampler not in SAMPLERS:
         raise ValueError(f"sampler must be one of {', '.join(SAMPLERS)}, got {sampler!r}")
+    _check_interval(interval)
+    _check_top_k(top_k)
     if sampler == "auto":
         sampler = "tachyon" if sys.version_info >= (3, 15) else "pyinstrument"
     if sampler == "tachyon":
         return TachyonManager(interval, top_k=top_k)
     return PyinstrumentManager(interval)
+
+
+def _check_interval(interval: float) -> None:
+    if not isfinite(interval) or interval <= 0:
+        raise ValueError(f"interval must be a positive finite number, got {interval!r}")
+
+
+def _check_top_k(top_k: int) -> None:
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1:
+        raise ValueError(f"top_k must be an integer >= 1, got {top_k!r}")
 
 
 class PyinstrumentManager:
@@ -177,28 +197,28 @@ class PyinstrumentManager:
     ------
     ValueError
         If ``interval`` is not positive and finite.
-    SystemExit
-        If pyinstrument is missing or the interpreter is free-threaded.
+    RuntimeError
+        If the interpreter is free-threaded.
+    ImportError
+        If pyinstrument is not installed.
     """
 
     def __init__(self, interval: float = 1e-4) -> None:
-        if not isfinite(interval) or interval <= 0:
-            raise ValueError(f"interval must be a positive finite number, got {interval!r}")
+        _check_interval(interval)
         if not gil_enabled():
-            raise SystemExit(
+            raise RuntimeError(
                 "pyinstrument does not support free-threaded Python: importing its "
                 "native sampler would enable the GIL. On Python 3.15+, mew samples "
                 "with Tachyon instead."
             )
         if find_spec("pyinstrument") is None:
-            raise SystemExit(
+            raise ImportError(
                 "pyinstrument is required for CPU profiling. "
                 "Install it with: uv add 'mew-bench[cpu]'"
             )
         self._interval = interval
         self._prof: Profiler | None = None
         self._session: Session | None = None
-        self._paused = False
         self.sessions: list[Session] = []
 
     def after_setup_start(self) -> None:
@@ -211,42 +231,36 @@ class PyinstrumentManager:
     def before_teardown_stop(self) -> None:
         if self._prof is None:
             return
-        # A pause scope held open over the end of the loop already stopped it.
-        if not self._paused:
-            self._prof.stop()
-        # Its later exit finds the pass over and does not resume.
-        self._paused = False
-        self._session = self._prof.last_session
-        if self._session is not None:
-            self.sessions.append(self._session)
+        self._session = self._prof.stop()
+        self.sessions.append(self._session)
         self._prof = None
 
     def pause(self) -> None:
         """Suspend sampling for a ``state.pause()`` region."""
-        # The session continues across stop() and start(), without the gap. A
-        # pause held open over the end of the loop is never resumed:
-        # before_teardown_stop() absorbs it.
+        # The session continues across stop() and start(), without the gap.
         if self._prof is not None:
             self._prof.stop()
-            self._paused = True
 
     def resume(self) -> None:
         if self._prof is not None:
             self._prof.start()
-            self._paused = False
 
     def get_result(self) -> CpuProfile | None:
-        """Summarize the last pass, or ``None`` when nothing was sampled."""
-        session = self._session
-        if session is None or (root := session.root_frame()) is None:
+        """Summarize the pass that just ended, or ``None`` if none started.
+
+        A pass without samples gets a summary with ``sample_count`` 0 and no
+        ``top_function``.
+        """
+        # Taken, so a pass that skips before its loop can't report the last one's.
+        session, self._session = self._session, None
+        if session is None:
             return None
-        if (top := _hottest_frame(root)) is None:
-            return None
+        root = session.root_frame()
         return {
             "profiler": "pyinstrument",
             "wall_time": session.duration,
             "sample_count": session.sample_count,
-            "top_function": top,
+            "top_function": None if root is None else _hottest_frame(root),
             "top_instructions": [],
             "unspecialized_share": None,
         }
@@ -278,9 +292,15 @@ def _hottest_frame(root: Frame) -> TopFunction | None:
 
 
 def require_tachyon() -> None:
-    """Check that this interpreter ships Tachyon, i.e. is Python 3.15+."""
+    """Check that this interpreter ships Tachyon, i.e. is Python 3.15+.
+
+    Raises
+    ------
+    RuntimeError
+        Before Python 3.15.
+    """
     if sys.version_info < (3, 15):
-        raise SystemExit("Tachyon CPU sampling requires Python 3.15 or newer")
+        raise RuntimeError("Tachyon CPU sampling requires Python 3.15 or newer")
 
 
 def reads_instructions() -> bool:
@@ -407,16 +427,15 @@ class TachyonManager:
     Raises
     ------
     ValueError
-        If ``interval`` is not positive and finite, or ``top_k`` is below 1.
-    SystemExit
+        If ``interval`` is not positive and finite, or ``top_k`` is not an
+        integer of at least 1.
+    RuntimeError
         Before Python 3.15, or if the process cannot read its own memory.
     """
 
     def __init__(self, interval: float = 1e-4, *, top_k: int = 5) -> None:
-        if not isfinite(interval) or interval <= 0:
-            raise ValueError(f"interval must be a positive finite number, got {interval!r}")
-        if top_k < 1:
-            raise ValueError(f"top_k must be at least 1, got {top_k!r}")
+        _check_interval(interval)
+        _check_top_k(top_k)
         require_tachyon()
 
         from profiling.sampling.stack_collector import (  # ty: ignore[unresolved-import]
@@ -426,7 +445,7 @@ class TachyonManager:
         try:
             self._unwinder = _unwinder(os.getpid())
         except (OSError, RuntimeError) as e:
-            raise SystemExit(f"Tachyon cannot sample this process: {e}") from e
+            raise RuntimeError(f"Tachyon cannot sample this process: {e}") from e
         self._interval = interval
         self._top_k = top_k
         self._thread: threading.Thread | None = None
@@ -498,10 +517,7 @@ class TachyonManager:
     def before_teardown_stop(self) -> None:
         if self._thread is None:
             return
-        # A pause scope held open over the end of the loop already stopped the clock.
-        if not self._paused:
-            self._active += time.perf_counter() - self._since
-        self._paused = False
+        self._active += time.perf_counter() - self._since
         self._running = False
         self._thread.join()
         self._thread = None
@@ -515,20 +531,24 @@ class TachyonManager:
 
     def pause(self) -> None:
         """Drop samples for a ``state.pause()`` region."""
-        # A pause held open over the end of the loop is never resumed:
-        # before_teardown_stop() absorbs it.
-        if self._thread is not None and not self._paused:
+        if self._thread is not None:
             self._active += time.perf_counter() - self._since
             self._paused = True
 
     def resume(self) -> None:
-        if self._thread is not None and self._paused:
+        if self._thread is not None:
             self._since = time.perf_counter()
             self._paused = False
 
     def get_result(self) -> CpuProfile | None:
-        """Summarize the last pass, or ``None`` when nothing was sampled."""
-        return self._result
+        """Summarize the pass that just ended, or ``None`` if none started.
+
+        A pass without samples gets a summary with ``sample_count`` 0 and no
+        ``top_function``.
+        """
+        # Taken, so a pass that skips before its loop can't report the last one's.
+        result, self._result = self._result, None
+        return result
 
     def _record(self) -> None:
         """Summarize the pass and add its stacks to the flame graph."""
@@ -565,23 +585,19 @@ class TachyonManager:
             rate = self._samples / self._duration
             interval_us = round(self._interval * 1e6)
             self.flamegraph.set_stats(interval_us, self._duration, rate, mode=PROFILING_MODE_WALL)
-        total = sum(lines.values())
-        if not total:
-            return
-        # The hottest function by self time, and its hottest line.
-        functions: defaultdict[tuple[str, str], float] = defaultdict(float)
-        for (file, func, _), seconds in lines.items():
-            functions[file, func] += seconds
-        (file, func), hot = max(functions.items(), key=lambda kv: kv[1])
-        line = max((k for k in lines if k[:2] == (file, func)), key=lines.__getitem__)[2]
-        # Synthetic frames such as <GC> have no source file.
-        synthetic = file == "~"
-        top, unspecialized = _summarize_instructions(instructions, total, self._top_k)
-        self._result = {
-            "profiler": "tachyon",
-            "wall_time": self._active,
-            "sample_count": samples,
-            "top_function": {
+        hottest: TopFunction | None = None
+        top: list[TopInstruction] = []
+        unspecialized: float | None = None
+        if total := sum(lines.values()):
+            # The hottest function by self time, and its hottest line.
+            functions: defaultdict[tuple[str, str], float] = defaultdict(float)
+            for (file, func, _), seconds in lines.items():
+                functions[file, func] += seconds
+            (file, func), hot = max(functions.items(), key=lambda kv: kv[1])
+            line = max((k for k in lines if k[:2] == (file, func)), key=lines.__getitem__)[2]
+            # Synthetic frames such as <GC> have no source file.
+            synthetic = file == "~"
+            hottest = {
                 "function": func,
                 "file": None if synthetic else Path(file).name,
                 "line": None if synthetic else line,
@@ -589,7 +605,13 @@ class TachyonManager:
                 # after the last sample. The share first: a function holding
                 # every sample must get exactly wall_time, not an ulp above.
                 "self_time": self._active * (hot / total),
-            },
+            }
+            top, unspecialized = _summarize_instructions(instructions, total, self._top_k)
+        self._result = {
+            "profiler": "tachyon",
+            "wall_time": self._active,
+            "sample_count": samples,
+            "top_function": hottest,
             "top_instructions": top,
             "unspecialized_share": unspecialized,
         }
@@ -615,7 +637,17 @@ def write_html(manager: TachyonManager | PyinstrumentManager, path: Path) -> Non
         Manager whose passes have completed.
     path : Path
         Destination HTML file.
+
+    Raises
+    ------
+    TypeError
+        If ``manager`` is neither of the two, such as a custom profiler manager.
     """
+    if not isinstance(manager, TachyonManager | PyinstrumentManager):
+        raise TypeError(
+            "write_html needs a TachyonManager or PyinstrumentManager, "
+            f"got {type(manager).__name__}"
+        )
     if isinstance(manager, TachyonManager):
         # export() reports progress on stdout, which may carry a JSON result
         # stream, and returns whether it wrote the file.

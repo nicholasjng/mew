@@ -62,13 +62,29 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
     }
 
     void Stop(Result& out) override {
+        static constexpr const char* kShape =
+            "memory manager stop() must return None, or a dict of integers with "
+            "peak_bytes and total_allocations, and optionally total_bytes and "
+            "net_heap_growth";
         nb::gil_scoped_acquire gil;
         nb::object r = call("stop");
-        if (r.is_none()) return;
+        // Nothing measured: the tombstone keeps the row's memory block out.
+        if (r.is_none()) {
+            out.num_allocs = TombstoneValue;
+            return;
+        }
         // A cast_error must not unwind through Google Benchmark.
         try {
             auto metrics = nb::cast<nb::dict>(r);
-            // Keys the manager omits keep their tombstone and are dropped by `Run.to_dict`.
+            for (auto [key, value] : metrics) {
+                std::string name = nb::cast<std::string>(key);
+                if (name != "peak_bytes" && name != "total_allocations" && name != "total_bytes" &&
+                    name != "net_heap_growth")
+                    return abort_with_type_error(kShape);
+            }
+            if (!metrics.contains("peak_bytes") || !metrics.contains("total_allocations"))
+                return abort_with_type_error(kShape);
+            // The optional two keep their tombstone when omitted; the row leaves them out.
             auto take = [&](const char* key, int64_t& target) {
                 if (metrics.contains(key)) target = nb::cast<int64_t>(metrics[key]);
             };
@@ -77,8 +93,7 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
             take("total_bytes", out.total_allocated_bytes);
             take("net_heap_growth", out.net_heap_growth);
         } catch (const nb::cast_error&) {
-            abort_with_type_error(
-                "memory manager stop() must return a dict with integer values, or None");
+            abort_with_type_error(kShape);
         }
     }
 };
@@ -98,6 +113,10 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
     }
     void BeforeTeardownStop() override {
         nb::gil_scoped_acquire gil;
+        // A pause scope held open over the end of the loop: resume first, so the
+        // manager always sees pause() and resume() in pairs.
+        if (paused_ && nb::hasattr(py_, "resume")) call("resume");
+        paused_ = false;
         active_ = false;
         call("before_teardown_stop");
     }
@@ -107,11 +126,13 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
     void Pause() {
         if (!active_) return;
         nb::gil_scoped_acquire gil;
+        paused_ = true;
         if (nb::hasattr(py_, "pause")) call("pause");
     }
     void Resume() {
         if (!active_) return;
         nb::gil_scoped_acquire gil;
+        paused_ = false;
         if (nb::hasattr(py_, "resume")) call("resume");
     }
 
@@ -122,7 +143,6 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
         if (r.is_none()) return;
         if (!nb::isinstance<nb::dict>(r)) return abort_with_type_error(kResultShape);
         nb::dict summary = nb::borrow<nb::dict>(r);
-        if (summary.size() == 0) return;
         // json.dumps would turn an int key into a string; nested keys follow JSON's rules.
         for (auto [k, v] : summary)
             if (!nb::isinstance<nb::str>(k)) return abort_with_type_error(kResultShape);
@@ -140,6 +160,8 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
    private:
     // Written by the profiler pass and read by timed-run worker threads.
     std::atomic<bool> active_{false};
+    // Only touched by the profiler pass, which runs a single thread.
+    bool paused_ = false;
 };
 
 // GB holds raw pointers to these for the length of the run.

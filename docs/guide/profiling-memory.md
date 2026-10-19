@@ -22,7 +22,9 @@ it requires scanning every allocation in the capture.
 $ uv add 'mew-bench[memory]'    # or: pip install 'mew-bench[memory]'
 ```
 
-Note: `memray` is not available on Windows.
+Note: `memray` is not available on Windows. Without memray, `mew run
+--profile-memory` stops with exit code 2 and the install hint, before any
+benchmark runs; from Python, {func}`mew.memory.manager` raises `ImportError`.
 
 ## Basics
 

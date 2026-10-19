@@ -111,9 +111,6 @@ class State:
         again while it is active, raises RuntimeError.
         """
 
-    def keep_running_batch(self, n: int) -> bool:
-        """Advance by `n` iterations and return whether another batch should run."""
-
     def batches(self, n: int) -> BatchIter:
         """
         Iterate in batches of `n`, reducing dispatch overhead for fast bodies.
@@ -227,9 +224,6 @@ class BenchmarkHandle:
         """
         Measure CPU time across the whole process, not just the running thread.
         """
-
-    def report_aggregates_only(self, value: bool = True) -> BenchmarkHandle:
-        """Emit only the aggregate rows, suppressing per-repetition ones."""
 
     def threads(self, n: int) -> BenchmarkHandle:
         """

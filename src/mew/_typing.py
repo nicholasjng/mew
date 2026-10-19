@@ -61,7 +61,8 @@ class BenchmarkResult(TypedDict):
     memory : dict, optional
         The memory manager's figures (``peak_bytes``, ``total_allocations``,
         ``iterations``, ``allocations_per_iteration``, and optionally
-        ``total_bytes`` and ``net_heap_growth``), when one ran.
+        ``total_bytes`` and ``net_heap_growth``), when one ran and measured
+        something.
     cpu_profile : dict, optional
         The profiler manager's summary, when it returned one; a
         :class:`mew.cpu.CpuProfile` under ``--sample``.
@@ -97,15 +98,18 @@ class BenchmarkOptions(TypedDict, total=False):
     """Per-benchmark Google Benchmark options accepted by the decorators.
 
     All keys are optional; omit one to fall back to Google Benchmark's default.
-    ``iterations`` fixes the iteration count, so it cannot be combined with
-    ``min_time`` or ``min_warmup_time``.
+    ``min_time`` takes seconds (``0.5``, ``"0.5s"``) or, as for :func:`mew.run`,
+    a fixed iteration count (``"100x"``), the same as ``iterations=100``. A fixed
+    iteration count cannot be combined with ``min_time`` in seconds or
+    ``min_warmup_time``, and ``min_warmup_time`` needs ``min_time`` in seconds.
+    ``use_real_time`` cannot be combined with ``use_manual_time``.
 
     ``threads`` requires a free-threaded interpreter. On a GIL build,
     :func:`mew.run` skips threaded benchmarks unless ``strict=True``. An
     iterable runs the benchmark once per thread count, e.g. ``[1, 2, 4, 8]``.
     """
 
-    min_time: float
+    min_time: float | str
     min_warmup_time: float
     iterations: int
     repetitions: int
@@ -116,25 +120,25 @@ class BenchmarkOptions(TypedDict, total=False):
     threads: int | Iterable[int]
 
 
-class MemoryMetrics(TypedDict, total=False):
-    """Measurements returned by a memory manager.
+class MemoryMetrics(TypedDict):
+    """Measurements returned by a memory manager's ``stop()``.
 
     Attributes
     ----------
-    total_allocations : int, optional
-        Number of allocations.
-    peak_bytes : int, optional
+    peak_bytes : int
         Maximum live bytes.
+    total_allocations : int
+        Number of allocations.
     total_bytes : int, optional
         Total allocated bytes.
     net_heap_growth : int, optional
         Live-byte increase over the measurement.
     """
 
-    total_allocations: int
     peak_bytes: int
-    total_bytes: int
-    net_heap_growth: int
+    total_allocations: int
+    total_bytes: NotRequired[int]
+    net_heap_growth: NotRequired[int]
 
 
 ProfilerSummary: TypeAlias = dict[str, Any]
@@ -142,7 +146,16 @@ ProfilerSummary: TypeAlias = dict[str, Any]
 
 @runtime_checkable
 class MemoryManager(Protocol):
-    """Memory-measurement callbacks accepted by :func:`mew.run`."""
+    """Memory-measurement callbacks accepted by :func:`mew.run`.
+
+    ``start()`` runs at the first step of the memory pass's timing loop and
+    ``stop()`` after its last. ``stop()`` returns :class:`MemoryMetrics`, a
+    dict of ints with ``peak_bytes`` and ``total_allocations`` and optionally
+    ``total_bytes`` and ``net_heap_growth``, or ``None`` when it measured
+    nothing, which leaves the row without a ``memory`` block. A missing
+    required key, an unknown key or a value that isn't an int fails the run
+    with ``TypeError``.
+    """
 
     def start(self) -> None: ...
     def stop(self) -> MemoryMetrics | None: ...
@@ -158,7 +171,11 @@ class ProfilerManager(Protocol):
 
 @runtime_checkable
 class ProfilerResultProvider(Protocol):
-    """Optional profiler capability that attaches a summary to each result."""
+    """Optional profiler capability that attaches a summary to each result.
+
+    ``get_result()`` runs after each profiling pass. A dict, even an empty one,
+    becomes the row's ``cpu_profile`` block; ``None`` leaves the block out.
+    """
 
     def get_result(self) -> ProfilerSummary | None: ...
 
@@ -167,9 +184,10 @@ class ProfilerResultProvider(Protocol):
 class PausableProfiler(Protocol):
     """Optional profiler capability that suspends across ``state.pause()``.
 
-    Calls come from the profiling thread only. A ``pause()`` may go unmatched
-    when a body leaves a pause scope open at the end of its loop; the next
-    ``before_teardown_stop()`` then arrives while paused.
+    Calls come from the profiling thread only, and in pairs: every ``pause()``
+    is followed by a ``resume()`` before ``before_teardown_stop()``. When a
+    body leaves a pause scope open at the end of its loop, mew calls
+    ``resume()`` itself before ``before_teardown_stop()``.
     """
 
     def pause(self) -> None: ...
