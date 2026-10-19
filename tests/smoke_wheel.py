@@ -7,7 +7,7 @@ package data shipped. Behaviour is covered by the regular suite.
 
 import sys
 import sysconfig
-from importlib import resources
+from importlib import metadata, resources
 from pathlib import Path
 
 import mew
@@ -25,6 +25,14 @@ assert mew.__version__, "mew.__version__ is empty"  # ty: ignore[redundant-condi
 # Declared package data, absent from the wheel if wheel.packages ever drifts.
 for data in ("py.typed", "_core.pyi"):
     assert (resources.files("mew") / data).is_file(), f"{data} missing from wheel"
+
+# The extension links in Google Benchmark and nanobind, whose licenses must ship.
+dist = metadata.distribution("mew-bench")
+shipped = set(dist.metadata.get_all("License-File") or [])
+bundled = {f"licenses/{name}.txt" for name in ("google-benchmark", "nanobind", "robin-map")}
+assert bundled <= shipped, f"license files missing from metadata: {bundled - shipped}"
+for name in shipped:
+    assert dist.read_text(f"licenses/{name}"), f"{name} missing from wheel"
 
 # On a free-threaded build, `import mew._core` above would have made CPython
 # re-enable the GIL had the wheel been built without Py_MOD_GIL_NOT_USED.
