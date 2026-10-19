@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import difflib
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from mew._statistics import resolve_statistic
+
 # `mew run --capture` values; also accepted as `[tool.mew] capture`.
 CAPTURE_MODES = ("fd", "no")
+
+# `[tool.mew]` keys in snake_case; `regressions` is the table that
+# `mew.regressions.load_config` reads.
+_KEYS = ("benchpaths", "python_files", "setup", "statistic", "capture", "regressions")
 
 
 @dataclass(slots=True)
@@ -41,6 +49,26 @@ class Config:
     statistic: str | None = None
     capture: str | None = None
     project_root: Path | None = None
+
+
+def _read_table(raw: Mapping[str, Any], known: Sequence[str], table: str) -> dict[str, Any]:
+    """Return a config table with its dashed keys (the TOML idiom) in snake_case.
+
+    A key not in ``known`` raises, because a typo would otherwise load the
+    default silently, and so does a key set in both spellings.
+    """
+    spelled: dict[str, str] = {}
+    for key in raw:
+        name = key.replace("-", "_")
+        if name not in known:
+            spellings = [*known, *(k.replace("_", "-") for k in known)]
+            close = difflib.get_close_matches(key, spellings, n=1)
+            hint = f"; did you mean {close[0]!r}?" if close else ""
+            raise ValueError(f"unknown key {key!r} in {table}{hint}")
+        if name in spelled:
+            raise ValueError(f"{table} sets both {spelled[name]!r} and {key!r}; keep one")
+        spelled[name] = key
+    return {name: raw[key] for name, key in spelled.items()}
 
 
 def _parse_str_list(raw: Any, key: str) -> list[str]:
@@ -82,7 +110,8 @@ def load(start: Path | None = None) -> Config:
     Raises
     ------
     ValueError
-        If a config field has the wrong shape.
+        If a key is unknown, is set in both its dashed and snake_case spelling,
+        or has an invalid value.
     """
     import tomllib
 
@@ -93,8 +122,7 @@ def load(start: Path | None = None) -> Config:
             continue
         with candidate.open("rb") as fh:
             data = tomllib.load(fh)
-        # Keys are written with dashes (TOML idiom) but map onto snake_case fields.
-        tool = {k.replace("-", "_"): v for k, v in data.get("tool", {}).get("mew", {}).items()}
+        tool = _read_table(data.get("tool", {}).get("mew", {}), _KEYS, "[tool.mew]")
         cfg = Config(
             statistic=_parse_str(tool, "statistic"),
             setup=_parse_str(tool, "setup"),
@@ -103,6 +131,12 @@ def load(start: Path | None = None) -> Config:
         )
         if cfg.capture not in (None, *CAPTURE_MODES):
             raise ValueError(f"[tool.mew] capture must be one of {', '.join(CAPTURE_MODES)}")
+        if cfg.statistic is not None:
+            # Fail at load, not at the first `mew compare`.
+            try:
+                resolve_statistic(cfg.statistic)
+            except ValueError as e:
+                raise ValueError(f"[tool.mew] {e}") from e
         if (raw := tool.get("benchpaths")) is not None:
             cfg.benchpaths = _parse_str_list(raw, "benchpaths")
         if (raw := tool.get("python_files")) is not None:
