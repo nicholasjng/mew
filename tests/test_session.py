@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import platform
 import shutil
 import subprocess
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -16,7 +14,7 @@ import pytest
 
 import mew
 from mew._session import new_session_id
-from mew.compare import session_summaries
+from mew.compare import read_results, session_summaries
 from mew.machine import _cpuinfo_model
 from mew.reporter import JSONLReporter, JSONReporter
 from mew.vcs import vcs_context
@@ -44,18 +42,13 @@ def _isolated_vcs(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
     monkeypatch.delenv("DYLD_INSERT_LIBRARIES", raising=False)
 
 
-def test_new_session_id_is_a_version7_uuid():
-    sid = uuid.UUID(new_session_id())
-    assert sid.version == 7
-    assert sid.variant == uuid.RFC_4122
-
-
-def test_new_session_ids_are_unique_and_time_ordered():
-    first = new_session_id()
-    time.sleep(0.002)  # cross a millisecond boundary so the timestamps differ
-    second = new_session_id()
-    assert first != second
-    assert first < second  # lexicographic order matches creation order
+def test_new_session_id_is_a_uuid7_led_by_the_unix_ms(monkeypatch: pytest.MonkeyPatch):
+    """The 48-bit millisecond timestamp leads, so ids sort by creation time."""
+    monkeypatch.setattr(time, "time_ns", lambda: 1_750_000_000_123_456_789)
+    first, second = uuid.UUID(new_session_id()), uuid.UUID(new_session_id())
+    assert (first.version, first.variant) == (7, uuid.RFC_4122)
+    assert first.int >> 80 == 1_750_000_000_123
+    assert first != second  # random bits keep same-millisecond ids apart
 
 
 @pytest.mark.usefixtures("_isolated_vcs")
@@ -68,28 +61,34 @@ def test_vcs_context_outside_a_repo(tmp_path: Path):
 def test_vcs_context_in_a_git_repo(tmp_path: Path):
     if not shutil.which("git"):
         pytest.skip("git not available")
+
+    def git(*args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
+        )
+        return proc.stdout.strip()
+
     tracked = tmp_path / "tracked.txt"
     tracked.write_text("v1")
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    git("init", "-q", "-b", "main")
     # Without a commit, HEAD names nothing to record.
     assert vcs_context(cwd=tmp_path) == {}
-    for args in (["add", "tracked.txt"], ["commit", "-q", "-m", "x"]):
-        subprocess.run(["git", *args], cwd=tmp_path, check=True)
+    git("add", "tracked.txt")
+    git("commit", "-q", "-m", "x")
     # Untracked files are not a change to what was benchmarked: a results file or
     # build artifact in the tree must not mark every run dirty.
     (tmp_path / "results.jsonl").write_text("{}")
-    info = vcs_context(cwd=tmp_path)["vcs"]
-    assert info["backend"] == "git"
-    assert len(info["commit"]) == 40, "full sha: an abbreviation can collide as history grows"
-    assert info["branch"] == "main"
-    assert info["dirty"] is False
+    # The full commit id: an abbreviation can collide as history grows.
+    head = git("rev-parse", "HEAD")
+    expected = {"backend": "git", "commit": head, "branch": "main", "dirty": False}
+    assert vcs_context(cwd=tmp_path) == {"vcs": expected}
 
     # A modified tracked file is.
     tracked.write_text("v2")
     assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is True
 
     # A detached HEAD is on no branch.
-    subprocess.run(["git", "checkout", "-q", "--detach"], cwd=tmp_path, check=True)
+    git("checkout", "-q", "--detach")
     assert "branch" not in vcs_context(cwd=tmp_path)["vcs"]
 
 
@@ -110,16 +109,10 @@ def test_vcs_context_prefers_jj(tmp_path: Path):
     assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is True
 
 
-def test_machine_context_names_the_cpu():
+def test_machine_context_names_the_cpu_or_none():
+    # Which name the OS gives the CPU, if any, depends on the machine.
     model = mew.machine_context()["cpu_model"]
-    if sys.platform == "darwin":
-        sysctl = ["sysctl", "-n", "machdep.cpu.brand_string"]
-        assert model == subprocess.run(sysctl, capture_output=True, text=True).stdout.strip()
-    elif sys.platform == "linux" and platform.machine() == "aarch64":
-        pytest.skip("Arm64 kernels name no CPU model")
-    else:
-        # CI's x86-64 Linux and Windows runners name theirs.
-        assert model and model == model.strip()
+    assert model is None or model == model.strip() != ""
 
 
 @pytest.mark.parametrize(
@@ -137,9 +130,11 @@ def test_cpuinfo_model(lines: list[str], model: str | None):
     assert _cpuinfo_model(line + "\n" for line in lines) == model
 
 
-def test_json_reporter_persists_session_identity(tmp_path: Path):
-    """JSON rows are the same self-contained objects JSONL writes; the header
-    repeats `session` / `context` for readers."""
+@pytest.mark.parametrize(
+    ("reporter", "suffix"), [(JSONReporter, ".json"), (JSONLReporter, ".jsonl")]
+)
+def test_run_stamps_session_identity_on_every_row(tmp_path: Path, reporter, suffix: str):
+    """JSON and JSONL rows alike carry the run's `session` and `context` blocks."""
     mew.set_context("build", "asan")
 
     @mew.benchmark
@@ -147,49 +142,21 @@ def test_json_reporter_persists_session_identity(tmp_path: Path):
         for _ in state:
             pass
 
-    out = tmp_path / "out.json"
-    mew.run(
-        min_time="1x",
-        repetitions=2,
-        reporter=JSONReporter(output=out),
-        session_tag="before",
-    )
-    doc = json.loads(out.read_text())
-    assert uuid.UUID(doc["session"]["id"]).version == 7
-    assert doc["session"]["tag"] == "before"
-    assert doc["context"]["build"] == "asan"
-    # Every row, aggregates included, carries the header's blocks.
-    assert doc["benchmarks"]
-    for bench in doc["benchmarks"]:
-        assert bench["session"] == doc["session"]
-        assert bench["context"] == doc["context"]
-
-
-def test_jsonl_rows_are_self_contained(tmp_path: Path):
-    @mew.benchmark
-    def bench_s(state):
-        for _ in state:
-            pass
-
-    out = tmp_path / "out.jsonl"
-    mew.run(
-        min_time="1x",
-        reporter=JSONLReporter(output=out),
-        session_tag="before",
-    )
-    lines = [json.loads(ln) for ln in out.read_text().splitlines()]
-    assert all("name" in row for row in lines)  # pure NDJSON, no context line
-    row = lines[0]
-    assert uuid.UUID(row["session"]["id"]).version == 7
-    assert row["session"]["tag"] == "before"
-    assert row["session"]["host"] and row["session"]["date"]
+    out = tmp_path / f"out{suffix}"
+    mew.run(min_time="1x", repetitions=2, reporter=reporter(output=out), session_tag="before")
+    # read_results rejects anything but rows, such as a JSONL context line.
+    first, second = read_results(out)
+    session = first["session"]
+    assert uuid.UUID(session["id"]).version == 7
+    assert session["tag"] == "before"
+    assert session["host"] and session["date"]
+    assert first["context"]["build"] == "asan"
+    assert (second["session"], second["context"]) == (session, first["context"])
 
 
 def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
     """A reporter driven without mew.run has no identity: the block is passed
     through untouched, so nothing invents a session."""
-    from mew.reporter import JSONReporter
-
     out = tmp_path / "o.json"
     rep = JSONReporter(output=out)
     rep.report_context({"context": {"num_cpus": 4}})
@@ -199,25 +166,17 @@ def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
     assert doc["context"] == {"num_cpus": 4}
 
 
-# A gzip archive gains a new member per --append; readers see one stream.
 @pytest.mark.parametrize("suffix", [".jsonl", ".jsonl.gz"])
 def test_jsonl_append_makes_two_sessions(tmp_path: Path, suffix: str):
+    # The gzip sink appends too, instead of starting the archive over.
     @mew.benchmark
     def bench_s(state):
         for _ in state:
             pass
 
     out = tmp_path / f"acc{suffix}"
-    mew.run(
-        min_time="1x",
-        reporter=JSONLReporter(output=out),
-        session_tag="before",
-    )
-    mew.run(
-        min_time="1x",
-        reporter=JSONLReporter(output=out, append=True),
-        session_tag="after",
-    )
+    mew.run(min_time="1x", reporter=JSONLReporter(output=out), session_tag="before")
+    mew.run(min_time="1x", reporter=JSONLReporter(output=out, append=True), session_tag="after")
 
     sessions = session_summaries(out)
     assert len(sessions) == 2

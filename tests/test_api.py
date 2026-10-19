@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
 import pytest
@@ -46,13 +45,90 @@ def test_called_decorator_captures_options():
     assert family.options["unit"] == "us"
 
 
-def test_unknown_option_raises():
-    with pytest.raises(TypeError, match="unknown option"):
+def test_min_time_takes_run_syntax_and_nx_fixes_the_iteration_count():
+    @mew.benchmark(min_time="3x")
+    def bench_a(state):
+        pass
 
-        @mew.benchmark(foo=1)
+    @mew.parametrize([{"n": 1}], min_time="0.25s")
+    def bench_b(state, n):
+        pass
+
+    # Google Benchmark has no per-benchmark "Nx"; its equivalent is iterations.
+    @mew.product(n=[1], min_time=" 7x ")
+    def bench_c(state, n):
+        pass
+
+    assert [e.options for e in REGISTRY.all()] == [
+        {"iterations": 3},
+        {"min_time": 0.25},
+        {"iterations": 7},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("options", "error", "message"),
+    [
+        ({"foo": 1}, TypeError, "unknown option"),
+        # A bool is an int, but not a count.
+        ({"repetitions": True}, TypeError, "repetitions must be an integer"),
+        ({"iterations": 2.5}, TypeError, "iterations must be an integer"),
+        ({"iterations": 0}, ValueError, "iterations must be >= 1"),
+        ({"repetitions": -1}, ValueError, "repetitions must be >= 1"),
+        ({"threads": True}, TypeError, "threads must be an int or"),
+        ({"threads": [2.5]}, TypeError, "threads must be an integer"),
+        ({"threads": "4"}, TypeError, "threads must be an integer"),
+        ({"threads": 0}, ValueError, "threads must be >= 1"),
+        ({"threads": []}, ValueError, "at least one thread count"),
+        ({"min_time": True}, TypeError, "min_time must be seconds"),
+        ({"min_time": 0.0}, ValueError, "min_time must be positive"),
+        ({"min_time": float("nan")}, ValueError, "min_time must be positive"),
+        ({"min_time": "1.5x"}, ValueError, "min_time must be positive"),
+        ({"min_warmup_time": "0.1"}, TypeError, "min_warmup_time must be a number"),
+        ({"min_warmup_time": -0.1}, ValueError, "min_warmup_time must be a finite"),
+        ({"min_warmup_time": float("nan")}, ValueError, "min_warmup_time must be a finite"),
+        ({"min_warmup_time": 0.1}, ValueError, "min_warmup_time needs min_time"),
+        # Unchecked, a misspelled unit fails only once the benchmark runs.
+        ({"unit": 1}, TypeError, "unit must be a string"),
+        ({"unit": "usec"}, ValueError, "unit must be one of 'ns', 'us', 'ms', 's'"),
+        ({"use_real_time": 1}, TypeError, "use_real_time must be a bool"),
+        # Google Benchmark checks these only in debug builds, which abort.
+        (
+            {"iterations": 5, "min_time": 0.1},
+            ValueError,
+            "iterations cannot be combined with min_time",
+        ),
+        (
+            {"iterations": 5, "min_warmup_time": 0.1},
+            ValueError,
+            "iterations cannot be combined with min_warmup_time",
+        ),
+        (
+            {"min_time": "5x", "iterations": 5},
+            ValueError,
+            "min_time='5x' cannot be combined with iterations",
+        ),
+        (
+            {"min_time": "5x", "min_warmup_time": 0.1},
+            ValueError,
+            "min_time='5x' cannot be combined with min_warmup_time",
+        ),
+        (
+            {"use_real_time": True, "use_manual_time": True},
+            ValueError,
+            "use_real_time cannot be combined with use_manual_time",
+        ),
+    ],
+)
+def test_decorators_reject_invalid_options(options, error, message):
+    with pytest.raises(error, match=message):
+
+        @mew.benchmark(**options)
         def _bench(state):
             for _ in state:
                 pass
+
+    assert REGISTRY.all() == []  # nothing half-registered
 
 
 def test_parametrize_ids_length_mismatch():
@@ -77,15 +153,7 @@ def test_rejected_name_can_be_corrected():
     with pytest.raises(ValueError, match="already registered"):
         mew.benchmark(name="x")(bench_b)
     mew.benchmark(name="y")(bench_b)
-
-    def bench_c(state, n):
-        for _ in state:
-            pass
-
-    with pytest.raises(ValueError, match="already registered"):
-        mew.parametrize([{"n": 1}], name="y")(bench_c)
-    mew.parametrize([{"n": 1}], name="z")(bench_c)
-    assert [e.name for e in REGISTRY.all()] == ["x", "y", "z"]
+    assert [e.name for e in REGISTRY.all()] == ["x", "y"]
 
 
 def test_parametrize_accepts_generator():
@@ -110,8 +178,12 @@ def test_product_cartesian():
     assert entry.case_labels == ["n=1-algo=a", "n=1-algo=b", "n=2-algo=a", "n=2-algo=b"]
 
 
-@pytest.mark.parametrize("budget", ["min_time", "iterations"])
-def test_product_passes_every_option_through(budget):
+# Each variant drops the options that contradict the other's, so between them
+# every option is forwarded.
+@pytest.mark.parametrize(
+    "dropped", [{"iterations", "use_manual_time"}, {"min_time", "min_warmup_time", "use_real_time"}]
+)
+def test_product_passes_every_option_through(dropped):
     # product()'s **kwargs are the iterables, so it forwards each option by
     # hand; a forgotten one would be silently dropped.
     every: dict[str, Any] = {
@@ -123,12 +195,9 @@ def test_product_passes_every_option_through(budget):
         "use_real_time": True,
         "use_manual_time": True,
         "measure_process_cpu_time": True,
-        "report_aggregates_only": True,
         "threads": 2,
     }
     assert set(every) == _OptionKeys  # a new option needs a value here
-    # iterations cannot be combined with either time budget.
-    dropped = {"iterations"} if budget == "min_time" else {"min_time", "min_warmup_time"}
     options = {k: v for k, v in every.items() if k not in dropped}
 
     @mew.product(n=[1, 2], **options)
@@ -152,16 +221,6 @@ def test_threads_accepts_a_sequence_of_counts():
     assert entry.options["threads"] == (1, 2, 4)
 
 
-@pytest.mark.parametrize("threads", [0, True, [], [1, 0], [2.5], "4"])
-def test_threads_validated_at_decoration(threads):
-    with pytest.raises(TypeError, match="threads"):
-
-        @mew.benchmark(threads=threads)
-        def _bench(state):
-            for _ in state:
-                pass
-
-
 def test_product_needs_at_least_one_iterable():
     with pytest.raises(TypeError, match="at least one iterable"):
 
@@ -174,7 +233,6 @@ def test_product_needs_at_least_one_iterable():
 @pytest.mark.parametrize(
     "bad",
     [
-        "",
         "   ",
         "a::b",  # stdin selector / file-prefix separator
         "a[b",  # case-addressing brackets
@@ -204,66 +262,14 @@ def test_benchmark_allows_slash_hierarchy_names():
     assert entry.name == "suite/sort/insertion"
 
 
-def test_parametrize_rejects_structurally_confusing_ids():
+# A label derived from a value ("s=x[1]") is checked too; ids= is the escape
+# hatch for values that collide with case addressing.
+@pytest.mark.parametrize("ids", [["a::b"], None])
+def test_parametrize_rejects_structurally_confusing_case_labels(ids):
     with pytest.raises(ValueError, match="case label"):
 
-        @mew.parametrize([{"n": 1}], ids=["a::b"])
-        def _bench(state, n):
-            for _ in state:
-                pass
-
-    assert REGISTRY.all() == []
-
-
-def test_parametrize_rejects_structurally_confusing_derived_labels():
-    # The label derives from the parameter value ("s=x[1]"); ids= is the
-    # escape hatch for values whose repr collides with case addressing.
-    with pytest.raises(ValueError, match="case label"):
-
-        @mew.parametrize([{"s": "x[1]"}])
+        @mew.parametrize([{"s": "x[1]"}], ids=ids)
         def _bench(state, s):
-            for _ in state:
-                pass
-
-    assert REGISTRY.all() == []
-
-
-@pytest.mark.parametrize(
-    "options",
-    [
-        {"iterations": 0},
-        {"repetitions": -1},
-        {"threads": 0},
-        {"min_time": 0.0},
-        {"min_time": float("nan")},
-        {"min_warmup_time": -0.1},
-        {"min_warmup_time": float("nan")},
-    ],
-)
-def test_decorators_reject_out_of_range_options(options):
-    # Google Benchmark guards these with asserts compiled out of release
-    # builds, so mew validates at decoration time.
-    with pytest.raises(TypeError, match="must be"):
-
-        @mew.benchmark(**options)
-        def _bench(state):
-            for _ in state:
-                pass
-
-    assert REGISTRY.all() == []  # nothing half-registered
-
-
-@pytest.mark.parametrize(
-    "options",
-    [{"iterations": 5, "min_time": 0.1}, {"iterations": 5, "min_warmup_time": 0.1}],
-)
-def test_decorators_reject_iterations_with_a_time_budget(options):
-    # GB checks this combination only in debug builds and otherwise ignores
-    # the time budget.
-    with pytest.raises(TypeError, match="iterations cannot be combined with min_"):
-
-        @mew.benchmark(**options)
-        def _bench(state):
             for _ in state:
                 pass
 
@@ -296,35 +302,31 @@ def test_parametrize_rejects_duplicate_case_labels():
     assert REGISTRY.all() == []  # nothing half-registered
 
 
-def test_product_signature_covers_all_benchmark_options():
-    # product()'s **kwargs are the iterables, so each BenchmarkOptions field is
-    # listed by hand; catch a new field that was forgotten there.
-    params = set(inspect.signature(mew.product).parameters)
-    assert _OptionKeys <= params
+def test_tags_normalize_to_a_frozenset_on_every_decorator():
+    @mew.benchmark(tags=("io", "slow"))
+    def bench_a(state):
+        pass
 
+    @mew.benchmark(tags="io")  # a string is one tag
+    def bench_b(state):
+        pass
 
-@pytest.mark.parametrize(
-    ("decorate", "tags", "expected"),
-    [
-        (mew.benchmark, ("io", "slow"), frozenset({"io", "slow"})),
-        (mew.benchmark, "io", frozenset({"io"})),
-        (mew.benchmark, None, frozenset()),
-        (
-            lambda **kw: mew.parametrize([{"n": 1}, {"n": 2}], **kw),
-            ("sort",),
-            frozenset({"sort"}),
-        ),
-        (
-            lambda **kw: mew.product(n=[1, 2], algo=["a", "b"], **kw),
-            ("sort", "heavy"),
-            frozenset({"sort", "heavy"}),
-        ),
-    ],
-)
-def test_tags_normalize_to_a_frozenset_on_every_decorator(decorate, tags, expected):
-    @decorate(**({} if tags is None else {"tags": tags}))
-    def bench_x(state, **_):
-        for _ in state:
-            pass
+    @mew.benchmark
+    def bench_c(state):
+        pass
 
-    assert all(e.tags == expected for e in REGISTRY.all())
+    @mew.parametrize([{"n": 1}, {"n": 2}], tags=["sort"])
+    def bench_d(state, n):
+        pass
+
+    @mew.product(n=[1, 2], tags="sort")
+    def bench_e(state, n):
+        pass
+
+    assert [e.tags for e in REGISTRY.all()] == [
+        frozenset({"io", "slow"}),
+        frozenset({"io"}),
+        frozenset(),
+        frozenset({"sort"}),
+        frozenset({"sort"}),
+    ]

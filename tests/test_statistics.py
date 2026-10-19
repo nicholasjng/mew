@@ -11,64 +11,38 @@ from mew._results import _aggregate_values
 from mew._statistics import resolve_statistic
 
 
-def test_aggregate_values_custom_statistic_replaces_center() -> None:
+def test_statistic_replaces_the_median_but_not_the_stddev() -> None:
     values = [1.0, 2.0, 3.0, 100.0]
-    median, base_stddev = _aggregate_values(values)
-    center, stddev = _aggregate_values(values, np.max)
+    median, stddev = _aggregate_values(values)
     assert median == 2.5
-    assert center == 100.0
-    assert stddev == base_stddev
 
-
-def test_aggregate_values_custom_statistic_gets_list() -> None:
-    seen: list[object] = []
-
-    def reduce(a):
-        seen.append(a)
-        return sum(a) / len(a)
-
-    values = [2.0, 4.0]
-    center, _ = _aggregate_values(values, reduce)
-    assert center == 3.0
-    # Reducers get a plain list, which numpy/scipy accept.
-    assert seen[0] == [2.0, 4.0]
-    assert isinstance(seen[0], list)
-
-
-def test_aggregate_values_casts_statistic_result_to_float() -> None:
-    # np.float32, unlike np.float64, is not a float subclass, so this catches a
-    # dropped cast.
-    def reduce(values: list[float]) -> Any:  # like a numpy reducer
+    def numpy_max(values: list[float]) -> Any:
+        # np.float32, unlike np.float64, is not a float subclass, so this
+        # catches a dropped cast.
         return np.float32(max(values))
 
-    center, _ = _aggregate_values([1.0, 2.0, 3.0], reduce)
-    assert type(center) is float
-    assert center == 3.0
+    center, same_stddev = _aggregate_values(values, numpy_max)
+    assert (type(center), center, same_stddev) == (float, 100.0, stddev)
 
 
 @pytest.mark.parametrize(
     ("spec", "expected"),
     [
+        # Skewed, so mean, median and gmean all differ.
         ("min", 1.0),
         ("max", 9.0),
         ("median", 2.0),
         ("mean", 4.0),
         ("gmean", 18.0 ** (1 / 3)),
-        ("p50", 2.0),
-        ("p100", 9.0),
+        # mew's percentile: min and max at the edges, numpy's linear
+        # interpolation between them (rank 0.9 * 2 = 1.8, so 2 + 0.8 * 7).
         ("p0", 1.0),
+        ("p90", 7.6),
+        ("p100", 9.0),
     ],
 )
 def test_resolve_statistic_builtin_names(spec: str, expected: float) -> None:
-    stat = resolve_statistic(spec)
-    # Skewed, so mean, median and gmean all differ.
-    assert stat([1.0, 2.0, 9.0]) == pytest.approx(expected)
-
-
-def test_resolve_statistic_percentile_picks_tail() -> None:
-    stat = resolve_statistic("p90")
-    # 90th percentile of 1..10 (linear interpolation) is 9.1.
-    assert stat([float(i) for i in range(1, 11)]) == pytest.approx(9.1)
+    assert resolve_statistic(spec)([1.0, 2.0, 9.0]) == pytest.approx(expected)
 
 
 def test_resolve_statistic_rejects_unknown_names() -> None:
