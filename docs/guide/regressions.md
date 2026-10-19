@@ -2,9 +2,10 @@
 
 `mew compare` diffs `.json`, `.jsonl`, or `.jsonl.gz` results. The last file is the baseline.
 Add a regression threshold and exit flag to use it as a CI gate.
-With more than two files, the gate compares the first file against the last;
-intermediate files are informational. Missing historical measurements appear as
-dashes and do not exclude a benchmark from gating.
+With more than two files, the first is the candidate and the files between are
+informational. The table lists the benchmarks that the candidate and the baseline
+share, with or without a gate; a file between them that lacks one shows dashes.
+The gate compares the candidate against the baseline.
 
 ## Basic comparison
 
@@ -51,7 +52,8 @@ Context is printed per file above the table. `compare` warns when machine
 properties differ and adds differing custom values to that file's context line.
 
 For repeated measurements, a red `±N% (!)` marks a coefficient of variation
-above 25%. Treat that delta as unreliable.
+(stddev over the mean of the repetitions, whatever the `--statistic`) above 25%.
+Treat that delta as unreliable.
 
 (comparing-sessions-in-one-file)=
 ## Comparing sessions in one file
@@ -68,8 +70,9 @@ $ mew run --session-tag after --append -o results.jsonl
 $ mew compare results.jsonl@after results.jsonl@before
 ```
 
-`path@latest` names the newest session explicitly. Every session carrying a
-tag is selected, so repeated runs under one tag pool as repetitions:
+`path@latest` names the newest session explicitly, so `latest` is reserved:
+`--session-tag latest` is an error. Every session carrying a tag is selected,
+so repeated runs under one tag pool as repetitions:
 
 ```console
 $ for i in 1 2 3 4 5; do
@@ -82,7 +85,9 @@ $ mew compare --key func results.jsonl@b results.jsonl@a
 Interleaving decorrelates thermal and load drift from the axis you are
 comparing, and all five repetitions of each side feed the statistic. Two
 files, one per side, work the same way without tags (see {doc}`ab-comparison`).
-Existing filenames that contain `@` are treated literally.
+The selector follows the last `@` that comes after a `.json`, `.jsonl`, or
+`.jsonl.gz` extension. Any other `@` is part of the file name, so
+`runs@ci.jsonl` names a file.
 
 For anything richer than "this session against that one", query the archive
 directly; see [](reporters.md#sql-and-dataframe-recipes).
@@ -94,8 +99,9 @@ $ mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json 
 ```
 
 The `%` suffix is required. A threshold prints the panel;
-`--exit-non-zero-on-regression` additionally returns exit code 2 on regression.
-`--regression-threshold` overrides `default_threshold` from `pyproject.toml`
+`--exit-non-zero-on-regression` additionally exits with code 3 on regression,
+apart from the other [exit codes](cli.md#exit-codes).
+`--regression-threshold` overrides `default-threshold` from `pyproject.toml`
 (see below); without either, the threshold is 5%.
 
 ## Allowlist
@@ -104,7 +110,7 @@ Keep an allowlist of expected drift in `pyproject.toml`:
 
 ```toml
 [tool.mew.regressions]
-default_threshold = 5.0
+default-threshold = 5.0
 
 [[tool.mew.regressions.allow]]
 pattern = "benchmarks/bench_io.py::*"
@@ -123,6 +129,9 @@ benchmark name as `mew compare` keys it: `file.py::func[label]` by default,
 `func[label]` under `--key func`.
 Each rule must include a `reason` so the allowlist stays explainable. A
 rule must either set `ignore=true` or `threshold=<float>`.
+As in `[tool.mew]` (see {doc}`configuration`), keys are dashed, and an unknown
+key, such as a misspelled `treshold` or `default_threshold`, is an error in the
+table and in its rules.
 
 ## Verdicts
 
@@ -133,7 +142,7 @@ rule must either set `ignore=true` or `threshold=<float>`.
 | `ALLOWED_OVER`  | Over the default, but a rule raised the bar. Shown as a warning, not a failure. |
 | `IGNORED`       | A matching rule says skip gating entirely. Listed for visibility.                |
 
-The panel goes to stderr. `REGRESSED` controls the optional nonzero exit.
+The panel goes to stderr. `REGRESSED` controls the optional exit code 3.
 
 ## A typical CI workflow
 

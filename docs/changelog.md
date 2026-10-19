@@ -8,6 +8,10 @@ change between minor releases.
 
 ### Added
 
+- `mew run --summary-only` (`RichReporter(show_repetitions=False)`) shows each
+  repeated benchmark only in the closing summary, not every repetition. Unlike
+  Google Benchmark's `report_aggregates_only`, it only affects the console:
+  result files keep every repetition, which `mew compare` needs.
 - `--sample` samples with Tachyon, the sampling profiler in Python 3.15's
   standard library (`profiling.sampling`), through the new
   `mew.cpu.TachyonManager`. It needs no extra install and works on free-threaded
@@ -53,9 +57,20 @@ change between minor releases.
   Benchmark's console (`bytes_per_second=1.2Gi/s`): SI or binary prefixes
   (`one_k`) and `/s` for rates. A counter carries this in an optional `format`.
   `CounterFlags.kStringifyExponent` is exposed for exponent notation.
+- Decorators take `min_time` as `mew.run()` does: seconds (`0.5`, `"0.5s"`) or
+  a fixed iteration count (`"100x"`), the same as `iterations=100`.
 
 ### Changed
 
+- Result files and the console no longer hold Google Benchmark's aggregate rows
+  (`_mean`, `_median`, `_stddev`, `_cv`), only each repetition: `mew compare`
+  reduces repetitions itself, by its `--statistic`, and ignored them anyway.
+  When the run ends, the console sums up each repeated benchmark in a second
+  table, in the order the benchmarks were registered, also under
+  `--random-interleaving`: the median real and CPU time, and the real time's
+  stddev and cv, as `mew compare` computes them. `report_aggregates_only`
+  is gone; it wrote files `mew compare` could not use. `mew compare` still
+  skips the aggregate rows in older files.
 - The console table fits the terminal. Its name column is as wide as the
   longest name the run will show, not all the width there is, and times are
   scaled to a readable unit (`305.03 ms`, not `305028333.33 ns`), as
@@ -112,12 +127,75 @@ change between minor releases.
 - `mew.run()` without a reporter prints mew's console table, like `mew run`,
   instead of Google Benchmark's console output. Google Benchmark's reporters
   are no longer used.
+- Exit codes tell the outcomes apart: 0 for success, 1 when nothing matched, 2
+  for a usage or environment error and 3 for a regression under
+  `--exit-non-zero-on-regression`, which exited 2. Exit 2, with a one-line
+  message instead of a traceback, now also covers a sampler or profiler that
+  can't run here, a missing, unreadable, truncated or malformed result file, an
+  invalid `mew compare -k`, an unknown `@tag`, metric or key, `--strict` with
+  threaded benchmarks on a GIL build, and a missing output directory, which
+  exited 1 like "nothing matched".
+  A benchmark or setup file that raises on import exits 2 after its traceback.
+- Library functions raise exceptions instead of `SystemExit`.
+  `mew.compare.compare()`, `read_results()` and `session_summaries()` raise
+  `ValueError`, `FileNotFoundError` or another `OSError`. `mew.cpu.manager()`,
+  the sampler managers and `mew.memory.manager()` raise `ImportError` for a
+  missing package and `RuntimeError` for a sampler that can't run here.
+  `compare()`, `mew.regressions.render_panel()` and `report()` return 3 for a
+  regression.
+- The decorators and `mew.run()` check options by the same rules: a wrong type
+  raises `TypeError` and an out-of-range value `ValueError`, where the
+  decorators raised `TypeError` for both. The decorators also reject what Google
+  Benchmark would ignore or misread: `iterations=2.5`, which ran 2 iterations,
+  `repetitions=True`, an infinite time, `use_real_time` with `use_manual_time`,
+  where manual time won, and `min_warmup_time` without `min_time` in seconds,
+  which did nothing. A misspelled `unit` fails at decoration instead of during
+  the run.
+- `mew.run()` and `--session-tag` reject the tag `latest`, which
+  `mew compare path@latest` reserves for the newest session, and an empty tag,
+  which was dropped.
+- Unknown keys in `[tool.mew]`, `[tool.mew.regressions]` and its `allow` rules
+  are errors that suggest the likely key, instead of being ignored. This
+  includes free-form keys such as `note = "..."` in an allow rule. An invalid
+  `statistic` fails every command, not only `mew compare`.
+- Config keys are spelled with dashes only, as TOML has them: `python_files`
+  and `[tool.mew.regressions] default_threshold`, the spelling 0.2.0 required,
+  must become `python-files` and `default-threshold`. The error names the
+  dashed key.
+- In the context, the last write wins: `set_context("dataset.size", 1)`
+  replaces a `dataset` that is not a dict instead of raising. Values are
+  deep-copied, so changing a dict or list after setting it no longer changes
+  what runs record.
+- `mew compare` measures noise (`±N% (!)`) as the stddev over the mean of the
+  repetitions, whatever `--statistic` is; `--statistic min` could inflate it. It
+  shows the same rows with or without a regression gate: the benchmarks the
+  first file and the baseline share, with dashes for a file in between that
+  lacks one. `path@tag` is split after a `.json`, `.jsonl` or `.jsonl.gz`
+  extension instead of by whether a file of the full name exists, and sessions
+  with the same date are ordered by their ID instead of their host.
+  `Sample.time_unit` is `None` for metrics that aren't times.
+- A memory manager's `stop()` must return `None` or a dict with `peak_bytes`
+  and `total_allocations`, and optionally `total_bytes` and `net_heap_growth`.
+  A missing or unknown key fails the run with `TypeError` instead of being
+  zeroed or dropped, and `None` leaves the row without a `memory` block instead
+  of one of zeros. A profiler's `get_result()` of `{}` becomes an empty
+  `cpu_profile` instead of none.
+- mew resumes a `state.pause()` held over the end of the loop before it stops
+  the profiler, so a manager's `pause()` and `resume()` calls are balanced and
+  its teardown never finds it paused.
+- A CPU profiling pass that caught no sample reports a profile with
+  `sample_count` 0 and a `null` `top_function`, shown as `0 samples`, instead
+  of no `cpu_profile`. `mew.cpu.manager()` checks `interval` and `top_k` for
+  every sampler, and `top_k` must be an integer. `mew.cpu.write_html()` raises
+  `TypeError` for a manager it can't render instead of treating it as
+  pyinstrument.
+
+### Removed
+
+- `State.keep_running_batch()`; `state.batches()` does the same.
 
 ### Fixed
 
-- Aggregate `cv` rows report the coefficient of variation as a ratio, marked by
-  a new `aggregate_unit` field, instead of a meaningless time. The console shows
-  it as a percentage.
 - After a `KeyboardInterrupt` or a failing reporter, benchmarks that did not run
   no longer reach result files as `aborted` rows.
 - Returning or breaking out of the benchmark loop, including in the final
@@ -145,8 +223,6 @@ change between minor releases.
   time to the result.
 - `--regression-threshold` overrides `[tool.mew.regressions] default_threshold`
   instead of being silently replaced by it.
-- `[tool.mew.regressions]` accepts dashed keys such as `default-threshold`, as
-  `[tool.mew]` does, instead of silently ignoring them.
 - Regression allowlist patterns match brackets literally, so `*[algo=bubble]`
   selects that case instead of acting as a character class.
 - Calling `state.set_label()` in a parametrized family only sets the row's
@@ -172,6 +248,8 @@ change between minor releases.
 - On Python 3.14+, argparse no longer colors `--help` under mew's own colors,
   which mixed two color schemes and colored redirected help when
   `PYTHON_COLORS` was set.
+- A CPU profiling pass that ends before its loop, for example by skipping, no
+  longer reports the previous benchmark's profile.
 
 ## Version 0.2.0 (September 24, 2026)
 
