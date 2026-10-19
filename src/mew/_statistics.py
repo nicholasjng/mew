@@ -5,8 +5,10 @@ from __future__ import annotations
 import re
 import statistics
 from collections.abc import Callable
+from typing import SupportsFloat
 
-Statistic = Callable[[list[float]], float]
+# Any float-castable result, e.g. a numpy scalar; callers convert it with float().
+Statistic = Callable[[list[float]], SupportsFloat]
 
 
 def _percentile(q: int) -> Statistic:

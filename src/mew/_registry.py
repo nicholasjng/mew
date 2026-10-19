@@ -78,28 +78,19 @@ def _match_cases(entry: Entry, rx: re.Pattern[str], n: int) -> set[int]:
     return {i for i, name in case_names(entry) if rx.search(name)}
 
 
-def narrow_entry(
-    entry: Entry,
-    *,
-    any_of: Iterable[re.Pattern[str]] = (),
-    all_of: re.Pattern[str] | None = None,
-) -> Entry | None:
-    """Apply name filters to an entry, returning a (possibly case-narrowed) view or ``None``.
+def narrow_entry(entry: Entry, filters: Iterable[re.Pattern[str]]) -> Entry | None:
+    """Narrow an entry to the cases any of ``filters`` selects, or return ``None``.
 
-    ``any_of`` is an OR group (per-path ``file.py::filter`` selectors); ``all_of`` is
-    an extra AND constraint (the global ``-k``). A family whose own name matches keeps
-    all its cases. The registered entry is never mutated; a strict subset is a copy.
+    A family whose own name matches keeps all its cases. A view narrows further, so
+    narrowing by one filter group, then another, keeps the cases both select. The
+    entry is never mutated; a strict subset is a copy.
     """
     n = len(entry.case_labels) if entry.case_labels is not None else 1
-    cases = set(range(n))
-    any_of = list(any_of)
-    if any_of:
-        cases &= set().union(*(_match_cases(entry, rx, n) for rx in any_of))
-    if all_of is not None:
-        cases &= _match_cases(entry, all_of, n)
+    current = set(range(n)) if entry.cases is None else set(entry.cases)
+    cases = current & set().union(*(_match_cases(entry, f, n) for f in filters))
     if not cases:
         return None
-    return entry if len(cases) == n else dataclasses.replace(entry, cases=sorted(cases))
+    return entry if cases == current else dataclasses.replace(entry, cases=sorted(cases))
 
 
 class Registry:
@@ -151,16 +142,18 @@ class Registry:
         tags: Iterable[str] | None = None,
         literal: bool = False,
     ) -> list[Entry]:
-        """Filter entries by name and tags.
+        """Select entries by name and tags, like ``mew run -k PATTERN --tag TAG``.
 
         Parameters
         ----------
         pattern : str, optional
-            Name regex. A case-only match narrows a family to those cases.
+            Name regex, searched for (``re.search``). A match on some cases of a
+            family narrows the family to those cases.
         tags : Iterable[str], optional
-            Tags with OR semantics.
+            Selects entries with any of these tags.
         literal : bool, default False
-            Treat ``pattern`` as literal text.
+            Match ``pattern`` as plain text, e.g. to keep a ``name[label]``'s
+            brackets, like ``mew run -F``.
 
         Returns
         -------
@@ -170,15 +163,15 @@ class Registry:
         Raises
         ------
         ValueError
-            If ``pattern`` is invalid.
+            If ``pattern`` is not a valid regex.
         """
         out = list(self._entries.values())
-        if pattern:
-            rx = compile_name_filter(pattern, literal=literal)
-            out = [n for e in out if (n := narrow_entry(e, all_of=rx)) is not None]
         if tags:
             wanted = set(tags)
             out = [e for e in out if wanted.intersection(e.tags)]
+        if pattern:
+            rx = compile_name_filter(pattern, literal=literal)
+            out = [n for e in out if (n := narrow_entry(e, [rx])) is not None]
         return out
 
     def __len__(self) -> int:

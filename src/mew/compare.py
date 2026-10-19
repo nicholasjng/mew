@@ -221,12 +221,14 @@ def _render(
     if pattern is not None:
         all_names = {n for n in all_names if pattern.search(n)}
 
-    # Only baseline and candidate must share a benchmark when gating; extra
-    # columns render missing values as dashes.
-    required = columns[:2] if regressions is not None else columns
-    shared = all_names.intersection(*(c.samples.keys() for c in required))
+    # The rows are what baseline and candidate share, gated or not: a benchmark
+    # missing from an extra column, such as an older run, shows dashes there.
+    shared = all_names.intersection(columns[0].samples, columns[1].samples)
     if not shared:
-        msg = "no overlapping benchmarks across input files"
+        msg = (
+            f"no overlapping benchmarks between {columns[1].source} "
+            f"and the baseline {columns[0].source}"
+        )
         if metric in _MEMORY_METRICS:
             msg += f" with {metric!r} data (produced with --profile-memory?)"
         elif key == "name":
@@ -342,7 +344,9 @@ def compare(
 ) -> int:
     """Print a table comparing result files against the last, the baseline.
 
-    Each other file's column shows its value, the delta and the speedup.
+    Each other file's column shows its value, the delta and the speedup. The
+    rows are the benchmarks the first file and the baseline share; another file
+    that lacks one shows dashes in its row.
 
     Parameters
     ----------
@@ -351,7 +355,9 @@ def compare(
         ``mew compare head.json base.json`` compares head against base. A file
         with several sessions contributes its newest; ``path@<tag>`` selects
         the sessions run with that ``--session-tag``, and ``path@latest`` the
-        newest explicitly.
+        newest explicitly (``latest`` is reserved, never a tag). A path splits
+        at its last ``@`` only after a ``.json``, ``.jsonl`` or ``.jsonl.gz``
+        extension, so ``a@b.json`` is a file name.
     metric : str, default "real_time"
         ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or, for results with
         memory figures, ``"memory.peak_bytes"`` or
@@ -366,7 +372,7 @@ def compare(
         Match ``pattern`` as plain text, e.g. to keep a ``name[label]``'s brackets.
     show_stddev : bool, default False
         Add a stddev column per file, where results have repetitions.
-    statistic : Callable[[list[float]], float], optional
+    statistic : Callable[[list[float]], SupportsFloat], optional
         Reduces each benchmark's repetition values to the value shown and
         gated; the median by default. Stddev is unaffected.
     regressions : RegressionConfig, optional
@@ -377,25 +383,27 @@ def compare(
     Returns
     -------
     int
-        ``0``; ``1`` when the files share no benchmark; ``2`` when the
-        regression gate fails.
+        ``0``; ``1`` when the first file and the baseline share no benchmark;
+        ``3`` when the regression gate fails.
 
     Raises
     ------
-    SystemExit
-        If a file can't be read, or holds no measurements.
+    ValueError
+        If an argument, such as ``pattern``, is invalid, or a file can't be
+        compared: it is not a mew result file, holds no measurements or no
+        session with the given tag, or ``statistic`` fails on a benchmark's
+        values.
+    OSError
+        If a file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
     if metric not in _METRICS:
-        raise SystemExit(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
+        raise ValueError(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
     if key not in _KEYS:
-        raise SystemExit(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
-    try:
-        name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
-    except ValueError as e:
-        raise SystemExit(str(e)) from e
+        raise ValueError(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
+    name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
 
     if len(files) < 2:
-        raise SystemExit("mew compare needs at least two result files")
+        raise ValueError(f"expected at least two result files, got {len(files)}")
     parsed = [_split_selector(str(p)) for p in files]
     paths = [p for p, _ in parsed]
     # CLI convention: the last file is the baseline ("compare head against
