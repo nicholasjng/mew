@@ -105,8 +105,14 @@ _DEFAULT_MIN_TIME = "0.5s"
 _DEFAULT_MEMORY_ITERATIONS = 16
 
 
+# The option checks below are shared by mew.run() and the decorators:
+# a wrong type raises TypeError, a value out of range ValueError.
+
+
 def parse_min_time(value: str | float) -> str:
     """Validate seconds or a fixed iteration count and return Google Benchmark syntax."""
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
+        raise TypeError(f"min_time must be seconds or a string like '100x', got {value!r}")
     text = str(value).strip()
     number = text[:-1] if text.endswith(("s", "x")) else text
     try:
@@ -120,9 +126,55 @@ def parse_min_time(value: str | float) -> str:
     return text if text.endswith(("s", "x")) else text + "s"
 
 
-def _check_positive_int(value: int | None, name: str) -> None:
-    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
-        raise ValueError(f"{name} must be an integer >= 1, got {value!r}")
+def check_min_warmup_time(value: object) -> None:
+    """Reject warm-up seconds that aren't a finite number >= 0."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(f"min_warmup_time must be a number of seconds, got {value!r}")
+    if not isfinite(value) or value < 0:
+        raise ValueError(f"min_warmup_time must be a finite number >= 0, got {value!r}")
+
+
+def check_count(value: object, name: str) -> None:
+    """Reject a count that isn't an integer >= 1; a ``bool`` is not a count."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer, got {value!r}")
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1, got {value!r}")
+
+
+def check_session_tag(tag: object) -> None:
+    """Reject a session tag that ``mew compare path@<tag>`` can't select."""
+    if not isinstance(tag, str):
+        raise TypeError(f"session_tag must be a string, got {tag!r}")
+    if not tag.strip():
+        raise ValueError("session_tag must not be empty")
+    if tag == "latest":
+        raise ValueError(
+            "session_tag 'latest' is reserved: `mew compare path@latest` selects the newest session"
+        )
+
+
+_THREADED_ON_GIL = (
+    "threaded benchmarks require a free-threaded interpreter; "
+    "this interpreter has the GIL enabled, where threaded mode "
+    "would deadlock on Google Benchmark's start barrier"
+)
+
+
+def _threaded_on_gil(entries: Iterable[Entry]) -> tuple[list[Entry], str]:
+    """The threaded benchmarks this build can't run, and the first few names."""
+    threaded = [e for e in entries if _is_threaded(e.options)] if gil_enabled() else []
+    return threaded, ", ".join(e.name for e in threaded[:3]) + overflow(len(threaded), 3)
+
+
+def check_strict(entries: Iterable[Entry]) -> None:
+    """Raise what ``mew.run(strict=True)`` raises for ``entries`` before running them."""
+    threaded, names = _threaded_on_gil(entries)
+    if threaded:
+        raise RuntimeError(
+            f"{_THREADED_ON_GIL}. Affected: {names}. Run on a free-threaded build, "
+            "drop the threads option, or pass strict=False to skip them."
+        )
 
 
 def _gb_argv(
@@ -136,12 +188,14 @@ def _gb_argv(
 
     Pure, so :func:`run` calls it before the run has any side effects. All values
     are emitted because Google Benchmark flags persist across runs in the same
-    process. Decorator options take precedence.
+    process. Decorator options take precedence, except that an ``Nx`` min_time
+    also overrides a decorator's min_time.
     """
-    _check_positive_int(repetitions, "repetitions")
-    _check_positive_int(memory_iterations, "memory_iterations")
-    if min_warmup_time is not None and (not isfinite(min_warmup_time) or min_warmup_time < 0):
-        raise ValueError(f"min_warmup_time must be a finite number >= 0, got {min_warmup_time!r}")
+    for name, count in (("repetitions", repetitions), ("memory_iterations", memory_iterations)):
+        if count is not None:
+            check_count(count, name)
+    if min_warmup_time is not None:
+        check_min_warmup_time(min_warmup_time)
     mt = parse_min_time(min_time) if min_time is not None else _DEFAULT_MIN_TIME
     mi = memory_iterations if memory_iterations is not None else _DEFAULT_MEMORY_ITERATIONS
     return [
@@ -183,8 +237,9 @@ def run(
         One reporter or several; ``None``, or none, prints mew's console table
         (:class:`~mew.reporter.RichReporter`).
     min_time : str or float, optional
-        Minimum time per benchmark in seconds (``0.5``), or a fixed iteration
-        count (``"100x"``). A benchmark's own ``min_time`` wins.
+        Minimum time per benchmark in seconds (``0.5``, ``"0.5s"``), or a fixed
+        iteration count (``"100x"``). A benchmark's own ``iterations`` wins over
+        both, its own ``min_time`` only over seconds.
     min_warmup_time : float, optional
         Seconds each benchmark warms up before it is measured.
     repetitions : int, optional
@@ -193,7 +248,9 @@ def run(
         Shuffle repetitions across benchmarks, so drift in load or temperature
         spreads over all of them. Needs ``repetitions > 1``.
     session_tag : str, optional
-        A label for the session, e.g. ``"before"``, stored with its ID.
+        A label for the session, e.g. ``"before"``, stored with its ID, which
+        ``mew compare path@<tag>`` selects by. It can't be empty or
+        ``"latest"``, which selects the newest session.
     strict : bool, default False
         Raise when threaded benchmarks are selected on a GIL build, where they
         can't run, instead of warning and reporting them as skipped: in CI, a
@@ -222,43 +279,38 @@ def run(
 
     Raises
     ------
+    TypeError
+        If a run option has the wrong type.
     ValueError
-        If a run option is out of range.
+        If a run option is out of range, or ``session_tag`` is empty or
+        ``"latest"``.
     RuntimeError
         With ``strict``, if threaded benchmarks are selected on a GIL build.
     """
     cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, memory_iterations)
+    if session_tag is not None:
+        check_session_tag(session_tag)
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
         return 0
 
+    if strict:
+        check_strict(selected)
     skipped_rows: list[BenchmarkResult] = []
-    threaded = [e for e in selected if _is_threaded(e.options)]
-    if threaded and gil_enabled():
-        names = ", ".join(e.name for e in threaded[:3])
-        more = overflow(len(threaded), 3)
-        reason = (
-            "threaded benchmarks require a free-threaded interpreter; "
-            "this interpreter has the GIL enabled, where threaded mode "
-            "would deadlock on Google Benchmark's start barrier"
-        )
-        if strict:
-            raise RuntimeError(
-                f"{reason}. Affected: {names}{more}. Run on a free-threaded build, "
-                f"drop the threads option, or pass strict=False to skip them."
-            )
+    skipped, names = _threaded_on_gil(selected)
+    if skipped:
         warnings.warn(
-            f"skipping {len(threaded)} threaded benchmark(s) on a GIL interpreter "
-            f"({names}{more}), run on a free-threaded build to execute them; {reason}.",
+            f"skipping {len(skipped)} threaded benchmark(s) on a GIL interpreter "
+            f"({names}), run on a free-threaded build to execute them; {_THREADED_ON_GIL}.",
             RuntimeWarning,
             stacklevel=2,
         )
-        skip_msg = f"skipped: {reason}"
+        skip_msg = f"skipped: {_THREADED_ON_GIL}"
         skipped_rows = [
-            _skipped_row(e.name, max(_thread_counts(e.options)), skip_msg) for e in threaded
+            _skipped_row(e.name, max(_thread_counts(e.options)), skip_msg) for e in skipped
         ]
         selected = [e for e in selected if not _is_threaded(e.options)]
-        threaded = []
+    threaded = any(_is_threaded(e.options) for e in selected)
 
     # Anything with the reporter callbacks is a single reporter, even if iterable.
     if isinstance(reporter, Reporter):
@@ -271,7 +323,7 @@ def run(
         rep = reps[0]
     else:
         # A threaded benchmark skipped above shows its plain name.
-        widths = [longest_row_name(selected, repetitions)]
+        widths = [longest_row_name(selected)]
         widths += [len(row["benchmark"]) for row in skipped_rows]
         rep = RichReporter(
             show_memory=memory_manager is not None,
@@ -287,7 +339,7 @@ def run(
         "host": socket.gethostname(),
         "mew_version": __version__,
     }
-    if session_tag:
+    if session_tag is not None:
         session["tag"] = session_tag
     # Machine context first so a suite's providers can override it. It also loads
     # GB's CPU info, whose probes print to fd 2, silenced, before the run.

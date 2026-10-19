@@ -12,11 +12,13 @@ from typing import Any, Unpack, cast, overload
 from mew._core import TimeUnit
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
+from mew.runner import check_count, check_min_warmup_time, parse_min_time
 
 _REGISTERED_ATTR = "__mew_registered__"
 
 
 _OptionKeys = BenchmarkOptions.__required_keys__ | BenchmarkOptions.__optional_keys__
+_TIME_UNITS = tuple(unit.value for unit in TimeUnit)
 
 
 def _format_id_value(value: Any) -> str:
@@ -47,27 +49,6 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
     return f"{module}::{qualname}"
 
 
-def _check_options(options: Mapping[str, Any]) -> None:
-    extra = set(options) - _OptionKeys
-    if extra:
-        raise TypeError(f"unknown option(s): {sorted(extra)}")
-    # GB guards these with asserts compiled out of release builds, so bad values
-    # would misbehave silently; fail at decoration time instead.
-    for key in ("iterations", "repetitions"):
-        if (v := options.get(key)) is not None and int(v) < 1:
-            raise TypeError(f"{key} must be >= 1, got {v!r}")
-    # Negated so NaN fails too.
-    if (v := options.get("min_time")) is not None and not float(v) > 0:
-        raise TypeError(f"min_time must be positive, got {v!r}")
-    if (v := options.get("min_warmup_time")) is not None and not float(v) >= 0:
-        raise TypeError(f"min_warmup_time must be >= 0, got {v!r}")
-    # GB's Iterations() and MinTime()/MinWarmUpTime() reject each other.
-    if options.get("iterations") is not None:
-        for key in ("min_time", "min_warmup_time"):
-            if options.get(key) is not None:
-                raise TypeError(f"iterations cannot be combined with {key}")
-
-
 def _normalize_threads(value: Any) -> tuple[int, ...]:
     """Coerce ``threads`` (an int or an iterable of ints) to a tuple of distinct counts.
 
@@ -78,20 +59,65 @@ def _normalize_threads(value: Any) -> tuple[int, ...]:
         raise TypeError(f"threads must be an int or an iterable of ints, got {value!r}")
     counts = (value,) if isinstance(value, int) else tuple(dict.fromkeys(value))
     if not counts:
-        raise TypeError("threads must name at least one thread count")
+        raise ValueError("threads must name at least one thread count")
     for n in counts:
-        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
-            raise TypeError(f"threads must be integers >= 1, got {n!r}")
+        check_count(n, "threads")
     return counts
 
 
 def _normalize_options(options: Mapping[str, Any]) -> BenchmarkOptions:
-    """Validate decorator options and snapshot iterables (``threads``) into tuples."""
-    _check_options(options)
-    normalized = dict(options)
-    if (threads := normalized.get("threads")) is not None:
-        normalized["threads"] = _normalize_threads(threads)
-    return cast(BenchmarkOptions, normalized)
+    """Validate decorator options by :func:`mew.run`'s rules and normalize them.
+
+    Unset (``None``) options are dropped, ``min_time`` becomes seconds, or
+    ``iterations`` for ``"Nx"``, and ``threads`` becomes a tuple.
+    """
+    extra = set(options) - _OptionKeys
+    if extra:
+        raise TypeError(f"unknown option(s): {sorted(extra)}")
+    opts = {k: v for k, v in options.items() if v is not None}
+    # Fail at decoration time: GB guards many of these with asserts compiled out
+    # of release builds, so bad values would misbehave silently.
+    for key in ("iterations", "repetitions"):
+        if key in opts:
+            check_count(opts[key], key)
+    if "min_warmup_time" in opts:
+        check_min_warmup_time(opts["min_warmup_time"])
+    if "unit" in opts:
+        if not isinstance(opts["unit"], str):
+            raise TypeError(f"unit must be a string, got {opts['unit']!r}")
+        if opts["unit"] not in _TIME_UNITS:
+            units = ", ".join(map(repr, _TIME_UNITS))
+            raise ValueError(f"unit must be one of {units}, got {opts['unit']!r}")
+    for key in ("use_real_time", "use_manual_time", "measure_process_cpu_time"):
+        if key in opts and not isinstance(opts[key], bool):
+            raise TypeError(f"{key} must be a bool, got {opts[key]!r}")
+    if "threads" in opts:
+        opts["threads"] = _normalize_threads(opts["threads"])
+
+    fixed = "iterations"
+    if "min_time" in opts:
+        min_time = parse_min_time(opts["min_time"])
+        if min_time.endswith("x"):
+            # "Nx" fixes the iteration count, as it does for mew.run().
+            fixed = f"min_time={opts.pop('min_time')!r}"
+            if "iterations" in opts:
+                raise ValueError(f"{fixed} cannot be combined with iterations")
+            opts["iterations"] = int(min_time[:-1])
+        else:
+            opts["min_time"] = float(min_time[:-1])
+    # GB checks these combinations only in debug builds, which abort; release
+    # builds silently drop the time budget, or use_real_time for manual time.
+    if "iterations" in opts:
+        for key in ("min_time", "min_warmup_time"):
+            if key in opts:
+                raise ValueError(f"{fixed} cannot be combined with {key}")
+    # GB warms a benchmark up for its own time only if it also has its own
+    # min_time; alone, the option would do nothing.
+    if "min_warmup_time" in opts and "min_time" not in opts:
+        raise ValueError("min_warmup_time needs min_time in seconds")
+    if opts.get("use_real_time") and opts.get("use_manual_time"):
+        raise ValueError("use_real_time cannot be combined with use_manual_time")
+    return cast(BenchmarkOptions, opts)
 
 
 def _check_addressable(text: str, what: str) -> None:
@@ -198,9 +224,10 @@ def benchmark(
     Raises
     ------
     TypeError
-        If an option is unknown or out of range.
+        If an option is unknown or has the wrong type.
     ValueError
-        If ``name`` contains ``::``, brackets or a newline.
+        If an option is out of range or contradicts another, or ``name``
+        contains ``::``, brackets or a newline.
     RuntimeError
         If another decorator already registered the function.
 
@@ -304,10 +331,10 @@ def parametrize(
     ------
     ValueError
         If there are no cases, ``ids`` doesn't have one label per case, two
-        labels are equal, or a name or label contains ``::``, brackets or a
-        newline.
+        labels are equal, a name or label contains ``::``, brackets or a
+        newline, or an option is out of range or contradicts another.
     TypeError
-        If an option is unknown or out of range.
+        If an option is unknown or has the wrong type.
     RuntimeError
         If another decorator already registered the function.
 
@@ -335,7 +362,7 @@ def product(
     name: str | None = None,
     ids: Sequence[str] | None = None,
     tags: Iterable[str] | str | None = None,
-    min_time: float | None = None,
+    min_time: float | str | None = None,
     min_warmup_time: float | None = None,
     iterations: int | None = None,
     repetitions: int | None = None,
@@ -360,13 +387,17 @@ def product(
         One label per combination, instead of labels made from the values.
     tags : Iterable[str] or str, optional
         Tags for every case.
-    min_time, min_warmup_time : float, optional
-        Seconds to measure and to warm up each case.
+    min_time : float or str, optional
+        Seconds to measure each case, or a fixed iteration count like
+        ``"100x"``, which is the same as ``iterations=100``.
+    min_warmup_time : float, optional
+        Seconds to warm up each case; needs ``min_time`` in seconds.
     iterations, repetitions : int, optional
         A fixed iteration count, which excludes the two times above, and how
         many runs per case.
     unit : str or TimeUnit, optional
-        The time unit results are reported in.
+        The time unit results are reported in: ``"ns"``, ``"us"``, ``"ms"`` or
+        ``"s"``.
     use_real_time, use_manual_time, measure_process_cpu_time : bool
         Which clock each case's time comes from; ``use_real_time`` and
         ``use_manual_time`` exclude each other.
@@ -384,10 +415,10 @@ def product(
     Raises
     ------
     TypeError
-        If no iterables are given, or an option is out of range.
+        If no iterables are given, or an option has the wrong type.
     ValueError
-        If two labels are equal, or a name or label contains ``::``, brackets
-        or a newline.
+        If an option is out of range or contradicts another, two labels are
+        equal, or a name or label contains ``::``, brackets or a newline.
     RuntimeError
         If another decorator already registered the function.
 
