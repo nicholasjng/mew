@@ -7,7 +7,9 @@ import math
 import os
 import re
 import sys
-from contextlib import ExitStack
+import traceback
+from collections.abc import Generator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import mew.config as _config
@@ -24,7 +26,7 @@ from mew import (
     run as _run,
 )
 from mew._registry import compile_name_filter
-from mew.runner import longest_row_name, parse_min_time
+from mew.runner import check_session_tag, check_strict, longest_row_name, parse_min_time
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -34,11 +36,39 @@ def _load_config_or_exit() -> _config.Config:
     try:
         return _config.load()
     except ValueError as e:
-        print(f"mew: invalid [tool.mew] config: {e}", file=sys.stderr)
+        print(f"mew: invalid config: {e}", file=sys.stderr)
         raise SystemExit(2) from e
 
 
-def _import_setup(cfg: _config.Config) -> None:
+@contextmanager
+def _usage_error(command: str, *errors: type[Exception]) -> Generator[None]:
+    """Turn ``errors`` into a one-line ``mew <command>: ...`` message and exit 2.
+
+    2 is the usage-or-environment code; uncaught, they would exit 1, the code
+    for "nothing matched".
+    """
+    try:
+        yield
+    except errors as e:
+        print(f"mew {command}: {e}", file=sys.stderr)
+        raise SystemExit(2) from e
+
+
+def _import_or_exit(path: Path, command: str) -> None:
+    """Import a benchmark or setup file; if it raises, exit 2 after its traceback.
+
+    The traceback shows what the file got wrong, e.g. an option a decorator
+    rejects; uncaught, it would exit 1, the code for "nothing matched".
+    """
+    try:
+        _discovery.import_file(path)
+    except Exception as e:
+        traceback.print_exc()
+        print(f"mew {command}: cannot import {path}", file=sys.stderr)
+        raise SystemExit(2) from e
+
+
+def _import_setup(cfg: _config.Config, command: str) -> None:
     """Import ``[tool.mew] setup`` before discovery, if configured.
 
     Imported first and unconditionally, so what it establishes -- context
@@ -49,9 +79,9 @@ def _import_setup(cfg: _config.Config) -> None:
         return
     path = (cfg.project_root or Path.cwd()) / cfg.setup  # an absolute setup replaces root
     if not path.is_file():
-        print(f"mew: invalid [tool.mew] config: setup file not found: {path}", file=sys.stderr)
+        print(f"mew: invalid config: [tool.mew] setup file not found: {path}", file=sys.stderr)
         raise SystemExit(2)
-    _discovery.import_file(path)
+    _import_or_exit(path, command)
 
 
 def _collect(
@@ -62,39 +92,37 @@ def _collect(
     tags: list[str],
     literal: bool = False,
     stdin: bool = False,
+    command: str,
 ) -> list[Entry]:
     """Resolve CLI path args into a filtered list of registered entries.
 
-    Exits ``1`` (the shared "nothing matched" code) if nothing is selected.
+    Exits ``1`` (the shared "nothing matched" code) if nothing is selected,
+    and ``2`` if a file fails to import; ``command`` names the command in
+    that message.
 
     Stdin lines are always literal. A path-less line (``mew list --names-only``
     output) filters names over the normal discovery, so it round-trips from any cwd.
     """
     lines = [line.strip() for line in sys.stdin.read().splitlines()] if stdin else []
-    name_filters = [line for line in lines if line and "::" not in line]
+    names = [compile_name_filter(line, literal=True) for line in lines if line and "::" not in line]
     # Keep each filter attached to its discovery path. Otherwise selecting
     # a.py::x and b.py::y also selects a.py::y and b.py::x. Compiled before any
     # import, so a bad pattern fails before benchmark code runs.
-    try:
+    with _usage_error(command, ValueError):
         selectors = [_discovery.parse(p, literal=literal) for p in paths]
         selectors += [_discovery.parse(line, literal=True) for line in lines if "::" in line]
-        # Files to import come from positional args and `::` stdin selectors, else
-        # benchpaths; an empty stdin pipe must select nothing, not the whole suite.
-        if not selectors and (name_filters or not stdin):
-            # Benchpaths resolve against pyproject.toml, not the cwd, so a subdirectory
-            # works. A missing one means "nothing to discover" in a fresh project, not
-            # a hard error like a mistyped positional path.
-            root = cfg.project_root or Path.cwd()
-            selectors = [
-                sel
-                for p in cfg.benchpaths
-                if (sel := _discovery.parse(p, root=root, literal=literal)).path.exists()
-            ]
-        names = [compile_name_filter(n, literal=True) for n in name_filters]
-        pattern_re = compile_name_filter(pattern, literal=literal) if pattern else None
-    except ValueError as e:
-        print(e, file=sys.stderr)
-        raise SystemExit(2) from e
+        if pattern:
+            compile_name_filter(pattern, literal=literal)
+    # Files to import come from positional args and `::` stdin selectors, else
+    # benchpaths; an empty stdin pipe must select nothing, not the whole suite.
+    if not selectors and (names or not stdin):
+        # Benchpaths resolve against pyproject.toml, not the cwd, so a subdirectory
+        # works. A missing one means "nothing to discover" in a fresh project, not
+        # a hard error like a mistyped positional path.
+        root = cfg.project_root or Path.cwd()
+        selectors = [
+            sel for p in cfg.benchpaths if (sel := _discovery.parse(p, root=root)).path.exists()
+        ]
 
     try:
         files = _discovery.collect_files(selectors, file_patterns=cfg.python_files)
@@ -103,19 +131,17 @@ def _collect(
         raise SystemExit(2) from e
 
     REGISTRY.clear()
-    _import_setup(cfg)
+    _import_setup(cfg, command)
     for f in files:
-        _discovery.import_file(f)
+        _import_or_exit(f, command)
 
     candidates = [
         # abspath, not resolve(): a symlinked bench file inside a benchpath was
         # imported through the link and must stay inside that benchpath.
         (entry, Path(os.path.abspath(entry.file)) if entry.file else None)
-        for entry in REGISTRY.all()
+        for entry in REGISTRY.filter(pattern, tags=tags, literal=literal)
     ]
-    entries = _discovery.select_entries(
-        candidates, selectors, names=names, pattern=pattern_re, tags=tags
-    )
+    entries = _discovery.select_entries(candidates, selectors, names=names)
     if not entries:
         print("no benchmarks found", file=sys.stderr)
         raise SystemExit(1)
@@ -138,7 +164,12 @@ def list_(
     """List discovered benchmarks without running them."""
     with _discovery.discovered():
         entries = _collect(
-            paths, cfg=_load_config_or_exit(), pattern=pattern, tags=tag, literal=literal
+            paths,
+            cfg=_load_config_or_exit(),
+            pattern=pattern,
+            tags=tag,
+            literal=literal,
+            command="list",
         )
         for e in entries:
             tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
@@ -164,6 +195,7 @@ def _build_reporters(
     show_memory: bool = False,
     show_cpu: bool = False,
     name_width: int | None = None,
+    show_repetitions: bool = True,
     append: bool = False,
 ) -> list[Reporter]:
     """Resolve ``-o`` sinks into reporters; file format follows the extension.
@@ -176,7 +208,12 @@ def _build_reporters(
             return JSONReporter(output=None)
         if stdout_format == "jsonl":
             return JSONLReporter(output=None)
-        return RichReporter(show_memory=show_memory, show_cpu=show_cpu, name_width=name_width)
+        return RichReporter(
+            show_memory=show_memory,
+            show_cpu=show_cpu,
+            name_width=name_width,
+            show_repetitions=show_repetitions,
+        )
 
     if append and not any(raw.lower().endswith((".jsonl", ".jsonl.gz")) for raw in outputs):
         print("--append requires a .jsonl or .jsonl.gz output sink", file=sys.stderr)
@@ -199,6 +236,10 @@ def _build_reporters(
         path = Path(raw).resolve()
         if path in seen_files:
             print(f"duplicate file sink: {raw}", file=sys.stderr)
+            raise SystemExit(2)
+        # Opened only once the run starts; fail before it does.
+        if not path.parent.is_dir():
+            print(f"output directory does not exist: {path.parent}", file=sys.stderr)
             raise SystemExit(2)
         seen_files.add(path)
         name = path.name.lower()
@@ -242,6 +283,7 @@ def run(
     min_warmup_time: float | None,
     random_interleaving: bool,
     repetitions: int | None,
+    summary_only: bool,
     session_tag: str | None,
     append: bool,
     strict: bool,
@@ -256,25 +298,45 @@ def run(
     sample_html: Path | None,
 ) -> None:
     """Discover and run benchmarks."""
+    # argparse checks the other options mew.run takes. Before discovery, so a
+    # bad tag fails before any benchmark file is imported.
+    if session_tag is not None:
+        with _usage_error("run", TypeError, ValueError):
+            check_session_tag(session_tag)
     profile_memory = profile_memory or flamegraph is not None
     sample = sample or sample_html is not None
     cfg = _load_config_or_exit()
     with _discovery.discovered():
-        entries = _collect(paths, cfg=cfg, pattern=pattern, tags=tag, literal=literal, stdin=stdin)
+        entries = _collect(
+            paths,
+            cfg=cfg,
+            pattern=pattern,
+            tags=tag,
+            literal=literal,
+            stdin=stdin,
+            command="run",
+        )
+        if strict:
+            # Here rather than in mew.run, so it exits 2 like a profiler that can't run.
+            with _usage_error("run", RuntimeError):
+                check_strict(entries)
         profiler_manager = None
         if sample:
             from mew import cpu as _cpu
 
-            profiler_manager = _cpu.manager(
-                interval=sample_interval, sampler=sampler, top_k=sample_top_k
-            )
+            # A sampler that can't run here, or a bad setting for it.
+            with _usage_error("run", ImportError, RuntimeError, ValueError):
+                profiler_manager = _cpu.manager(
+                    interval=sample_interval, sampler=sampler, top_k=sample_top_k
+                )
 
         reporters = _build_reporters(
             output,
             stdout_format=format,
             show_memory=profile_memory,
             show_cpu=sample,
-            name_width=longest_row_name(entries, repetitions),
+            name_width=longest_row_name(entries),
+            show_repetitions=not summary_only,
             append=append,
         )
 
@@ -283,7 +345,8 @@ def run(
             if profile_memory:
                 from mew import memory as _memory
 
-                memory_manager = _memory.manager(stack)
+                with _usage_error("run", ImportError, RuntimeError):
+                    memory_manager = _memory.manager(stack)
 
             _run(
                 entries,
@@ -345,19 +408,20 @@ def compare(
             print(f"mew compare: invalid regressions config: {e}", file=sys.stderr)
             raise SystemExit(2) from e
 
-    code = _compare(
-        files,
-        metric=metric,
-        key=key,
-        pattern=pattern,
-        literal=literal,
-        show_stddev=stddev,
-        statistic=reduce,
-        regressions=cfg,
-    )
+    with _usage_error("compare", ValueError, OSError):
+        code = _compare(
+            files,
+            metric=metric,
+            key=key,
+            pattern=pattern,
+            literal=literal,
+            show_stddev=stddev,
+            statistic=reduce,
+            regressions=cfg,
+        )
     # The regression panel is informational unless the caller opted into gating;
     # a `no overlap` (1) exit still propagates as-is.
-    if code == 2 and not exit_non_zero_on_regression:
+    if code == 3 and not exit_non_zero_on_regression:
         code = 0
     if code:
         raise SystemExit(code)
@@ -377,7 +441,9 @@ def sessions(files: list[Path]) -> None:
         table.add_column("Tag")
         table.add_column("Benchmarks", justify="right")
         table.add_column("Rows", justify="right")
-        for s in session_summaries(path):
+        with _usage_error("sessions", ValueError, OSError):
+            summaries = session_summaries(path)
+        for s in summaries:
             table.add_row(
                 (s.id or "-")[:8],
                 (s.date or "-")[:19],
@@ -503,17 +569,15 @@ def _percent(value: str) -> float:
         raise argparse.ArgumentTypeError(f"expected a percent like '5%', got {value!r}") from None
 
 
-def _add_filter_args(
-    p: argparse.ArgumentParser,
-    *,
-    pattern_help: str,
-) -> None:
+def _add_filter_args(p: argparse.ArgumentParser, *, verb: str) -> None:
     """Add the coupled ``-k/--pattern`` + ``-F/--literal`` pair.
 
     ``-F`` only means anything alongside ``-k``, so the two are always registered
-    together; only the help text differs per command.
+    together; only the help's verb differs per command.
     """
-    p.add_argument("-k", "--pattern", metavar="<regex>", help=pattern_help)
+    p.add_argument(
+        "-k", "--pattern", metavar="<regex>", help=f"{verb} benchmarks whose name matches <regex>."
+    )
     p.add_argument("-F", "--literal", action="store_true", help="Treat -k as a literal string.")
 
 
@@ -546,7 +610,7 @@ def _add_command(
 def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
     p = _add_command(sub, "list", aliases=("ls",), help="List discovered benchmarks.")
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
-    _add_filter_args(p, pattern_help="List benchmarks whose name matches <regex>.")
+    _add_filter_args(p, verb="List")
     _add_tag_arg(p)
     p.add_argument("--show-tags", action="store_true", help="Show tags alongside benchmark names.")
     p.add_argument(
@@ -566,14 +630,11 @@ def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
 def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     p = _add_command(sub, "run", help="Discover and run benchmarks.")
     p.add_argument("paths", nargs="*", default=[], help=_PATHS_HELP)
-    _add_filter_args(
-        p,
-        pattern_help="Run benchmarks whose name matches <regex>.",
-    )
+    _add_filter_args(p, verb="Run")
     p.add_argument(
         "--stdin",
         action="store_true",
-        help="Read literal benchmark selectors from standard input.",
+        help="Read literal benchmark selectors from standard input, one per line.",
     )
     _add_tag_arg(p)
     p.add_argument(
@@ -612,9 +673,14 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         help="Randomly interleave benchmark repetitions.",
     )
     p.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Show repeated benchmarks only in the closing summary, not each repetition.",
+    )
+    p.add_argument(
         "--session-tag",
         metavar="<tag>",
-        help="Identify this run as session <tag>.",
+        help="Identify this run as session <tag> ('latest' is reserved).",
     )
     p.add_argument(
         "--append",
@@ -704,7 +770,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         metavar="<key>",
         help="Match benchmarks by name or func (default name).",
     )
-    _add_filter_args(p, pattern_help="Compare benchmarks whose name matches <regex>.")
+    _add_filter_args(p, verb="Compare")
     p.add_argument("--stddev", action="store_true", help="Show standard-deviation columns.")
     p.add_argument(
         "--statistic",
@@ -720,7 +786,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--exit-non-zero-on-regression",
         action="store_true",
-        help="Exit with status 2 when a regression is found.",
+        help="Exit with status 3 when a regression is found.",
     )
     p.set_defaults(_func=compare)
 
