@@ -204,7 +204,8 @@ _ROW_LINE = json.dumps(_row("b", 1.0))
         # Pure NDJSON: every line is a row with `name` and `benchmark`.
         ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', "a.jsonl:2: expected a mew result row"),
         # Cut off, as by a full disk or an interrupted copy.
-        ("a.jsonl.gz", gzip.compress(_ROW_LINE.encode())[:-8], "cannot read result file"),
+        # mtime=0: a timestamp in the header would vary the test ID between xdist workers.
+        ("a.jsonl.gz", gzip.compress(_ROW_LINE.encode(), mtime=0)[:-8], "cannot read result file"),
     ],
 )
 def test_load_rejects_unreadable_files(

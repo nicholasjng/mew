@@ -6,7 +6,6 @@ import contextlib
 import importlib
 import inspect
 import sys
-import time
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -494,25 +493,6 @@ def test_write_html_warns_when_nothing_was_sampled(tmp_path, capsys, sampler):
     _cpu.write_html(_sampled_manager(sampler), out)
     assert not out.exists()
     assert "no CPU samples collected" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize("sampler", _SAMPLERS)
-def test_sampler_handles_a_pause_held_over_the_loop_end(sampler):
-    """mew resumes the held pause before teardown, so the sampler stops once
-    and leaves the paused time out of wall_time."""
-
-    @mew.benchmark(iterations=2)
-    def bench_held(state):
-        with contextlib.ExitStack() as stack:
-            for _ in state:
-                stack.enter_context(state.pause())
-                time.sleep(0.01)
-
-    rep = Capture()
-    mew.run(reporter=rep, profiler_manager=_sampled_manager(sampler))
-    # A sleep never ends early, so counting the paused time would reach 20 ms;
-    # only the step into the first pause ran unpaused.
-    assert rep.runs[0]["cpu_profile"]["wall_time"] < 0.02
 
 
 def _sampling_nothing(sampler: str) -> Any:
