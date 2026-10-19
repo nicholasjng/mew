@@ -82,19 +82,13 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
         handle.use_manual_time()
     if opts.get("measure_process_cpu_time"):
         handle.measure_process_cpu_time()
-    if opts.get("report_aggregates_only"):
-        handle.report_aggregates_only(True)
     if opts.get("threads") is not None:
         # GB accumulates: one Threads() call per count runs the benchmark once each.
         for n in _thread_counts(opts):
             handle.threads(n)
 
 
-# The longest suffix of Google Benchmark's default aggregates: mean, median, stddev, cv.
-_AGGREGATE_SUFFIX = len("_median")
-
-
-def longest_row_name(entries: Iterable[Entry], repetitions: int | None) -> int:
+def longest_row_name(entries: Iterable[Entry]) -> int:
     """The longest name the console shows for these benchmarks' rows, so it can
     size its name column before the first row arrives."""
     longest = 0
@@ -103,8 +97,6 @@ def longest_row_name(entries: Iterable[Entry], repetitions: int | None) -> int:
         width = max(map(len, cases or [entry.name]))
         if entry.options.get("threads") is not None:
             width += len(f"/threads:{max(_thread_counts(entry.options))}")
-        if (entry.options.get("repetitions") or repetitions or 1) > 1:
-            width += _AGGREGATE_SUFFIX
         longest = max(longest, width)
     return longest
 

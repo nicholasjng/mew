@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import contextlib
 import json
+import statistics
 import sys
 import textwrap
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol, TextIO, cast, runtime_checkable
 
-from mew._console import _COL_SEP, Terminal, _truncate_left, fill, sgr
+from mew._console import _COL_SEP, Table, Terminal, _truncate_left, fill, sgr
 from mew._typing import BenchmarkResult
 
 
@@ -81,8 +82,8 @@ def _fmt_function(top: object) -> str:
 
 def _fmt_profile(cpu: Mapping[str, Any] | None) -> list[str]:
     """``42 samples``, ``hottest work (bench.py:6)`` and ``BINARY_OP 62%, 62% generic``."""
-    if not cpu:
-        return ["no samples"]
+    if cpu is None:  # The pass ended before its loop, or the profiler had nothing to say.
+        return ["no profile"]
     parts = []
     if (count := cpu.get("sample_count")) is not None:
         parts.append(f"{count:,} sample{'' if count == 1 else 's'}")
@@ -127,24 +128,14 @@ def _human_readable(value: float, one_k: int, exponent: bool) -> str:
 
 def _fmt_counters(row: BenchmarkResult) -> list[str]:
     """Counters as Google Benchmark's console shows them: ``name=1.2Gi/s``."""
-    ratio = row.get("aggregate_unit") == "percentage"
     parts = []
     for counter in row["counters"]:
-        value, fmt = counter["value"], counter.get("format", {})
-        if ratio:  # e.g. the `cv` aggregate of a counter
-            text = f"{100 * value:.2f}%"
-        else:
-            text = _human_readable(value, fmt.get("one_k", 1000), fmt.get("exponent", False))
-            if fmt.get("rate"):
-                text += "s" if fmt.get("inverted") else "/s"
+        fmt = counter.get("format", {})
+        text = _human_readable(counter["value"], fmt.get("one_k", 1000), fmt.get("exponent", False))
+        if fmt.get("rate"):
+            text += "s" if fmt.get("inverted") else "/s"
         parts.append(f"{counter['name']}={text}")
     return parts
-
-
-def canonical_row_name(row: Mapping[str, Any]) -> str:
-    """The display name of a stored row: its ``benchmark`` plus any aggregate suffix."""
-    aggregate = row.get("aggregate_name")
-    return f"{row['benchmark']}_{aggregate}" if aggregate else row["benchmark"]
 
 
 # Stamped onto every row so each one stands alone, in JSON and JSONL alike.
@@ -285,7 +276,10 @@ class RichReporter:
 
     The header prints before the first result, so the columns are chosen up
     front. Below a row, an indented line lists what has no column: a label the
-    benchmark set, its counters and, with ``show_cpu``, its CPU profile.
+    benchmark set, its counters and, with ``show_cpu``, its CPU profile. When the
+    run ends, a second table sums up each repeated benchmark as ``mew compare``
+    reduces it: the median times, and the stddev and cv (stddev over the mean)
+    of the real time. The terminal width is read once per run.
 
     Parameters
     ----------
@@ -299,6 +293,9 @@ class RichReporter:
     name_width : int, optional
         Width of the name column, such as the longest name the run will report;
         by default all the width the other columns leave.
+    show_repetitions : bool, default True
+        Print each repetition of a repeated benchmark. Without them, it appears
+        only in the closing summary; result files keep every repetition either way.
     """
 
     def __init__(
@@ -308,33 +305,84 @@ class RichReporter:
         show_memory: bool = False,
         show_cpu: bool = False,
         name_width: int | None = None,
+        show_repetitions: bool = True,
     ) -> None:
         self._term = terminal or Terminal()
         self._show_memory = show_memory
         self._show_cpu = show_cpu
         self._name_width = name_width
-        # Column header -> width, in display order; set once the terminal width is known.
+        self._show_repetitions = show_repetitions
+        # The terminal width, and column header -> width in display order; set
+        # per run, so a piped run doesn't probe the terminal for every row.
+        self._width = 0
         self._widths: dict[str, int] = {}
+        self._header_printed = False
+        # Each repeated benchmark's rows, for the summary at the end.
+        self._repeated: dict[str, list[BenchmarkResult]] = {}
 
     def report_context(self, context: dict[str, Any]) -> None:
+        self._repeated = {}
+        self._width = self._term.width
         self._print_banner(context)
         widths = {"Iters": 12, "Real": 10, "CPU": 10}
         if self._show_memory:
             widths["Peak Mem"] = 10
         # The name takes what's left, or what its longest name needs, but at least
         # 20 columns even if rows then overflow.
-        spare = self._term.width - sum(widths.values()) - len(widths) * len(_COL_SEP)
+        spare = self._width - sum(widths.values()) - len(widths) * len(_COL_SEP)
         if self._name_width is not None:
             spare = min(spare, self._name_width)
         self._widths = {"Benchmark": max(20, spare), **widths}
+        self._header_printed = False
+        # Without repetitions, every row may go to the summary: no empty table.
+        if self._show_repetitions:
+            self._print_header()
+
+    def _print_header(self) -> None:
         line = self._join(list(self._widths))
         color = self._term.color
         self._term.print(sgr(line, "bold", enabled=color))
         self._term.print(sgr("─" * len(line), "dim", enabled=color))
+        self._header_printed = True
 
     def report_runs(self, runs: list[BenchmarkResult]) -> None:
         for row in runs:
-            self._print_row(row)
+            repeated = row["repetitions"] > 1 and not row["skipped"]
+            if repeated:
+                self._repeated.setdefault(row["benchmark"], []).append(row)
+            if self._show_repetitions or not repeated:
+                if not self._header_printed:
+                    self._print_header()
+                self._print_row(row)
+
+    def finalize(self) -> None:
+        """Sum up the repeated benchmarks, in the order they were registered:
+        random interleaving reports them in the order they finish."""
+        groups = sorted(
+            (rows for rows in self._repeated.values() if len(rows) > 1),
+            key=lambda rows: (rows[0]["family_index"], rows[0]["per_family_instance_index"]),
+        )
+        self._repeated = {}
+        if not groups:
+            return
+        table = Table(title="Median of repetitions")
+        table.add_column("Benchmark", flex=True)
+        for header in ("Reps", "Real", "± stddev", "CV", "CPU"):
+            table.add_column(header, justify="right")
+        for rows in groups:
+            real, unit = [row["real_time"] for row in rows], rows[0]["time_unit"]
+            mean, stddev = statistics.fmean(real), statistics.stdev(real)
+            table.add_row(
+                rows[0]["benchmark"],
+                str(len(rows)),
+                _fmt_time(statistics.median(real), unit),
+                _fmt_time(stddev, unit),
+                f"{stddev / abs(mean):.2%}" if mean else "-",
+                _fmt_time(statistics.median(row["cpu_time"] for row in rows), unit),
+            )
+        self._term.print()
+        for line in table.render(self._width, color=self._term.color):
+            self._term.print(line)
 
     def _print_banner(self, context: dict[str, Any]) -> None:
         session = context.get("session", {})
@@ -365,7 +413,7 @@ class RichReporter:
         color = self._term.color
         # Canonical `file.py::f[label]` form, matching `mew compare`, left-ellipsized
         # to keep the disambiguating tail.
-        full_name = canonical_row_name(row)
+        full_name = row["benchmark"]
         name = _truncate_left(full_name, width)
 
         # Skipped rows carry no timing, so the dimmed reason fills the timing
@@ -373,7 +421,7 @@ class RichReporter:
         # and every character, since a cut path would no longer locate anything.
         if row["skipped"]:
             lead = name.ljust(width) + _COL_SEP
-            avail = max(10, self._term.width - len(lead))
+            avail = max(10, self._width - len(lead))
             lines: list[str] = []
             for text in (row["skip_message"] or "skipped").splitlines():
                 body = text.lstrip(" ")
@@ -386,12 +434,8 @@ class RichReporter:
                 self._term.print(sgr(prefix + line, "dim", enabled=color))
             return
 
-        if row.get("aggregate_unit") == "percentage":
-            # A ratio such as `cv`, shown as a percentage like GB's console.
-            real, cpu_time = f"{row['real_time']:.2%}", f"{row['cpu_time']:.2%}"
-        else:
-            unit = row["time_unit"]
-            real, cpu_time = _fmt_time(row["real_time"], unit), _fmt_time(row["cpu_time"], unit)
+        unit = row["time_unit"]
+        real, cpu_time = _fmt_time(row["real_time"], unit), _fmt_time(row["cpu_time"], unit)
         cells = [name, f"{row['iterations']:,}", real, cpu_time]
         if self._show_memory:
             mem = row.get("memory")
@@ -404,7 +448,7 @@ class RichReporter:
         details += _fmt_counters(row)
         if self._show_cpu:
             details += _fmt_profile(row.get("cpu_profile"))
-        for line in fill(details, self._term.width, indent="  ", hang="    ", sep=" · "):
+        for line in fill(details, self._width, indent="  ", hang="    ", sep=" · "):
             self._term.print(sgr(line, "dim", enabled=color))
 
 

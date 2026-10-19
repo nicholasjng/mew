@@ -62,7 +62,11 @@ class Sample:
 
 
 def _is_measurement_row(row: dict[str, Any]) -> bool:
-    """Return whether a row is a successful, non-aggregate measurement."""
+    """Return whether a row is a successful measurement.
+
+    Older result files also hold Google Benchmark's aggregate rows (``_mean``,
+    ``_median``, ...), which mew now leaves out and reduces itself.
+    """
     return (
         isinstance(row.get("name"), str)
         and not row.get("aggregate_name")
@@ -290,7 +294,7 @@ def _load(
     # Repetitions of one benchmark share its canonical `name[label]`.
     groups: dict[str, list[dict[str, Any]]] = {}
     for r in selected:
-        groups.setdefault(canonical_row_name(r), []).append(r)
+        groups.setdefault(r["benchmark"], []).append(r)
     samples = _samples_from_groups(groups, metric, statistic)
     ctx = {k: rep_row[k] for k in _ROW_STAMP_FIELDS if k in rep_row}
     return _normalize_samples(samples, key, str(path)), ctx
