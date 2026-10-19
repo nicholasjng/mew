@@ -67,6 +67,21 @@ $ rm -rf build/
 $ uv sync --reinstall-package=nanobind --reinstall-package=mew-bench
 ```
 
+## Building without network access
+
+A build fetches Google Benchmark from GitHub at the commit pinned in
+`CMakeLists.txt` and applies the patches in `patches/`. To build offline, as for
+a distribution's package, point CMake at a copy of that commit's source with the
+patches applied in order:
+
+```console
+$ git -C /path/to/benchmark apply "$PWD"/patches/*.patch
+$ CMAKE_ARGS="-DFETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK=/path/to/benchmark" pip install .
+```
+
+CMake uses that tree as it is and doesn't patch it, so the build checks that the
+patches are there and stops if they're not; mew depends on them.
+
 ## Test, lint, type-check
 
 ```console

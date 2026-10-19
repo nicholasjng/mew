@@ -37,7 +37,8 @@ change between minor releases.
   console names the hottest below the row.
 - A profiler manager's `get_result()` may return any JSON-serializable values,
   `None`, lists and dicts included. They reach `cpu_profile` with their JSON
-  types.
+  types; a value `json.dumps` rejects, such as a NumPy integer, fails the run,
+  where 0.2.0 converted top-level numbers to floats.
 - Every run records its interpreter in `context.python` (`version`,
   `implementation`, `gil_enabled`) and the mew that wrote it in
   `session.mew_version`, so an archive that mixes interpreters or mew releases
@@ -47,8 +48,8 @@ change between minor releases.
   warns when the compared files' models differ, as it does for the CPU count.
 - `mew.gil_enabled()` tells whether the GIL is enabled right now: `False` on a
   free-threaded build, unless an extension module enabled it on import.
-- Python 3.15 support. CI tests 3.15 and free-threaded 3.15t, and releases
-  include a `cp315t` wheel; the stable-ABI wheel already covers 3.15.
+- Python 3.15 support, with a `cp315t` wheel for free-threaded 3.15t; the
+  stable-ABI wheel already covers 3.15.
 - `mew run` captures what benchmarks write to stdout and stderr, native writes
   included, and prints it to stderr after the run, so library warnings no longer
   break up the console table or corrupt JSON on stdout. `--capture=no`,
@@ -81,8 +82,7 @@ change between minor releases.
   timing columns. The `Label` column is gone, since a case's label is part of
   its name, and with it `RichReporter`'s `show_label` parameter.
 - `mew compare` names the baseline in the table's title instead of its column
-  header, wraps each file's provenance line to the terminal width, and keeps at
-  least 20 columns of a benchmark's name.
+  header, and wraps each file's provenance line to the terminal width.
 - `mew.cpu.write_html()` takes the profiler manager instead of its pyinstrument
   sessions, like `mew.memory.write_flamegraph()`.
 - A row's `counters` is a list of `{"name", "value"}` records, plus the optional
@@ -96,46 +96,36 @@ change between minor releases.
   `function`, `file`, `line` and `self_time`, which replaces
   `top_function_total_self_time`. Its `line` is the hottest line, or `null`
   under pyinstrument, which reported the `def` line.
-- `cpu_profile.sample_count` is an integer instead of a float: the profiler
-  summary crosses Google Benchmark as JSON text, not as separate number and
-  string maps. DuckDB reads the column as `DOUBLE` when an archive mixes both.
-  For the same reason, a `get_result()` value that `json.dumps` rejects, such
-  as a NumPy integer, fails the run at any depth; 0.2.0 converted top-level
-  numbers to floats.
-- Google Benchmark is pinned to `e662de9` (v1.9.5-144).
+- `cpu_profile.sample_count` is an integer instead of a float. DuckDB reads the
+  column as `DOUBLE` in an archive that mixes both.
+- Google Benchmark is pinned to `e662de9` (v1.9.5-144). `mew --version` and
+  `mew.BENCHMARK_VERSION` report it as `v1.9.5-144-ge662de9a+mew`, without the
+  `-dirty` suffix that mew's patches caused.
 - On macOS, the thread CPU clock is read with `clock_gettime` instead of
   `thread_info`, which Google Benchmark kept for macOS 10.11: a read costs about
   110 ns instead of 510, and resolves 42 ns instead of 1 µs.
 - On Apple Silicon Macs, `mew run` starts about a second sooner. macOS doesn't
   report the CPU frequency there, and Google Benchmark estimated it by
   busy-looping for a second; mew never reported it.
-- `mew --version` and `mew.BENCHMARK_VERSION` report Google Benchmark as
-  `v1.9.5-144-ge662de9a+mew` instead of with a `-dirty` suffix caused by
-  mew's own patches.
-- `iterations` can no longer be combined with `min_time` or `min_warmup_time`.
-  Google Benchmark ignored the time budget in that case.
-- Registering a memory or profiler manager through `mew._core` replaces the
-  registered one, as in Google Benchmark, instead of raising `ValueError`.
 - `vcs_context()` lets jj snapshot the working copy, so uncommitted edits mark a
   jj checkout as dirty.
 - The CPU and memory profiling passes run a single thread again, as in Google
   Benchmark, also for threaded benchmarks. `state.threads` reports 1 in these
   passes, in the body and in setup and teardown, so code sized by the thread
   count (for example a barrier) cannot wait for absent workers.
-- A benchmark that raises is no longer additionally printed as an
-  "Exception ignored in" message; its row's skip message carries the traceback.
 - `mew.run()` without a reporter prints mew's console table, like `mew run`,
   instead of Google Benchmark's console output. Google Benchmark's reporters
   are no longer used.
 - Exit codes tell the outcomes apart: 0 for success, 1 when nothing matched, 2
   for a usage or environment error and 3 for a regression under
   `--exit-non-zero-on-regression`, which exited 2. Exit 2, with a one-line
-  message instead of a traceback, now also covers a sampler or profiler that
-  can't run here, a missing, unreadable, truncated or malformed result file, an
-  invalid `mew compare -k`, an unknown `@tag`, metric or key, `--strict` with
-  threaded benchmarks on a GIL build, and a missing output directory, which
-  exited 1 like "nothing matched".
-  A benchmark or setup file that raises on import exits 2 after its traceback.
+  message instead of a traceback, now also covers an invalid `--statistic`, a
+  missing `[tool.mew] setup` file, a sampler or profiler that can't run here, a
+  missing, unreadable, truncated or malformed result file, an invalid
+  `mew compare -k`, an unknown `@tag`, metric or key, `--strict` with threaded
+  benchmarks on a GIL build, and a missing output directory, which exited 1 like
+  "nothing matched". A benchmark or setup file that raises on import exits 2
+  after its traceback.
 - Library functions raise exceptions instead of `SystemExit`.
   `mew.compare.compare()`, `read_results()` and `session_summaries()` raise
   `ValueError`, `FileNotFoundError` or another `OSError`. `mew.cpu.manager()`,
@@ -144,13 +134,14 @@ change between minor releases.
   `compare()`, `mew.regressions.render_panel()` and `report()` return 3 for a
   regression.
 - The decorators and `mew.run()` check options by the same rules: a wrong type
-  raises `TypeError` and an out-of-range value `ValueError`, where the
-  decorators raised `TypeError` for both. The decorators also reject what Google
-  Benchmark would ignore or misread: `iterations=2.5`, which ran 2 iterations,
-  `repetitions=True`, an infinite time, `use_real_time` with `use_manual_time`,
-  where manual time won, and `min_warmup_time` without `min_time` in seconds,
-  which did nothing. A misspelled `unit` fails at decoration instead of during
-  the run.
+  raises `TypeError` and an out-of-range value, NaN included, `ValueError`,
+  where the decorators raised `TypeError` for both. The decorators also reject
+  what Google Benchmark would ignore or misread: `iterations` with `min_time`
+  or `min_warmup_time`, whose time budget it ignored; `iterations=2.5`, which
+  ran 2 iterations; `repetitions=True`; an infinite time; `use_real_time` with
+  `use_manual_time`, where manual time won; and `min_warmup_time` without
+  `min_time` in seconds, which did nothing. A misspelled `unit` fails at
+  decoration instead of during the run.
 - `mew.run()` and `--session-tag` reject the tag `latest`, which
   `mew compare path@latest` reserves for the newest session, and an empty tag,
   which was dropped.
@@ -171,8 +162,7 @@ change between minor releases.
   shows the same rows with or without a regression gate: the benchmarks the
   first file and the baseline share, with dashes for a file in between that
   lacks one. `path@tag` is split after a `.json`, `.jsonl` or `.jsonl.gz`
-  extension instead of by whether a file of the full name exists, and sessions
-  with the same date are ordered by their ID instead of their host.
+  extension instead of by whether a file of the full name exists.
   `Sample.time_unit` is `None` for metrics that aren't times.
 - A memory manager's `stop()` must return `None` or a dict with `peak_bytes`
   and `total_allocations`, and optionally `total_bytes` and `net_heap_growth`.
@@ -221,7 +211,7 @@ change between minor releases.
   (`state.batches()`), so `allocations_per_iteration` is no longer inflated.
 - A second `for _ in state:` loop after the first has finished no longer adds
   time to the result.
-- `--regression-threshold` overrides `[tool.mew.regressions] default_threshold`
+- `--regression-threshold` overrides `[tool.mew.regressions] default-threshold`
   instead of being silently replaced by it.
 - Regression allowlist patterns match brackets literally, so `*[algo=bubble]`
   selects that case instead of acting as a character class.
@@ -240,16 +230,23 @@ change between minor releases.
   assumes, instead of written as plain text.
 - Benchmark files symlinked into a benchpath are selected by `mew list` and
   `mew run`.
-- An invalid `--statistic` or a missing `[tool.mew] setup` file exits with the
-  usage error code 2, not 1 ("nothing matched").
 - A decorator rejected for a duplicate `name=` leaves the function free for a
-  corrected registration, and `min_time` / `min_warmup_time` reject NaN.
+  corrected registration.
+- A benchmark that raises is reported once, in its row's skip message, instead
+  of also as an "Exception ignored in" message.
 - `--help` honors `FORCE_COLOR`, and shell completions no longer show `%%`.
 - On Python 3.14+, argparse no longer colors `--help` under mew's own colors,
   which mixed two color schemes and colored redirected help when
   `PYTHON_COLORS` was set.
 - A CPU profiling pass that ends before its loop, for example by skipping, no
   longer reports the previous benchmark's profile.
+- Wheels include the licenses of the code they link in, Google Benchmark,
+  nanobind and nanobind's `tsl::robin_map`, and the license expression names
+  them: `Apache-2.0 AND BSD-3-Clause AND MIT`.
+- A build given Google Benchmark's source through
+  `FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK`, as an offline package build is,
+  stops unless mew's patches are applied to it, instead of building against
+  unpatched Google Benchmark.
 
 ## Version 0.2.0 (September 24, 2026)
 
