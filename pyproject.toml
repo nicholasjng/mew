@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core >=1.0,<2", "nanobind >=3.0"]
+requires = ["scikit-build-core >=1.0", "nanobind >=3.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -9,7 +9,7 @@ description = "A CLI for microbenchmarking Python code snippets."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "licenses/*.txt"]
 authors = [{ name = "Nicholas Junge", email = "nicho.junge@gmail.com" }]
 dependencies = []
 keywords = ["benchmarking", "microbenchmark", "performance", "profiling"]
@@ -47,9 +47,8 @@ memory = [ "memray>=1.5; sys_platform != 'win32'" ]
 
 [dependency-groups]
 build = [
-    "nanobind>=3.0",
+    "nanobind>=3.0",  # for creating clangd compilation databases.
     "ruff>=0.15.12",  # for CMake's post-build stub formatting step.
-    "scikit-build-core >=1.0,<2",  # keep in sync with build-system.requires.
     "ty>=0.0.42",
 ]
 docs = [

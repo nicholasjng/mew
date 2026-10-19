@@ -154,6 +154,35 @@ if(NOT FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK
     endif()
 endif()
 
+# A source tree passed in for an offline build, such as a distribution's package,
+# skips FetchContent's patch step: check that it carries the patches, or mew
+# would build against plain Google Benchmark. The series is undone in a copy;
+# `git apply --check` can't test it, since it checks each patch against the
+# files as they are, and later patches build on earlier ones. The ceiling keeps
+# git from taking the copy for part of the repository the build tree is in.
+if(FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK)
+    set(_mew_patches_reversed ${MEW_BENCHMARK_PATCHES})
+    list(REVERSE _mew_patches_reversed)
+    set(_mew_patch_check "${CMAKE_BINARY_DIR}/mew-patch-check")
+    file(REMOVE_RECURSE "${_mew_patch_check}")
+    file(COPY "${FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK}/"
+        DESTINATION "${_mew_patch_check}" PATTERN ".git" EXCLUDE)
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E env "GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}"
+            "${GIT_EXECUTABLE}" apply --reverse --ignore-whitespace ${_mew_patches_reversed}
+        WORKING_DIRECTORY "${_mew_patch_check}"
+        RESULT_VARIABLE _mew_override_patched
+        OUTPUT_QUIET ERROR_QUIET)
+    file(REMOVE_RECURSE "${_mew_patch_check}")
+    if(NOT _mew_override_patched EQUAL 0)
+        message(FATAL_ERROR
+            "FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK (${FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK}) "
+            "lacks mew's Google Benchmark patches, which CMake doesn't apply to a source "
+            "tree passed in this way. Apply ${CMAKE_CURRENT_SOURCE_DIR}/patches/*.patch "
+            "to it in order first, e.g. with `git apply`.")
+    endif()
+endif()
+
 FetchContent_Declare(
     googlebenchmark
     GIT_REPOSITORY https://github.com/google/benchmark.git
