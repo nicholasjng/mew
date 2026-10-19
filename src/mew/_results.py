@@ -72,8 +72,8 @@ class Sample:
 def _is_measurement_row(row: dict[str, Any]) -> bool:
     """Return whether a row is a successful measurement.
 
-    Older result files also hold Google Benchmark's aggregate rows (``_mean``,
-    ``_median``, ...), which mew now leaves out and reduces itself.
+    Google Benchmark's aggregate rows (``_mean``, ``_median``, ...), which some
+    result files hold, are not: mew reduces repetitions itself.
     """
     return (
         isinstance(row.get("name"), str)
