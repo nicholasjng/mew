@@ -31,7 +31,7 @@ def test_load_reads_every_setting(tmp_path: Path):
         "[tool.mew]\n"
         # A bare string must be one path, not list("perf") == ["p", "e", "r", "f"].
         'benchpaths = "perf"\n'
-        'python-files = ["bench_*.py", "*_perf.py"]\n'  # dashed, as TOML spells keys
+        'python-files = ["bench_*.py", "*_perf.py"]\n'
         'setup = "benchmarks/conf.py"\n'
         'statistic = "gmean"\n'
         'capture = "no"\n'
@@ -56,12 +56,12 @@ def test_load_reads_every_setting(tmp_path: Path):
         ("statistic = 95", "statistic must be a string"),
         ('statistic = "average"', "[tool.mew] statistic 'average': unknown name"),
         ('capture = "sys"', "capture must be one of fd, no"),
-        # A typo would otherwise load the default; the hint keeps the key's spelling.
+        # A typo would otherwise load the default.
         ('benchpath = "perf"', "unknown key 'benchpath' in [tool.mew]; did you mean 'benchpaths'?"),
-        ('python-file = "*.py"', "did you mean 'python-files'?"),
+        # Keys are dashed, as TOML spells them.
         (
-            'python-files = "a.py"\npython_files = "b.py"',
-            "[tool.mew] sets both 'python-files' and 'python_files'",
+            'python_files = "*.py"',
+            "unknown key 'python_files' in [tool.mew]; did you mean 'python-files'?",
         ),
     ],
 )
