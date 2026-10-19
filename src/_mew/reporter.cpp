@@ -67,20 +67,16 @@ nb::dict run_to_dict(const Run& r) {
     d["benchmark"] = addressable_name(r);
     d["family_index"] = r.family_index;
     d["per_family_instance_index"] = r.per_family_instance_index;
-    const bool aggregate = r.run_type == Run::RT_Aggregate;
-    // A ratio aggregate such as `cv` is not a time: no unit scaling or
-    // per-iteration split.
-    const bool ratio = aggregate && r.aggregate_unit == benchmark::kPercentage;
-    d["run_type"] = aggregate ? "aggregate" : "iteration";
-    d["aggregate_name"] = r.aggregate_name;
-    // As in GB's JSON output: only aggregates carry a unit, "time" or "percentage".
-    if (aggregate) d["aggregate_unit"] = ratio ? "percentage" : "time";
+    // No aggregate gets here (see ReportRuns). The fields stay, so that rows
+    // load alongside older result files, which hold aggregate rows.
+    d["run_type"] = "iteration";
+    d["aggregate_name"] = "";
     d["repetitions"] = r.repetitions;
     d["repetition_index"] = r.repetition_index;
     d["threads"] = r.threads;
     d["iterations"] = r.iterations;
-    d["real_time"] = ratio ? r.real_accumulated_time : r.GetAdjustedRealTime();
-    d["cpu_time"] = ratio ? r.cpu_accumulated_time : r.GetAdjustedCPUTime();
+    d["real_time"] = r.GetAdjustedRealTime();
+    d["cpu_time"] = r.GetAdjustedCPUTime();
     d["real_accumulated_time"] = r.real_accumulated_time;
     d["cpu_accumulated_time"] = r.cpu_accumulated_time;
     d["time_unit"] = time_unit_name(r.time_unit);
@@ -107,7 +103,10 @@ nb::dict run_to_dict(const Run& r) {
     }
     d["counters"] = counters;
     // GB stamps the memory result on the Run, mew's patch the profiler one.
-    if (r.memory_result.memory_iterations > 0) d["memory"] = memory_block(r);
+    // A memory manager that measured nothing leaves its tombstone in num_allocs.
+    if (r.memory_result.memory_iterations > 0 &&
+        r.memory_result.num_allocs != benchmark::MemoryManager::TombstoneValue)
+        d["memory"] = memory_block(r);
     if (!r.profile_result.json.empty())
         d["cpu_profile"] = nb::module_::import_("json").attr("loads")(r.profile_result.json);
     return d;
@@ -167,9 +166,12 @@ class PyReporter : public BenchmarkReporter {
             suspend_capture();
             nb::list rows;
             for (const auto& r : runs) {
+                // mew reduces repetitions itself, so drop GB-side aggregates.
+                if (r.run_type == Run::RT_Aggregate) continue;
                 rows.append(run_to_dict(r));
             }
-            py.attr("report_runs")(rows);
+            // Google Benchmark reports a benchmark's aggregates as a batch of their own.
+            if (rows.size() > 0) py.attr("report_runs")(rows);
             resume_capture();
         } catch (...) {
             mew_set_pending_abort(std::current_exception());

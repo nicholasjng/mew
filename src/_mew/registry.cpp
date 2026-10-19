@@ -36,9 +36,6 @@ void register_registry(nb::module_& m) {
         .def("measure_process_cpu_time", &benchmark::Benchmark::MeasureProcessCPUTime,
              nb::rv_policy::reference,
              "Measure CPU time across the whole process, not just the running thread.")
-        .def("report_aggregates_only", &benchmark::Benchmark::ReportAggregatesOnly,
-             "value"_a = true, nb::rv_policy::reference,
-             "Emit only the aggregate rows, suppressing per-repetition ones.")
         .def("threads", &benchmark::Benchmark::Threads, "n"_a, nb::rv_policy::reference,
              "Run the benchmark with `n` threads, each with its own State and timer.\n"
              "Repeat to run once per thread count. Requires a free-threaded "

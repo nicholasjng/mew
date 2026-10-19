@@ -343,7 +343,6 @@ def product(
     use_real_time: bool = False,
     use_manual_time: bool = False,
     measure_process_cpu_time: bool = False,
-    report_aggregates_only: bool = False,
     threads: int | Iterable[int] | None = None,
     **iterables: Iterable[Any],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
@@ -369,9 +368,8 @@ def product(
     unit : str or TimeUnit, optional
         The time unit results are reported in.
     use_real_time, use_manual_time, measure_process_cpu_time : bool
-        Which clock each case's time comes from.
-    report_aggregates_only : bool
-        Report only the aggregates of repeated runs, not each run.
+        Which clock each case's time comes from; ``use_real_time`` and
+        ``use_manual_time`` exclude each other.
     threads : int or Iterable[int], optional
         Threads per case, or one run per count. Needs a free-threaded build;
         on a GIL build :func:`mew.run` skips threaded benchmarks.
@@ -411,7 +409,6 @@ def product(
         "use_real_time": use_real_time,
         "use_manual_time": use_manual_time,
         "measure_process_cpu_time": measure_process_cpu_time,
-        "report_aggregates_only": report_aggregates_only,
         "threads": threads,
     }
     options = _normalize_options(

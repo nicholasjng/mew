@@ -44,13 +44,8 @@ class BenchmarkResult(TypedDict):
     benchmark : str
         The benchmark as mew addresses it: the registered name, ``[case label]``
         for a family case, ``/threads:N`` when the benchmark set ``threads``. Shared
-        by all repetition and aggregate rows of one benchmark, unlike ``name``,
-        which also carries Google Benchmark's option fragments and the
-        aggregate suffix.
-    aggregate_unit : {"time", "percentage"}, optional
-        Present on aggregate rows only. ``"percentage"`` (e.g. ``cv``) means
-        ``real_time`` and ``cpu_time`` are plain ratios, not durations in
-        ``time_unit``.
+        by all repetitions of one benchmark, unlike ``name``, which also carries
+        Google Benchmark's option fragments.
     session : SessionInfo, optional
         Identity of the run that produced this result.
     context : dict, optional
@@ -79,7 +74,6 @@ class BenchmarkResult(TypedDict):
     per_family_instance_index: int
     run_type: str
     aggregate_name: str
-    aggregate_unit: NotRequired[Literal["time", "percentage"]]
     repetitions: int
     repetition_index: int
     threads: int
@@ -119,7 +113,6 @@ class BenchmarkOptions(TypedDict, total=False):
     use_real_time: bool
     use_manual_time: bool
     measure_process_cpu_time: bool
-    report_aggregates_only: bool
     threads: int | Iterable[int]
 
 
@@ -200,7 +193,6 @@ class State(Protocol):
     def max_iterations(self) -> int: ...
     def __iter__(self) -> State: ...
     def __next__(self) -> None: ...
-    def keep_running_batch(self, n: int) -> bool: ...
     def batches(self, n: int) -> Iterator[int]: ...
     def pause(self) -> AbstractContextManager[None]: ...
     def set_counter(
