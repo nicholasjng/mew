@@ -190,7 +190,7 @@ def load_config(
     ----------
     default_threshold : float, optional
         Threshold in percent, e.g. from ``--regression-threshold``. Overrides
-        ``[tool.mew.regressions] default_threshold``; without either, 5.0.
+        ``[tool.mew.regressions] default-threshold``; without either, 5.0.
     root : Path, optional
         Directory holding the project's ``pyproject.toml`` (see
         :attr:`mew.config.Config.project_root`). ``None`` means no file:
