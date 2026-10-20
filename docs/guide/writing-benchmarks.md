@@ -22,8 +22,8 @@ All options are optional and map 1:1 to Google Benchmark concepts:
 
 | Option                       | Effect                                                       |
 | ---------------------------- | ------------------------------------------------------------ |
-| `min_time`                   | Seconds Google Benchmark may spend stabilising the timing, or a fixed iteration count like `"100x"`, the same as `iterations=100`. |
-| `min_warmup_time`            | Seconds spent warming caches before measurement; needs `min_time` in seconds. |
+| `min_time`                   | Seconds Google Benchmark may spend stabilising the timing (`0.5`, `"500ms"`, `"1m"`), or a fixed iteration count like `"100x"`, the same as `iterations=100`. |
+| `min_warmup_time`            | Seconds spent warming caches before measurement.              |
 | `iterations`                 | Force an exact iteration count (skips auto-tuning); excludes `min_time` and `min_warmup_time`. |
 | `repetitions`                | Re-run the whole benchmark _N_ times for variance metrics.    |
 | `unit`                       | Override reported time unit (`"ns"`, `"us"`, `"ms"`, `"s"`).  |

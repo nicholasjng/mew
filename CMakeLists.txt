@@ -68,7 +68,7 @@ find_package(nanobind CONFIG REQUIRED)
 # --- Google Benchmark ---------------------------------------------------------
 include(FetchContent)
 
-set(_mew_benchmark_default_commit "e662de9aab8e705ecf4fa4bd41a207e5a0acfd0c")
+set(_mew_benchmark_default_commit "00aed1d2cc650262186fa35338a178425270415a")
 
 # A plain CACHE default would keep an existing build tree on the old pin after
 # a bump. Follow the default unless the cached value was overridden, i.e. it
@@ -95,8 +95,7 @@ set(MEW_BENCHMARK_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-timer-running.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-manager-pass-thread-count.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0008-start-timer-cpu-first.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0009-macos-thread-cpu-clock.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0010-skip-cpu-frequency-estimate.patch")
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0009-skip-cpu-frequency-estimate.patch")
 
 string(JOIN "|" _mew_patches_arg ${MEW_BENCHMARK_PATCHES})
 
@@ -141,9 +140,10 @@ if(NOT FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK
             RESULT_VARIABLE _mew_benchmark_have_commit
             ERROR_QUIET)
         if(NOT _mew_benchmark_have_commit EQUAL 0 AND NOT FETCHCONTENT_FULLY_DISCONNECTED)
+            # With tags: GB versions itself by `git describe`.
             execute_process(
                 COMMAND "${GIT_EXECUTABLE}" -C "${_mew_benchmark_src}"
-                    fetch --quiet origin "${MEW_BENCHMARK_COMMIT}"
+                    fetch --quiet --tags origin "${MEW_BENCHMARK_COMMIT}"
                 RESULT_VARIABLE _mew_benchmark_fetch_status)
             if(NOT _mew_benchmark_fetch_status EQUAL 0)
                 message(WARNING
