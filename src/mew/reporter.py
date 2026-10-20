@@ -9,9 +9,11 @@ import sys
 import textwrap
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Protocol, TextIO, cast, runtime_checkable
+from typing import Any, Protocol, TextIO, runtime_checkable
 
-from mew._console import _COL_SEP, Table, Terminal, _truncate_left, fill, sgr
+from mew._console import COL_SEP, Table, Terminal, fill, sgr, truncate_left
+from mew._format import fmt_bytes, fmt_time
+from mew._results import ROW_STAMP_FIELDS, open_text
 from mew._typing import BenchmarkResult
 
 
@@ -35,41 +37,6 @@ class Reporter(Protocol):
 
     def report_context(self, context: dict[str, Any], /) -> None: ...
     def report_runs(self, runs: list[BenchmarkResult], /) -> None: ...
-
-
-_NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
-
-
-def _to_ns(value: float, unit: str | None) -> float:
-    """Normalize a ``(value, unit)`` pair to nanoseconds.
-
-    Compared files can declare different units (e.g. ``--benchmark_time_unit=us``),
-    so delta/speedup math must go through this, not raw ``sample.value``.
-    """
-    return value * _NS_PER_UNIT.get(unit or "ns", 1.0)
-
-
-def _scale_time(value: float, unit: str | None) -> tuple[float, str]:
-    """Rescale a raw ``(value, unit)`` pair to whichever of s/ms/us/ns keeps the
-    mantissa >= 1, e.g. ``(6995135790.99, "ns")`` -> ``(7.00, "s")``. Display-only.
-    """
-    ns = _to_ns(value, unit)
-    for threshold, out_unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):
-        if abs(ns) >= threshold:
-            return ns / threshold, out_unit
-    return ns, "ns"
-
-
-def _fmt_time(value: float, unit: str | None) -> str:
-    scaled, out_unit = _scale_time(value, unit)
-    return f"{scaled:.2f} {out_unit}"
-
-
-def _fmt_bytes(n: int) -> str:
-    for threshold, unit in ((1 << 30, "GB"), (1 << 20, "MB"), (1 << 10, "KB")):
-        if n >= threshold:
-            return f"{n / threshold:.1f} {unit}"
-    return f"{n} B"
 
 
 def _fmt_function(top: object) -> str:
@@ -138,9 +105,6 @@ def _fmt_counters(row: BenchmarkResult) -> list[str]:
     return parts
 
 
-# Stamped onto every row so each one stands alone, in JSON and JSONL alike.
-_ROW_STAMP_FIELDS = ("session", "context")
-
 _JSON_CLOSER = "\n  ]\n}\n"
 
 
@@ -149,19 +113,10 @@ def _indent_block(text: str, spaces: int) -> str:
     return text.replace("\n", "\n" + " " * spaces)
 
 
-def _open_text(path: Path, mode: str = "r") -> TextIO:
-    """Open ``path`` as text, through gzip when its name ends in ``.gz`` in any case."""
-    if path.name.lower().endswith(".gz"):
-        import gzip
-
-        return cast(TextIO, gzip.open(path, mode + "t"))
-    return cast(TextIO, path.open(mode))
-
-
 def _open_sink(output: Path | TextIO | None, mode: str = "w") -> tuple[TextIO, bool]:
     """Resolve ``output`` to a stream and an ownership flag."""
     if isinstance(output, Path):
-        return _open_text(output, mode), True
+        return open_text(output, mode), True
     if output is None:
         return sys.stdout, False
     return output, False
@@ -199,7 +154,7 @@ class JSONReporter:
         self._fh, self._owns_fh = _open_sink(self._output)
         # Reset comma state when the reporter is reused.
         self._first_row = True
-        self._stamp = {k: context[k] for k in _ROW_STAMP_FIELDS if k in context}
+        self._stamp = {k: context[k] for k in ROW_STAMP_FIELDS if k in context}
         # default=str: don't crash on Path/datetime; lossy by design.
         header = "".join(
             f'  "{key}": {_indent_block(json.dumps(value, indent=2, default=str), 2)},\n'
@@ -256,7 +211,7 @@ class JSONLReporter:
 
     def report_context(self, context: dict[str, Any]) -> None:
         self._fh, self._owns_fh = _open_sink(self._output, "a" if self._append else "w")
-        self._stamp = {k: context[k] for k in _ROW_STAMP_FIELDS if k in context}
+        self._stamp = {k: context[k] for k in ROW_STAMP_FIELDS if k in context}
 
     def report_runs(self, runs: list[BenchmarkResult]) -> None:
         assert self._fh is not None  # report_context runs first, always
@@ -329,7 +284,7 @@ class RichReporter:
             widths["Peak Mem"] = 10
         # The name takes what's left, or what its longest name needs, but at least
         # 20 columns even if rows then overflow.
-        spare = self._width - sum(widths.values()) - len(widths) * len(_COL_SEP)
+        spare = self._width - sum(widths.values()) - len(widths) * len(COL_SEP)
         if self._name_width is not None:
             spare = min(spare, self._name_width)
         self._widths = {"Benchmark": max(20, spare), **widths}
@@ -375,10 +330,10 @@ class RichReporter:
             table.add_row(
                 rows[0]["benchmark"],
                 str(len(rows)),
-                _fmt_time(statistics.median(real), unit),
-                _fmt_time(stddev, unit),
+                fmt_time(statistics.median(real), unit),
+                fmt_time(stddev, unit),
                 f"{stddev / abs(mean):.2%}" if mean else "-",
-                _fmt_time(statistics.median(row["cpu_time"] for row in rows), unit),
+                fmt_time(statistics.median(row["cpu_time"] for row in rows), unit),
             )
         self._term.print()
         for line in table.render(self._width, color=self._term.color):
@@ -406,7 +361,7 @@ class RichReporter:
             cell.ljust(width) if i == 0 else cell.rjust(width)
             for i, (cell, width) in enumerate(zip(cells, widths, strict=True))
         ]
-        return _COL_SEP.join(padded)
+        return COL_SEP.join(padded)
 
     def _print_row(self, row: BenchmarkResult) -> None:
         width = self._widths["Benchmark"]
@@ -414,13 +369,13 @@ class RichReporter:
         # Canonical `file.py::f[label]` form, matching `mew compare`, left-ellipsized
         # to keep the disambiguating tail.
         full_name = row["benchmark"]
-        name = _truncate_left(full_name, width)
+        name = truncate_left(full_name, width)
 
         # Skipped rows carry no timing, so the dimmed reason fills the timing
         # columns. Its lines (a traceback has several) wrap, keeping their indent
         # and every character, since a cut path would no longer locate anything.
         if row["skipped"]:
-            lead = name.ljust(width) + _COL_SEP
+            lead = name.ljust(width) + COL_SEP
             avail = max(10, self._width - len(lead))
             lines: list[str] = []
             for text in (row["skip_message"] or "skipped").splitlines():
@@ -435,11 +390,11 @@ class RichReporter:
             return
 
         unit = row["time_unit"]
-        real, cpu_time = _fmt_time(row["real_time"], unit), _fmt_time(row["cpu_time"], unit)
+        real, cpu_time = fmt_time(row["real_time"], unit), fmt_time(row["cpu_time"], unit)
         cells = [name, f"{row['iterations']:,}", real, cpu_time]
         if self._show_memory:
             mem = row.get("memory")
-            cells.append(_fmt_bytes(mem["peak_bytes"]) if mem else "-")
+            cells.append(fmt_bytes(mem["peak_bytes"]) if mem else "-")
         self._term.print(self._join(cells))
 
         # A family case's own label is part of its name already.

@@ -18,7 +18,7 @@ from _helpers import (
     write_pair as _write_pair,
 )
 
-from mew._results import _load, _split_selector
+from mew._results import load_column, split_selector
 from mew._statistics import Statistic
 from mew.compare import (
     Sample,
@@ -63,7 +63,7 @@ def test_load_skips_aggregate_and_skipped_rows(tmp_path: Path) -> None:
             _row("only_skipped", 0.0, skipped=True),
         ],
     )
-    samples, _ = _load(p, "real_time")
+    samples, _ = load_column(p, "real_time")
     assert samples.keys() == {"b"}
     assert samples["b"].values == (5.0, 7.0)
 
@@ -218,14 +218,14 @@ def test_load_rejects_unreadable_files(
     elif content is not None:
         p.write_text(content)
     with pytest.raises(FileNotFoundError if content is None else ValueError, match=match):
-        _load(p, "real_time")
+        load_column(p, "real_time")
 
 
 def test_load_key_func_rejects_collisions(tmp_path: Path) -> None:
     p = tmp_path / "a.json"
     _write_json(p, [_row("a.py::bench_x", 1.0), _row("b.py::bench_x", 2.0)])
     with pytest.raises(ValueError, match="maps both"):
-        _load(p, "real_time", key="func")
+        load_column(p, "real_time", key="func")
 
 
 def test_compare_key_func_matches_across_suites(tmp_path: Path) -> None:
@@ -258,7 +258,7 @@ def test_compare_key_func_matches_across_suites(tmp_path: Path) -> None:
     ],
 )
 def test_split_selector(raw: str, path: str, selector: str | None) -> None:
-    assert _split_selector(raw) == (Path(path), selector)
+    assert split_selector(raw) == (Path(path), selector)
 
 
 def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
@@ -295,7 +295,7 @@ def test_load_gzip_jsonl_with_uppercase_suffix(tmp_path: Path) -> None:
     p = tmp_path / "a.JSONL.GZ"
     with gzip.open(p, "wt") as fh:
         fh.write(json.dumps(_row("bench_x", 10.0)) + "\n")
-    samples, _ = _load(p, "real_time")
+    samples, _ = load_column(p, "real_time")
     assert samples["bench_x"].value == 10.0
 
 
@@ -313,8 +313,8 @@ def test_same_second_runs_stay_distinct_and_order_by_session_id(tmp_path: Path) 
             _row("b", 20.0, date=when, host_name="h1", session_id="0197-bbbb", session_tag="after"),
         ],
     )
-    assert _load(p, "real_time", selector="before")[0]["b"].value == 10.0
-    assert _load(p, "real_time")[0]["b"].value == 20.0
+    assert load_column(p, "real_time", selector="before")[0]["b"].value == 10.0
+    assert load_column(p, "real_time")[0]["b"].value == 20.0
     assert [s.id for s in session_summaries(p)] == ["0197-bbbb", "0197-aaaa"]
 
 
@@ -331,12 +331,12 @@ def test_tag_selector_pools_runs_sharing_the_tag(tmp_path: Path) -> None:
             _row("b", 99.0, date="2026-03-01T00:00:00", session_id="cccc", session_tag="other"),
         ],
     )
-    pooled, ctx = _load(p, "real_time", selector="ab")
+    pooled, ctx = load_column(p, "real_time", selector="ab")
     assert pooled["b"].values == (10.0, 20.0)
     assert pooled["b"].value == 15.0
     assert ctx["session"]["id"] == "bbbb"  # provenance from the newest pooled run
     for selector in (None, "latest"):
-        newest, ctx = _load(p, "real_time", selector=selector)
+        newest, ctx = load_column(p, "real_time", selector=selector)
         assert newest["b"].value == 99.0
         assert ctx["session"]["tag"] == "other"
 
@@ -348,9 +348,9 @@ def test_unknown_selector_lists_the_tags(tmp_path: Path) -> None:
         ValueError,
         match=r"no session tagged 'nope' \(tags in file: t0, t1, t2, t3, t4 \(\+2 more\)",
     ):
-        _load(p, "real_time", selector="nope")
+        load_column(p, "real_time", selector="nope")
     with pytest.raises(ValueError, match="empty session selector"):
-        _load(p, "real_time", selector="")
+        load_column(p, "real_time", selector="")
 
 
 def test_session_summaries_newest_first(tmp_path: Path) -> None:
@@ -381,7 +381,7 @@ def test_load_without_measurements_errors(tmp_path: Path) -> None:
     p = tmp_path / "r.json"
     _write_json(p, [_row("b", 0.0, skipped=True)])
     with pytest.raises(ValueError, match="no measurements"):
-        _load(p, "real_time")
+        load_column(p, "real_time")
 
 
 def test_compare_prints_context_and_warns_on_skew(
@@ -455,7 +455,7 @@ def test_rows_group_by_benchmark_not_raw_name(tmp_path: Path) -> None:
             _row("b/case:0/min_time:0.500/threads:2", 200.0, benchmark="b[n=1]/threads:2"),
         ],
     )
-    samples, _ = _load(p, "real_time")
+    samples, _ = load_column(p, "real_time")
     assert {name: s.values for name, s in samples.items()} == {
         "b[n=1]/threads:1": (100.0, 110.0),
         "b[n=1]/threads:2": (200.0,),
@@ -502,7 +502,7 @@ def test_sample_time_unit_is_set_for_times_only(
 ) -> None:
     p = tmp_path / "a.json"
     _write_json(p, [{**_mem_row("b", 1.0, peak=1, allocs=1), "time_unit": "us"}])
-    assert _load(p, metric)[0]["b"].time_unit == unit
+    assert load_column(p, metric)[0]["b"].time_unit == unit
 
 
 @pytest.mark.parametrize(
@@ -613,7 +613,7 @@ def test_grouped_sessions_normalize_units_before_reduction(tmp_path: Path, rever
     if reverse:
         rows.reverse()
     _write_jsonl(path, rows)
-    sample = _load(path, "real_time", selector="same")[0]["b"]
+    sample = load_column(path, "real_time", selector="same")[0]["b"]
     # Pooled rows are ordered by session date, so the oldest run's unit wins
     # regardless of file order.
     assert sample.values == (1000, 1000)

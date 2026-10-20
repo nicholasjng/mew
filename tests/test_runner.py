@@ -61,7 +61,7 @@ def test_run_rejects_invalid_options(kwargs, error, message):
         mew.run(**kwargs)
 
 
-@pytest.mark.parametrize("min_time", [0.00001, "0.00001", "0.00001s", " 7x "])
+@pytest.mark.parametrize("min_time", [0.00001, "0.00001", "0.00001s", "0.01ms", " 7x "])
 def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
     @mew.benchmark
     def bench_time_option(state):
@@ -69,6 +69,35 @@ def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
             pass
 
     assert mew.run(min_time=min_time, reporter=Capture()) == 1
+
+
+@pytest.mark.parametrize(
+    ("value", "flag"),
+    [
+        (0.5, "0.5s"),
+        ("0.5", "0.5s"),
+        ("0.5s", "0.5s"),
+        # Units Google Benchmark doesn't take.
+        ("500ms", "0.5s"),
+        ("1m", "60.0s"),
+        (" 7x ", "7x"),
+    ],
+)
+def test_parse_min_time_renders_google_benchmark_syntax(value, flag):
+    from mew._options import parse_min_time
+
+    assert parse_min_time(value) == flag
+
+
+def test_a_benchmarks_own_warmup_needs_no_min_time_of_its_own():
+    @mew.benchmark(min_warmup_time=0.2)
+    def bench_warm(state):
+        for _ in state:
+            pass
+
+    start = time.perf_counter()
+    mew.run(min_time="0.01s", reporter=Capture())
+    assert time.perf_counter() - start >= 0.2
 
 
 def test_gb_argv_emits_every_flag_with_its_default():

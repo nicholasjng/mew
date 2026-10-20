@@ -8,13 +8,20 @@ import warnings
 from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
 from datetime import UTC, datetime
-from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 from mew import _core
 from mew._capture import OutputCapture
 from mew._console import overflow
-from mew._registry import REGISTRY, Entry, case_names
+from mew._options import (
+    check_count,
+    check_min_warmup_time,
+    check_session_tag,
+    is_threaded,
+    parse_min_time,
+    thread_counts,
+)
+from mew._registry import REGISTRY, Entry, selected_cases
 from mew._session import new_session_id
 from mew._typing import MemoryManager, ProfilerManager
 from mew.context import get_context
@@ -23,19 +30,6 @@ from mew.reporter import Fanout, Reporter, RichReporter
 
 if TYPE_CHECKING:
     from mew._typing import BenchmarkOptions, BenchmarkResult
-
-
-def _thread_counts(opts: BenchmarkOptions) -> tuple[int, ...]:
-    """The thread counts a benchmark asked for; ``(1,)`` when unspecified."""
-    v = opts.get("threads")
-    if v is None:
-        return (1,)
-    return (v,) if isinstance(v, int) else tuple(v)
-
-
-def _is_threaded(opts: BenchmarkOptions) -> bool:
-    """Whether ``opts`` asks Google Benchmark to spawn more than one worker thread."""
-    return max(_thread_counts(opts)) > 1
 
 
 def _skipped_row(name: str, threads: int, message: str) -> BenchmarkResult:
@@ -84,7 +78,7 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
         handle.measure_process_cpu_time()
     if opts.get("threads") is not None:
         # GB accumulates: one Threads() call per count runs the benchmark once each.
-        for n in _thread_counts(opts):
+        for n in thread_counts(opts):
             handle.threads(n)
 
 
@@ -93,65 +87,16 @@ def longest_row_name(entries: Iterable[Entry]) -> int:
     size its name column before the first row arrives."""
     longest = 0
     for entry in entries:
-        cases = [n for i, n in case_names(entry) if entry.cases is None or i in entry.cases]
+        cases = [name for _, name in selected_cases(entry)]
         width = max(map(len, cases or [entry.name]))
         if entry.options.get("threads") is not None:
-            width += len(f"/threads:{max(_thread_counts(entry.options))}")
+            width += len(f"/threads:{max(thread_counts(entry.options))}")
         longest = max(longest, width)
     return longest
 
 
 _DEFAULT_MIN_TIME = "0.5s"
 _DEFAULT_MEMORY_ITERATIONS = 16
-
-
-# The option checks below are shared by mew.run() and the decorators:
-# a wrong type raises TypeError, a value out of range ValueError.
-
-
-def parse_min_time(value: str | float) -> str:
-    """Validate seconds or a fixed iteration count and return Google Benchmark syntax."""
-    if isinstance(value, bool) or not isinstance(value, str | int | float):
-        raise TypeError(f"min_time must be seconds or a string like '100x', got {value!r}")
-    text = str(value).strip()
-    number = text[:-1] if text.endswith(("s", "x")) else text
-    try:
-        parsed = float(number)
-    except ValueError:
-        parsed = float("nan")
-    if not isfinite(parsed) or parsed <= 0 or (text.endswith("x") and not number.isdigit()):
-        raise ValueError(
-            f"min_time must be positive seconds or an iteration count like '100x', got {value!r}"
-        )
-    return text if text.endswith(("s", "x")) else text + "s"
-
-
-def check_min_warmup_time(value: object) -> None:
-    """Reject warm-up seconds that aren't a finite number >= 0."""
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise TypeError(f"min_warmup_time must be a number of seconds, got {value!r}")
-    if not isfinite(value) or value < 0:
-        raise ValueError(f"min_warmup_time must be a finite number >= 0, got {value!r}")
-
-
-def check_count(value: object, name: str) -> None:
-    """Reject a count that isn't an integer >= 1; a ``bool`` is not a count."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{name} must be an integer, got {value!r}")
-    if value < 1:
-        raise ValueError(f"{name} must be >= 1, got {value!r}")
-
-
-def check_session_tag(tag: object) -> None:
-    """Reject a session tag that ``mew compare path@<tag>`` can't select."""
-    if not isinstance(tag, str):
-        raise TypeError(f"session_tag must be a string, got {tag!r}")
-    if not tag.strip():
-        raise ValueError("session_tag must not be empty")
-    if tag == "latest":
-        raise ValueError(
-            "session_tag 'latest' is reserved: `mew compare path@latest` selects the newest session"
-        )
 
 
 _THREADED_ON_GIL = (
@@ -163,7 +108,7 @@ _THREADED_ON_GIL = (
 
 def _threaded_on_gil(entries: Iterable[Entry]) -> tuple[list[Entry], str]:
     """The threaded benchmarks this build can't run, and the first few names."""
-    threaded = [e for e in entries if _is_threaded(e.options)] if gil_enabled() else []
+    threaded = [e for e in entries if is_threaded(e.options)] if gil_enabled() else []
     return threaded, ", ".join(e.name for e in threaded[:3]) + overflow(len(threaded), 3)
 
 
@@ -237,9 +182,9 @@ def run(
         One reporter or several; ``None``, or none, prints mew's console table
         (:class:`~mew.reporter.RichReporter`).
     min_time : str or float, optional
-        Minimum time per benchmark in seconds (``0.5``, ``"0.5s"``), or a fixed
-        iteration count (``"100x"``). A benchmark's own ``iterations`` wins over
-        both, its own ``min_time`` only over seconds.
+        Minimum time per benchmark (``0.5``, ``"0.5s"``, ``"500ms"``, ``"1m"``),
+        or a fixed iteration count (``"100x"``). A benchmark's own
+        ``iterations`` wins over both, its own ``min_time`` only over a time.
     min_warmup_time : float, optional
         Seconds each benchmark warms up before it is measured.
     repetitions : int, optional
@@ -307,10 +252,10 @@ def run(
         )
         skip_msg = f"skipped: {_THREADED_ON_GIL}"
         skipped_rows = [
-            _skipped_row(e.name, max(_thread_counts(e.options)), skip_msg) for e in skipped
+            _skipped_row(e.name, max(thread_counts(e.options)), skip_msg) for e in skipped
         ]
-        selected = [e for e in selected if not _is_threaded(e.options)]
-    threaded = any(_is_threaded(e.options) for e in selected)
+        selected = [e for e in selected if not is_threaded(e.options)]
+    threaded = any(is_threaded(e.options) for e in selected)
 
     # Anything with the reporter callbacks is a single reporter, even if iterable.
     if isinstance(reporter, Reporter):
@@ -367,11 +312,10 @@ def run(
             continue
         # One benchmark per case, named `name[label]`; the trampoline reads the
         # case index from state.range(0). A name filter may have narrowed the cases.
-        for i, case_name in case_names(entry):
-            if entry.cases is None or i in entry.cases:
-                handle = _core.register_benchmark(case_name, entry.fn)
-                _apply_options(handle, entry.options)
-                handle.arg(i).arg_name("case")
+        for i, case_name in selected_cases(entry):
+            handle = _core.register_benchmark(case_name, entry.fn)
+            _apply_options(handle, entry.options)
+            handle.arg(i).arg_name("case")
 
     # On free-threaded builds the first second-thread creation runs a
     # stop-the-world pass that deadlocks GB's attaching workers; trigger it here.

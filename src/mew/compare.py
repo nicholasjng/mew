@@ -13,23 +13,23 @@ from pathlib import Path
 from typing import Any
 
 from mew._console import Span, Table, Terminal, fill, overflow, sgr
+from mew._format import NS_PER_UNIT, fmt_bytes, fmt_time, scale_time, to_ns
 from mew._registry import compile_name_filter
 from mew._results import (
-    _MEMORY_METRICS,
-    _METRICS,
-    _TIME_METRICS,
+    MEMORY_METRICS,
+    METRICS,
+    TIME_METRICS,
     Sample,
     SessionSummary,
-    _load,
-    _read_rows,
-    _split_selector,
+    load_column,
     read_results,
+    read_rows,
     session_summaries,
+    split_selector,
 )
 from mew._significance import mannwhitney_p
 from mew._statistics import Statistic
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
-from mew.reporter import _NS_PER_UNIT, _fmt_bytes, _fmt_time, _scale_time, _to_ns
 
 __all__ = ["Sample", "SessionSummary", "compare", "read_results", "session_summaries"]
 
@@ -114,9 +114,9 @@ def _fmt_value(sample: Sample, metric: str) -> str:
         return f"{sample.value:,.1f}"
     if metric == "iterations":
         return f"{int(sample.value):,}"
-    if metric in _MEMORY_METRICS:  # remaining memory metrics are byte-valued
-        return _fmt_bytes(int(sample.value))
-    return _fmt_time(sample.value, sample.time_unit)
+    if metric in MEMORY_METRICS:  # remaining memory metrics are byte-valued
+        return fmt_bytes(int(sample.value))
+    return fmt_time(sample.value, sample.time_unit)
 
 
 def _fmt_stddev(sample: Sample, metric: str) -> str:
@@ -124,11 +124,11 @@ def _fmt_stddev(sample: Sample, metric: str) -> str:
     if sample.stddev is None:
         return "-"
     if metric == "memory.peak_bytes":
-        return _fmt_bytes(int(sample.stddev))
-    if metric not in _TIME_METRICS:
+        return fmt_bytes(int(sample.stddev))
+    if metric not in TIME_METRICS:
         return f"{sample.stddev:.2f}"
-    _, unit = _scale_time(sample.value, sample.time_unit)
-    scaled = _to_ns(sample.stddev, sample.time_unit) / _NS_PER_UNIT[unit]
+    _, unit = scale_time(sample.value, sample.time_unit)
+    scaled = to_ns(sample.stddev, sample.time_unit) / NS_PER_UNIT[unit]
     return f"{scaled:.2f} {unit}"
 
 
@@ -145,9 +145,9 @@ class _Comparison:
 
 def _compare_samples(base: Sample, other: Sample, metric: str) -> _Comparison:
     """Calculate a comparison independently of table layout and gating policy."""
-    is_time = metric in _TIME_METRICS
-    base_value = _to_ns(base.value, base.time_unit) if is_time else base.value
-    other_value = _to_ns(other.value, other.time_unit) if is_time else other.value
+    is_time = metric in TIME_METRICS
+    base_value = to_ns(base.value, base.time_unit) if is_time else base.value
+    other_value = to_ns(other.value, other.time_unit) if is_time else other.value
     if base_value:
         delta = (other_value - base_value) / base_value
     else:
@@ -159,8 +159,8 @@ def _compare_samples(base: Sample, other: Sample, metric: str) -> _Comparison:
     # Mann-Whitney over raw repetitions; fewer than 2 per side leaves nothing to rank.
     p_value: float | None = None
     if len(base.values) >= 2 and len(other.values) >= 2:
-        a = [_to_ns(v, base.time_unit) if is_time else v for v in base.values]
-        b = [_to_ns(v, other.time_unit) if is_time else v for v in other.values]
+        a = [to_ns(v, base.time_unit) if is_time else v for v in base.values]
+        b = [to_ns(v, other.time_unit) if is_time else v for v in other.values]
         p_value = mannwhitney_p(a, b)
     return _Comparison(
         delta=delta,
@@ -229,7 +229,7 @@ def _render(
             f"no overlapping benchmarks between {columns[1].source} "
             f"and the baseline {columns[0].source}"
         )
-        if metric in _MEMORY_METRICS:
+        if metric in MEMORY_METRICS:
             msg += f" with {metric!r} data (produced with --profile-memory?)"
         elif key == "name":
             msg += (
@@ -274,12 +274,12 @@ def _render(
         table.add_column(lbl, justify="right")
         table.add_column("Δ%", justify="right")
         # Memory: less isn't "faster".
-        table.add_column("ratio" if metric in _MEMORY_METRICS else "speedup", justify="right")
+        table.add_column("ratio" if metric in MEMORY_METRICS else "speedup", justify="right")
         if show_stddev:
             table.add_column("± stddev", justify="right")
 
     higher_is_better = metric in _HIGHER_IS_BETTER
-    is_time_metric = metric in _TIME_METRICS
+    is_time_metric = metric in TIME_METRICS
     baseline = columns[0].samples
     verdicts: list[BenchmarkVerdict] = []
     unit_skew: dict[str, tuple[Any, Any]] = {}
@@ -396,25 +396,25 @@ def compare(
     OSError
         If a file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
-    if metric not in _METRICS:
-        raise ValueError(f"unknown metric {metric!r}; choose from {sorted(_METRICS)}")
+    if metric not in METRICS:
+        raise ValueError(f"unknown metric {metric!r}; choose from {sorted(METRICS)}")
     if key not in _KEYS:
         raise ValueError(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
     name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
 
     if len(files) < 2:
         raise ValueError(f"expected at least two result files, got {len(files)}")
-    parsed = [_split_selector(str(p)) for p in files]
+    parsed = [split_selector(str(p)) for p in files]
     paths = [p for p, _ in parsed]
     # CLI convention: the last file is the baseline ("compare head against
     # baseline"), while `_render` expects columns[0] to be the baseline.
     ordered = [parsed[-1], *parsed[:-1]]
     # Two selectors on one archive must not parse it twice.
-    read_once = functools.cache(_read_rows)
+    read_once = functools.cache(read_rows)
 
     columns = []
     for path, selector in ordered:
-        samples, ctx = _load(path, metric, key, selector, statistic, reader=read_once)
+        samples, ctx = load_column(path, metric, key, selector, statistic, reader=read_once)
         base = _label(path, paths)
         label = f"{base}@{selector}" if selector else base
         columns.append(

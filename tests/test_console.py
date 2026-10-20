@@ -8,18 +8,18 @@ import shutil
 
 import pytest
 
-from mew._console import Table, Terminal, _terminal_width, _truncate_left, _truncate_right, fill
+from mew._console import Table, Terminal, _terminal_width, fill, truncate_left, truncate_right
 
 
 @pytest.mark.parametrize(
     ("truncate", "width", "expected"),
     [
-        (_truncate_left, 6, "abcdef"),
-        (_truncate_left, 4, "…def"),
-        (_truncate_left, 1, "a"),  # too narrow for an ellipsis: a bare slice
-        (_truncate_right, 6, "abcdef"),
-        (_truncate_right, 4, "abc…"),
-        (_truncate_right, 1, "a"),
+        (truncate_left, 6, "abcdef"),
+        (truncate_left, 4, "…def"),
+        (truncate_left, 1, "a"),  # too narrow for an ellipsis: a bare slice
+        (truncate_right, 6, "abcdef"),
+        (truncate_right, 4, "abc…"),
+        (truncate_right, 1, "a"),
     ],
 )
 def test_truncate(truncate, width, expected) -> None:

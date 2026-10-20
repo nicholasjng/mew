@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import math
 import os
 import re
@@ -25,8 +26,10 @@ from mew import (
     _discovery,
     run as _run,
 )
-from mew._registry import compile_name_filter
-from mew.runner import check_session_tag, check_strict, longest_row_name, parse_min_time
+from mew._options import check_session_tag, parse_min_time, parse_seconds
+from mew._registry import compile_name_filter, selected_cases
+from mew._results import result_format
+from mew.runner import check_strict, longest_row_name
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -173,16 +176,15 @@ def list_(
         )
         for e in entries:
             tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
-            # --names-only drops the `file.py::` prefix for a cwd-independent id.
-            base = e.name.rsplit("::", 1)[-1] if names_only else e.name
             # Expand family cases by label: those a -k narrowed to, or all with
             # --show-cases. Matches what `mew run` executes.
             if e.case_labels is not None and (e.cases is not None or show_cases):
-                indices = e.cases if e.cases is not None else range(len(e.case_labels))
-                for i in indices:
-                    print(f"{base}[{e.case_labels[i]}]{tags_suffix}")
+                names = [name for _, name in selected_cases(e)]
             else:
-                print(f"{base}{tags_suffix}")
+                names = [e.name]
+            for name in names:
+                # --names-only drops the `file.py::` prefix for a cwd-independent id.
+                print(f"{name.rsplit('::', 1)[-1] if names_only else name}{tags_suffix}")
 
 
 _STDOUT_SENTINELS = frozenset({"-", "stdout"})
@@ -200,7 +202,8 @@ def _build_reporters(
 ) -> list[Reporter]:
     """Resolve ``-o`` sinks into reporters; file format follows the extension.
 
-    ``append`` is rejected for ``.json``, which is a single streamed document.
+    Raises :class:`ValueError` for a sink the run can't write to. ``append`` is
+    rejected for ``.json``, which is a single streamed document.
     """
 
     def _stdout() -> Reporter:
@@ -215,9 +218,8 @@ def _build_reporters(
             show_repetitions=show_repetitions,
         )
 
-    if append and not any(raw.lower().endswith((".jsonl", ".jsonl.gz")) for raw in outputs):
-        print("--append requires a .jsonl or .jsonl.gz output sink", file=sys.stderr)
-        raise SystemExit(2)
+    if append and not any(result_format(raw) == "jsonl" for raw in outputs):
+        raise ValueError("--append requires a .jsonl or .jsonl.gz output sink")
 
     if not outputs:
         return [_stdout()]
@@ -228,39 +230,32 @@ def _build_reporters(
     for raw in outputs:
         if raw in _STDOUT_SENTINELS:
             if seen_stdout:
-                print("duplicate stdout sink", file=sys.stderr)
-                raise SystemExit(2)
+                raise ValueError("duplicate stdout sink")
             seen_stdout = True
             reps.append(_stdout())
             continue
         path = Path(raw).resolve()
         if path in seen_files:
-            print(f"duplicate file sink: {raw}", file=sys.stderr)
-            raise SystemExit(2)
+            raise ValueError(f"duplicate file sink: {raw}")
         # Opened only once the run starts; fail before it does.
         if not path.parent.is_dir():
-            print(f"output directory does not exist: {path.parent}", file=sys.stderr)
-            raise SystemExit(2)
+            raise ValueError(f"output directory does not exist: {path.parent}")
         seen_files.add(path)
-        name = path.name.lower()
-        if name.endswith(".json"):
+        fmt = result_format(path.name)
+        if fmt == "json":
             if append:
-                print(
+                raise ValueError(
                     f"--append is not supported for the JSON sink {raw} "
-                    "(a single streamed document); use *.jsonl or *.jsonl.gz",
-                    file=sys.stderr,
+                    "(a single streamed document); use *.jsonl or *.jsonl.gz"
                 )
-                raise SystemExit(2)
             reps.append(JSONReporter(output=Path(raw)))
-        elif name.endswith((".jsonl", ".jsonl.gz")):
+        elif fmt == "jsonl":
             reps.append(JSONLReporter(output=Path(raw), append=append))
         else:
-            print(
+            raise ValueError(
                 f"unsupported output format: {raw} "
-                "(use `-`/`stdout`, *.json, *.jsonl, or *.jsonl.gz)",
-                file=sys.stderr,
+                "(use `-`/`stdout`, *.json, *.jsonl, or *.jsonl.gz)"
             )
-            raise SystemExit(2)
     if stdout_format != "rich" and not seen_stdout:
         print(
             f"warning: --format {stdout_format} has no effect without a stdout sink "
@@ -330,15 +325,16 @@ def run(
                     interval=sample_interval, sampler=sampler, top_k=sample_top_k
                 )
 
-        reporters = _build_reporters(
-            output,
-            stdout_format=format,
-            show_memory=profile_memory,
-            show_cpu=sample,
-            name_width=longest_row_name(entries),
-            show_repetitions=not summary_only,
-            append=append,
-        )
+        with _usage_error("run", ValueError):
+            reporters = _build_reporters(
+                output,
+                stdout_format=format,
+                show_memory=profile_memory,
+                show_cpu=sample,
+                name_width=longest_row_name(entries),
+                show_repetitions=not summary_only,
+                append=append,
+            )
 
         with ExitStack() as stack:
             memory_manager = None
@@ -387,26 +383,19 @@ def compare(
     from mew._statistics import resolve_statistic
     from mew.compare import compare as _compare
 
-    cfg_file = _load_config_or_exit()
+    cfg = _load_config_or_exit()
     # --statistic wins; else fall back to [tool.mew] statistic; else stdlib median.
-    spec = statistic if statistic is not None else cfg_file.statistic
-    try:
+    spec = statistic if statistic is not None else cfg.statistic
+    with _usage_error("compare", ValueError):
         reduce = resolve_statistic(spec) if spec is not None else None
-    except ValueError as e:
-        print(f"mew compare: {e}", file=sys.stderr)
-        raise SystemExit(2) from e
 
     # Any regression flag opts into gating, so the gate flag alone is not a
     # silent no-op; it gates at the default threshold.
-    cfg = None
+    gate = None
     if regression_threshold is not None or exit_non_zero_on_regression:
-        from mew.regressions import load_config
-
-        try:
-            cfg = load_config(default_threshold=regression_threshold, root=cfg_file.project_root)
-        except ValueError as e:
-            print(f"mew compare: invalid regressions config: {e}", file=sys.stderr)
-            raise SystemExit(2) from e
+        gate = cfg.regressions
+        if regression_threshold is not None:  # wins over default-threshold
+            gate = dataclasses.replace(gate, default_threshold=regression_threshold)
 
     with _usage_error("compare", ValueError, OSError):
         code = _compare(
@@ -417,7 +406,7 @@ def compare(
             literal=literal,
             show_stddev=stddev,
             statistic=reduce,
-            regressions=cfg,
+            regressions=gate,
         )
     # The regression panel is informational unless the caller opted into gating;
     # a `no overlap` (1) exit still propagates as-is.
@@ -504,34 +493,28 @@ def completions(shell: str) -> None:
 
 def _warmup_seconds(value: str) -> float:
     """argparse type for --min-warmup-time: '0.2', '200ms', '1m' → seconds."""
-    dur = value.strip()
     try:
-        if dur.endswith("ms"):  # before "m": "500ms" is not minutes
-            seconds = float(dur[:-2]) / 1000
-        elif dur.endswith("m"):
-            seconds = float(dur[:-1]) * 60
-        else:
-            seconds = float(dur.removesuffix("s"))
-        if not math.isfinite(seconds) or seconds < 0:
-            raise ValueError
-        return seconds
+        seconds = parse_seconds(value)
     except ValueError:
+        seconds = math.nan
+    if not math.isfinite(seconds) or seconds < 0:
         # ArgumentTypeError gets argparse's usage-error exit (2); SystemExit
         # would exit 1, colliding with the "nothing matched" code.
         raise argparse.ArgumentTypeError(
-            f"invalid --min-warmup-time {dur!r}; use seconds ('10s', '0.5'), "
+            f"invalid --min-warmup-time {value!r}; use seconds ('10s', '0.5'), "
             "milliseconds ('500ms'), or minutes ('1m')"
-        ) from None
+        )
+    return seconds
 
 
 def _min_time(value: str) -> str:
-    """Validate seconds or an ``Nx`` fixed-iteration count for --min-time."""
+    """Validate a duration or an ``Nx`` fixed-iteration count for --min-time."""
     try:
         return parse_min_time(value)
     except ValueError as e:
         raise argparse.ArgumentTypeError(
-            f"invalid --min-time {value!r}; use positive seconds ('0.5', '1s') "
-            "or iterations ('100x')"
+            f"invalid --min-time {value!r}; use positive seconds ('0.5', '1s'), "
+            "milliseconds ('500ms'), minutes ('1m'), or iterations ('100x')"
         ) from e
 
 
