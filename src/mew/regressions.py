@@ -11,14 +11,8 @@ from __future__ import annotations
 import fnmatch
 import math
 import sys
-import tomllib
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-from typing import cast
-
-from mew.config import _read_table
 
 
 class Verdict(Enum):
@@ -101,15 +95,17 @@ class BenchmarkVerdict:
 class RegressionConfig:
     """The active gate: a default threshold plus ordered allowlist rules.
 
+    Loaded from ``[tool.mew.regressions]`` into :attr:`mew.config.Config.regressions`.
+
     Attributes
     ----------
-    default_threshold : float
+    default_threshold : float, default 5.0
         Percent slowdown tolerated by benchmarks no rule matches.
     rules : tuple[AllowRule, ...]
         Allowlist rules in file order; the first match wins.
     """
 
-    default_threshold: float
+    default_threshold: float = 5.0
     rules: tuple[AllowRule, ...] = ()
 
     def __post_init__(self) -> None:
@@ -153,83 +149,6 @@ class RegressionConfig:
         # Past the default but within the threshold: only a looser rule allows that.
         verdict = Verdict.ALLOWED_OVER if magnitude > self.default_threshold else Verdict.OK
         return BenchmarkVerdict(name, delta_pct, verdict, rule)
-
-
-def _coerce_rule(raw: Mapping[str, object]) -> AllowRule:
-    raw = _read_table(
-        raw, ("pattern", "reason", "ignore", "threshold"), "[[tool.mew.regressions.allow]]"
-    )
-    pattern = raw.get("pattern")
-    if not isinstance(pattern, str) or not pattern:
-        raise ValueError("allow rule missing 'pattern'")
-
-    reason = raw.get("reason")
-    if not isinstance(reason, str) or not reason.strip():
-        raise ValueError(
-            f"allow rule {pattern!r}: 'reason' is required (document why this is allowlisted)"
-        )
-
-    try:
-        return AllowRule(
-            pattern=pattern,
-            reason=reason.strip(),
-            ignore=cast(bool, raw.get("ignore", False)),
-            threshold=cast(float | None, raw.get("threshold")),
-        )
-    except (TypeError, ValueError) as e:
-        # The model owns validation; the loader adds configuration context.
-        raise ValueError(f"allow rule {pattern!r}: {e}") from e
-
-
-def load_config(
-    *, default_threshold: float | None = None, root: Path | None = None
-) -> RegressionConfig:
-    """Build a :class:`RegressionConfig` from ``[tool.mew.regressions]``.
-
-    Parameters
-    ----------
-    default_threshold : float, optional
-        Threshold in percent, e.g. from ``--regression-threshold``. Overrides
-        ``[tool.mew.regressions] default-threshold``; without either, 5.0.
-    root : Path, optional
-        Directory holding the project's ``pyproject.toml`` (see
-        :attr:`mew.config.Config.project_root`). ``None`` means no file:
-        the defaults apply with no allowlist.
-
-    Returns
-    -------
-    RegressionConfig
-        Parsed threshold and ordered allowlist rules.
-
-    Raises
-    ------
-    ValueError
-        If a key is unknown, such as a snake_case spelling of a dashed key, or
-        has an invalid value, in ``[tool.mew.regressions]`` or in one of its
-        ``allow`` rules.
-    """
-    threshold = default_threshold if default_threshold is not None else 5.0
-    source = root / "pyproject.toml" if root is not None else None
-    if source is None or not source.is_file():
-        return RegressionConfig(default_threshold=threshold)
-
-    with source.open("rb") as fh:
-        doc = tomllib.load(fh)
-    try:
-        table = _read_table(
-            doc.get("tool", {}).get("mew", {}).get("regressions", {}),
-            ("default-threshold", "allow"),
-            "[tool.mew.regressions]",
-        )
-        if default_threshold is None:
-            threshold = table.get("default_threshold", threshold)
-        allow = table.get("allow", [])
-        if not isinstance(allow, list) or not all(isinstance(r, dict) for r in allow):
-            raise ValueError("[tool.mew.regressions] allow must be an array of tables")
-        rules = tuple(_coerce_rule(raw) for raw in allow)
-        return RegressionConfig(default_threshold=threshold, rules=rules)
-    except ValueError as e:
-        raise ValueError(f"{source}: {e}") from e
 
 
 def render_panel(

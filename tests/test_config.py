@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from mew.config import Config, load
+from mew.regressions import RegressionConfig
 
 
 def _write(root: Path, body: str) -> None:
@@ -35,7 +36,6 @@ def test_load_reads_every_setting(tmp_path: Path):
         'setup = "benchmarks/conf.py"\n'
         'statistic = "gmean"\n'
         'capture = "no"\n'
-        # A table mew.regressions reads: known here, not a typo.
         "[tool.mew.regressions]\n"
         "default-threshold = 7.5\n",
     )
@@ -45,6 +45,7 @@ def test_load_reads_every_setting(tmp_path: Path):
         setup="benchmarks/conf.py",
         statistic="gmean",
         capture="no",
+        regressions=RegressionConfig(default_threshold=7.5),
         project_root=tmp_path.resolve(),
     )
 
@@ -63,9 +64,13 @@ def test_load_reads_every_setting(tmp_path: Path):
             'python_files = "*.py"',
             "unknown key 'python_files' in [tool.mew]; did you mean 'python-files'?",
         ),
+        # Not TOML at all.
+        ("benchpaths = ", "(at line 2"),
     ],
 )
 def test_load_rejects_malformed_setting(tmp_path: Path, setting: str, message: str):
     _write(tmp_path, f"[tool.mew]\n{setting}\n")
-    with pytest.raises(ValueError, match=re.escape(message)):
+    with pytest.raises(ValueError, match=re.escape(message)) as exc:
         load(tmp_path)
+    # The message names the file.
+    assert str(exc.value).startswith(f"{(tmp_path / 'pyproject.toml').resolve()}: ")

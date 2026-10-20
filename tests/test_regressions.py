@@ -9,12 +9,12 @@ import pytest
 from _helpers import Console, row as _row, write_pair as _write_pair
 
 from mew.compare import compare
+from mew.config import load
 from mew.regressions import (
     AllowRule,
     BenchmarkVerdict,
     RegressionConfig,
     Verdict,
-    load_config,
     render_panel,
 )
 
@@ -59,7 +59,7 @@ def test_first_matching_rule_wins() -> None:
     assert v.rule is a
 
 
-def test_load_config_from_pyproject(tmp_path: Path) -> None:
+def test_load_regressions_from_pyproject(tmp_path: Path) -> None:
     py = tmp_path / "pyproject.toml"
     py.write_text(
         """
@@ -77,10 +77,8 @@ threshold = 25.0
 reason = "noisy on shared runners"
 """
     )
-    cfg = load_config(root=tmp_path)
+    cfg = load(tmp_path).regressions
     assert cfg.default_threshold == 7.5
-    # An explicit threshold (--regression-threshold) wins over the file.
-    assert load_config(default_threshold=2.0, root=tmp_path).default_threshold == 2.0
     assert len(cfg.rules) == 2
     assert cfg.rules[0].ignore is True
     assert cfg.rules[1].threshold == 25.0
@@ -107,6 +105,7 @@ _ALLOW = '[[tool.mew.regressions.allow]]\npattern = "b*"\n'
         (_ALLOW + 'reason = "r"\nignore = "false"', "ignore must be a boolean"),
         (_ALLOW + 'reason = "r"\nthreshold = -1.0', "finite, non-negative"),
         ('[tool.mew.regressions]\nallow = "b*"', "allow must be an array of tables"),
+        ("[tool.mew]\nregressions = 5", "[tool.mew.regressions] must be a table"),
         # Typos fail, in the table and in its rules alike, and keys are dashed.
         (
             "[tool.mew.regressions]\ndefault-treshold = 7.5",
@@ -120,15 +119,16 @@ _ALLOW = '[[tool.mew.regressions.allow]]\npattern = "b*"\n'
             _ALLOW + 'reason = "r"\ntreshold = 10.0',
             "unknown key 'treshold' in [[tool.mew.regressions.allow]]; did you mean 'threshold'?",
         ),
+        ("[tool.mew.regressions]\ndefault-threshold = ", "(at line 2"),
     ],
 )
-def test_load_config_rejects_invalid_config(tmp_path: Path, body: str, match: str) -> None:
+def test_load_rejects_invalid_regressions_config(tmp_path: Path, body: str, match: str) -> None:
     # Every row names its error: a TOML syntax error is a ValueError too.
     source = tmp_path / "pyproject.toml"
     source.write_text(body + "\n")
     with pytest.raises(ValueError, match=re.escape(match)) as exc:
-        load_config(default_threshold=5.0, root=tmp_path)
-    assert str(exc.value).startswith(f"{source}: ")
+        load(tmp_path)
+    assert str(exc.value).startswith(f"{source.resolve()}: ")
 
 
 @pytest.mark.parametrize("threshold", [-1, float("nan"), True])
@@ -168,7 +168,7 @@ def test_compare_config_allow_rule_passes_the_gate(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[[tool.mew.regressions.allow]]\npattern = "b"\nthreshold = 50.0\nreason = "noisy"\n'
     )
-    cfg = load_config(default_threshold=5.0, root=tmp_path)
+    cfg = load(tmp_path).regressions
     assert compare([other, base], regressions=cfg, console=Console(width=200)) == 0
 
 
