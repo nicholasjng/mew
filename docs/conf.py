@@ -50,6 +50,8 @@ autodoc_default_options = {
     "show-inheritance": True,
     "member-order": "bysource",
 }
+# Evaluated nanobind enum defaults (State.set_counter) break autodoc's formatting.
+autodoc_preserve_defaults = True
 autodoc_typehints = "description"
 autodoc_typehints_format = "short"
 napoleon_numpy_docstring = True
