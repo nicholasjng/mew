@@ -129,3 +129,7 @@ combine-as-imports = true
 
 [tool.ty.src]
 include = ["src", "tests"]
+
+[tool.ty.analysis]
+# Tachyon (mew.cpu) is standard library from Python 3.15 only.
+allowed-unresolved-imports = ["_remote_debugging", "profiling.**"]

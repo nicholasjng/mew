@@ -319,7 +319,7 @@ def _unwinder(pid: int) -> Any:
 
     ``<native>`` frames mark where C code calls back into Python.
     """
-    import _remote_debugging  # ty: ignore[unresolved-import]
+    import _remote_debugging
 
     return _remote_debugging.RemoteUnwinder(
         pid,
@@ -465,9 +465,7 @@ class TachyonManager:
         _check_top_k(top_k)
         require_tachyon()
 
-        from profiling.sampling.stack_collector import (  # ty: ignore[unresolved-import]
-            FlamegraphCollector,
-        )
+        from profiling.sampling.stack_collector import FlamegraphCollector
 
         try:
             self._unwinder = _unwinder(os.getpid())
@@ -579,10 +577,8 @@ class TachyonManager:
 
     def _record(self) -> None:
         """Summarize the pass and add its stacks to the flame graph."""
-        from _remote_debugging import InterpreterInfo, ThreadInfo  # ty: ignore[unresolved-import]
-        from profiling.sampling.constants import (  # ty: ignore[unresolved-import]
-            PROFILING_MODE_WALL,
-        )
+        from _remote_debugging import InterpreterInfo, ThreadInfo
+        from profiling.sampling.constants import PROFILING_MODE_WALL
 
         samples = 0
         lines: defaultdict[tuple[str, str, int], float] = defaultdict(float)
