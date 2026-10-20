@@ -29,12 +29,12 @@ stop with exit code 2 on an error. An unknown key is an error, so a typo such as
 
 ```console
 $ mew list
-mew: invalid config: unknown key 'benchpath' in [tool.mew]; did you mean 'benchpaths'?
+mew: invalid config: /path/to/project/pyproject.toml: unknown key 'benchpath' in [tool.mew]; did you mean 'benchpaths'?
 ```
 
-An invalid `statistic` also stops `mew run`, not only `mew compare`. When
-`mew compare` gates on regressions, it checks `[tool.mew.regressions]` and its
-allowlist rules in the same way (see {doc}`regressions`).
+An invalid `statistic` also stops `mew run`, not only `mew compare`, and so
+does an error in `[tool.mew.regressions]` or its allowlist rules (see
+{doc}`regressions`).
 
 ## Where measurement settings live
 
