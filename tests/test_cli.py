@@ -304,7 +304,8 @@ def test_usage_errors_exit_2(mew_cli, benchdir, args, message):
 @pytest.mark.parametrize(
     ("config", "args", "message"),
     [
-        ("[tool.mew]\nbenchpaths = 42\n", ("list",), "mew: invalid config: [tool.mew] benchpaths"),
+        # The message names the file.
+        ("[tool.mew]\nbenchpaths = 42\n", ("list",), "pyproject.toml: [tool.mew] benchpaths"),
         ('[tool.mew]\nsetup = "nope.py"\n', ("run",), "setup file not found"),
         # Read before the result files, which don't exist here.
         (
@@ -325,7 +326,6 @@ def test_config_errors_exit_2(mew_cli, tmp_path, config, args, message):
     ("value", "seconds"), [("0.5", 0.5), ("200ms", 0.2), ("10s", 10.0), ("1m", 60.0)]
 )
 def test_min_warmup_time_parses_durations(value, seconds):
-    # Consistent with --min-time's suffix syntax: `200ms` parses to seconds.
     from mew.cli import _warmup_seconds
 
     assert _warmup_seconds(value) == seconds
@@ -496,7 +496,7 @@ _SAMPLED_ITERATIONS = "200x"
 
 def test_run_flamegraph_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     pytest.importorskip("memray")
-    from mew.reporter import _fmt_bytes
+    from mew._format import fmt_bytes
 
     (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_ALLOCATING))
     report, out = tmp_path / "flame.html", tmp_path / "rows.json"
@@ -518,7 +518,7 @@ def test_run_flamegraph_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     # The row carries the profile, and the console table shows it.
     (row,) = json.loads(out.read_text())["benchmarks"]
     assert row["memory"]["peak_bytes"] >= 1 << 20  # the loop's 1 MiB buffer
-    assert _fmt_bytes(row["memory"]["peak_bytes"]) in res.stdout
+    assert fmt_bytes(row["memory"]["peak_bytes"]) in res.stdout
 
 
 @pytest.mark.skipif(
@@ -639,6 +639,16 @@ def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path, flags, cod
     res = mew_cli("compare", str(other), str(base), *flags, cwd=tmp_path)
     assert res.returncode == code, res.stderr
     assert "❌" in res.stderr
+
+
+def test_compare_regression_threshold_wins_over_the_configured_default(mew_cli, tmp_path):
+    # +20%: within the file's 50% default, over the flag's 5%.
+    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
+    (tmp_path / "pyproject.toml").write_text("[tool.mew.regressions]\ndefault-threshold = 50.0\n")
+    args = ("compare", str(other), str(base), "--exit-non-zero-on-regression")
+    assert mew_cli(*args, cwd=tmp_path).returncode == 0
+    res = mew_cli(*args, "--regression-threshold", "5%", cwd=tmp_path)
+    assert res.returncode == 3, res.stderr
 
 
 def test_sessions_lists_newest_first(mew_cli, tmp_path):

@@ -21,7 +21,7 @@ Span = tuple[str, str | None]
 # A table cell: plain text, or a sequence of differently-styled spans.
 Cell = str | list[Span]
 
-_COL_SEP = " │ "
+COL_SEP = " │ "
 # Fewest columns a narrowed name keeps: below that it no longer identifies anything.
 _FLEX_FLOOR = 20
 
@@ -43,7 +43,7 @@ def fill(parts: list[str], width: int, *, indent: str, hang: str, sep: str) -> l
             lines[-1] += sep + part
         else:
             lead = hang if lines else indent
-            lines.append(lead + _truncate_right(part, max(1, width - len(lead))))
+            lines.append(lead + truncate_right(part, max(1, width - len(lead))))
     return lines
 
 
@@ -136,7 +136,7 @@ def _visible_len(cell: Cell) -> int:
     return sum(len(t) for t, _ in cell)
 
 
-def _truncate_left(text: str, width: int) -> str:
+def truncate_left(text: str, width: int) -> str:
     """Keep the right side (the disambiguating suffix), prefixing an ellipsis."""
     if len(text) <= width:
         return text
@@ -145,7 +145,7 @@ def _truncate_left(text: str, width: int) -> str:
     return "…" + text[-(width - 1) :]
 
 
-def _truncate_right(text: str, width: int) -> str:
+def truncate_right(text: str, width: int) -> str:
     """Keep the left side, appending an ellipsis."""
     if len(text) <= width:
         return text
@@ -156,7 +156,7 @@ def _truncate_right(text: str, width: int) -> str:
 
 def _format_cell(cell: Cell, width: int, justify: str, color: bool) -> str:
     if isinstance(cell, str):
-        text = _truncate_left(cell, width)
+        text = truncate_left(cell, width)
         pad = width - len(text)
         body = text
     else:  # styled spans: only ever in fixed columns, so never truncated
@@ -197,7 +197,7 @@ class Table:
 
         flex = next((i for i, f in enumerate(self._flex) if f), None)
         if flex is not None:
-            overhead = (len(self._headers) - 1) * len(_COL_SEP)
+            overhead = (len(self._headers) - 1) * len(COL_SEP)
             fixed = sum(w for i, w in enumerate(widths) if i != flex)
             avail = width - fixed - overhead
             floor = min(widths[flex], max(len(self._headers[flex]), _FLEX_FLOOR))
@@ -206,17 +206,17 @@ class Table:
         lines: list[str] = []
         if self.title:
             lines.append(sgr(self.title, "bold", enabled=color))
-        header = _COL_SEP.join(
+        header = COL_SEP.join(
             sgr(_format_cell(h, w, j, False), "bold", enabled=color)
             for h, w, j in zip(self._headers, widths, self._justify, strict=True)
         )
         lines.append(header)
         lines.append(
-            sgr("─" * (sum(widths) + (len(widths) - 1) * len(_COL_SEP)), "dim", enabled=color)
+            sgr("─" * (sum(widths) + (len(widths) - 1) * len(COL_SEP)), "dim", enabled=color)
         )
         for row in self._rows:
             lines.append(
-                _COL_SEP.join(
+                COL_SEP.join(
                     _format_cell(c, w, j, color)
                     for c, w, j in zip(row, widths, self._justify, strict=True)
                 )
