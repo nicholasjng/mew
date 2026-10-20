@@ -70,6 +70,13 @@ def case_names(entry: Entry) -> Iterator[tuple[int, str]]:
         yield i, f"{entry.name}[{label}]"
 
 
+def selected_cases(entry: Entry) -> Iterator[tuple[int, str]]:
+    """Like :func:`case_names`, but only the cases a name filter left selected."""
+    for i, name in case_names(entry):
+        if entry.cases is None or i in entry.cases:
+            yield i, name
+
+
 def _match_cases(entry: Entry, rx: re.Pattern[str], n: int) -> set[int]:
     """Return the indices of the ``n`` cases a regex selects; a plain benchmark has one."""
     # Plain benchmark, or a family whose own name matches → the whole entry.

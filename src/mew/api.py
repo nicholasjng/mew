@@ -5,20 +5,16 @@ from __future__ import annotations
 import inspect
 import itertools
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import Any, Unpack, cast, overload
+from typing import Any, Unpack, overload
 
 from mew._core import TimeUnit
+from mew._options import normalize_options
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
-from mew.runner import check_count, check_min_warmup_time, parse_min_time
 
 _REGISTERED_ATTR = "__mew_registered__"
-
-
-_OptionKeys = BenchmarkOptions.__required_keys__ | BenchmarkOptions.__optional_keys__
-_TIME_UNITS = tuple(unit.value for unit in TimeUnit)
 
 
 def _format_id_value(value: Any) -> str:
@@ -47,77 +43,6 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
             return f"{Path(file).name}::{qualname}"
     module = getattr(fn, "__module__", "<unknown>")
     return f"{module}::{qualname}"
-
-
-def _normalize_threads(value: Any) -> tuple[int, ...]:
-    """Coerce ``threads`` (an int or an iterable of ints) to a tuple of distinct counts.
-
-    Google Benchmark accumulates thread counts, so each count runs the benchmark
-    once; duplicates are dropped and the given order is kept.
-    """
-    if isinstance(value, bool) or not isinstance(value, int | Iterable):
-        raise TypeError(f"threads must be an int or an iterable of ints, got {value!r}")
-    counts = (value,) if isinstance(value, int) else tuple(dict.fromkeys(value))
-    if not counts:
-        raise ValueError("threads must name at least one thread count")
-    for n in counts:
-        check_count(n, "threads")
-    return counts
-
-
-def _normalize_options(options: Mapping[str, Any]) -> BenchmarkOptions:
-    """Validate decorator options by :func:`mew.run`'s rules and normalize them.
-
-    Unset (``None``) options are dropped, ``min_time`` becomes seconds, or
-    ``iterations`` for ``"Nx"``, and ``threads`` becomes a tuple.
-    """
-    extra = set(options) - _OptionKeys
-    if extra:
-        raise TypeError(f"unknown option(s): {sorted(extra)}")
-    opts = {k: v for k, v in options.items() if v is not None}
-    # Fail at decoration time: GB guards many of these with asserts compiled out
-    # of release builds, so bad values would misbehave silently.
-    for key in ("iterations", "repetitions"):
-        if key in opts:
-            check_count(opts[key], key)
-    if "min_warmup_time" in opts:
-        check_min_warmup_time(opts["min_warmup_time"])
-    if "unit" in opts:
-        if not isinstance(opts["unit"], str):
-            raise TypeError(f"unit must be a string, got {opts['unit']!r}")
-        if opts["unit"] not in _TIME_UNITS:
-            units = ", ".join(map(repr, _TIME_UNITS))
-            raise ValueError(f"unit must be one of {units}, got {opts['unit']!r}")
-    for key in ("use_real_time", "use_manual_time", "measure_process_cpu_time"):
-        if key in opts and not isinstance(opts[key], bool):
-            raise TypeError(f"{key} must be a bool, got {opts[key]!r}")
-    if "threads" in opts:
-        opts["threads"] = _normalize_threads(opts["threads"])
-
-    fixed = "iterations"
-    if "min_time" in opts:
-        min_time = parse_min_time(opts["min_time"])
-        if min_time.endswith("x"):
-            # "Nx" fixes the iteration count, as it does for mew.run().
-            fixed = f"min_time={opts.pop('min_time')!r}"
-            if "iterations" in opts:
-                raise ValueError(f"{fixed} cannot be combined with iterations")
-            opts["iterations"] = int(min_time[:-1])
-        else:
-            opts["min_time"] = float(min_time[:-1])
-    # GB checks these combinations only in debug builds, which abort; release
-    # builds silently drop the time budget, or use_real_time for manual time.
-    if "iterations" in opts:
-        for key in ("min_time", "min_warmup_time"):
-            if key in opts:
-                raise ValueError(f"{fixed} cannot be combined with {key}")
-    # GB warms a benchmark up for its own time only if it also has its own
-    # min_time; alone, the option would do nothing.
-    if "min_warmup_time" in opts and "min_time" not in opts:
-        raise ValueError("min_warmup_time needs min_time in seconds")
-    if opts.get("use_real_time") and opts.get("use_manual_time"):
-        raise ValueError("use_real_time cannot be combined with use_manual_time")
-    return cast(BenchmarkOptions, opts)
 
 
 def _check_addressable(text: str, what: str) -> None:
@@ -238,7 +163,7 @@ def benchmark(
     ...     for _ in state:
     ...         sorted([3, 1, 2])
     """
-    norm_options = _normalize_options(options)
+    norm_options = normalize_options(options)
     if name is not None:
         _check_addressable(name, "benchmark name")
     norm_tags = _normalize_tags(tags)
@@ -349,7 +274,7 @@ def parametrize(
     ...     for _ in state:
     ...         sorted(data)
     """
-    norm_options = _normalize_options(options)
+    norm_options = normalize_options(options)
     norm_tags = _normalize_tags(tags)
     cases = [dict(p) for p in parameters]  # snapshot, allow generators
     return lambda target: _register_family(
@@ -388,10 +313,10 @@ def product(
     tags : Iterable[str] or str, optional
         Tags for every case.
     min_time : float or str, optional
-        Seconds to measure each case, or a fixed iteration count like
-        ``"100x"``, which is the same as ``iterations=100``.
+        Seconds to measure each case (``0.5``, ``"500ms"``, ``"1m"``), or a
+        fixed iteration count like ``"100x"``, the same as ``iterations=100``.
     min_warmup_time : float, optional
-        Seconds to warm up each case; needs ``min_time`` in seconds.
+        Seconds to warm up each case before measuring it.
     iterations, repetitions : int, optional
         A fixed iteration count, which excludes the two times above, and how
         many runs per case.
@@ -442,7 +367,7 @@ def product(
         "measure_process_cpu_time": measure_process_cpu_time,
         "threads": threads,
     }
-    options = _normalize_options(
+    options = normalize_options(
         {k: v for k, v in local_options.items() if v is not None and v is not False}
     )
 
