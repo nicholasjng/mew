@@ -71,7 +71,7 @@ importable from `mew` directly:
 
    The Google Benchmark version the extension was built against, in
    ``git describe`` form with ``+mew`` marking mew's patches, e.g.
-   ``v1.9.5-144-ge662de9a+mew``.
+   ``v1.10.0-4-g00aed1d2+mew``.
 
 .. py:data:: BENCHMARK_COMMIT
    :type: str

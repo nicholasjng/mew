@@ -73,7 +73,7 @@ $ uv add 'mew-bench[cpu,memory]'
 
 ```console
 $ mew --version
-mew 0.2.0 (Google Benchmark v1.9.5-144-ge662de9a+mew)
+mew 0.3.0 (Google Benchmark v1.10.0-4-g00aed1d2+mew)
 ```
 
 The trailing identifier names the Google Benchmark commit the C++ extension was

@@ -29,7 +29,7 @@ absolute values.
 Google Benchmark increases the iteration count until the body reaches `min_time`.
 
 ```console
-$ mew run --min-time 0.5          # seconds
+$ mew run --min-time 0.5          # seconds; or 500ms, 1m
 $ mew run --min-time 100x         # or an exact iteration count
 $ mew run --min-warmup-time 200ms # warm caches before measuring
 ```

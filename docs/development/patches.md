@@ -7,7 +7,7 @@ fetched tree records the base commit and each patch's hash; when either changes,
 script resets the tree to the pin and re-applies the whole series.
 
 Because of the patches, the build reports Google Benchmark's version with `+mew`
-build metadata, for example `v1.9.5-144-ge662de9a+mew`. The mew version identifies
+build metadata, for example `v1.10.0-4-g00aed1d2+mew`. The mew version identifies
 the exact patch series, since the series only changes between mew releases.
 A build against your own checkout (`-DFETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK=...`)
 skips the patch step, so apply the series to it yourself; mew does not compile
