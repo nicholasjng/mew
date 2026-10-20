@@ -363,6 +363,33 @@ def _instruction_source(file: str, location: tuple[int, int, int, int]) -> str:
     return source if len(source) <= 40 else source[:39] + "…"
 
 
+def _hottest_function(
+    lines: dict[tuple[str, str, int], float], wall_time: float
+) -> TopFunction | None:
+    """The function with the most self time, at its hottest line; ``None`` if there is none.
+
+    ``lines`` maps ``(file, function, line)`` to self time.
+    """
+    if not (total := sum(lines.values())):
+        return None
+    functions: defaultdict[tuple[str, str], float] = defaultdict(float)
+    for (file, func, _), seconds in lines.items():
+        functions[file, func] += seconds
+    (file, func), hot = max(functions.items(), key=lambda kv: kv[1])
+    line = max((k for k in lines if k[:2] == (file, func)), key=lines.__getitem__)[2]
+    # Synthetic frames such as <GC> have no source file.
+    synthetic = file == "~"
+    return {
+        "function": func,
+        "file": None if synthetic else Path(file).name,
+        "line": None if synthetic else line,
+        # Scaled to the unpaused time, which also covers the stretch after the
+        # last sample. The share first: a function holding every sample must get
+        # exactly wall_time, not an ulp above.
+        "self_time": wall_time * (hot / total),
+    }
+
+
 def _summarize_instructions(
     instructions: dict[tuple[str, Any, int], float], total: float, top_k: int
 ) -> tuple[list[TopInstruction], float | None]:
@@ -370,9 +397,9 @@ def _summarize_instructions(
 
     ``instructions`` maps ``(file, location, opcode)`` to self time; ``total`` is
     the body's self time, so shares compare with the hottest function's. Without
-    instructions, or if the opcode tables moved, ``([], None)``.
+    instructions or time, or if the opcode tables moved, ``([], None)``.
     """
-    if not instructions or (tables := _opcode_tables()) is None:
+    if not instructions or not total or (tables := _opcode_tables()) is None:
         return [], None
     names, generic = tables
     hottest = sorted(instructions.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
@@ -585,33 +612,12 @@ class TachyonManager:
             rate = self._samples / self._duration
             interval_us = round(self._interval * 1e6)
             self.flamegraph.set_stats(interval_us, self._duration, rate, mode=PROFILING_MODE_WALL)
-        hottest: TopFunction | None = None
-        top: list[TopInstruction] = []
-        unspecialized: float | None = None
-        if total := sum(lines.values()):
-            # The hottest function by self time, and its hottest line.
-            functions: defaultdict[tuple[str, str], float] = defaultdict(float)
-            for (file, func, _), seconds in lines.items():
-                functions[file, func] += seconds
-            (file, func), hot = max(functions.items(), key=lambda kv: kv[1])
-            line = max((k for k in lines if k[:2] == (file, func)), key=lines.__getitem__)[2]
-            # Synthetic frames such as <GC> have no source file.
-            synthetic = file == "~"
-            hottest = {
-                "function": func,
-                "file": None if synthetic else Path(file).name,
-                "line": None if synthetic else line,
-                # Scaled to the unpaused time, which also covers the stretch
-                # after the last sample. The share first: a function holding
-                # every sample must get exactly wall_time, not an ulp above.
-                "self_time": self._active * (hot / total),
-            }
-            top, unspecialized = _summarize_instructions(instructions, total, self._top_k)
+        top, unspecialized = _summarize_instructions(instructions, sum(lines.values()), self._top_k)
         self._result = {
             "profiler": "tachyon",
             "wall_time": self._active,
             "sample_count": samples,
-            "top_function": hottest,
+            "top_function": _hottest_function(lines, self._active),
             "top_instructions": top,
             "unspecialized_share": unspecialized,
         }
