@@ -60,6 +60,8 @@ change between minor releases.
   `CounterFlags.kStringifyExponent` is exposed for exponent notation.
 - Decorators take `min_time` as `mew.run()` does: seconds (`0.5`, `"0.5s"`) or
   a fixed iteration count (`"100x"`), the same as `iterations=100`.
+- `--min-time`, `mew.run(min_time=...)` and the decorators' `min_time` take
+  milliseconds (`500ms`) and minutes (`1m`), as `--min-warmup-time` does.
 
 ### Changed
 
@@ -98,12 +100,14 @@ change between minor releases.
   under pyinstrument, which reported the `def` line.
 - `cpu_profile.sample_count` is an integer instead of a float. DuckDB reads the
   column as `DOUBLE` in an archive that mixes both.
-- Google Benchmark is pinned to `e662de9` (v1.9.5-144). `mew --version` and
-  `mew.BENCHMARK_VERSION` report it as `v1.9.5-144-ge662de9a+mew`, without the
+- Google Benchmark is pinned to `00aed1d` (v1.10.0-4). `mew --version` and
+  `mew.BENCHMARK_VERSION` report it as `v1.10.0-4-g00aed1d2+mew`, without the
   `-dirty` suffix that mew's patches caused.
 - On macOS, the thread CPU clock is read with `clock_gettime` instead of
   `thread_info`, which Google Benchmark kept for macOS 10.11: a read costs about
-  110 ns instead of 510, and resolves 42 ns instead of 1 µs.
+  110 ns instead of 510, and resolves 42 ns instead of 1 µs. The process CPU
+  clock of `measure_process_cpu_time` is read with `clock_gettime` too, instead
+  of `getrusage`.
 - On Apple Silicon Macs, `mew run` starts about a second sooner. macOS doesn't
   report the CPU frequency there, and Google Benchmark estimated it by
   busy-looping for a second; mew never reported it.
@@ -138,9 +142,8 @@ change between minor releases.
   where the decorators raised `TypeError` for both. The decorators also reject
   what Google Benchmark would ignore or misread: `iterations` with `min_time`
   or `min_warmup_time`, whose time budget it ignored; `iterations=2.5`, which
-  ran 2 iterations; `repetitions=True`; an infinite time; `use_real_time` with
-  `use_manual_time`, where manual time won; and `min_warmup_time` without
-  `min_time` in seconds, which did nothing. A misspelled `unit` fails at
+  ran 2 iterations; `repetitions=True`; an infinite time; and `use_real_time`
+  with `use_manual_time`, where manual time won. A misspelled `unit` fails at
   decoration instead of during the run.
 - `mew.run()` and `--session-tag` reject the tag `latest`, which
   `mew compare path@latest` reserves for the newest session, and an empty tag,
@@ -148,7 +151,13 @@ change between minor releases.
 - Unknown keys in `[tool.mew]`, `[tool.mew.regressions]` and its `allow` rules
   are errors that suggest the likely key, instead of being ignored. This
   includes free-form keys such as `note = "..."` in an allow rule. An invalid
-  `statistic` fails every command, not only `mew compare`.
+  `statistic` or `[tool.mew.regressions]` table fails every command, not only
+  `mew compare`. Config errors, TOML syntax errors included, start with the
+  path of the `pyproject.toml` they are in.
+- `mew.config.load()` reads `[tool.mew.regressions]` into the new
+  `Config.regressions`, a `RegressionConfig`, whose `default_threshold` is 5.0
+  unless set. Apply `--regression-threshold`-style overrides with
+  `dataclasses.replace()`.
 - Config keys are spelled with dashes only, as TOML has them: `python_files`
   and `[tool.mew.regressions] default_threshold`, the spelling 0.2.0 required,
   must become `python-files` and `default-threshold`. The error names the
@@ -183,6 +192,9 @@ change between minor releases.
 ### Removed
 
 - `State.keep_running_batch()`; `state.batches()` does the same.
+- `mew.regressions.load_config()`; read `mew.config.load().regressions`
+  instead, which comes from the same `pyproject.toml` as the rest of the
+  config.
 
 ### Fixed
 
@@ -213,6 +225,8 @@ change between minor releases.
   time to the result.
 - `--regression-threshold` overrides `[tool.mew.regressions] default-threshold`
   instead of being silently replaced by it.
+- A benchmark's own `min_warmup_time` warms it up without a `min_time` of its
+  own; Google Benchmark ignored it before v1.10.0-4.
 - Regression allowlist patterns match brackets literally, so `*[algo=bubble]`
   selects that case instead of acting as a character class.
 - Calling `state.set_label()` in a parametrized family only sets the row's
@@ -247,6 +261,12 @@ change between minor releases.
   `FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK`, as an offline package build is,
   stops unless mew's patches are applied to it, instead of building against
   unpatched Google Benchmark.
+- The `mew.State` type matches the runtime `State`, which now type-checks as
+  one: `set_items_processed()` and `set_bytes_processed()` take `items` and
+  `n_bytes`, so passing `n=` no longer type-checks and then skips the
+  benchmark, and its attributes are read-only. Its members are documented in
+  the API reference. `mew.BenchmarkFn` no longer requires `__globals__`, so
+  callable objects type-check as benchmarks.
 
 ## Version 0.2.0 (September 24, 2026)
 
