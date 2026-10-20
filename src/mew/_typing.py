@@ -98,11 +98,11 @@ class BenchmarkOptions(TypedDict, total=False):
     """Per-benchmark Google Benchmark options accepted by the decorators.
 
     All keys are optional; omit one to fall back to Google Benchmark's default.
-    ``min_time`` takes seconds (``0.5``, ``"0.5s"``) or, as for :func:`mew.run`,
-    a fixed iteration count (``"100x"``), the same as ``iterations=100``. A fixed
-    iteration count cannot be combined with ``min_time`` in seconds or
-    ``min_warmup_time``, and ``min_warmup_time`` needs ``min_time`` in seconds.
-    ``use_real_time`` cannot be combined with ``use_manual_time``.
+    ``min_time`` takes seconds (``0.5``, ``"0.5s"``, ``"500ms"``, ``"1m"``) or,
+    as for :func:`mew.run`, a fixed iteration count (``"100x"``), the same as
+    ``iterations=100``. A fixed iteration count cannot be combined with
+    ``min_time`` in seconds or ``min_warmup_time``. ``use_real_time`` cannot be
+    combined with ``use_manual_time``.
 
     ``threads`` requires a free-threaded interpreter. On a GIL build,
     :func:`mew.run` skips threaded benchmarks unless ``strict=True``. An
@@ -198,35 +198,110 @@ class PausableProfiler(Protocol):
 class State(Protocol):
     """What a benchmark function receives first: iterate it to run the timed loop."""
 
-    range_size: int
-    threads: int
-    thread_index: int
-    name: str
-    skipped: bool
-    error_occurred: bool
+    # Keep the docstrings in sync with src/_mew/state.cpp.
+    @property
+    def range_size(self) -> int:
+        """Number of range arguments available to :meth:`range`."""
+        ...
 
     @property
-    def iterations(self) -> int: ...
+    def threads(self) -> int:
+        """Threads in this run; 1 without threaded mode or in a profiling pass."""
+        ...
+
     @property
-    def max_iterations(self) -> int: ...
+    def thread_index(self) -> int:
+        """Index of the thread owning this State, in ``[0, threads)``."""
+        ...
+
+    @property
+    def name(self) -> str:
+        """The registered benchmark name."""
+        ...
+
+    @property
+    def skipped(self) -> bool:
+        """Whether this benchmark was skipped, by either ``skip_with_*`` call."""
+        ...
+
+    @property
+    def error_occurred(self) -> bool:
+        """Whether the skip came from :meth:`skip_with_error` rather than
+        :meth:`skip_with_message`."""
+        ...
+
+    @property
+    def iterations(self) -> int:
+        """Iterations completed so far; the total once the loop finishes."""
+        ...
+
+    @property
+    def max_iterations(self) -> int:
+        """Iteration count Google Benchmark budgeted for this run."""
+        ...
+
     def __iter__(self) -> State: ...
     def __next__(self) -> None: ...
-    def batches(self, n: int) -> Iterator[int]: ...
-    def pause(self) -> AbstractContextManager[None]: ...
+
+    def batches(self, n: int) -> Iterator[int]:
+        """Iterate in batches of ``n``, reducing dispatch overhead for fast bodies.
+
+        Each step yields ``n``; the final batch may exceed the iteration budget.
+        """
+        ...
+
+    def pause(self) -> AbstractContextManager[object]:
+        """Return a context manager that pauses timing for its ``with`` block.
+
+        Inside another pause it does nothing. Entering it outside the benchmark
+        loop, or again while it is active, raises :class:`RuntimeError`.
+        """
+        ...
+
     def set_counter(
         self,
         name: str,
         value: float,
-        flags: CounterFlags = ...,
-        one_k: CounterOneK = ...,
-    ) -> None: ...
-    def set_label(self, label: str) -> None: ...
-    def set_items_processed(self, n: int) -> None: ...
-    def set_bytes_processed(self, n: int) -> None: ...
-    def set_iteration_time(self, seconds: float) -> None: ...
-    def skip_with_error(self, msg: str) -> None: ...
-    def skip_with_message(self, msg: str) -> None: ...
-    def range(self, pos: int = 0) -> int: ...
+        flags: CounterFlags = CounterFlags.kDefaults,
+        one_k: CounterOneK = CounterOneK.kIs1000,
+    ) -> None:
+        """Attach a user-defined counter, surfaced in the row's ``counters``.
+
+        ``flags`` controls normalization (and rate/exponent display); ``one_k``
+        selects decimal or binary prefixes when the console shows the counter.
+        """
+        ...
+
+    def set_label(self, label: str) -> None:
+        """Attach a free-form label to this benchmark's reported row."""
+        ...
+
+    def set_items_processed(self, items: int) -> None:
+        """Record how many items the body handled, reported as items/second."""
+        ...
+
+    def set_bytes_processed(self, n_bytes: int) -> None:
+        """Record how many bytes the body handled, reported as bytes/second."""
+        ...
+
+    def set_iteration_time(self, seconds: float) -> None:
+        """Report the elapsed time of one iteration yourself.
+
+        Only honored when the benchmark sets ``use_manual_time``.
+        """
+        ...
+
+    def skip_with_error(self, msg: str) -> None:
+        """Abort this benchmark and mark it failed; the row reports as skipped."""
+        ...
+
+    def skip_with_message(self, msg: str) -> None:
+        """Abort this benchmark without marking it an error (e.g. an unmet precondition)."""
+        ...
+
+    def range(self, pos: int = 0) -> int:
+        """Return the range argument at ``pos``."""
+        ...
 
 
 @runtime_checkable
@@ -236,8 +311,5 @@ class BenchmarkFn(Protocol):
 
     __name__: str
     __qualname__: str
-
-    @property
-    def __globals__(self) -> dict[str, Any]: ...
 
     def __call__(self, state: State, /, *args: Any, **kwargs: Any) -> None: ...

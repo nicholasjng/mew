@@ -1,4 +1,5 @@
-"""Decode result files, normalize metadata, and select a session's comparable samples."""
+"""Result files: open and decode them, normalize metadata, and select a session's
+comparable samples."""
 
 from __future__ import annotations
 
@@ -9,25 +10,48 @@ import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, TextIO, cast
 
 from mew._console import overflow
+from mew._format import to_ns
 from mew._statistics import Statistic
 from mew._typing import BenchmarkResult
-from mew.reporter import _ROW_STAMP_FIELDS, _open_text, _to_ns
 
-_TIME_METRICS = frozenset({"real_time", "cpu_time"})
+# Stamped onto every row so each one stands alone, in JSON and JSONL alike.
+ROW_STAMP_FIELDS = ("session", "context")
+
+
+def result_format(name: str) -> Literal["json", "jsonl"] | None:
+    """``"json"`` or ``"jsonl"`` by a result file's extension, in any case; else ``None``."""
+    name = name.lower()
+    if name.endswith(".json"):
+        return "json"
+    if name.endswith((".jsonl", ".jsonl.gz")):
+        return "jsonl"
+    return None
+
+
+def open_text(path: Path, mode: str = "r") -> TextIO:
+    """Open ``path`` as text, through gzip when its name ends in ``.gz`` in any case."""
+    if path.name.lower().endswith(".gz"):
+        import gzip
+
+        return cast(TextIO, gzip.open(path, mode + "t"))
+    return cast(TextIO, path.open(mode))
+
+
+TIME_METRICS = frozenset({"real_time", "cpu_time"})
 
 
 # Totals scale with the iteration count, so only peak and per-iteration memory
 # are comparable.
-_MEMORY_METRICS = frozenset(
+MEMORY_METRICS = frozenset(
     {
         "memory.peak_bytes",
         "memory.allocations_per_iteration",
     }
 )
-_METRICS = frozenset({"real_time", "cpu_time", "iterations"}) | _MEMORY_METRICS
+METRICS = frozenset({"real_time", "cpu_time", "iterations"}) | MEMORY_METRICS
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +131,7 @@ def _rows_from_jsonl(path: Path) -> list[dict[str, Any]]:
     """Read the JSONL sink (plain or gzip): one self-contained row per line."""
     rows: list[dict[str, Any]] = []
     # Stream: a growing --append archive can be large.
-    with _open_text(path) as fh:
+    with open_text(path) as fh:
         for lineno, line in enumerate(fh, start=1):
             if not line.strip():
                 continue
@@ -148,9 +172,9 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
     """Per-repetition values in the first row's unit, dropping absent metrics."""
     # Appended sessions may declare different units.
-    unit_scale = _to_ns(1.0, rows[0].get("time_unit"))
+    unit_scale = to_ns(1.0, rows[0].get("time_unit"))
     return [
-        _to_ns(float(v), r.get("time_unit")) / unit_scale if metric in _TIME_METRICS else float(v)
+        to_ns(float(v), r.get("time_unit")) / unit_scale if metric in TIME_METRICS else float(v)
         for r in rows
         if (v := _metric_value(r, metric)) is not None
     ]
@@ -187,20 +211,17 @@ def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dic
     return renamed
 
 
-def _read_rows(path: Path) -> list[dict[str, Any]]:
+def read_rows(path: Path) -> list[dict[str, Any]]:
     """Read a result file's rows.
 
     Errors carry a one-line message naming the file: :class:`ValueError` for an
     unsupported extension or malformed contents, :class:`OSError` (of the
     original subclass) if the file can't be read.
     """
-    name = path.name.lower()
-    if name.endswith(".json"):
-        reader = _rows_from_json
-    elif name.endswith((".jsonl", ".jsonl.gz")):
-        reader = _rows_from_jsonl
-    else:
+    fmt = result_format(path.name)
+    if fmt is None:
         raise ValueError(f"unsupported result file: {path} (use .json, .jsonl, or .jsonl.gz)")
+    reader = _rows_from_json if fmt == "json" else _rows_from_jsonl
     try:
         return reader(path)
     except FileNotFoundError as e:
@@ -231,7 +252,7 @@ def _samples_from_groups(
             name=name,
             value=center,
             stddev=stddev,
-            time_unit=group[0].get("time_unit") if metric in _TIME_METRICS else None,
+            time_unit=group[0].get("time_unit") if metric in TIME_METRICS else None,
             values=tuple(values),
         )
     return samples
@@ -251,14 +272,14 @@ def _group_by_session(
     return dict(sorted(buckets.items()))
 
 
-def _split_selector(raw: str) -> tuple[Path, str | None]:
+def split_selector(raw: str) -> tuple[Path, str | None]:
     """Split ``path@selector`` at the last ``@``, if a result-file extension precedes it.
 
     Otherwise the whole argument is the path, so ``a@b.json`` names a file.
     Decided by name alone, so an argument means the same whichever files exist.
     """
     base, sep, selector = raw.rpartition("@")
-    if sep and base.lower().endswith((".json", ".jsonl", ".jsonl.gz")):
+    if sep and result_format(base) is not None:
         return Path(base), selector
     return Path(raw), None
 
@@ -294,13 +315,13 @@ def _select_rows(
     return [r for rows in tagged for r in rows]
 
 
-def _load(
+def load_column(
     path: Path,
     metric: str,
     key: str = "name",
     selector: str | None = None,
     statistic: Statistic | None = None,
-    reader: Callable[[Path], list[dict[str, Any]]] = _read_rows,
+    reader: Callable[[Path], list[dict[str, Any]]] = read_rows,
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
     """Load one comparison column from a result file: read, select a session, re-key.
 
@@ -315,7 +336,7 @@ def _load(
     for r in selected:
         groups.setdefault(r["benchmark"], []).append(r)
     samples = _samples_from_groups(groups, metric, statistic)
-    ctx = {k: rep_row[k] for k in _ROW_STAMP_FIELDS if k in rep_row}
+    ctx = {k: rep_row[k] for k in ROW_STAMP_FIELDS if k in rep_row}
     return _normalize_samples(samples, key, str(path)), ctx
 
 
@@ -355,7 +376,7 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
     OSError
         If the file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
-    by_session = _group_by_session(_read_rows(Path(path)), measured_only=False)
+    by_session = _group_by_session(read_rows(Path(path)), measured_only=False)
     out: list[SessionSummary] = []
     for (date, sid, host), session_rows in reversed(by_session.items()):
         measured = {r["benchmark"] for r in session_rows if _is_measurement_row(r)}
@@ -395,4 +416,4 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
     OSError
         If the file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
-    return cast("list[BenchmarkResult]", _read_rows(Path(path)))
+    return cast("list[BenchmarkResult]", read_rows(Path(path)))

@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 
 import mew
+from mew._options import _OPTION_KEYS
 from mew._registry import REGISTRY
-from mew.api import _OptionKeys
 
 
 def test_bare_decorator_registers_one_entry():
@@ -59,10 +59,15 @@ def test_min_time_takes_run_syntax_and_nx_fixes_the_iteration_count():
     def bench_c(state, n):
         pass
 
+    @mew.benchmark(min_time="250ms")
+    def bench_d(state):
+        pass
+
     assert [e.options for e in REGISTRY.all()] == [
         {"iterations": 3},
         {"min_time": 0.25},
         {"iterations": 7},
+        {"min_time": 0.25},
     ]
 
 
@@ -87,7 +92,6 @@ def test_min_time_takes_run_syntax_and_nx_fixes_the_iteration_count():
         ({"min_warmup_time": "0.1"}, TypeError, "min_warmup_time must be a number"),
         ({"min_warmup_time": -0.1}, ValueError, "min_warmup_time must be a finite"),
         ({"min_warmup_time": float("nan")}, ValueError, "min_warmup_time must be a finite"),
-        ({"min_warmup_time": 0.1}, ValueError, "min_warmup_time needs min_time"),
         # Unchecked, a misspelled unit fails only once the benchmark runs.
         ({"unit": 1}, TypeError, "unit must be a string"),
         ({"unit": "usec"}, ValueError, "unit must be one of 'ns', 'us', 'ms', 's'"),
@@ -197,7 +201,7 @@ def test_product_passes_every_option_through(dropped):
         "measure_process_cpu_time": True,
         "threads": 2,
     }
-    assert set(every) == _OptionKeys  # a new option needs a value here
+    assert set(every) == _OPTION_KEYS  # a new option needs a value here
     options = {k: v for k, v in every.items() if k not in dropped}
 
     @mew.product(n=[1, 2], **options)
