@@ -4,7 +4,7 @@ All notable changes to `mew` are documented here. Versions follow
 [semantic versioning](https://semver.org/); until 1.0 the public API may still
 change between minor releases.
 
-## Version 0.3.0 (unreleased)
+## Version 0.3.0 (Oct 21, 2026)
 
 ### Added
 

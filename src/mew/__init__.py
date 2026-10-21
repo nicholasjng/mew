@@ -37,7 +37,7 @@ from mew.reporter import (
 from mew.runner import run
 from mew.vcs import vcs_context
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 # Registrations hold Python callables; release them while the interpreter is alive.
 atexit.register(_clear_registered_benchmarks)
