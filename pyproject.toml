@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "A CLI for microbenchmarking Python code snippets."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "Apache-2.0"
+license = "Apache-2.0 AND BSD-3-Clause AND MIT"
 license-files = ["LICENSE", "licenses/*.txt"]
 authors = [{ name = "Nicholas Junge", email = "nicho.junge@gmail.com" }]
 dependencies = []
