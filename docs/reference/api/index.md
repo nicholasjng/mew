@@ -40,6 +40,7 @@ importable from `mew` directly:
    JSONReporter
    JSONLReporter
    Fanout
+   Terminal
    BenchmarkResult
    SessionInfo
    MemoryMetrics

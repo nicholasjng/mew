@@ -2,6 +2,7 @@
 
 import atexit
 
+from mew._console import Terminal
 from mew._core import (
     BENCHMARK_COMMIT,
     BENCHMARK_VERSION,
@@ -65,6 +66,7 @@ __all__ = [
     "RichReporter",
     "SessionInfo",
     "State",
+    "Terminal",
     "TimeUnit",
     "__version__",
     "benchmark",

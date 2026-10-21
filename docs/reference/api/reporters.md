@@ -23,4 +23,7 @@
 
 .. autoclass:: Fanout
    :members:
+
+.. autoclass:: Terminal
+   :members:
 ```
