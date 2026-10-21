@@ -1,4 +1,4 @@
-"""Shared typing primitives for mew's public API."""
+"""Types and protocols of mew's public API."""
 
 from __future__ import annotations
 
@@ -20,11 +20,20 @@ TimeUnitStr = Literal["ns", "us", "ms", "s"]
 
 
 class SessionInfo(TypedDict):
-    """Which run a result came from.
+    """The identity of the run a result came from.
 
-    ``mew compare`` reads a file's newest session unless ``path@<tag>`` names
-    one, and pools sessions that share a ``tag`` as repetitions. ``mew_version``
-    is the mew that wrote the rows, and so their format.
+    Attributes
+    ----------
+    id : str
+        A time-ordered UUIDv7, unique to the run.
+    date : str
+        When the run started, in ISO 8601.
+    host : str
+        The machine's host name.
+    mew_version : str, optional
+        The mew that wrote the row, and so its format.
+    tag : str, optional
+        The run's session tag.
     """
 
     id: str
@@ -35,7 +44,7 @@ class SessionInfo(TypedDict):
 
 
 class BenchmarkResult(TypedDict):
-    """One result row, as reporters receive it and result files store it.
+    """The result of one benchmark repetition: its timings, counters and provenance.
 
     Every key is present except those marked optional.
 
@@ -95,7 +104,7 @@ class BenchmarkResult(TypedDict):
 
 
 class BenchmarkOptions(TypedDict, total=False):
-    """Per-benchmark Google Benchmark options accepted by the decorators.
+    """Per-benchmark Google Benchmark options.
 
     All keys are optional; omit one to fall back to Google Benchmark's default.
     ``min_time`` takes seconds (``0.5``, ``"0.5s"``, ``"500ms"``, ``"1m"``) or,
@@ -121,7 +130,7 @@ class BenchmarkOptions(TypedDict, total=False):
 
 
 class MemoryMetrics(TypedDict):
-    """Measurements returned by a memory manager's ``stop()``.
+    """The memory figures of one profiling pass.
 
     Attributes
     ----------
@@ -146,43 +155,83 @@ ProfilerSummary: TypeAlias = dict[str, Any]
 
 @runtime_checkable
 class MemoryManager(Protocol):
-    """Memory-measurement callbacks accepted by :func:`mew.run`.
+    """Protocol for measuring the memory a benchmark body allocates.
 
-    ``start()`` runs at the first step of the memory pass's timing loop and
-    ``stop()`` after its last. ``stop()`` returns :class:`MemoryMetrics`, a
-    dict of ints with ``peak_bytes`` and ``total_allocations`` and optionally
-    ``total_bytes`` and ``net_heap_growth``, or ``None`` when it measured
-    nothing, which leaves the row without a ``memory`` block. A missing
-    required key, an unknown key or a value that isn't an int fails the run
-    with ``TypeError``.
+    :func:`mew.run` calls ``start()`` and ``stop()`` around the timing loop of an
+    extra, untimed pass per benchmark and repetition, and stores the figures in
+    the row's ``memory`` block.
     """
 
-    def start(self) -> None: ...
-    def stop(self) -> MemoryMetrics | None: ...
+    def start(self) -> None:
+        """Start measuring.
+
+        Called at the first step of the memory pass's timing loop.
+        """
+        ...
+
+    def stop(self) -> MemoryMetrics | None:
+        """Stop measuring and return the figures.
+
+        Called after the pass's last loop step. A dict with a missing required
+        key, an unknown key or a value that isn't an int fails the run with
+        ``TypeError``.
+
+        Returns
+        -------
+        MemoryMetrics or None
+            The figures, or ``None`` when nothing was measured, which leaves the
+            row without a ``memory`` block.
+        """
+        ...
 
 
 @runtime_checkable
 class ProfilerManager(Protocol):
-    """Required profiler callbacks accepted by :func:`mew.run`."""
+    """Protocol for profiling a benchmark body.
 
-    def after_setup_start(self) -> None: ...
-    def before_teardown_stop(self) -> None: ...
+    :func:`mew.run` starts and stops the profiler around the timing loop of an
+    extra, untimed pass per benchmark and repetition. A profiler may also
+    implement :class:`ProfilerResultProvider` and :class:`PausableProfiler`.
+    """
+
+    def after_setup_start(self) -> None:
+        """Start profiling.
+
+        Called at the first step of the profiling pass's timing loop.
+        """
+        ...
+
+    def before_teardown_stop(self) -> None:
+        """Stop profiling.
+
+        Called after the pass's last loop step.
+        """
+        ...
 
 
 @runtime_checkable
 class ProfilerResultProvider(Protocol):
-    """Optional profiler capability that attaches a summary to each result.
+    """Protocol for profilers that summarize each profiling pass.
 
-    ``get_result()`` runs after each profiling pass. A dict, even an empty one,
-    becomes the row's ``cpu_profile`` block; ``None`` leaves the block out.
+    ``get_result()`` is called after each pass, and its summary stored in the
+    row's ``cpu_profile`` block.
     """
 
-    def get_result(self) -> ProfilerSummary | None: ...
+    def get_result(self) -> ProfilerSummary | None:
+        """Summarize the pass that just ended.
+
+        Returns
+        -------
+        ProfilerSummary or None
+            The summary, an empty dict included, or ``None`` to leave the row
+            without a ``cpu_profile`` block.
+        """
+        ...
 
 
 @runtime_checkable
 class PausableProfiler(Protocol):
-    """Optional profiler capability that suspends across ``state.pause()``.
+    """Protocol for profilers that pause during ``state.pause()`` scopes.
 
     Calls come from the profiling thread only, and in pairs: every ``pause()``
     is followed by a ``resume()`` before ``before_teardown_stop()``. When a
@@ -190,13 +239,28 @@ class PausableProfiler(Protocol):
     ``resume()`` itself before ``before_teardown_stop()``.
     """
 
-    def pause(self) -> None: ...
-    def resume(self) -> None: ...
+    def pause(self) -> None:
+        """Suspend profiling.
+
+        Called when the body enters a ``state.pause()`` scope.
+        """
+        ...
+
+    def resume(self) -> None:
+        """Resume profiling.
+
+        Called when the pause scope exits.
+        """
+        ...
 
 
 @runtime_checkable
 class State(Protocol):
-    """What a benchmark function receives first: iterate it to run the timed loop."""
+    """The state of a running benchmark; iterating it runs the timed loop.
+
+    Only the body of ``for _ in state:`` is timed; code before and after the
+    loop is setup and teardown.
+    """
 
     # Keep the docstrings in sync with src/_mew/state.cpp.
     @property
@@ -226,8 +290,7 @@ class State(Protocol):
 
     @property
     def error_occurred(self) -> bool:
-        """Whether the skip came from :meth:`skip_with_error` rather than
-        :meth:`skip_with_message`."""
+        """Whether :meth:`skip_with_error`, not :meth:`skip_with_message`, skipped it."""
         ...
 
     @property
@@ -246,7 +309,20 @@ class State(Protocol):
     def batches(self, n: int) -> Iterator[int]:
         """Iterate in batches of ``n``, reducing dispatch overhead for fast bodies.
 
-        Each step yields ``n``; the final batch may exceed the iteration budget.
+        Parameters
+        ----------
+        n : int
+            Iterations per batch.
+
+        Yields
+        ------
+        int
+            ``n`` at each step; the final batch may exceed the iteration budget.
+
+        Raises
+        ------
+        ValueError
+            If ``n`` is less than 1.
         """
         ...
 
@@ -255,6 +331,11 @@ class State(Protocol):
 
         Inside another pause it does nothing. Entering it outside the benchmark
         loop, or again while it is active, raises :class:`RuntimeError`.
+
+        Returns
+        -------
+        AbstractContextManager
+            The pause scope.
         """
         ...
 
@@ -267,47 +348,110 @@ class State(Protocol):
     ) -> None:
         """Attach a user-defined counter, surfaced in the row's ``counters``.
 
-        ``flags`` controls normalization (and rate/exponent display); ``one_k``
-        selects decimal or binary prefixes when the console shows the counter.
+        Parameters
+        ----------
+        name : str
+            The counter's name.
+        value : float
+            Its value, before ``flags`` apply.
+        flags : CounterFlags, default CounterFlags.kDefaults
+            How Google Benchmark normalizes the value, e.g. as a rate, and
+            whether the console shows it in exponent notation.
+        one_k : CounterOneK, default CounterOneK.kIs1000
+            Whether the console scales the value with decimal or binary prefixes.
         """
         ...
 
     def set_label(self, label: str) -> None:
-        """Attach a free-form label to this benchmark's reported row."""
+        """Attach a free-form label to this benchmark's reported row.
+
+        Parameters
+        ----------
+        label : str
+            The label; it replaces one set before.
+        """
         ...
 
     def set_items_processed(self, items: int) -> None:
-        """Record how many items the body handled, reported as items/second."""
+        """Record how many items the body handled, reported as items/second.
+
+        Parameters
+        ----------
+        items : int
+            Items handled over all iterations.
+        """
         ...
 
     def set_bytes_processed(self, n_bytes: int) -> None:
-        """Record how many bytes the body handled, reported as bytes/second."""
+        """Record how many bytes the body handled, reported as bytes/second.
+
+        Parameters
+        ----------
+        n_bytes : int
+            Bytes handled over all iterations.
+        """
         ...
 
     def set_iteration_time(self, seconds: float) -> None:
         """Report the elapsed time of one iteration yourself.
 
         Only honored when the benchmark sets ``use_manual_time``.
+
+        Parameters
+        ----------
+        seconds : float
+            The iteration's elapsed time in seconds.
         """
         ...
 
     def skip_with_error(self, msg: str) -> None:
-        """Abort this benchmark and mark it failed; the row reports as skipped."""
+        """Abort this benchmark and mark it failed; the row reports as skipped.
+
+        Parameters
+        ----------
+        msg : str
+            The reason, reported as the row's ``skip_message``.
+        """
         ...
 
     def skip_with_message(self, msg: str) -> None:
-        """Abort this benchmark without marking it an error (e.g. an unmet precondition)."""
+        """Abort this benchmark without marking it an error (e.g. an unmet precondition).
+
+        Parameters
+        ----------
+        msg : str
+            The reason, reported as the row's ``skip_message``.
+        """
         ...
 
     def range(self, pos: int = 0) -> int:
-        """Return the range argument at ``pos``."""
+        """Return a range argument.
+
+        Parameters
+        ----------
+        pos : int, default 0
+            The argument's index, below :attr:`range_size`.
+
+        Returns
+        -------
+        int
+            The argument at ``pos``.
+
+        Raises
+        ------
+        IndexError
+            If ``pos`` is out of bounds.
+        """
         ...
 
 
 @runtime_checkable
 class BenchmarkFn(Protocol):
-    """A benchmark function: a :class:`State` first, then a family case's parameters
-    as keyword arguments."""
+    """A benchmark function, called with a :class:`State` and its case's parameters.
+
+    A case of a family from :func:`mew.parametrize` or :func:`mew.product` passes
+    its parameters as keyword arguments; a plain benchmark gets none.
+    """
 
     __name__: str
     __qualname__: str
