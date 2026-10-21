@@ -18,7 +18,7 @@ def cpu_info() -> dict:
     """
 
 class TimeUnit(enum.StrEnum):
-    """Time unit used for reported per-iteration durations."""
+    """A time unit for per-iteration durations."""
 
     ns = "ns"
 
@@ -45,8 +45,9 @@ def run_benchmarks(
 
 class CounterFlags(enum.IntFlag):
     """
-    Flags forwarded to `benchmark::Counter`.
-    OR together to combine (e.g. `kIsRate | kInvert`).
+    Flags that set how Google Benchmark normalizes and shows a counter.
+
+    Combine them with ``|``, e.g. ``kIsRate | kInvert``.
     """
 
     def __repr__(self, /):
@@ -73,7 +74,7 @@ class CounterFlags(enum.IntFlag):
     kInvert = -2147483648
 
 class CounterOneK(enum.Enum):
-    """Base used to scale a counter for display."""
+    """The base, 1000 or 1024, of a counter's displayed prefixes."""
 
     kIs1000 = 1000
 
@@ -98,46 +99,108 @@ class PauseScope:
 
 class State:
     """
-    Active microbenchmark state.
-    Iterate with `for _ in state:` to time the body.
+    The state of a running benchmark; iterating it runs the timed loop.
+
+    Only the body of ``for _ in state:`` is timed; code before and after the
+    loop is setup and teardown.
     """
 
     def __iter__(self) -> State: ...
     def __next__(self) -> None: ...
     def pause(self) -> PauseScope:
         """
-        Return a context manager that pauses timing for the duration of the `with` block.
-        Inside another pause it does nothing. Entering it outside the benchmark loop, or
-        again while it is active, raises RuntimeError.
+        Return a context manager that pauses timing for its ``with`` block.
+
+        Inside another pause it does nothing. Entering it outside the benchmark
+        loop, or again while it is active, raises :class:`RuntimeError`.
+
+        Returns
+        -------
+        AbstractContextManager
+            The pause scope.
         """
 
     def batches(self, n: int) -> BatchIter:
         """
-        Iterate in batches of `n`, reducing dispatch overhead for fast bodies.
-        The final batch may exceed the iteration budget.
+        Iterate in batches of ``n``, reducing dispatch overhead for fast bodies.
+
+        Parameters
+        ----------
+        n : int
+            Iterations per batch.
+
+        Yields
+        ------
+        int
+            ``n`` at each step; the final batch may exceed the iteration budget.
+
+        Raises
+        ------
+        ValueError
+            If ``n`` is less than 1.
         """
 
     def skip_with_error(self, msg: str) -> None:
-        """Abort this benchmark and mark it failed; the row reports as skipped."""
+        """
+        Abort this benchmark and mark it failed; the row reports as skipped.
+
+        Parameters
+        ----------
+        msg : str
+            The reason, reported as the row's ``skip_message``.
+        """
 
     def skip_with_message(self, msg: str) -> None:
         """
         Abort this benchmark without marking it an error (e.g. an unmet precondition).
+
+        Parameters
+        ----------
+        msg : str
+            The reason, reported as the row's ``skip_message``.
         """
 
     def set_label(self, label: str) -> None:
-        """Attach a free-form label to this benchmark's reported row."""
+        """
+        Attach a free-form label to this benchmark's reported row.
+
+        Parameters
+        ----------
+        label : str
+            The label; it replaces one set before.
+        """
 
     def set_iteration_time(self, seconds: float) -> None:
         """
-        Report the elapsed time of one iteration yourself. Only honored when the benchmark sets `use_manual_time`.
+        Report the elapsed time of one iteration yourself.
+
+        Only honored when the benchmark sets ``use_manual_time``.
+
+        Parameters
+        ----------
+        seconds : float
+            The iteration's elapsed time in seconds.
         """
 
     def set_items_processed(self, items: int) -> None:
-        """Record how many items the body handled, reported as items/second."""
+        """
+        Record how many items the body handled, reported as items/second.
+
+        Parameters
+        ----------
+        items : int
+            Items handled over all iterations.
+        """
 
     def set_bytes_processed(self, n_bytes: int) -> None:
-        """Record how many bytes the body handled, reported as bytes/second."""
+        """
+        Record how many bytes the body handled, reported as bytes/second.
+
+        Parameters
+        ----------
+        n_bytes : int
+            Bytes handled over all iterations.
+        """
 
     def set_counter(
         self,
@@ -147,17 +210,44 @@ class State:
         one_k: CounterOneK = CounterOneK.kIs1000,
     ) -> None:
         """
-        Attach a user-defined counter, surfaced in `BenchmarkResult['counters']`.
-        `flags` controls normalization (and rate/exponent display); `one_k` selects
-        decimal or binary prefixes when the console shows the counter.
+        Attach a user-defined counter, surfaced in the row's ``counters``.
+
+        Parameters
+        ----------
+        name : str
+            The counter's name.
+        value : float
+            Its value, before ``flags`` apply.
+        flags : CounterFlags, default CounterFlags.kDefaults
+            How Google Benchmark normalizes the value, e.g. as a rate, and
+            whether the console shows it in exponent notation.
+        one_k : CounterOneK, default CounterOneK.kIs1000
+            Whether the console scales the value with decimal or binary prefixes.
         """
 
     def range(self, pos: int = 0) -> int:
-        """Return the range argument at `pos`."""
+        """
+        Return a range argument.
+
+        Parameters
+        ----------
+        pos : int, default 0
+            The argument's index, below :attr:`range_size`.
+
+        Returns
+        -------
+        int
+            The argument at ``pos``.
+
+        Raises
+        ------
+        IndexError
+            If ``pos`` is out of bounds.
+        """
 
     @property
     def range_size(self) -> int:
-        """Number of range arguments available to `range`."""
+        """Number of range arguments available to :meth:`range`."""
 
     @property
     def iterations(self) -> int:
@@ -165,11 +255,11 @@ class State:
 
     @property
     def threads(self) -> int:
-        """Threads in this run: 1 without threaded mode or in a profiling pass."""
+        """Threads in this run; 1 without threaded mode or in a profiling pass."""
 
     @property
     def thread_index(self) -> int:
-        """Index of the thread owning this State, in `[0, threads)`."""
+        """Index of the thread owning this State, in ``[0, threads)``."""
 
     @property
     def name(self) -> str:
@@ -177,12 +267,12 @@ class State:
 
     @property
     def skipped(self) -> bool:
-        """Whether this benchmark was skipped, by either skip_with_* call."""
+        """Whether this benchmark was skipped, by either ``skip_with_*`` call."""
 
     @property
     def error_occurred(self) -> bool:
         """
-        Whether the skip came from `skip_with_error` rather than `skip_with_message`.
+        Whether :meth:`skip_with_error`, not :meth:`skip_with_message`, skipped it.
         """
 
     @property

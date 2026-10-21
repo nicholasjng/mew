@@ -214,7 +214,7 @@ void register_reporter(nb::module_& m) {
         "CPU count, and whether frequency scaling was detected (sysfs on Linux, sysctl on macOS).");
 
     nb::enum_<benchmark::TimeUnit>(m, "TimeUnit", nb::is_str(),
-                                   "Time unit used for reported per-iteration durations.")
+                                   "A time unit for per-iteration durations.")
         .str_value("ns", benchmark::kNanosecond, "ns")
         .str_value("us", benchmark::kMicrosecond, "us")
         .str_value("ms", benchmark::kMillisecond, "ms")

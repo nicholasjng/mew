@@ -95,9 +95,15 @@ PyObject* state_pause(PyObject* self, PyObject*) {
 // Bound through the type slots for the same reason as PauseScope's methods.
 PyMethodDef state_methods[] = {
     {"pause", state_pause, METH_NOARGS,
-     "Return a context manager that pauses timing for the duration of the `with` block.\n"
-     "Inside another pause it does nothing. Entering it outside the benchmark loop, or\n"
-     "again while it is active, raises RuntimeError."},
+     "Return a context manager that pauses timing for its ``with`` block.\n"
+     "\n"
+     "Inside another pause it does nothing. Entering it outside the benchmark\n"
+     "loop, or again while it is active, raises :class:`RuntimeError`.\n"
+     "\n"
+     "Returns\n"
+     "-------\n"
+     "AbstractContextManager\n"
+     "    The pause scope."},
     {nullptr, nullptr, 0, nullptr}};
 
 struct BatchIter {
@@ -130,9 +136,11 @@ PyType_Slot batch_slots[] = {
 }  // namespace
 
 void register_state(nb::module_& m) {
-    nb::enum_<benchmark::Counter::Flags>(m, "CounterFlags", nb::is_arithmetic(), nb::is_flag(),
-                                         "Flags forwarded to `benchmark::Counter`.\n"
-                                         "OR together to combine (e.g. `kIsRate | kInvert`).")
+    nb::enum_<benchmark::Counter::Flags>(
+        m, "CounterFlags", nb::is_arithmetic(), nb::is_flag(),
+        "Flags that set how Google Benchmark normalizes and shows a counter.\n"
+        "\n"
+        "Combine them with ``|``, e.g. ``kIsRate | kInvert``.")
         .value("kDefaults", benchmark::Counter::kDefaults)
         .value("kIsRate", benchmark::Counter::kIsRate)
         .value("kAvgThreads", benchmark::Counter::kAvgThreads)
@@ -144,8 +152,8 @@ void register_state(nb::module_& m) {
         .value("kStringifyExponent", benchmark::Counter::kStringifyExponent)
         .value("kInvert", benchmark::Counter::kInvert);
 
-    nb::enum_<benchmark::Counter::OneK>(m, "CounterOneK",
-                                        "Base used to scale a counter for display.")
+    nb::enum_<benchmark::Counter::OneK>(
+        m, "CounterOneK", "The base, 1000 or 1024, of a counter's displayed prefixes.")
         .value("kIs1000", benchmark::Counter::kIs1000)
         .value("kIs1024", benchmark::Counter::kIs1024);
 
@@ -162,9 +170,12 @@ void register_state(nb::module_& m) {
     if (!pause_scope_type) throw nb::python_error();
     m.attr("PauseScope") = nb::borrow(reinterpret_cast<PyObject*>(pause_scope_type));
 
-    nb::class_<benchmark::State>(m, "State", nb::type_slots(state_slots),
-                                 "Active microbenchmark state.\n"
-                                 "Iterate with `for _ in state:` to time the body.")
+    nb::class_<benchmark::State>(
+        m, "State", nb::type_slots(state_slots),
+        "The state of a running benchmark; iterating it runs the timed loop.\n"
+        "\n"
+        "Only the body of ``for _ in state:`` is timed; code before and after the\n"
+        "loop is setup and teardown.")
         .def(
             "batches",
             [](benchmark::State& self, int64_t n) {
@@ -172,22 +183,66 @@ void register_state(nb::module_& m) {
                 return BatchIter{&self, n};
             },
             "n"_a,
-            "Iterate in batches of `n`, reducing dispatch overhead for fast bodies.\n"
-            "The final batch may exceed the iteration budget.")
+            "Iterate in batches of ``n``, reducing dispatch overhead for fast bodies.\n"
+            "\n"
+            "Parameters\n"
+            "----------\n"
+            "n : int\n"
+            "    Iterations per batch.\n"
+            "\n"
+            "Yields\n"
+            "------\n"
+            "int\n"
+            "    ``n`` at each step; the final batch may exceed the iteration budget.\n"
+            "\n"
+            "Raises\n"
+            "------\n"
+            "ValueError\n"
+            "    If ``n`` is less than 1.")
         .def("skip_with_error", &benchmark::State::SkipWithError, "msg"_a,
-             "Abort this benchmark and mark it failed; the row reports as skipped.")
+             "Abort this benchmark and mark it failed; the row reports as skipped.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "msg : str\n"
+             "    The reason, reported as the row's ``skip_message``.")
         .def("skip_with_message", &benchmark::State::SkipWithMessage, "msg"_a,
-             "Abort this benchmark without marking it an error (e.g. an unmet "
-             "precondition).")
+             "Abort this benchmark without marking it an error (e.g. an unmet precondition).\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "msg : str\n"
+             "    The reason, reported as the row's ``skip_message``.")
         .def("set_label", &benchmark::State::SetLabel, "label"_a,
-             "Attach a free-form label to this benchmark's reported row.")
+             "Attach a free-form label to this benchmark's reported row.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "label : str\n"
+             "    The label; it replaces one set before.")
         .def("set_iteration_time", &benchmark::State::SetIterationTime, "seconds"_a,
-             "Report the elapsed time of one iteration yourself. Only honored when "
-             "the benchmark sets `use_manual_time`.")
+             "Report the elapsed time of one iteration yourself.\n"
+             "\n"
+             "Only honored when the benchmark sets ``use_manual_time``.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "seconds : float\n"
+             "    The iteration's elapsed time in seconds.")
         .def("set_items_processed", &benchmark::State::SetItemsProcessed, "items"_a,
-             "Record how many items the body handled, reported as items/second.")
+             "Record how many items the body handled, reported as items/second.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "items : int\n"
+             "    Items handled over all iterations.")
         .def("set_bytes_processed", &benchmark::State::SetBytesProcessed, "n_bytes"_a,
-             "Record how many bytes the body handled, reported as bytes/second.")
+             "Record how many bytes the body handled, reported as bytes/second.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "n_bytes : int\n"
+             "    Bytes handled over all iterations.")
         .def(
             "set_counter",
             [](benchmark::State& self, const std::string& name, double value,
@@ -198,9 +253,19 @@ void register_state(nb::module_& m) {
             // Keep enum names in generated signatures.
             "flags"_a.sig("CounterFlags.kDefaults") = benchmark::Counter::kDefaults,
             "one_k"_a.sig("CounterOneK.kIs1000") = benchmark::Counter::kIs1000,
-            "Attach a user-defined counter, surfaced in `BenchmarkResult['counters']`.\n"
-            "`flags` controls normalization (and rate/exponent display); `one_k` selects\n"
-            "decimal or binary prefixes when the console shows the counter.")
+            "Attach a user-defined counter, surfaced in the row's ``counters``.\n"
+            "\n"
+            "Parameters\n"
+            "----------\n"
+            "name : str\n"
+            "    The counter's name.\n"
+            "value : float\n"
+            "    Its value, before ``flags`` apply.\n"
+            "flags : CounterFlags, default CounterFlags.kDefaults\n"
+            "    How Google Benchmark normalizes the value, e.g. as a rate, and\n"
+            "    whether the console shows it in exponent notation.\n"
+            "one_k : CounterOneK, default CounterOneK.kIs1000\n"
+            "    Whether the console scales the value with decimal or binary prefixes.")
         .def(
             "range",
             [](const benchmark::State& self, std::size_t pos) {
@@ -214,21 +279,37 @@ void register_state(nb::module_& m) {
                 }
                 return self.range(pos);
             },
-            "pos"_a = 0, "Return the range argument at `pos`.")
+            "pos"_a = 0,
+            "Return a range argument.\n"
+            "\n"
+            "Parameters\n"
+            "----------\n"
+            "pos : int, default 0\n"
+            "    The argument's index, below :attr:`range_size`.\n"
+            "\n"
+            "Returns\n"
+            "-------\n"
+            "int\n"
+            "    The argument at ``pos``.\n"
+            "\n"
+            "Raises\n"
+            "------\n"
+            "IndexError\n"
+            "    If ``pos`` is out of bounds.")
         .def_prop_ro("range_size", &benchmark::State::range_size,
-                     "Number of range arguments available to `range`.")
+                     "Number of range arguments available to :meth:`range`.")
         .def_prop_ro("iterations", &benchmark::State::iterations,
                      "Iterations completed so far; the total once the loop finishes.")
         .def_prop_ro("threads", &benchmark::State::threads,
-                     "Threads in this run: 1 without threaded mode or in a profiling pass.")
+                     "Threads in this run; 1 without threaded mode or in a profiling pass.")
         .def_prop_ro("thread_index", &benchmark::State::thread_index,
-                     "Index of the thread owning this State, in `[0, threads)`.")
+                     "Index of the thread owning this State, in ``[0, threads)``.")
         .def_prop_ro("name", &benchmark::State::name, "The registered benchmark name.")
         .def_prop_ro("skipped", &benchmark::State::skipped,
-                     "Whether this benchmark was skipped, by either skip_with_* call.")
+                     "Whether this benchmark was skipped, by either ``skip_with_*`` call.")
         .def_prop_ro("error_occurred", &benchmark::State::error_occurred,
-                     "Whether the skip came from `skip_with_error` rather than "
-                     "`skip_with_message`.")
+                     "Whether :meth:`skip_with_error`, not :meth:`skip_with_message`, "
+                     "skipped it.")
         .def_ro("max_iterations", &benchmark::State::max_iterations,
                 "Iteration count Google Benchmark budgeted for this run.");
 }
