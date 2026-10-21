@@ -32,6 +32,7 @@ from mew.regressions import RegressionConfig
 
 
 def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
+    """`compare(statistic=max)` reduces each benchmark by its maximum instead of the median."""
     # Both files: a tight cluster plus one outlier. median ignores it; max picks it.
     other, base = _write_pair(
         tmp_path,
@@ -69,6 +70,7 @@ def test_load_skips_aggregate_and_skipped_rows(tmp_path: Path) -> None:
 
 
 def test_compare_speedup_signs(tmp_path: Path) -> None:
+    """A faster candidate gets a negative delta and a speedup over 1, a slower one the opposite."""
     other, base = _write_pair(
         tmp_path,
         other=[_row("bench_x", 80.0), _row("bench_y", 75.0)],
@@ -92,6 +94,7 @@ def test_compare_speedup_signs(tmp_path: Path) -> None:
 
 
 def test_compare_warns_on_missing_names(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`compare` warns about benchmarks missing from one file and leaves them out of the table."""
     other, base = _write_pair(
         tmp_path,
         other=[_row("bench_x", 80.0)],
@@ -109,6 +112,7 @@ def test_compare_warns_on_missing_names(tmp_path: Path, capsys: pytest.CaptureFi
 
 
 def test_compare_empty_overlap(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`compare` exits with code 1 when the files share no benchmarks."""
     other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("a", 1.0)])
     code = compare([other, base], console=Console())
     assert code == 1
@@ -122,6 +126,7 @@ def test_compare_empty_overlap(tmp_path: Path, capsys: pytest.CaptureFixture[str
 def test_compare_pattern_is_a_regex_unless_literal(
     tmp_path: Path, pattern: str, literal: bool, shown: list[str]
 ) -> None:
+    """`pattern` filters benchmark names as a regex, or as plain text with `literal=True`."""
     names = ["alpha", "beta[n=1]", "gamma"]
     other, base = _write_pair(
         tmp_path, other=[_row(n, 5.0) for n in names], base=[_row(n, 10.0) for n in names]
@@ -144,6 +149,7 @@ def test_compare_pattern_is_a_regex_unless_literal(
 def test_compare_rejects_bad_arguments(
     tmp_path: Path, n_files: int, kwargs: dict, match: str
 ) -> None:
+    """`compare` rejects fewer than two files, an unknown metric or key, and a malformed pattern."""
     # Checked before any file is read, so the files need not exist.
     files = [tmp_path / f"{i}.json" for i in range(n_files)]
     with pytest.raises(ValueError, match=match):
@@ -169,13 +175,14 @@ def _mem_row(name: str, real_time: float, peak: int, allocs: int, *, iterations:
     ("metric", "stddevs"),
     [
         ("real_time", ["1.00 ns", "2.00 ns"]),
-        # 0.2.0 printed the peak_bytes stddev unscaled, as "1048576.00".
+        # Scaled like the value, not raw bytes ("1048576.00").
         ("memory.peak_bytes", ["1.0 MB", "2.0 MB"]),
     ],
 )
 def test_compare_stddev_column_uses_the_value_unit(
     tmp_path: Path, metric: str, stddevs: list[str]
 ) -> None:
+    """The stddev columns are formatted in the metric's value unit, such as `ns` or `MB`."""
     mib = 1 << 20
     other, base = _write_pair(
         tmp_path,
@@ -211,6 +218,7 @@ _ROW_LINE = json.dumps(_row("b", 1.0))
 def test_load_rejects_unreadable_files(
     tmp_path: Path, filename: str, content: str | bytes | None, match: str
 ) -> None:
+    """`load_column` rejects missing, unsupported, malformed and truncated result files."""
     # A one-line error naming the file (and line), which the CLI prints.
     p = tmp_path / filename
     if isinstance(content, bytes):
@@ -222,6 +230,7 @@ def test_load_rejects_unreadable_files(
 
 
 def test_load_key_func_rejects_collisions(tmp_path: Path) -> None:
+    """`key="func"` raises when two benchmarks in one file map to the same function name."""
     p = tmp_path / "a.json"
     _write_json(p, [_row("a.py::bench_x", 1.0), _row("b.py::bench_x", 2.0)])
     with pytest.raises(ValueError, match="maps both"):
@@ -229,6 +238,7 @@ def test_load_key_func_rejects_collisions(tmp_path: Path) -> None:
 
 
 def test_compare_key_func_matches_across_suites(tmp_path: Path) -> None:
+    """`key="func"` matches benchmarks by function name across differently named bench files."""
     # The cross-engine A/B shape: same function names, different bench files.
     base = tmp_path / "ducky.json"
     other = tmp_path / "duckdb.json"
@@ -258,10 +268,12 @@ def test_compare_key_func_matches_across_suites(tmp_path: Path) -> None:
     ],
 )
 def test_split_selector(raw: str, path: str, selector: str | None) -> None:
+    """`split_selector` splits off `@selector` only after a result-file extension."""
     assert split_selector(raw) == (Path(path), selector)
 
 
 def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
+    """`file@tag` selectors compare two sessions of one file, with distinct column labels."""
     p = tmp_path / "results.json"
     _write_json(
         p,
@@ -281,6 +293,7 @@ def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("suffix", [".json", ".jsonl", ".jsonl.gz"])
 def test_compare_reads_every_result_format(tmp_path: Path, suffix: str) -> None:
+    """`compare` reads `.json`, `.jsonl` and `.jsonl.gz` result files."""
     other, base = _write_pair(
         tmp_path, other=[_row("bench_x", 50.0)], base=[_row("bench_x", 100.0)], suffix=suffix
     )
@@ -291,6 +304,7 @@ def test_compare_reads_every_result_format(tmp_path: Path, suffix: str) -> None:
 
 
 def test_load_gzip_jsonl_with_uppercase_suffix(tmp_path: Path) -> None:
+    """`load_column` decompresses a `.JSONL.GZ` file despite the uppercase suffix."""
     # The suffix check is case-insensitive, so the gzip check must be too.
     p = tmp_path / "a.JSONL.GZ"
     with gzip.open(p, "wt") as fh:
@@ -300,6 +314,7 @@ def test_load_gzip_jsonl_with_uppercase_suffix(tmp_path: Path) -> None:
 
 
 def test_same_second_runs_stay_distinct_and_order_by_session_id(tmp_path: Path) -> None:
+    """Two runs in the same second stay separate sessions, ordered by session id, not by host."""
     # Two runs in one wall-clock second: the time-ordered id keeps them apart
     # and orders them, though their hosts sort the other way.
     p = tmp_path / "agg.json"
@@ -342,6 +357,7 @@ def test_tag_selector_pools_runs_sharing_the_tag(tmp_path: Path) -> None:
 
 
 def test_unknown_selector_lists_the_tags(tmp_path: Path) -> None:
+    """An unknown session tag errors with the file's first five tags, as does an empty selector."""
     p = tmp_path / "r.json"
     _write_json(p, [_row("b", 1.0, session_id=f"s{i}", session_tag=f"t{i}") for i in range(7)])
     with pytest.raises(
@@ -354,6 +370,7 @@ def test_unknown_selector_lists_the_tags(tmp_path: Path) -> None:
 
 
 def test_session_summaries_newest_first(tmp_path: Path) -> None:
+    """`session_summaries` lists sessions newest first, with benchmark and row counts."""
     p = tmp_path / "r.json"
     new = dict(date="2026-02-01T00:00:00", session_id="new")
     _write_json(
@@ -378,6 +395,7 @@ def test_session_summaries_newest_first(tmp_path: Path) -> None:
 
 
 def test_load_without_measurements_errors(tmp_path: Path) -> None:
+    """`load_column` raises when a file has no measured rows."""
     p = tmp_path / "r.json"
     _write_json(p, [_row("b", 0.0, skipped=True)])
     with pytest.raises(ValueError, match="no measurements"):
@@ -387,6 +405,7 @@ def test_load_without_measurements_errors(tmp_path: Path) -> None:
 def test_compare_prints_context_and_warns_on_skew(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """`compare` labels columns with host and differing context keys, and warns on machine skew."""
     other, base = _write_pair(
         tmp_path,
         other=[_row("bench_x", 80.0)],
@@ -445,7 +464,7 @@ def test_compare_labels_columns_by_interpreter(
 
 def test_rows_group_by_benchmark_not_raw_name(tmp_path: Path) -> None:
     """A row's `benchmark` names its sample: run options in the raw `name`, such
-    as min_time, don't split it, and thread counts stay apart (fixed in 0.2.0)."""
+    as min_time, don't split it, and thread counts stay apart."""
     p = tmp_path / "a.json"
     _write_json(
         p,
@@ -463,6 +482,7 @@ def test_rows_group_by_benchmark_not_raw_name(tmp_path: Path) -> None:
 
 
 def test_compare_memory_metric(tmp_path: Path) -> None:
+    """Memory metrics show byte-formatted values under a `ratio` column instead of `speedup`."""
     other, base = _write_pair(
         tmp_path,
         other=[_mem_row("bench_x", 1.0, peak=1 << 21, allocs=50)],
@@ -488,6 +508,7 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
 def test_compare_memory_metric_without_data_hints_profile_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A memory metric on results without memory data exits 1 and points to `--profile-memory`."""
     other, base = _write_pair(tmp_path, other=[_row("bench_x", 1.0)], base=[_row("bench_x", 1.0)])
     code = compare([other, base], metric="memory.peak_bytes", console=Console())
     assert code == 1
@@ -500,6 +521,7 @@ def test_compare_memory_metric_without_data_hints_profile_flag(
 def test_sample_time_unit_is_set_for_times_only(
     tmp_path: Path, metric: str, unit: str | None
 ) -> None:
+    """`Sample.time_unit` is set for time metrics and `None` for counts and bytes."""
     p = tmp_path / "a.json"
     _write_json(p, [{**_mem_row("b", 1.0, peak=1, allocs=1), "time_unit": "us"}])
     assert load_column(p, metric)[0]["b"].time_unit == unit
@@ -523,6 +545,7 @@ def test_compare_marks_only_high_cv_rows(
     statistic: Statistic | None,
     markers: list[str],
 ) -> None:
+    """Only values whose repetitions vary by more than 25% of the mean get a `±N% (!)` marker."""
     other_path, base_path = _write_pair(
         tmp_path, other=[_row("b", v) for v in other], base=[_row("b", v) for v in base]
     )
@@ -543,6 +566,7 @@ def test_compare_marks_only_high_cv_rows(
 def test_compare_marks_only_significant_deltas(
     tmp_path: Path, other: tuple[float, ...], base: tuple[float, ...], significant: bool
 ) -> None:
+    """Only a statistically significant delta gets the `(signif.)` marker."""
     other_path, base_path = _write_pair(
         tmp_path, other=[_row("b", v) for v in other], base=[_row("b", v) for v in base]
     )
@@ -552,6 +576,7 @@ def test_compare_marks_only_significant_deltas(
 
 
 def test_fmt_delta_colors_by_improvement_direction() -> None:
+    """`_fmt_delta` colors a delta by improvement direction and shows an infinite one as `+∞%`."""
     assert _fmt_delta(0.2) == ("+20.00%", "red")  # slower time: bad
     assert _fmt_delta(-0.2) == ("-20.00%", "green")
     # More iterations is an improvement, fewer a regression.
@@ -566,6 +591,7 @@ def test_fmt_delta_colors_by_improvement_direction() -> None:
 def test_compare_warns_on_time_unit_skew(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """`compare` warns when the two files use different time units."""
     other, base = _write_pair(
         tmp_path,
         other=[_row("b", 0.1, time_unit="us")],
@@ -577,6 +603,8 @@ def test_compare_warns_on_time_unit_skew(
 
 
 def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
+    """An exception in a custom statistic surfaces as a `ValueError` naming the benchmark."""
+
     # A failing reducer must fail loudly, not drop every benchmark and report
     # "no overlapping benchmarks".
     def failing(values: list[float]) -> float:
@@ -605,6 +633,7 @@ def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_grouped_sessions_normalize_units_before_reduction(tmp_path: Path, reverse: bool) -> None:
+    """Pooled sessions with mixed time units convert to the oldest run's unit before reduction."""
     path = tmp_path / "units.jsonl"
     rows = [
         _row("b", 1000, time_unit="ns", session_tag="same", date="2026-01-01"),
@@ -647,13 +676,14 @@ def test_rows_are_the_benchmarks_candidate_and_baseline_share(
         ("memory.peak_bytes", 100, 200, "ns", "us", 1, 0.5),
         ("real_time", 0, 1, "ns", "ns", float("inf"), 0),
         ("real_time", 1, 0, "ns", "ns", -1, float("inf")),
-        # Both zero (e.g. allocation-free bodies) is a tie: 0.2.0 showed ×inf.
+        # Both zero (e.g. allocation-free bodies) is a tie, not ×inf.
         ("memory.peak_bytes", 0, 0, None, None, 0, 1),
     ],
 )
 def test_comparison_math_without_rendering(
     metric, base_value, other_value, base_unit, other_unit, delta, ratio
 ):
+    """`_compare_samples` converts time units, inverts the iterations ratio, and handles zeros."""
     base = Sample("b", base_value, None, base_unit)
     other = Sample("b", other_value, None, other_unit)
     result = _compare_samples(base, other, metric)

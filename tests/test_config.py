@@ -19,6 +19,7 @@ def _write(root: Path, body: str) -> None:
 # table, so no ancestor of tmp_path can leak its settings in.
 @pytest.mark.parametrize("body", ["", "[tool.mew]\n"])
 def test_load_defaults_from_the_nearest_pyproject(tmp_path: Path, body: str):
+    """`load` from a nested directory gives the defaults, rooted at the nearest pyproject.toml."""
     _write(tmp_path, body)
     nested = tmp_path / "src" / "pkg"
     nested.mkdir(parents=True)
@@ -27,6 +28,7 @@ def test_load_defaults_from_the_nearest_pyproject(tmp_path: Path, body: str):
 
 
 def test_load_reads_every_setting(tmp_path: Path):
+    """Each `[tool.mew]` key, `[tool.mew.regressions]` included, loads into its `Config` field."""
     _write(
         tmp_path,
         "[tool.mew]\n"
@@ -69,6 +71,7 @@ def test_load_reads_every_setting(tmp_path: Path):
     ],
 )
 def test_load_rejects_malformed_setting(tmp_path: Path, setting: str, message: str):
+    """A wrong-typed, unknown or unparsable setting raises `ValueError` led by the file's path."""
     _write(tmp_path, f"[tool.mew]\n{setting}\n")
     with pytest.raises(ValueError, match=re.escape(message)) as exc:
         load(tmp_path)

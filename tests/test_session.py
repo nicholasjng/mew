@@ -13,10 +13,10 @@ from pathlib import Path
 import pytest
 
 import mew
-from mew._session import new_session_id
 from mew.compare import read_results, session_summaries
 from mew.machine import _cpuinfo_model
 from mew.reporter import JSONLReporter, JSONReporter
+from mew.runner import _new_session_id
 from mew.vcs import vcs_context
 
 
@@ -45,7 +45,7 @@ def _isolated_vcs(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
 def test_new_session_id_is_a_uuid7_led_by_the_unix_ms(monkeypatch: pytest.MonkeyPatch):
     """The 48-bit millisecond timestamp leads, so ids sort by creation time."""
     monkeypatch.setattr(time, "time_ns", lambda: 1_750_000_000_123_456_789)
-    first, second = uuid.UUID(new_session_id()), uuid.UUID(new_session_id())
+    first, second = uuid.UUID(_new_session_id()), uuid.UUID(_new_session_id())
     assert (first.version, first.variant) == (7, uuid.RFC_4122)
     assert first.int >> 80 == 1_750_000_000_123
     assert first != second  # random bits keep same-millisecond ids apart
@@ -59,6 +59,8 @@ def test_vcs_context_outside_a_repo(tmp_path: Path):
 
 @pytest.mark.usefixtures("_isolated_vcs")
 def test_vcs_context_in_a_git_repo(tmp_path: Path):
+    """In git, `vcs_context` records the full commit, branch and dirty flag once HEAD has a commit;
+    untracked files are not dirty."""
     if not shutil.which("git"):
         pytest.skip("git not available")
 
@@ -94,6 +96,7 @@ def test_vcs_context_in_a_git_repo(tmp_path: Path):
 
 @pytest.mark.usefixtures("_isolated_vcs")
 def test_vcs_context_prefers_jj(tmp_path: Path):
+    """In a colocated jj and git repo, `vcs_context` reports jj: change id, commit and dirty flag."""
     if not shutil.which("jj"):
         pytest.skip("jj not available")
     # Colocated with one commit, git has a HEAD too: only the order picks jj.
@@ -110,6 +113,7 @@ def test_vcs_context_prefers_jj(tmp_path: Path):
 
 
 def test_machine_context_names_the_cpu_or_none():
+    """`machine_context` gives `cpu_model` as a stripped, non-empty name or `None`."""
     # Which name the OS gives the CPU, if any, depends on the machine.
     model = mew.machine_context()["cpu_model"]
     assert model is None or model == model.strip() != ""
@@ -127,6 +131,7 @@ def test_machine_context_names_the_cpu_or_none():
     ],
 )
 def test_cpuinfo_model(lines: list[str], model: str | None):
+    """`_cpuinfo_model` takes the `model name` from /proc/cpuinfo lines, else `None`."""
     assert _cpuinfo_model(line + "\n" for line in lines) == model
 
 
@@ -168,6 +173,8 @@ def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
 
 @pytest.mark.parametrize("suffix", [".jsonl", ".jsonl.gz"])
 def test_jsonl_append_makes_two_sessions(tmp_path: Path, suffix: str):
+    """Two runs appending to one JSONL file, plain or gzipped, record two distinct sessions."""
+
     # The gzip sink appends too, instead of starting the archive over.
     @mew.benchmark
     def bench_s(state):

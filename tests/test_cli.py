@@ -101,6 +101,8 @@ def mew_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str])
     ],
 )
 def test_list_selects_and_expands(mew_cli, benchdir, tmp_path, args, expected):
+    """`mew list` shows a family as one row, its cases with `--show-cases`, its tags with
+    `--show-tags`, and exits 1 when nothing matches."""
     res = mew_cli("list", str(benchdir), "--names-only", *args, cwd=tmp_path)
     assert res.returncode == (0 if expected else 1), res.stderr
     assert res.stdout.splitlines() == expected
@@ -131,6 +133,7 @@ def _listed(entries: list[mew.Entry]) -> list[str]:
 def test_cli_selects_like_registry_filter(
     mew_cli, benchdir, tmp_path, pattern, literal, tags, expected
 ):
+    """`mew list` with `-k`, `-F` and `-t` selects the same benchmarks as `Registry.filter`."""
     args = (["-k", pattern] if pattern else []) + (["-F"] if literal else [])
     args += [arg for tag in tags for arg in ("-t", tag)]
     res = mew_cli("list", str(benchdir), "--names-only", *args, cwd=tmp_path)
@@ -140,6 +143,7 @@ def test_cli_selects_like_registry_filter(
 
 
 def test_invalid_filter_fails_before_any_import(mew_cli, tmp_path):
+    """An invalid `-k` regex exits 2 with an error before any bench file is imported."""
     (tmp_path / "bench_x.py").write_text("print('imported')\n")
     res = mew_cli("list", "-k", "bench(", "bench_x.py", cwd=tmp_path)
     assert res.returncode == 2
@@ -148,6 +152,7 @@ def test_invalid_filter_fails_before_any_import(mew_cli, tmp_path):
 
 
 def test_run_summary_only_leaves_the_repetitions_to_files(mew_cli, benchdir, tmp_path):
+    """`--summary-only` prints only aggregates to the console; file sinks keep every repetition."""
     out = tmp_path / "rows.jsonl"
     res = mew_cli(
         "run",
@@ -171,6 +176,7 @@ def test_run_summary_only_leaves_the_repetitions_to_files(mew_cli, benchdir, tmp
 
 
 def test_run_sizes_the_console_name_column_to_the_longest_row(mew_cli, benchdir, tmp_path):
+    """The console table's name column is as wide as its longest benchmark name."""
     res = mew_cli("run", str(benchdir), "--min-time", "1x", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     names = [line.split(" │ ")[0] for line in res.stdout.splitlines()[1:] if " │ " in line]
@@ -179,6 +185,7 @@ def test_run_sizes_the_console_name_column_to_the_longest_row(mew_cli, benchdir,
 
 @pytest.mark.parametrize("args", [("-h",), ("run", "-h")])
 def test_help_is_plain_terminal_text(mew_cli, tmp_path, monkeypatch, args):
+    """`-h` output contains no ANSI escapes, even with `PYTHON_COLORS=1`."""
     # On 3.14+, argparse would color redirected help under PYTHON_COLORS itself.
     monkeypatch.setenv("PYTHON_COLORS", "1")
     res = mew_cli(*args, cwd=tmp_path)
@@ -188,6 +195,7 @@ def test_help_is_plain_terminal_text(mew_cli, tmp_path, monkeypatch, args):
 
 
 def test_help_honors_force_color(mew_cli, tmp_path, monkeypatch):
+    """`FORCE_COLOR` colors `-h` output with mew's own flag styling."""
     # Like the reporters and tables: FORCE_COLOR colors even redirected output.
     from mew._console import sgr
 
@@ -199,6 +207,7 @@ def test_help_honors_force_color(mew_cli, tmp_path, monkeypatch):
 
 
 def test_list_selects_symlinked_bench_file_in_benchpath(mew_cli, tmp_path):
+    """`mew list` selects a symlinked bench file in the benchpath whose target lies outside it."""
     # The link is imported through the benchpath, so it must be selected there
     # even though its target lives outside.
     shared = tmp_path / "shared"
@@ -216,6 +225,7 @@ def test_list_selects_symlinked_bench_file_in_benchpath(mew_cli, tmp_path):
 
 
 def test_list_works_from_subdirectory(mew_cli, benchdir, tmp_path):
+    """`mew list` in a subdirectory finds benchmarks relative to the project root."""
     # Config benchpaths anchor at the project root (pyproject.toml), not cwd.
     (tmp_path / "pyproject.toml").write_text("[tool.mew]\n")
     sub = tmp_path / "src" / "pkg"
@@ -226,6 +236,7 @@ def test_list_works_from_subdirectory(mew_cli, benchdir, tmp_path):
 
 
 def test_list_without_the_default_benchpath_finds_nothing(mew_cli, tmp_path):
+    """Without a `benchmarks/` directory, `mew list` reports no benchmarks found and exits 1."""
     # A fresh project without benchmarks/ is "nothing found", not a usage error.
     res = mew_cli("list", cwd=tmp_path)
     assert res.returncode == 1
@@ -233,6 +244,7 @@ def test_list_without_the_default_benchpath_finds_nothing(mew_cli, tmp_path):
 
 
 def test_bench_file_that_fails_to_import_exits_2(mew_cli, tmp_path):
+    """A bench file that raises on import exits 2 with its traceback and a `cannot import` line."""
     # Its traceback says what is wrong; the exit code is 2, not "nothing matched".
     (tmp_path / "bench_bad.py").write_text(
         "import mew\n\n@mew.benchmark(repetitions=0)\ndef bench_x(state):\n    pass\n"
@@ -245,7 +257,8 @@ def test_bench_file_that_fails_to_import_exits_2(mew_cli, tmp_path):
 
 
 def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_path, monkeypatch):
-    monkeypatch.setattr("mew.runner.gil_enabled", lambda: True)
+    """`mew run --strict` exits 2 for threaded benchmarks when the GIL is enabled."""
+    monkeypatch.setattr("mew._options.gil_enabled", lambda: True)
     (tmp_path / "bench_t.py").write_text(
         "import mew\n\n@mew.benchmark(threads=2)\ndef bench_t(state):\n    for _ in state:\n"
         "        pass\n"
@@ -294,6 +307,7 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
     ],
 )
 def test_usage_errors_exit_2(mew_cli, benchdir, args, message):
+    """Invalid arguments to `list`, `run`, `compare` and `sessions` exit 2 with a message."""
     # 2, not the "nothing matched" code 1. Run from the project root, so the
     # sink checks after discovering benchmarks/ are reached too.
     res = mew_cli(*args, cwd=benchdir.parent)
@@ -316,6 +330,7 @@ def test_usage_errors_exit_2(mew_cli, benchdir, args, message):
     ],
 )
 def test_config_errors_exit_2(mew_cli, tmp_path, config, args, message):
+    """An invalid `[tool.mew]` configuration exits 2 with a message on stderr."""
     (tmp_path / "pyproject.toml").write_text(config)
     res = mew_cli(*args, cwd=tmp_path)
     assert res.returncode == 2
@@ -326,12 +341,14 @@ def test_config_errors_exit_2(mew_cli, tmp_path, config, args, message):
     ("value", "seconds"), [("0.5", 0.5), ("200ms", 0.2), ("10s", 10.0), ("1m", 60.0)]
 )
 def test_min_warmup_time_parses_durations(value, seconds):
+    """`_warmup_seconds` parses bare seconds and durations with `ms`, `s` and `m` suffixes."""
     from mew.cli import _warmup_seconds
 
     assert _warmup_seconds(value) == seconds
 
 
 def test_run_promoted_gb_flags_accepted(mew_cli, benchdir, tmp_path):
+    """`run`'s promoted Google Benchmark flags reach GB as valid flags and take effect."""
     # The promoted global knobs translate to GB flags GB actually accepts —
     # a bad flag would make benchmark::Initialize exit() before any run.
     out = tmp_path / "results.json"
@@ -355,6 +372,7 @@ def test_run_promoted_gb_flags_accepted(mew_cli, benchdir, tmp_path):
 
 
 def test_run_stdin_show_cases_selects_one_case_literally(mew_cli, benchdir):
+    """A `name[label]` line from `list --show-cases` on `run --stdin` runs exactly that case."""
     # A `name[label]` line from --show-cases is matched literally — no -F, no
     # bracket escaping — so exactly that one case runs.
     listing = mew_cli("list", ".", "--show-cases", "-k", "n=2", cwd=benchdir)
@@ -367,6 +385,7 @@ def test_run_stdin_show_cases_selects_one_case_literally(mew_cli, benchdir):
 
 
 def test_run_stdin_empty_runs_nothing(mew_cli, benchdir):
+    """`run --stdin` with empty input selects nothing and exits 1 instead of using benchpaths."""
     # Empty stdin selects nothing — it does not fall back to benchpaths.
     res = mew_cli("run", "--stdin", "--min-time", "1x", stdin="", cwd=benchdir)
     assert res.returncode == 1
@@ -374,6 +393,7 @@ def test_run_stdin_empty_runs_nothing(mew_cli, benchdir):
 
 
 def test_run_stdin_names_only_round_trip_is_cwd_independent(mew_cli, benchdir, tmp_path):
+    """Names from `list --names-only` select the same benchmark on `run --stdin` from any cwd."""
     # A path-free name selects against run's own discovery, so the run cwd
     # need not match the bench dir.
     listing = mew_cli("list", str(benchdir), "--names-only", "-k", "bench_one", cwd=tmp_path)
@@ -394,6 +414,7 @@ def test_run_stdin_names_only_round_trip_is_cwd_independent(mew_cli, benchdir, t
 
 
 def test_run_format_jsonl_streams_every_row_to_stdout_and_files(mew_cli, benchdir, tmp_path):
+    """`--format jsonl` writes one row per stdout line, the same rows as a gzipped JSONL file."""
     # Every stdout line is a row (no console banner), so it pipes into `jq`.
     out = tmp_path / "results.jsonl.gz"
     res = mew_cli(
@@ -417,6 +438,7 @@ def test_run_format_jsonl_streams_every_row_to_stdout_and_files(mew_cli, benchdi
 
 
 def test_run_format_without_stdout_sink_warns(mew_cli, benchdir, tmp_path):
+    """`--format` with only file sinks warns that it has no effect and prints nothing to stdout."""
     # --format only configures stdout; with file-only sinks it has nothing to do.
     out = tmp_path / "r.json"
     res = mew_cli(
@@ -434,6 +456,8 @@ def test_run_format_without_stdout_sink_warns(mew_cli, benchdir, tmp_path):
 def test_capture_setting_and_flag_precedence(
     monkeypatch, capfd: pytest.CaptureFixture[str], tmp_path, config, flag, captured
 ):
+    """Benchmark output is captured by default, `capture = "no"` turns that off, and the
+    `--capture` flag overrides the setting."""
     # `main()` directly, not `mew_cli`: uncaptured, the body writes to the real
     # fd 2, which only capfd sees (and capfd cannot share a test with capsys).
     from mew.cli import main
@@ -495,6 +519,7 @@ _SAMPLED_ITERATIONS = "200x"
 
 
 def test_run_flamegraph_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
+    """`--flamegraph` writes a memray report and adds peak memory to the rows and console table."""
     pytest.importorskip("memray")
     from mew._format import fmt_bytes
 
@@ -526,6 +551,8 @@ def test_run_flamegraph_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     reason="pyinstrument's native sampler enables the GIL",
 )
 def test_run_sample_html_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
+    """`--sample-html` writes a CPU profile report and adds the hottest function to the rows and
+    console table, with at most `--sample-top-k` instructions."""
     pytest.importorskip("profiling.sampling" if sys.version_info >= (3, 15) else "pyinstrument")
     from mew.cpu import reads_instructions
 
@@ -562,6 +589,7 @@ def test_run_sample_html_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
 
 @pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon runs here")
 def test_run_rejects_tachyon_before_python_3_15(mew_cli, benchdir, tmp_path):
+    """`--sampler tachyon` exits 2 on Python versions before 3.15."""
     res = mew_cli("run", str(benchdir), "--sample", "--sampler", "tachyon", cwd=tmp_path)
     assert res.returncode == 2
     assert "mew run: Tachyon CPU sampling requires Python 3.15" in res.stderr
@@ -579,6 +607,8 @@ def test_run_rejects_tachyon_before_python_3_15(mew_cli, benchdir, tmp_path):
 def test_run_unusable_profiler_exits_2(
     mew_cli, benchdir, tmp_path, monkeypatch, flag, factory, error
 ):
+    """A sampler or memory profiler that fails to set up exits 2 with its error before any run."""
+
     # An environment error, not the "nothing matched" code 1, and before any run.
     def unusable(*args, **kwargs):
         raise error("unusable here")
@@ -634,6 +664,8 @@ def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
     ],
 )
 def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path, flags, code):
+    """A regression exits 3 only with `--exit-non-zero-on-regression`, which gates at the default
+    threshold when `--regression-threshold` is absent."""
     # +20%, well over both the 5% threshold and the 5% default:
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     res = mew_cli("compare", str(other), str(base), *flags, cwd=tmp_path)
@@ -642,6 +674,7 @@ def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path, flags, cod
 
 
 def test_compare_regression_threshold_wins_over_the_configured_default(mew_cli, tmp_path):
+    """`--regression-threshold` overrides `default-threshold` from `[tool.mew.regressions]`."""
     # +20%: within the file's 50% default, over the flag's 5%.
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     (tmp_path / "pyproject.toml").write_text("[tool.mew.regressions]\ndefault-threshold = 50.0\n")
@@ -652,6 +685,7 @@ def test_compare_regression_threshold_wins_over_the_configured_default(mew_cli, 
 
 
 def test_sessions_lists_newest_first(mew_cli, tmp_path):
+    """`mew sessions` lists a result file's sessions with their tags, newest first."""
     p = tmp_path / "r.json"
     _write_json(
         p,
@@ -681,6 +715,7 @@ def test_sessions_lists_newest_first(mew_cli, tmp_path):
     ],
 )
 def test_completions_generate(mew_cli, shell, marker, tmp_path):
+    """`mew completions` emits bash, zsh and fish scripts with subcommands, options and choices."""
     res = mew_cli("completions", shell, cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     assert marker in res.stdout
@@ -693,6 +728,7 @@ def test_completions_generate(mew_cli, shell, marker, tmp_path):
 
 
 def test_completions_zsh_repeatable_options_star_form(mew_cli, tmp_path):
+    """zsh completions let `-t/--tag` repeat; other multi-flag options keep exclusion groups."""
     zsh = mew_cli("completions", "zsh", cwd=tmp_path).stdout
     # Repeatable -t/--tag: `*` prefix and braces outside the quotes; no
     # self-exclusion that would stop zsh offering it a second time.
@@ -704,6 +740,7 @@ def test_completions_zsh_repeatable_options_star_form(mew_cli, tmp_path):
 
 @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
 def test_completions_parse_in_their_shell(mew_cli, tmp_path, shell):
+    """Each generated completion script parses without syntax errors in its own shell."""
     if (exe := shutil.which(shell)) is None:
         pytest.skip(f"{shell} not installed")
     script = tmp_path / f"mew.{shell}"
@@ -735,6 +772,7 @@ def test_setup_file_context_applies_to_a_single_file_run(mew_cli, benchdir, tmp_
     ],
 )
 def test_path_filters_are_scoped_to_their_files(mew_cli, tmp_path, second, expected):
+    """A `file::name` selector filters only its own file; a bare file selector selects all of it."""
     for name in ("a", "b"):
         (tmp_path / f"bench_{name}.py").write_text(textwrap.dedent(FIXTURE))
     res = mew_cli("list", "bench_a.py::bench_one", second, cwd=tmp_path)
@@ -743,6 +781,7 @@ def test_path_filters_are_scoped_to_their_files(mew_cli, tmp_path, second, expec
 
 
 def test_stdin_path_selectors_do_not_cross_select_family_cases(mew_cli, tmp_path):
+    """Path-qualified case lines on `run --stdin` select only that file's case of a family."""
     for name in ("a", "b"):
         (tmp_path / f"bench_{name}.py").write_text(textwrap.dedent(FIXTURE))
     res = mew_cli(
@@ -764,6 +803,7 @@ def test_stdin_path_selectors_do_not_cross_select_family_cases(mew_cli, tmp_path
 
 
 def test_directory_selectors_keep_filters_scoped_with_global_pattern(mew_cli, tmp_path):
+    """Directory `::name` selectors keep their own filters when combined with a global `-k`."""
     for directory in ("a", "b"):
         nested = tmp_path / directory / "nested"
         nested.mkdir(parents=True)
@@ -777,6 +817,7 @@ def test_directory_selectors_keep_filters_scoped_with_global_pattern(mew_cli, tm
 
 
 def test_e2e_benchmark_output_cannot_corrupt_json_on_stdout(tmp_path):
+    """Benchmark output from `print` and fd 1 goes to stderr, so JSON on stdout stays valid."""
     (tmp_path / "bench_noisy.py").write_text(
         textwrap.dedent(
             """

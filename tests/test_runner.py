@@ -13,6 +13,8 @@ import mew
 
 
 def test_run_reports_rows_and_the_session_context():
+    """A run reports one row per benchmark and a context with mew's session and Python details."""
+
     @mew.benchmark
     def bench_x(state):
         for _ in state:
@@ -57,12 +59,15 @@ def test_run_reports_rows_and_the_session_context():
     ],
 )
 def test_run_rejects_invalid_options(kwargs, error, message):
+    """`mew.run` rejects invalid option types and values with a message naming the option."""
     with pytest.raises(error, match=message):
         mew.run(**kwargs)
 
 
 @pytest.mark.parametrize("min_time", [0.00001, "0.00001", "0.00001s", "0.01ms", " 7x "])
 def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
+    """`mew.run` accepts `min_time` as seconds, a string with a unit, or an `Nx` iteration count."""
+
     @mew.benchmark
     def bench_time_option(state):
         for _ in state:
@@ -84,12 +89,15 @@ def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
     ],
 )
 def test_parse_min_time_renders_google_benchmark_syntax(value, flag):
+    """`parse_min_time` turns seconds, unit strings and `Nx` into Google Benchmark's syntax."""
     from mew._options import parse_min_time
 
     assert parse_min_time(value) == flag
 
 
 def test_a_benchmarks_own_warmup_needs_no_min_time_of_its_own():
+    """A benchmark's `min_warmup_time` takes effect without a `min_time` on the benchmark."""
+
     @mew.benchmark(min_warmup_time=0.2)
     def bench_warm(state):
         for _ in state:
@@ -101,6 +109,7 @@ def test_a_benchmarks_own_warmup_needs_no_min_time_of_its_own():
 
 
 def test_gb_argv_emits_every_flag_with_its_default():
+    """`_gb_argv` emits every Google Benchmark flag, with its default when no value is given."""
     from mew.runner import _gb_argv
 
     # Google Benchmark flags persist across runs in one process, so each one is
@@ -116,6 +125,8 @@ def test_gb_argv_emits_every_flag_with_its_default():
 
 
 def test_gb_flags_do_not_leak_across_runs():
+    """`repetitions` from one run does not carry over to the next run in the same process."""
+
     @mew.benchmark
     def bench_leak(state):
         for _ in state:
@@ -131,6 +142,8 @@ def test_gb_flags_do_not_leak_across_runs():
 
 
 def test_set_counter_values_reach_rows_with_their_format():
+    """`state.set_counter` values reach rows normalized by their flags, with `one_k` as format."""
+
     @mew.benchmark(iterations=4)
     def bench_counter(state):
         for _ in state:
@@ -171,7 +184,7 @@ def test_run_registers_only_selected_cases_of_a_family():
 @pytest.fixture
 def threaded_bench_on_gil_build(monkeypatch):
     """A GIL build (simulated) with one threaded benchmark registered."""
-    monkeypatch.setattr("mew.runner.gil_enabled", lambda: True)
+    monkeypatch.setattr("mew._options.gil_enabled", lambda: True)
 
     # Any count above 1 makes the benchmark threaded.
     @mew.benchmark(threads=[1, 4], iterations=1)
@@ -274,6 +287,8 @@ def test_thread_counts_run_each_requested_count(monkeypatch):
 
 
 def test_run_multiple_reporters_fan_out():
+    """Each reporter in a `reporter` list receives every row and is finalized."""
+
     @mew.benchmark
     def bench_x(state):
         for _ in state:
@@ -288,6 +303,8 @@ def test_run_multiple_reporters_fan_out():
 
 
 def test_manual_time_replaces_the_measured_real_time():
+    """With `use_manual_time`, times from `state.set_iteration_time` replace the real time."""
+
     @mew.benchmark(iterations=4, use_manual_time=True)
     def bench_manual(state):
         for _ in state:
@@ -303,6 +320,7 @@ def test_manual_time_replaces_the_measured_real_time():
 
 
 def test_state_pause_enters_as_its_own_scope():
+    """Entering a `state.pause()` scope returns the scope object itself."""
     seen: list[bool] = []
 
     @mew.benchmark(iterations=1)
@@ -317,6 +335,7 @@ def test_state_pause_enters_as_its_own_scope():
 
 
 def test_pause_scope_is_only_created_by_state_pause():
+    """`PauseScope` cannot be constructed directly from Python."""
     from mew._core import PauseScope
 
     # A scope without a State would dereference null on entry.
@@ -334,6 +353,8 @@ def _burn(seconds: float) -> None:
 
 
 def test_state_pause_resumes_on_exception():
+    """An exception that leaves a `state.pause()` scope resumes the timer."""
+
     @mew.benchmark(iterations=1)
     def bench_raises(state):
         for _ in state:
@@ -354,6 +375,7 @@ def test_state_pause_resumes_on_exception():
 
 @pytest.mark.parametrize("reuse_scope", [False, True])
 def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
+    """A nested pause keeps timing stopped until the outer scope exits; re-entering one raises."""
     errors: list[str] = []
 
     @mew.benchmark(iterations=1)
@@ -382,6 +404,7 @@ def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
 
 @pytest.mark.skipif(mew.gil_enabled(), reason="requires free-threaded Python")
 def test_nested_state_pauses_are_independent_between_workers():
+    """Threaded workers each hold their own nested pauses, and no worker's burn is timed."""
     from threading import Barrier
 
     barrier = Barrier(2)
@@ -405,6 +428,8 @@ def test_nested_state_pauses_are_independent_between_workers():
 
 
 def test_leaving_the_loop_early_marks_the_run_as_incomplete():
+    """A `break` or `return` out of the benchmark loop skips the row as an incomplete loop."""
+
     # One iteration makes the first the final one, whose iteration count is
     # already complete: only the running timer shows the loop was left.
     @mew.benchmark(iterations=1)
@@ -425,6 +450,8 @@ def test_leaving_the_loop_early_marks_the_run_as_incomplete():
 
 @pytest.mark.parametrize("where", ["before", "after"])
 def test_state_pause_outside_the_loop_skips_with_error(where):
+    """`state.pause()` before or after the benchmark loop skips the row with an error."""
+
     # Unchecked, this stops a timer that never ran and reports the raw clock.
     @mew.benchmark(iterations=1)
     def bench_x(state):
@@ -444,6 +471,8 @@ def test_state_pause_outside_the_loop_skips_with_error(where):
 
 
 def test_state_skip_inside_pause_does_not_resume_timing():
+    """A skip inside a `state.pause()` scope skips the row with its message."""
+
     # A resume after the skip trips the assert in Google Benchmark's
     # ResumeTiming(), which only Debug builds (the ASAN job) compile in; a
     # release build reads no timer for a skipped row, so this passes either way.
@@ -482,6 +511,8 @@ def test_pause_scope_held_open_across_the_loop_end_stays_untimed(loop):
 
 
 def test_pause_scope_left_open_after_a_break_does_not_leak():
+    """A pause scope left open at a `break` does not change pause timing in the next benchmark."""
+
     @mew.benchmark(iterations=2)
     def bench_breaks(state):
         for _ in state:
@@ -502,6 +533,8 @@ def test_pause_scope_left_open_after_a_break_does_not_leak():
 
 
 def test_second_loop_over_a_finished_state_adds_no_time():
+    """A second loop over a finished `state` does not add the time between the loops."""
+
     @mew.benchmark(iterations=5)
     def bench_x(state):
         for _ in state:
@@ -519,12 +552,14 @@ def test_second_loop_over_a_finished_state_adds_no_time():
 
 
 def test_run_with_no_entries_returns_zero():
+    """`mew.run` with no registered benchmarks returns 0 and reports no rows."""
     cap = Capture()
     assert mew.run(min_time="1x", reporter=cap) == 0
     assert cap.runs == []
 
 
 def test_state_batches_yields_n_and_counts_the_overshoot():
+    """`state.batches(n)` yields `n` per batch, and the row counts the last batch's overshoot."""
     yielded: list[int] = []
 
     @mew.benchmark(iterations=10)
@@ -539,6 +574,8 @@ def test_state_batches_yields_n_and_counts_the_overshoot():
 
 
 def test_state_rejects_out_of_range_arguments():
+    """Out-of-range `state.batches` and `state.range` arguments raise and skip the row."""
+
     # GB's own guards are asserts, compiled out in Release: a batch of 0 never
     # ends the loop, and range() would read past the range vector.
     @mew.benchmark(iterations=1)
@@ -637,6 +674,8 @@ def test_report_context_return_value_is_ignored():
 
 
 def test_benchmark_output_is_printed_to_stderr_after_the_run(capfd):
+    """Output from benchmark bodies goes to stderr after the run, not into rows; reporter writes
+    reach stdout directly."""
     import os
 
     class Recording(Capture):
@@ -661,8 +700,8 @@ def test_benchmark_output_is_printed_to_stderr_after_the_run(capfd):
 
 
 def test_longest_row_name_covers_cases_and_threads():
-    from mew._registry import Entry
-    from mew.runner import longest_row_name
+    """`longest_row_name` counts case labels, only selected cases, and the `/threads:N` suffix."""
+    from mew._registry import Entry, longest_row_name
 
     def entry(name, **kwargs):
         return Entry(name=name, fn=lambda s: None, **kwargs)
@@ -679,6 +718,7 @@ def test_longest_row_name_covers_cases_and_threads():
 
 
 def test_run_sizes_the_console_name_column_to_the_longest_row(capsys, monkeypatch):
+    """The console table's name column is as wide as the longest row name."""
     monkeypatch.setenv("COLUMNS", "200")
     monkeypatch.setenv("NO_COLOR", "1")
 
@@ -697,6 +737,7 @@ def test_run_sizes_the_console_name_column_to_the_longest_row(capsys, monkeypatc
 
 @pytest.mark.parametrize("reporter", [None, []])
 def test_run_without_reporter_prints_mews_console_table(capsys, monkeypatch, reporter):
+    """With no reporters, `mew.run` prints mew's console table, not Google Benchmark's."""
     monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.setenv("NO_COLOR", "1")
 

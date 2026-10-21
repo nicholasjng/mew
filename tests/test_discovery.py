@@ -35,12 +35,14 @@ def _write(path: Path, body: str) -> None:
     ],
 )
 def test_parse(tmp_path, raw, expected_filter):
+    """`parse` resolves the path against `root` and splits off an optional `::filter` pattern."""
     s = discovery.parse(raw, root=tmp_path)
     assert s.path == tmp_path.resolve() / "benchmarks" / "bench_sort.py"
     assert (s.pattern.pattern if s.pattern else None) == expected_filter
 
 
 def test_collect_files_globs_directory(tmp_path):
+    """A directory collects the files matching `file_patterns` in it and its subdirectories."""
     _write(tmp_path / "bench_a.py", "")
     _write(tmp_path / "nested" / "bench_b.py", "")
     _write(tmp_path / "ignore_me.py", "")
@@ -52,6 +54,7 @@ def test_collect_files_globs_directory(tmp_path):
 
 
 def test_collect_files_accepts_single_file(tmp_path):
+    """A file named directly is collected even if it does not match `file_patterns`."""
     f = tmp_path / "some_bench.py"
     _write(f, "")
     files = discovery.collect_files(
@@ -62,6 +65,8 @@ def test_collect_files_accepts_single_file(tmp_path):
 
 
 def test_discovered_unloads_only_what_it_added(tmp_path, _restore_sys_path):
+    """`discovered` drops the imported benchmark module and its `sys.path` entry on exit, but keeps
+    modules that module imported."""
     _write(tmp_path / "_bench_fixtures.py", "VALUE = 7\n")
     _write(
         tmp_path / "bench_scoped.py",
@@ -88,6 +93,7 @@ def test_discovered_unloads_only_what_it_added(tmp_path, _restore_sys_path):
 
 
 def test_collect_files_missing_path_raises(tmp_path):
+    """A path that does not exist raises `FileNotFoundError`."""
     with pytest.raises(FileNotFoundError):
         discovery.collect_files(
             [discovery.parse(str(tmp_path / "nope"))],
@@ -100,6 +106,8 @@ def test_collect_files_missing_path_raises(tmp_path):
     [(None, None), ("f[n=10]", [1])],
 )
 def test_select_entries_is_independent_of_discovery(tmp_path, stdin_name, expected_cases):
+    """`select_entries` matches by lexical path and narrows cases by stdin name, without changing
+    the entry."""
     from mew._registry import Entry, compile_name_filter
 
     # These paths do not exist: selection uses already-resolved lexical paths.
@@ -114,6 +122,7 @@ def test_select_entries_is_independent_of_discovery(tmp_path, stdin_name, expect
 
 
 def test_select_entries_scopes_path_filters_to_their_paths(tmp_path):
+    """A selector's `::filter` applies only to entries from its own path."""
     from mew._registry import Entry, compile_name_filter
 
     a, b = tmp_path / "a.py", tmp_path / "b.py"
