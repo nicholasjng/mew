@@ -1,4 +1,4 @@
-"""Time units and number formats, shared by the console reporter and ``mew compare``."""
+"""Format times, byte counts and truncated lists as text."""
 
 from __future__ import annotations
 
@@ -15,8 +15,9 @@ def to_ns(value: float, unit: str | None) -> float:
 
 
 def scale_time(value: float, unit: str | None) -> tuple[float, str]:
-    """Rescale a raw ``(value, unit)`` pair to whichever of s/ms/us/ns keeps the
-    mantissa >= 1, e.g. ``(6995135790.99, "ns")`` -> ``(7.00, "s")``. Display-only.
+    """Rescale a ``(value, unit)`` pair to the largest of s/ms/us/ns that keeps it >= 1.
+
+    For example, ``(6995135790.99, "ns")`` becomes ``(7.00, "s")``.
     """
     ns = to_ns(value, unit)
     for threshold, out_unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):
@@ -35,3 +36,8 @@ def fmt_bytes(n: int) -> str:
         if n >= threshold:
             return f"{n / threshold:.1f} {unit}"
     return f"{n} B"
+
+
+def overflow(total: int, shown: int) -> str:
+    """`` (+N more)`` when a message previewed only ``shown`` of ``total`` items."""
+    return f" (+{total - shown} more)" if total > shown else ""

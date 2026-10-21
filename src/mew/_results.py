@@ -1,5 +1,4 @@
-"""Result files: open and decode them, normalize metadata, and select a session's
-comparable samples."""
+"""Read result files, group their rows by session, and reduce them to samples."""
 
 from __future__ import annotations
 
@@ -12,8 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
-from mew._console import overflow
-from mew._format import to_ns
+from mew._format import overflow, to_ns
 from mew._statistics import Statistic
 from mew._typing import BenchmarkResult
 
@@ -81,7 +79,7 @@ class Sample:
 
     @property
     def cv(self) -> float | None:
-        """Coefficient of variation: ``stddev`` over the mean of ``values``.
+        """The coefficient of variation, ``stddev`` over the mean of ``values``.
 
         Uses the mean whatever statistic ``value`` holds, so the choice of
         statistic does not move the noise marker. ``None`` without repetitions
@@ -342,7 +340,23 @@ def load_column(
 
 @dataclass(frozen=True, slots=True)
 class SessionSummary:
-    """One session of a result file, as ``mew sessions`` lists it."""
+    """A summary of one session in a result file.
+
+    Attributes
+    ----------
+    id : str or None
+        The session's time-ordered id.
+    date : str or None
+        When the session started, in ISO 8601.
+    host : str or None
+        The machine it ran on.
+    tag : str or None
+        Its ``--session-tag``.
+    benchmarks : int
+        Distinct benchmarks it measured, without aggregate and skipped rows.
+    rows : int
+        Rows it stored, of every kind.
+    """
 
     id: str | None
     date: str | None

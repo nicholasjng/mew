@@ -1,4 +1,4 @@
-"""Resolve `[tool.mew]` config from the nearest pyproject.toml."""
+"""Resolve ``[tool.mew]`` config from the nearest ``pyproject.toml``."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any, cast
 from mew._statistics import resolve_statistic
 from mew.regressions import AllowRule, RegressionConfig
 
-# `mew run --capture` values; also accepted as `[tool.mew] capture`.
+#: The ``mew run --capture`` values, also accepted as ``[tool.mew] capture``.
 CAPTURE_MODES = ("fd", "no")
 
 # `[tool.mew]` keys.

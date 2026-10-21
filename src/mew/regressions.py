@@ -1,4 +1,4 @@
-"""Regression gating for ``mew compare``.
+"""Regression gating: classify benchmark deltas against thresholds.
 
 A *regression* is a benchmark whose delta against the baseline exceeds a threshold
 in the slower direction (larger for ``real_time`` / ``cpu_time``, smaller for
@@ -16,7 +16,7 @@ from enum import Enum
 
 
 class Verdict(Enum):
-    """How one benchmark's delta was classified by the gate."""
+    """A regression gate's classification of one benchmark's delta."""
 
     OK = "ok"
     """Within the active threshold; does not contribute to gate failure."""
@@ -45,7 +45,9 @@ def _check_threshold(value: object, field: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class AllowRule:
-    """One ``[[tool.mew.regressions.allow]]`` entry.
+    """An allowlist rule that exempts benchmarks from the gate or raises their threshold.
+
+    Rules are read from ``[[tool.mew.regressions.allow]]`` entries.
 
     Attributes
     ----------
@@ -76,14 +78,37 @@ class AllowRule:
             raise ValueError("set exactly one of ignore=true or threshold=<float>")
 
     def matches(self, name: str) -> bool:
-        """Whether ``name`` falls under this rule's pattern."""
+        """Whether ``name`` falls under this rule's pattern.
+
+        Parameters
+        ----------
+        name : str
+            A full benchmark name.
+
+        Returns
+        -------
+        bool
+            Whether the pattern matches ``name``.
+        """
         # Escape `[` so a case's `[label]` matches literally.
         return fnmatch.fnmatchcase(name, self.pattern.replace("[", "[[]"))
 
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkVerdict:
-    """One benchmark's gating outcome."""
+    """One benchmark's gating outcome.
+
+    Attributes
+    ----------
+    name : str
+        The full benchmark name.
+    delta_pct : float
+        Signed percent change against the baseline.
+    verdict : Verdict
+        How the gate classified ``delta_pct``.
+    rule : AllowRule or None
+        The allowlist rule that matched ``name``, if any.
+    """
 
     name: str
     delta_pct: float
@@ -93,9 +118,9 @@ class BenchmarkVerdict:
 
 @dataclass(frozen=True, slots=True)
 class RegressionConfig:
-    """The active gate: a default threshold plus ordered allowlist rules.
+    """A regression gate: a default threshold and ordered allowlist rules.
 
-    Loaded from ``[tool.mew.regressions]`` into :attr:`mew.config.Config.regressions`.
+    ``[tool.mew.regressions]`` configures it, as :attr:`mew.config.Config.regressions`.
 
     Attributes
     ----------
@@ -112,7 +137,18 @@ class RegressionConfig:
         _check_threshold(self.default_threshold, "default_threshold")
 
     def find_rule(self, name: str) -> AllowRule | None:
-        """The first rule matching ``name``, or ``None`` if none do."""
+        """Find the rule that applies to a benchmark.
+
+        Parameters
+        ----------
+        name : str
+            A full benchmark name.
+
+        Returns
+        -------
+        AllowRule or None
+            The first rule matching ``name``, or ``None`` if none do.
+        """
         return next((r for r in self.rules if r.matches(name)), None)
 
     def evaluate(
@@ -211,8 +247,8 @@ def report(
 ) -> int:
     """Print the regression panel to stderr and return the exit code.
 
-    Like :func:`render_panel`, but printed to stderr, which keeps the panel out
-    of a redirected comparison table.
+    The panel is the text of :func:`render_panel`; nothing is printed when it is
+    empty.
 
     Parameters
     ----------
