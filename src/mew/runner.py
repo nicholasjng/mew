@@ -1,9 +1,12 @@
-"""Bridge between the Python registry and the C++ runner."""
+"""Run registered benchmarks through Google Benchmark."""
 
 from __future__ import annotations
 
+import os
 import socket
 import tempfile
+import time
+import uuid
 import warnings
 from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
@@ -12,29 +15,31 @@ from typing import TYPE_CHECKING, Any
 
 from mew import _core
 from mew._capture import OutputCapture
-from mew._console import overflow
 from mew._options import (
+    THREADED_ON_GIL,
     check_count,
     check_min_warmup_time,
     check_session_tag,
+    check_strict,
     is_threaded,
     parse_min_time,
     thread_counts,
+    threaded_on_gil,
 )
-from mew._registry import REGISTRY, Entry, selected_cases
-from mew._session import new_session_id
+from mew._registry import REGISTRY, Entry, longest_row_name, selected_cases
 from mew._typing import MemoryManager, ProfilerManager
 from mew.context import get_context
-from mew.machine import gil_enabled, machine_context
+from mew.machine import machine_context
 from mew.reporter import Fanout, Reporter, RichReporter
 
 if TYPE_CHECKING:
     from mew._typing import BenchmarkOptions, BenchmarkResult
 
+__all__ = ["run"]
+
 
 def _skipped_row(name: str, threads: int, message: str) -> BenchmarkResult:
-    """A minimal ``skipped=True`` :class:`~mew._typing.BenchmarkResult` for a benchmark mew
-    declined to run (never handed to Google Benchmark)."""
+    """Build a skipped result row for a benchmark that never reaches Google Benchmark."""
     return {
         "name": name,
         "run_name": name,
@@ -57,6 +62,21 @@ def _skipped_row(name: str, threads: int, message: str) -> BenchmarkResult:
         "skip_message": message,
         "counters": [],
     }
+
+
+def _new_session_id() -> str:
+    """Return a time-ordered UUIDv7 string."""
+    unix_ms = time.time_ns() // 1_000_000
+    rand_a = int.from_bytes(os.urandom(2)) & 0x0FFF
+    rand_b = int.from_bytes(os.urandom(8)) & 0x3FFF_FFFF_FFFF_FFFF
+    value = (
+        ((unix_ms & 0xFFFF_FFFF_FFFF) << 80)  # unix_ts_ms
+        | (0x7 << 76)  # version 7
+        | (rand_a << 64)
+        | (0b10 << 62)  # RFC 4122/9562 variant
+        | rand_b
+    )
+    return str(uuid.UUID(int=value))
 
 
 def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> None:
@@ -82,44 +102,8 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
             handle.threads(n)
 
 
-def longest_row_name(entries: Iterable[Entry]) -> int:
-    """The longest name the console shows for these benchmarks' rows, so it can
-    size its name column before the first row arrives."""
-    longest = 0
-    for entry in entries:
-        cases = [name for _, name in selected_cases(entry)]
-        width = max(map(len, cases or [entry.name]))
-        if entry.options.get("threads") is not None:
-            width += len(f"/threads:{max(thread_counts(entry.options))}")
-        longest = max(longest, width)
-    return longest
-
-
 _DEFAULT_MIN_TIME = "0.5s"
 _DEFAULT_MEMORY_ITERATIONS = 16
-
-
-_THREADED_ON_GIL = (
-    "threaded benchmarks require a free-threaded interpreter; "
-    "this interpreter has the GIL enabled, where threaded mode "
-    "would deadlock on Google Benchmark's start barrier"
-)
-
-
-def _threaded_on_gil(entries: Iterable[Entry]) -> tuple[list[Entry], str]:
-    """The threaded benchmarks this build can't run, and the first few names."""
-    threaded = [e for e in entries if is_threaded(e.options)] if gil_enabled() else []
-    return threaded, ", ".join(e.name for e in threaded[:3]) + overflow(len(threaded), 3)
-
-
-def check_strict(entries: Iterable[Entry]) -> None:
-    """Raise what ``mew.run(strict=True)`` raises for ``entries`` before running them."""
-    threaded, names = _threaded_on_gil(entries)
-    if threaded:
-        raise RuntimeError(
-            f"{_THREADED_ON_GIL}. Affected: {names}. Run on a free-threaded build, "
-            "drop the threads option, or pass strict=False to skip them."
-        )
 
 
 def _gb_argv(
@@ -168,7 +152,7 @@ def run(
     profiler_manager: ProfilerManager | None = None,
     capture_output: bool = True,
 ) -> int:
-    """Run the registered benchmarks.
+    """Run benchmarks, by default every registered one.
 
     Each call is one session, whose time-ordered ID every row carries, so
     several runs can share a result file.
@@ -242,15 +226,15 @@ def run(
     if strict:
         check_strict(selected)
     skipped_rows: list[BenchmarkResult] = []
-    skipped, names = _threaded_on_gil(selected)
+    skipped, names = threaded_on_gil(selected)
     if skipped:
         warnings.warn(
             f"skipping {len(skipped)} threaded benchmark(s) on a GIL interpreter "
-            f"({names}), run on a free-threaded build to execute them; {_THREADED_ON_GIL}.",
+            f"({names}), run on a free-threaded build to execute them; {THREADED_ON_GIL}.",
             RuntimeWarning,
             stacklevel=2,
         )
-        skip_msg = f"skipped: {_THREADED_ON_GIL}"
+        skip_msg = f"skipped: {THREADED_ON_GIL}"
         skipped_rows = [
             _skipped_row(e.name, max(thread_counts(e.options)), skip_msg) for e in skipped
         ]
@@ -279,7 +263,7 @@ def run(
     from mew import __version__  # deferred: mew imports this module
 
     session: dict[str, Any] = {
-        "id": new_session_id(),
+        "id": _new_session_id(),
         "date": datetime.now(UTC).isoformat(),
         "host": socket.gethostname(),
         "mew_version": __version__,
