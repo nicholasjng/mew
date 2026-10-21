@@ -29,12 +29,14 @@ from mew.reporter import JSONReporter
     ],
 )
 def test_set_context_nests_dotted_keys(calls, expected):
+    """Dotted keys nest into dicts, and the last write to a key or to its parent wins."""
     for key, value in calls:
         mew.set_context(key, value)
     assert mew.get_context() == expected
 
 
 def test_set_context_copies_values():
+    """`set_context` stores deep copies: dotted writes and the caller's later changes stay apart."""
     dataset, shape = {"size": 1024, "source": {"name": "uniform"}}, [2, 3]
     mew.set_context("dataset", dataset)
     mew.set_context("shape", shape)
@@ -46,6 +48,7 @@ def test_set_context_copies_values():
 
 
 def test_update_context_applies_mappings_then_kwargs():
+    """`update_context` nests dotted keys from mappings and keyword arguments; keywords win."""
     # Dotted keys nest in both forms; keyword arguments override the mappings.
     mew.update_context(
         {"dataset.size": 1024, "commit": "abc"},
@@ -63,11 +66,13 @@ def test_update_context_applies_mappings_then_kwargs():
     ("key", "message"), [("", "non-empty string"), ("dataset..size", "empty path segment")]
 )
 def test_malformed_key_raises(key, message):
+    """An empty key or an empty dotted path segment raises `ValueError`."""
     with pytest.raises(ValueError, match=message):
         mew.set_context(key, 1)
 
 
 def test_get_context_returns_a_snapshot():
+    """`get_context` returns a deep copy; changing it leaves the stored context as it was."""
     mew.set_context("a", {"nested": 1})
     snap = mew.get_context()
     snap["a"]["nested"] = 999
@@ -76,6 +81,7 @@ def test_get_context_returns_a_snapshot():
 
 
 def test_context_snapshot_is_captured_at_run_start():
+    """Reporters get the context as it was when `mew.run` started, not as a benchmark changed it."""
     mew.set_context("snapshot_phase", "before")
 
     @mew.benchmark
@@ -92,6 +98,7 @@ def test_context_snapshot_is_captured_at_run_start():
 
 
 def test_json_reporter_writes_what_json_cannot_as_str(tmp_path: Path):
+    """`JSONReporter` writes a context value JSON cannot encode, such as a `Path`, as its `str`."""
     mew.set_context("path", Path("data.csv"))
 
     @mew.benchmark

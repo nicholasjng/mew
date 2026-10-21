@@ -12,6 +12,8 @@ from mew._registry import REGISTRY
 
 
 def test_bare_decorator_registers_one_entry():
+    """A bare `@mew.benchmark` registers one entry with no options."""
+
     @mew.benchmark
     def bench_x(state):
         for _ in state:
@@ -25,6 +27,8 @@ def test_bare_decorator_registers_one_entry():
 
 
 def test_called_decorator_captures_options():
+    """`@mew.benchmark(...)` and `@mew.parametrize(...)` store their options on the entry."""
+
     @mew.benchmark(min_time=0.5, unit="us", repetitions=10)
     def bench_x(state):
         for _ in state:
@@ -46,6 +50,8 @@ def test_called_decorator_captures_options():
 
 
 def test_min_time_takes_run_syntax_and_nx_fixes_the_iteration_count():
+    """Decorators take `min_time` in run syntax; `Nx` becomes a fixed `iterations` count."""
+
     @mew.benchmark(min_time="3x")
     def bench_a(state):
         pass
@@ -125,6 +131,7 @@ def test_min_time_takes_run_syntax_and_nx_fixes_the_iteration_count():
     ],
 )
 def test_decorators_reject_invalid_options(options, error, message):
+    """`@mew.benchmark` rejects invalid options and conflicting combinations without registering."""
     with pytest.raises(error, match=message):
 
         @mew.benchmark(**options)
@@ -136,6 +143,7 @@ def test_decorators_reject_invalid_options(options, error, message):
 
 
 def test_parametrize_ids_length_mismatch():
+    """`@mew.parametrize` raises when `ids` and the cases differ in length."""
     with pytest.raises(ValueError, match="ids"):
 
         @mew.parametrize([{"n": 1}, {"n": 2}, {"n": 3}], ids=["a", "b"])
@@ -145,6 +153,8 @@ def test_parametrize_ids_length_mismatch():
 
 
 def test_rejected_name_can_be_corrected():
+    """After a duplicate name is rejected, the function can register under another name."""
+
     def bench_a(state):
         for _ in state:
             pass
@@ -161,6 +171,8 @@ def test_rejected_name_can_be_corrected():
 
 
 def test_parametrize_accepts_generator():
+    """`@mew.parametrize` accepts a generator of cases."""
+
     @mew.parametrize({"n": n} for n in range(3))
     def bench_x(state, n):
         for _ in state:
@@ -172,6 +184,8 @@ def test_parametrize_accepts_generator():
 
 
 def test_product_cartesian():
+    """`@mew.product` registers the Cartesian product of its axes, the last axis varying fastest."""
+
     @mew.product(n=[1, 2], algo=["a", "b"])
     def bench_x(state, n, algo):
         for _ in state:
@@ -188,6 +202,7 @@ def test_product_cartesian():
     "dropped", [{"iterations", "use_manual_time"}, {"min_time", "min_warmup_time", "use_real_time"}]
 )
 def test_product_passes_every_option_through(dropped):
+    """`@mew.product` forwards every benchmark option to the entry."""
     # product()'s **kwargs are the iterables, so it forwards each option by
     # hand; a forgotten one would be silently dropped.
     every: dict[str, Any] = {
@@ -215,6 +230,8 @@ def test_product_passes_every_option_through(dropped):
 
 
 def test_threads_accepts_a_sequence_of_counts():
+    """`threads` accepts an iterable of counts, stored as a tuple with duplicates removed."""
+
     @mew.parametrize([{"n": 1}], threads=(n for n in [1, 2, 4, 4]))
     def bench_x(state, n):
         for _ in state:
@@ -226,6 +243,7 @@ def test_threads_accepts_a_sequence_of_counts():
 
 
 def test_product_needs_at_least_one_iterable():
+    """`@mew.product` with options but no iterables raises `TypeError`."""
     with pytest.raises(TypeError, match="at least one iterable"):
 
         @mew.product(min_time=0.1)
@@ -245,6 +263,7 @@ def test_product_needs_at_least_one_iterable():
     ],
 )
 def test_benchmark_rejects_structurally_confusing_names(bad):
+    """Benchmark names that are blank or contain `::`, `[`, `]` or a newline are rejected."""
     with pytest.raises(ValueError, match="benchmark name"):
 
         @mew.benchmark(name=bad)
@@ -256,6 +275,8 @@ def test_benchmark_rejects_structurally_confusing_names(bad):
 
 
 def test_benchmark_allows_slash_hierarchy_names():
+    """Benchmark names may use `/` to form a hierarchy."""
+
     # `/` grouping (the Google Benchmark convention) stays legal.
     @mew.benchmark(name="suite/sort/insertion")
     def _bench(state):
@@ -270,6 +291,7 @@ def test_benchmark_allows_slash_hierarchy_names():
 # hatch for values that collide with case addressing.
 @pytest.mark.parametrize("ids", [["a::b"], None])
 def test_parametrize_rejects_structurally_confusing_case_labels(ids):
+    """`@mew.parametrize` rejects case labels with `::` or brackets, from `ids` or from values."""
     with pytest.raises(ValueError, match="case label"):
 
         @mew.parametrize([{"s": "x[1]"}], ids=ids)
@@ -281,6 +303,7 @@ def test_parametrize_rejects_structurally_confusing_case_labels(ids):
 
 
 def test_double_registration_raises():
+    """`@mew.benchmark` over `@mew.parametrize` raises and keeps only the first entry."""
     with pytest.raises(RuntimeError, match="already registered"):
 
         @mew.benchmark
@@ -295,6 +318,7 @@ def test_double_registration_raises():
 
 
 def test_parametrize_rejects_duplicate_case_labels():
+    """`@mew.parametrize` rejects cases whose labels are the same."""
     # Both cases collapse to `data=list`, making `name[label]` addressing ambiguous.
     with pytest.raises(ValueError, match="duplicate case label"):
 
@@ -307,6 +331,8 @@ def test_parametrize_rejects_duplicate_case_labels():
 
 
 def test_tags_normalize_to_a_frozenset_on_every_decorator():
+    """Every decorator stores `tags` as a frozenset; a string is one tag, no tags is empty."""
+
     @mew.benchmark(tags=("io", "slow"))
     def bench_a(state):
         pass

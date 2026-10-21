@@ -122,6 +122,8 @@ def test_registering_a_manager_replaces_the_previous_one():
     ids=["all-keys", "required-keys", "none"],
 )
 def test_memory_manager_is_driven_and_stamped_onto_rows(metrics, block):
+    """A memory manager is started and stopped once; its metrics, with `iterations` and
+    `allocations_per_iteration`, become the row's `memory` block."""
     _register_noop(iterations=1)
     mgr = FakeMemoryManager(metrics)
     rep = Capture()
@@ -147,7 +149,7 @@ def test_profiler_manager_is_driven_and_stamped_onto_rows(summary):
 
 def test_profiler_manager_result_keeps_its_json_types():
     """The summary crosses Google Benchmark as JSON text, so an int stays an int
-    at any depth, where 0.2.0 turned numbers into floats."""
+    at any depth."""
     result = {"sample_count": 3, "flag": True, "missing": None, "top": [{"line": 7, "x": 0.5}]}
     _register_noop(iterations=1)
     rep = Capture()
@@ -165,6 +167,8 @@ def test_profiler_manager_result_keeps_its_json_types():
     ids=["returns-none", "required-hooks-only"],
 )
 def test_profiler_manager_without_a_result_leaves_row_unannotated(manager):
+    """A profiler manager that returns `None` or has no `get_result()` leaves no `cpu_profile`."""
+
     @mew.benchmark(iterations=2)
     def bench_paused(state):
         for _ in state:
@@ -216,6 +220,7 @@ def test_pause_held_across_the_loop_end_is_resumed_before_teardown():
 
 
 def test_managers_do_not_leak_into_a_later_run():
+    """Memory and profiler managers given to one `mew.run()` are not used by the next."""
     _register_noop(iterations=1)
     mem, prof = FakeMemoryManager(), FakeProfilerManager()
     mew.run(reporter=Capture(), memory_manager=mem, profiler_manager=prof)
@@ -229,6 +234,8 @@ def test_managers_do_not_leak_into_a_later_run():
 
 
 def test_memory_manager_stop_exception_propagates_out_of_run():
+    """An exception from the memory manager's `stop()` propagates out of `mew.run()`."""
+
     class Exploding(FakeMemoryManager):
         def stop(self):
             raise RuntimeError("capture unreadable")
@@ -262,6 +269,7 @@ def test_malformed_manager_result_propagates_out_of_run(kind, result):
 
 @pytest.mark.parametrize(("memory_iterations", "expected"), [(None, 16), (4, 4), (1000, 50)])
 def test_memory_iterations_caps_the_memory_pass(memory_iterations, expected):
+    """`memory_iterations` caps the memory pass (16 by default), never above the benchmark's own."""
     _register_noop(iterations=50)
     rep = Capture()
     mew.run(reporter=rep, memory_manager=FakeMemoryManager(), memory_iterations=memory_iterations)
@@ -269,6 +277,8 @@ def test_memory_iterations_caps_the_memory_pass(memory_iterations, expected):
 
 
 def test_memory_pass_counts_batch_overshoot():
+    """The memory pass counts whole batches: 4 requested iterations in batches of 10 count as 10."""
+
     @mew.benchmark(iterations=20)
     def bench_batch(state):
         for _ in state.batches(10):
@@ -322,6 +332,7 @@ def test_manager_passes_run_a_single_thread():
 
 @pytest.mark.parametrize("kind", ["memory", "profiler"])
 def test_interrupted_pass_still_stops_the_manager(kind):
+    """A `KeyboardInterrupt` in a memory or profiler pass still calls the manager's stop hook."""
     calls = 0
 
     @mew.benchmark(iterations=4)
@@ -340,6 +351,8 @@ def test_interrupted_pass_still_stops_the_manager(kind):
 
 
 def test_failed_timed_runs_skip_the_manager_passes():
+    """A benchmark whose timed run raises gets no memory or profiler pass, and neither block."""
+
     @mew.benchmark(iterations=4)
     def bench_raises(state):
         for _ in state:
@@ -475,6 +488,7 @@ def test_flamegraph_header_covers_every_capture(tmp_path, monkeypatch):
 
 
 def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
+    """`write_flamegraph()` writes no file and warns on stderr when memray captured nothing."""
     pytest.importorskip("memray")
     from mew import memory as _memory
 
@@ -487,6 +501,7 @@ def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
 
 @pytest.mark.parametrize("sampler", _SAMPLERS)
 def test_write_html_warns_when_nothing_was_sampled(tmp_path, capsys, sampler):
+    """`write_html()` writes no file and warns on stderr when the sampler collected nothing."""
     from mew import cpu as _cpu
 
     out = tmp_path / "cpu.html"
@@ -549,6 +564,7 @@ def test_pass_that_skips_before_its_loop_has_no_profile(sampler):
 
 
 def test_write_html_rejects_other_profiler_managers(tmp_path):
+    """`write_html()` raises `TypeError` for a manager that is not one of mew's samplers."""
     from mew import cpu as _cpu
 
     with pytest.raises(TypeError, match="TachyonManager or PyinstrumentManager"):
@@ -588,6 +604,7 @@ def test_missing_profiler_package_raises_import_error(monkeypatch, module, creat
 
 
 def test_hottest_frame_excludes_pyinstrument_internals(tmp_path):
+    """`_hottest_frame` skips pyinstrument's own frames, and is `None` when only those remain."""
     from mew.cpu import _hottest_frame
 
     class Frame:
@@ -650,6 +667,8 @@ def test_cpu_profiling_rejects_invalid_arguments(factory, kwargs):
     ],
 )
 def test_cpu_manager_creates_the_chosen_sampler(monkeypatch, sampler, expected):
+    """`cpu.manager()` builds the chosen sampler (`auto` is Tachyon on 3.15+), passing `top_k` to
+    Tachyon only."""
     from mew import cpu as _cpu
 
     made: list[tuple[str, float, dict]] = []
@@ -668,6 +687,7 @@ def test_cpu_manager_creates_the_chosen_sampler(monkeypatch, sampler, expected):
 
 @pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon is available")
 def test_tachyon_manager_requires_python_3_15():
+    """`TachyonManager` raises `RuntimeError` before Python 3.15."""
     from mew.cpu import TachyonManager
 
     with pytest.raises(RuntimeError, match="3.15"):
@@ -676,6 +696,8 @@ def test_tachyon_manager_requires_python_3_15():
 
 @needs_tachyon
 def test_tachyon_raises_when_it_cannot_read_the_process(monkeypatch):
+    """`TachyonManager` raises `RuntimeError`, chained to the `OSError`, when it cannot read the
+    process."""
     from mew import cpu as _cpu
 
     def unreadable(pid):
@@ -689,6 +711,7 @@ def test_tachyon_raises_when_it_cannot_read_the_process(monkeypatch):
 
 @needs_tachyon
 def test_tachyon_skips_paused_regions():
+    """Tachyon takes no samples inside `state.pause()`, so paused work is never the hottest."""
     from mew.cpu import TachyonManager
 
     def paused_work() -> int:
@@ -767,6 +790,8 @@ def test_instruction_summary_ranks_names_and_flags_instructions(tmp_path):
 
 
 def test_instruction_source_slices_utf8_columns(tmp_path):
+    """`_instruction_source` slices by byte columns, keeps a multi-line span's first line, takes the
+    whole line without columns, and cuts long source to 40 characters."""
     from mew.cpu import _instruction_source
 
     src = tmp_path / "mod.py"

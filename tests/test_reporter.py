@@ -59,6 +59,8 @@ def _feed(reporter, *rows: BenchmarkResult) -> None:
 
 
 def test_json_reporter_writes_the_documented_shape(tmp_path):
+    """`JSONReporter` writes `session`, `context` and `benchmarks`; each row carries its own
+    `session` and `context`, and enum fields as plain strings."""
     out = tmp_path / "results.json"
     _run_one(JSONReporter(output=out))
 
@@ -72,6 +74,7 @@ def test_json_reporter_writes_the_documented_shape(tmp_path):
 
 
 def test_json_reporter_leaves_a_stream_open():
+    """`JSONReporter` writes to a stream it was given and leaves it open after `finalize()`."""
     buf = io.StringIO()
     _feed(JSONReporter(output=buf), _fake_row("a::one"))
     assert json.loads(buf.getvalue())["benchmarks"][0]["name"] == "a::one"
@@ -81,6 +84,7 @@ def test_json_reporter_leaves_a_stream_open():
     ("reporter", "suffix"), [(JSONReporter, ".json"), (JSONLReporter, ".jsonl")]
 )
 def test_file_reporter_can_be_reused(tmp_path, reporter, suffix):
+    """A JSON or JSONL reporter used for a second run rewrites its file with that run's rows."""
     # A second run reopens the sink finalize() closed, and starts it over.
     out = tmp_path / f"results{suffix}"
     rep = reporter(output=out)
@@ -91,6 +95,7 @@ def test_file_reporter_can_be_reused(tmp_path, reporter, suffix):
 
 @pytest.mark.parametrize("reporter", [JSONReporter, JSONLReporter])
 def test_file_reporters_write_each_row_as_it_arrives(tmp_path, reporter):
+    """JSON and JSONL reporters write each row to disk in `report_runs()`, before `finalize()`."""
     # On disk before the run ends, not buffered; JSONL is the format that survives an interruption.
     out = tmp_path / "results"
     rep = reporter(output=out)
@@ -102,6 +107,7 @@ def test_file_reporters_write_each_row_as_it_arrives(tmp_path, reporter):
 
 @pytest.mark.parametrize("suffix", [".jsonl", ".jsonl.gz"])
 def test_jsonl_archive_is_queryable_by_duckdb(tmp_path, suffix):
+    """DuckDB queries a JSONL archive, plain or gzipped, with `context` and `session` as structs."""
     # The archive contract: self-contained rows, gzipped or not, that DuckDB
     # queries directly, with nested blocks (`context`, `session`) as structs.
     duckdb = pytest.importorskip("duckdb")
@@ -117,6 +123,7 @@ def test_jsonl_archive_is_queryable_by_duckdb(tmp_path, suffix):
 
 
 def test_jsonl_reporter_gzips_an_uppercase_gz_suffix(tmp_path):
+    """`JSONLReporter` gzips a file named `*.JSONL.GZ`, and `read_results` reads it back."""
     # The CLI and the reader match `.jsonl.gz` in any case, so the writer must too.
     out = tmp_path / "results.JSONL.GZ"
     _feed(JSONLReporter(output=out), _fake_row("a::one"))
@@ -134,6 +141,8 @@ def _rich(width: int = 200, **flags) -> tuple[io.StringIO, RichReporter]:
 
 
 def test_rich_reporter_prints_banner_and_header_before_the_first_row():
+    """`RichReporter` prints the host banner and the column header in `report_context()`, before
+    any row."""
     buf, _ = _rich()
     banner, header, _rule = buf.getvalue().splitlines()
     assert banner == "mew · host=h cpus=4 scaling=disabled"
@@ -150,12 +159,15 @@ def test_rich_reporter_prints_banner_and_header_before_the_first_row():
     ],
 )
 def test_rich_reporter_sizes_the_name_column(name_width, column):
+    """`RichReporter` makes the name column `name_width` wide (all free width for `None`), at least
+    20 columns and at most what the terminal leaves."""
     buf, _ = _rich(width=200, name_width=name_width)
     header = buf.getvalue().splitlines()[1]
     assert len(header.split(" │ ")[0]) == column
 
 
 def test_rich_reporter_scales_times_to_a_readable_unit():
+    """`RichReporter` shows each nanosecond time in a readable unit, such as `ms` or `us`."""
     buf, rep = _rich()
     row = _fake_row("bench.py::bench_x")
     row["real_time"], row["cpu_time"] = 305_028_333.33, 24_763.67
@@ -165,6 +177,8 @@ def test_rich_reporter_scales_times_to_a_readable_unit():
 
 
 def test_rich_reporter_memory_column_and_profile_line():
+    """`show_memory` adds a `Peak Mem` column and `show_cpu` a profile line per row; rows without
+    data show `-`, `0 samples` or `no profile`."""
     buf, rep = _rich(show_memory=True, show_cpu=True)
     header = buf.getvalue().splitlines()[1]
     assert header.split(" │ ")[-1].strip() == "Peak Mem"
@@ -202,6 +216,8 @@ def test_rich_reporter_lists_what_has_no_column_below_the_row():
 
 
 def test_rich_reporter_wraps_a_skip_message_without_losing_any_of_it():
+    """`RichReporter` wraps a long skip message across the timing columns within the terminal width,
+    keeping every character and the traceback's indent."""
     buf, rep = _rich(width=60)
     path = "/a/very/long/path/" + "x" * 50 + "/bench.py"
     row = _fake_row("bench.py::bench_x")
@@ -232,6 +248,8 @@ def test_rich_reporter_wraps_a_skip_message_without_losing_any_of_it():
     ],
 )
 def test_rich_reporter_renders_the_hottest_frame(top, shown):
+    """`RichReporter` shows the hottest frame as `function (file:line)`, leaving out a missing line
+    or file, and prints a free-form string as is."""
     buf, rep = _rich(show_cpu=True)
     row = _fake_row("bench.py::bench_x")
     row["cpu_profile"] = {"sample_count": 1, "top_function": top}
@@ -243,6 +261,7 @@ def test_rich_reporter_renders_the_hottest_frame(top, shown):
     ("generic", "shown"), [(0.62, "BINARY_OP 62%, 62% generic"), (0.0, "BINARY_OP 62%")]
 )
 def test_rich_reporter_names_the_hottest_instruction(generic, shown):
+    """`RichReporter` shows the hottest instruction's share, and the generic share when nonzero."""
     buf, rep = _rich(show_cpu=True)
     row = _fake_row("bench.py::bench_x")
     row["cpu_profile"] = {
@@ -277,6 +296,9 @@ def test_fanout_finalizes_every_sink_in_order_despite_a_failure():
 
 
 def test_family_rows_are_named_by_their_case_not_their_label():
+    """A family's rows carry `name[case]` in `benchmark`, shared by repetitions; `set_label()` sets
+    only `label`."""
+
     # `benchmark` is the addressable `name[label]` (repetitions share it), and
     # `set_label()` only sets `label`: cases that set the same one stay apart.
     @mew.parametrize([{"n": 1}, {"n": 2}], iterations=1, repetitions=2)
@@ -326,6 +348,8 @@ def _repetitions(name: str, reals: tuple[float, ...], family_index: int) -> list
 
 
 def test_rich_reporter_sums_up_repetitions_at_the_end_like_mew_compare():
+    """`finalize()` prints a `Median of repetitions` table in registration order, for benchmarks
+    with more than one repetition."""
     buf, rep = _rich()
     # Random interleaving reports benchmarks as they finish: here b before a.
     rep.report_runs(_repetitions("bench.py::bench_b", (20.0, 30.0), family_index=1))
@@ -345,6 +369,8 @@ def test_rich_reporter_sums_up_repetitions_at_the_end_like_mew_compare():
 
 
 def test_rich_reporter_can_leave_repetitions_to_the_summary():
+    """With `show_repetitions=False`, repeated rows appear only in the summary; single runs still
+    stream."""
     buf, rep = _rich(show_repetitions=False)
     # No header yet: every row may end up in the summary, leaving an empty table.
     assert "Benchmark" not in buf.getvalue()
@@ -358,6 +384,7 @@ def test_rich_reporter_can_leave_repetitions_to_the_summary():
 
 
 def test_rich_reporter_reads_the_terminal_width_once_per_run(monkeypatch):
+    """`RichReporter` probes the terminal width once per run, not once per row."""
     # Piped, the width comes from /dev/tty, which isn't worth opening for every row.
     probes = []
     monkeypatch.setattr("mew._console._terminal_width", lambda: probes.append(1) or 60)
@@ -369,6 +396,7 @@ def test_rich_reporter_reads_the_terminal_width_once_per_run(monkeypatch):
 
 
 def test_rich_reporter_prints_no_summary_without_repetitions():
+    """`finalize()` prints nothing when no benchmark ran more than one repetition."""
     buf, rep = _rich()
     rep.report_runs([_fake_row("bench.py::bench_x")])
     before = buf.getvalue()
@@ -396,6 +424,8 @@ def test_human_readable_matches_google_benchmark(value, one_k, exponent, expecte
 
 
 def test_counters_carry_a_format_only_when_they_need_one():
+    """A counter has a `format` only for non-default flags or `one_k`; a plain counter has just
+    `name` and `value`."""
     from mew._core import CounterFlags, CounterOneK
 
     @mew.benchmark(iterations=10)
@@ -421,6 +451,8 @@ def test_counters_carry_a_format_only_when_they_need_one():
 
 
 def test_rich_reporter_shows_counters_like_google_benchmark():
+    """`RichReporter` lists counters below the row in Google Benchmark's notation, with `/s` for
+    rates and inverted rates as times."""
     buf, rep = _rich()
     row = _fake_row("a::counted")
     row["counters"] = [

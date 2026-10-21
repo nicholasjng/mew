@@ -44,6 +44,7 @@ _IGNORE = AllowRule(pattern="b*", reason="flaky", ignore=True)
     ],
 )
 def test_evaluate_verdicts(rule, delta_pct, higher_is_better, verdict) -> None:
+    """`evaluate` applies the default threshold, a matching rule, and higher-is-better metrics."""
     cfg = RegressionConfig(default_threshold=5.0, rules=(rule,) if rule else ())
     v = cfg.evaluate("bench_x", delta_pct, higher_is_better=higher_is_better)
     assert v.verdict is verdict
@@ -51,6 +52,7 @@ def test_evaluate_verdicts(rule, delta_pct, higher_is_better, verdict) -> None:
 
 
 def test_first_matching_rule_wins() -> None:
+    """When several allow rules match a benchmark, the first one decides the verdict."""
     a = AllowRule(pattern="bench_*", reason="catch-all", ignore=True)
     b = AllowRule(pattern="bench_x", reason="more specific", threshold=99.0)
     cfg = RegressionConfig(default_threshold=5.0, rules=(a, b))
@@ -60,6 +62,7 @@ def test_first_matching_rule_wins() -> None:
 
 
 def test_load_regressions_from_pyproject(tmp_path: Path) -> None:
+    """`[tool.mew.regressions]` in `pyproject.toml` loads the default threshold and allow rules."""
     py = tmp_path / "pyproject.toml"
     py.write_text(
         """
@@ -85,6 +88,7 @@ reason = "noisy on shared runners"
 
 
 def test_allow_rule_brackets_match_literally() -> None:
+    """Square brackets in an allow rule's pattern match literally, not as a character class."""
     rule = AllowRule(pattern="*[algo=bubble]", reason="slow on purpose", ignore=True)
     assert rule.matches("bench.py::sort[algo=bubble]")
     assert not rule.matches("bench.py::sort[algo=merge]")
@@ -123,6 +127,7 @@ _ALLOW = '[[tool.mew.regressions.allow]]\npattern = "b*"\n'
     ],
 )
 def test_load_rejects_invalid_regressions_config(tmp_path: Path, body: str, match: str) -> None:
+    """An invalid regressions config raises a `ValueError` prefixed with the config file path."""
     # Every row names its error: a TOML syntax error is a ValueError too.
     source = tmp_path / "pyproject.toml"
     source.write_text(body + "\n")
@@ -133,11 +138,13 @@ def test_load_rejects_invalid_regressions_config(tmp_path: Path, body: str, matc
 
 @pytest.mark.parametrize("threshold", [-1, float("nan"), True])
 def test_regression_config_rejects_invalid_default_threshold(threshold) -> None:
+    """`RegressionConfig` rejects a negative, NaN or boolean `default_threshold`."""
     with pytest.raises(ValueError, match="default_threshold"):
         RegressionConfig(default_threshold=threshold)
 
 
 def test_render_panel_exit_codes() -> None:
+    """`render_panel` is empty when all pass, exits 3 on a regression, and lists ignored rows."""
     rule = AllowRule(pattern="x", reason="r", threshold=99.0)
     text, code = render_panel([BenchmarkVerdict("x", 1.0, Verdict.OK, None)], default_threshold=5.0)
     assert text == ""
@@ -163,6 +170,7 @@ def test_render_panel_exit_codes() -> None:
 
 
 def test_compare_config_allow_rule_passes_the_gate(tmp_path: Path) -> None:
+    """An allow rule from `pyproject.toml` lets a delta over the default threshold pass the gate."""
     # +20% is over the default 5% but within the rule's 50%.
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     (tmp_path / "pyproject.toml").write_text(
@@ -175,6 +183,7 @@ def test_compare_config_allow_rule_passes_the_gate(tmp_path: Path) -> None:
 def test_compare_iterations_metric_regression(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Fewer iterations count as a regression, and the displayed delta keeps its sign."""
     # Fewer iterations is slower.
     other, base = _write_pair(
         tmp_path,

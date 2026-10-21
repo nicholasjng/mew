@@ -34,6 +34,7 @@ def _names(entries: list[Entry]) -> list[str]:
     ],
 )
 def test_narrow_entry(labels, pattern, cases):
+    """`narrow_entry` returns a copy limited to the matching cases, the whole entry, or `None`."""
     entry = Entry(name="f.py::bench_fam", fn=lambda s: None, case_labels=labels)
     narrowed = narrow_entry(entry, [compile_name_filter(pattern)])
     # No case left drops the entry; every case keeps it whole (`cases=None`).
@@ -42,6 +43,7 @@ def test_narrow_entry(labels, pattern, cases):
 
 
 def test_narrow_entry_ors_its_filters_and_narrows_views_further():
+    """One `narrow_entry` call ORs its filters; narrowing a view again keeps cases both select."""
     # One call ORs its filters: cases 0 and 2.
     view = narrow_entry(_family(), [compile_name_filter("n=1]"), compile_name_filter("n=100]")])
     assert view is not None and view.cases == [0, 2]
@@ -52,6 +54,7 @@ def test_narrow_entry_ors_its_filters_and_narrows_views_further():
 
 
 def test_filter_pattern_is_a_regex_unless_literal():
+    """`Registry.filter` reads the pattern as a regex unless `literal=True`; a bad regex raises."""
     r = Registry()
     r.add(_family())
     assert r.filter("bench_fam[n=10]") == []  # brackets are a character class
@@ -62,6 +65,7 @@ def test_filter_pattern_is_a_regex_unless_literal():
 
 
 def test_filter_tags_select_any_tag_and_combine_with_the_pattern():
+    """`Registry.filter` keeps entries with any given tag that also match the pattern."""
     r = Registry()
     for name, tags in [("foo::a", {"io"}), ("bar::b", {"cpu"}), ("foo::c", {"io", "slow"})]:
         r.add(Entry(name=name, fn=lambda s: None, tags=frozenset(tags)))
