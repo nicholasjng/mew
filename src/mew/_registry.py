@@ -1,7 +1,7 @@
-"""Module-level registry that ``@benchmark`` / ``@parametrize`` populate.
+"""The benchmark registry, its entries, and name filters over them.
 
-Process-global so files imported from anywhere (discovery, manual import, REPL)
-accumulate into one place.
+:data:`REGISTRY` is process-global, so benchmark files imported from anywhere
+register into one place.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 
+from mew._options import thread_counts
 from mew._typing import BenchmarkFn, BenchmarkOptions
 
 
@@ -71,10 +72,25 @@ def case_names(entry: Entry) -> Iterator[tuple[int, str]]:
 
 
 def selected_cases(entry: Entry) -> Iterator[tuple[int, str]]:
-    """Like :func:`case_names`, but only the cases a name filter left selected."""
+    """Yield ``(case_index, name[label])`` for each case a name filter left selected."""
     for i, name in case_names(entry):
         if entry.cases is None or i in entry.cases:
             yield i, name
+
+
+def longest_row_name(entries: Iterable[Entry]) -> int:
+    """Return the length of the longest row name these entries report.
+
+    It counts the selected cases' labels and a ``/threads:N`` suffix.
+    """
+    longest = 0
+    for entry in entries:
+        cases = [name for _, name in selected_cases(entry)]
+        width = max(map(len, cases or [entry.name]))
+        if entry.options.get("threads") is not None:
+            width += len(f"/threads:{max(thread_counts(entry.options))}")
+        longest = max(longest, width)
+    return longest
 
 
 def _match_cases(entry: Entry, rx: re.Pattern[str], n: int) -> set[int]:
@@ -101,7 +117,7 @@ def narrow_entry(entry: Entry, filters: Iterable[re.Pattern[str]]) -> Entry | No
 
 
 class Registry:
-    """Process-global collection populated by benchmark decorators."""
+    """A collection of benchmark entries with unique names, in registration order."""
 
     def __init__(self) -> None:
         self._entries: dict[str, Entry] = {}
@@ -149,7 +165,7 @@ class Registry:
         tags: Iterable[str] | None = None,
         literal: bool = False,
     ) -> list[Entry]:
-        """Select entries by name and tags, like ``mew run -k PATTERN --tag TAG``.
+        """Select entries by a name pattern and tags.
 
         Parameters
         ----------

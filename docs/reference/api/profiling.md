@@ -57,6 +57,8 @@ still gets a {class}`mew.cpu.CpuProfile`, with `sample_count` 0 and no
 
 .. autofunction:: mew.cpu.manager
 
+.. autodata:: mew.cpu.SAMPLERS
+
 .. autoclass:: mew.cpu.TachyonManager
    :members:
 

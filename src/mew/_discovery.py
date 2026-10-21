@@ -85,6 +85,12 @@ def collect_files(
     *,
     file_patterns: Iterable[str],
 ) -> list[Path]:
+    """Return the files the selectors name, and the matching files beneath their directories.
+
+    A file matches when its name, or its path below the directory for a pattern
+    with ``/``, matches one of ``file_patterns``. A path that doesn't exist
+    raises :class:`FileNotFoundError`.
+    """
     patterns = list(file_patterns)
     out: dict[Path, None] = {}  # an ordered set: the first selector to reach a file wins
     for sel in selectors:

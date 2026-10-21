@@ -1,14 +1,13 @@
-"""Source-control provenance as a context provider.
+"""Source-control provenance from jj or git.
 
-:func:`vcs_context` returns a mapping to hand to :func:`mew.update_context`, so a
-suite records what it was built from::
+:func:`vcs_context` returns the working copy's commit and dirty state as a
+mapping that :func:`mew.update_context` accepts::
 
     import mew
 
     mew.update_context(mew.vcs_context())
 
-The provider shells out to jj or git and returns nothing outside a work tree.
-Results store it under ``context.vcs``.
+It shells out to jj, then git, and returns ``{}`` outside a work tree.
 """
 
 from __future__ import annotations

@@ -1,9 +1,8 @@
-"""Capture what benchmarked code writes to stdout and stderr during a run.
+"""Capture what a process writes to stdout and stderr, native writes included.
 
 Native libraries write to file descriptors 1 and 2 directly, so the capture
-redirects the descriptors themselves into one file. The bindings suspend it
-around every reporter callback, so reporters write to the real streams, and the
-captured output is printed to stderr once the run is over.
+redirects the descriptors themselves into one file. Suspending it lets output
+through to the real streams; closing it prints what was captured to stderr.
 """
 
 from __future__ import annotations

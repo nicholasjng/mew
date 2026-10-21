@@ -1,8 +1,4 @@
-"""Machine context: what the benchmarks ran on.
-
-Unlike :func:`mew.vcs_context`, :func:`mew.run` applies this provider by default,
-so its fields are part of every run's context.
-"""
+"""Machine provenance: the CPU and interpreter a process runs on."""
 
 from __future__ import annotations
 
@@ -35,9 +31,11 @@ def gil_enabled() -> bool:
 
 @contextmanager
 def _silence_native_stderr() -> Generator[None]:
-    """Redirect OS-level fd 2 to /dev/null, for GB probes that bypass ``sys.stderr``.
+    """Redirect OS-level fd 2 to /dev/null within the context.
 
-    Never wrap the run itself: user output and GB run-time diagnostics must stay visible.
+    It silences native writes that bypass ``sys.stderr``, such as Google
+    Benchmark's CPU probes. Never wrap the run itself: user output and GB
+    run-time diagnostics must stay visible.
     """
     sys.stderr.flush()
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -92,7 +90,7 @@ def _cpu_model() -> str | None:
 
 
 def machine_context() -> dict[str, Any]:
-    """Return what the benchmarks run on; :func:`mew.run` records it in every run.
+    """Describe the machine and interpreter this process runs on.
 
     Returns
     -------

@@ -1,4 +1,4 @@
-"""Public decorators: @benchmark, @parametrize, @product."""
+"""Decorators that register benchmarks: ``@benchmark``, ``@parametrize`` and ``@product``."""
 
 from __future__ import annotations
 
@@ -23,10 +23,6 @@ def _format_id_value(value: Any) -> str:
     if isinstance(value, bool | int | float):
         return repr(value)
     return type(value).__name__
-
-
-def _default_id(kwargs: dict[str, Any]) -> str:
-    return "-".join(f"{k}={_format_id_value(v)}" for k, v in kwargs.items())
 
 
 def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
@@ -187,7 +183,10 @@ def _register_family(
 ) -> BenchmarkFn:
     # `cases` holds fresh dicts from parametrize/product, only ever unpacked
     # by the trampoline.
-    labels = list(ids) if ids is not None else [_default_id(kw) for kw in cases]
+    if ids is not None:
+        labels = list(ids)
+    else:
+        labels = ["-".join(f"{k}={_format_id_value(v)}" for k, v in kw.items()) for kw in cases]
     if len(labels) != len(cases):
         raise ValueError(f"ids has {len(labels)} entries but parameters has {len(cases)}")
     if not cases:

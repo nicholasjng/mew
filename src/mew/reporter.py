@@ -19,32 +19,38 @@ from mew._typing import BenchmarkResult
 
 @runtime_checkable
 class Reporter(Protocol):
-    """What :func:`mew.run` hands results to.
+    """Protocol for receiving benchmark results during a run.
 
     All callbacks run on the main thread. One that raises aborts the remaining
-    benchmarks, and the exception propagates out of :func:`mew.run`.
-
-    Methods
-    -------
-    report_context(context)
-        Called once before any results, with the run's ``session`` and
-        ``context`` blocks.
-    report_runs(runs)
-        Called as results arrive, with a list of :class:`mew.BenchmarkResult`.
-    finalize()
-        Optional; called once after the last result, also when the run aborts.
+    benchmarks, and the exception propagates out of :func:`mew.run`. A reporter
+    may also define ``finalize()``, which is called once after the last result,
+    also when the run aborts.
     """
 
-    def report_context(self, context: dict[str, Any], /) -> None: ...
-    def report_runs(self, runs: list[BenchmarkResult], /) -> None: ...
+    def report_context(self, context: dict[str, Any], /) -> None:
+        """Receive the run's provenance.
 
+        Called once, before any result.
 
-def _fmt_function(top: object) -> str:
-    """``work (bench.py:6)`` from a :class:`~mew.cpu.TopFunction`, as far as it goes."""
-    if not isinstance(top, Mapping):  # A custom profiler's summary.
-        return str(top)
-    where = ":".join(str(part) for part in (top["file"], top["line"]) if part is not None)
-    return f"{top['function']} ({where})" if where else top["function"]
+        Parameters
+        ----------
+        context : dict[str, Any]
+            The run's ``session`` block, a :class:`mew.SessionInfo`, and its
+            ``context`` block.
+        """
+        ...
+
+    def report_runs(self, runs: list[BenchmarkResult], /) -> None:
+        """Receive result rows.
+
+        Called as results arrive, with the rows since the last call.
+
+        Parameters
+        ----------
+        runs : list[BenchmarkResult]
+            The new result rows.
+        """
+        ...
 
 
 def _fmt_profile(cpu: Mapping[str, Any] | None) -> list[str]:
@@ -55,7 +61,11 @@ def _fmt_profile(cpu: Mapping[str, Any] | None) -> list[str]:
     if (count := cpu.get("sample_count")) is not None:
         parts.append(f"{count:,} sample{'' if count == 1 else 's'}")
     if top := cpu.get("top_function"):
-        parts.append(f"hottest {_fmt_function(top)}")
+        # A TopFunction as `work (bench.py:6)`, as far as it goes; a custom profiler's as is.
+        if isinstance(top, Mapping):
+            where = ":".join(str(part) for part in (top["file"], top["line"]) if part is not None)
+            top = f"{top['function']} ({where})" if where else top["function"]
+        parts.append(f"hottest {top}")
     if instructions := cpu.get("top_instructions"):
         parts.append(f"{instructions[0]['instruction']} {instructions[0]['share']:.0%}")
         if (generic := cpu.get("unspecialized_share") or 0.0) >= 0.005:
@@ -128,8 +138,8 @@ def _close_sink(fh: TextIO | None, owns_fh: bool) -> None:
         fh.close()
 
 
-class JSONReporter:
-    """Write one ``{"session": ..., "context": ..., "benchmarks": [...]}`` document.
+class JSONReporter(Reporter):
+    """Write results as one JSON document of the session, context and benchmark rows.
 
     Each row carries ``session`` and ``context`` as :class:`JSONLReporter`
     writes them; the top level repeats them. The document is valid JSON only
@@ -173,6 +183,7 @@ class JSONReporter:
         self._fh.flush()
 
     def finalize(self) -> None:
+        """Close the JSON document, and the output file if this reporter opened it."""
         if self._fh is not None:
             self._fh.write(_JSON_CLOSER)
             self._fh.flush()
@@ -181,8 +192,8 @@ class JSONReporter:
         self._owns_fh = False
 
 
-class JSONLReporter:
-    """Stream one JSON object per result row, a line each, flushed as rows arrive.
+class JSONLReporter(Reporter):
+    """Write results as JSON Lines, one object per row, flushed as rows arrive.
 
     Every line stands alone, so the file works on pipes and survives an
     interrupted run.
@@ -221,24 +232,25 @@ class JSONLReporter:
         self._fh.flush()
 
     def finalize(self) -> None:
+        """Close the output file if this reporter opened it."""
         _close_sink(self._fh, self._owns_fh)
         self._fh = None
         self._owns_fh = False
 
 
-class RichReporter:
-    """Print mew's console table, a row per result as it arrives.
+class RichReporter(Reporter):
+    """Print results as a table, a row per result as it arrives.
 
     The header prints before the first result, so the columns are chosen up
     front. Below a row, an indented line lists what has no column: a label the
     benchmark set, its counters and, with ``show_cpu``, its CPU profile. When the
-    run ends, a second table sums up each repeated benchmark as ``mew compare``
-    reduces it: the median times, and the stddev and cv (stddev over the mean)
-    of the real time. The terminal width is read once per run.
+    run ends, a second table sums up each repeated benchmark: the median times,
+    and the stddev and cv (stddev over the mean) of the real time. The terminal
+    width is read once per run.
 
     Parameters
     ----------
-    terminal : Terminal, optional
+    terminal : mew.Terminal, optional
         Where to print; defaults to stdout, colored when it is a terminal.
     show_memory : bool, default False
         Add a ``Peak Mem`` column.
@@ -311,8 +323,11 @@ class RichReporter:
                 self._print_row(row)
 
     def finalize(self) -> None:
-        """Sum up the repeated benchmarks, in the order they were registered:
-        random interleaving reports them in the order they finish."""
+        """Sum up the repeated benchmarks in a second table.
+
+        The table lists them in the order they were registered, since random
+        interleaving reports them in the order they finish.
+        """
         groups = sorted(
             (rows for rows in self._repeated.values() if len(rows) > 1),
             key=lambda rows: (rows[0]["family_index"], rows[0]["per_family_instance_index"]),
@@ -407,11 +422,11 @@ class RichReporter:
             self._term.print(sgr(line, "dim", enabled=color))
 
 
-class Fanout:
+class Fanout(Reporter):
     """Pass every callback on to several reporters, in order.
 
-    :func:`mew.run` wraps a list of reporters in one. A reporter that raises
-    stops the run, as it would alone.
+    A callback that raises propagates before the reporters after it get the
+    call; ``finalize()`` still reaches every reporter.
 
     Parameters
     ----------
@@ -431,6 +446,7 @@ class Fanout:
             r.report_runs(runs)
 
     def finalize(self) -> None:
+        """Finalize the reporters that define ``finalize()``, in order, even if one raises."""
         # ExitStack unwinds LIFO, so register in reverse to finalize in call order.
         with contextlib.ExitStack() as stack:
             for r in reversed(self._reporters):

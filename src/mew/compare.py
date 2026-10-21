@@ -1,4 +1,4 @@
-"""Compare benchmark samples and render their differences."""
+"""Compare benchmark result files and print their differences."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from mew._console import Span, Table, Terminal, fill, overflow, sgr
-from mew._format import NS_PER_UNIT, fmt_bytes, fmt_time, scale_time, to_ns
+from mew._console import Span, Table, Terminal, fill, sgr
+from mew._format import NS_PER_UNIT, fmt_bytes, fmt_time, overflow, scale_time, to_ns
 from mew._registry import compile_name_filter
 from mew._results import (
     MEMORY_METRICS,
@@ -27,8 +27,7 @@ from mew._results import (
     session_summaries,
     split_selector,
 )
-from mew._significance import mannwhitney_p
-from mew._statistics import Statistic
+from mew._statistics import Statistic, mannwhitney_p
 from mew.regressions import BenchmarkVerdict, RegressionConfig, report
 
 __all__ = ["Sample", "SessionSummary", "compare", "read_results", "session_summaries"]
@@ -38,13 +37,6 @@ _KEYS = frozenset({"name", "func"})
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
 _CTX_SKEW_FIELDS = ("cpu_model", "num_cpus", "cpu_scaling_enabled")
-
-
-def _label(path: Path, others: list[Path]) -> str:
-    stem = path.stem
-    if sum(1 for p in others if p.stem == stem) > 1:
-        return str(path)
-    return stem
 
 
 def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
@@ -83,8 +75,10 @@ def _ctx_summary(ctx: dict[str, Any], *, exclude: Collection[str]) -> list[str]:
 
 
 def _warn_context_skew(columns: list[_Column]) -> None:
-    """Warn when machine-level context differs across columns (deltas then compare
-    environments, not just code)."""
+    """Warn when machine-level context differs across columns.
+
+    The deltas then compare environments, not just code.
+    """
     # `host` lives in the session block, the rest in provenance; all warn alike.
     for block, fld in (("session", "host"), *(("context", f) for f in _CTX_SKEW_FIELDS)):
         values = {c.label: (c.context.get(block) or {}).get(fld) for c in columns if c.context}
@@ -342,7 +336,7 @@ def compare(
     regressions: RegressionConfig | None = None,
     console: Terminal | None = None,
 ) -> int:
-    """Print a table comparing result files against the last, the baseline.
+    """Print a table comparing result files against the last one, the baseline.
 
     Each other file's column shows its value, the delta and the speedup. The
     rows are the benchmarks the first file and the baseline share; another file
@@ -377,7 +371,7 @@ def compare(
         gated; the median by default. Stddev is unaffected.
     regressions : RegressionConfig, optional
         Gate the first file against the baseline, and print a regression panel.
-    console : Terminal, optional
+    console : mew.Terminal, optional
         Where to print; defaults to stdout.
 
     Returns
@@ -405,7 +399,7 @@ def compare(
     if len(files) < 2:
         raise ValueError(f"expected at least two result files, got {len(files)}")
     parsed = [split_selector(str(p)) for p in files]
-    paths = [p for p, _ in parsed]
+    stems = [p.stem for p, _ in parsed]
     # CLI convention: the last file is the baseline ("compare head against
     # baseline"), while `_render` expects columns[0] to be the baseline.
     ordered = [parsed[-1], *parsed[:-1]]
@@ -415,7 +409,8 @@ def compare(
     columns = []
     for path, selector in ordered:
         samples, ctx = load_column(path, metric, key, selector, statistic, reader=read_once)
-        base = _label(path, paths)
+        # Files that share a stem are told apart by their full path.
+        base = str(path) if stems.count(path.stem) > 1 else path.stem
         label = f"{base}@{selector}" if selector else base
         columns.append(
             _Column(

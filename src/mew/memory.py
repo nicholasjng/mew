@@ -1,4 +1,4 @@
-"""Memory profiling with memray and Google Benchmark's memory manager."""
+"""Memory profiling of benchmark bodies with memray."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from mew._typing import MemoryMetrics
+from mew._typing import MemoryManager, MemoryMetrics
 
 if TYPE_CHECKING:
     from memray import Tracker
@@ -44,7 +44,7 @@ class _RootedRecord:
         return self.stack
 
 
-class MemrayManager:
+class MemrayManager(MemoryManager):
     """Memory manager that tracks allocations with memray.
 
     It records one capture per benchmark and repetition, covering the timing

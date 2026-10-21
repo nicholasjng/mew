@@ -1,7 +1,8 @@
-"""CPU profiling as a Google Benchmark profiler manager.
+"""CPU sampling profilers for benchmark bodies.
 
-Google Benchmark runs one extra, untimed pass per repetition with the sampler
-active from the first ``for _ in state`` to loop exit. :func:`manager` picks the
+Each sampler is a profiler manager: Google Benchmark runs one extra, untimed
+pass per repetition with the sampler active from the first ``for _ in state``
+to loop exit. :func:`manager` picks the
 sampler: Tachyon (:mod:`profiling.sampling`) on Python 3.15+, pyinstrument
 before. Its ``get_result()`` summary reaches reporters as the ``cpu_profile``
 block of a :class:`mew.BenchmarkResult`, a :class:`CpuProfile` with the
@@ -24,6 +25,7 @@ from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from mew._typing import PausableProfiler, ProfilerManager
 from mew.machine import gil_enabled
 
 if TYPE_CHECKING:
@@ -82,10 +84,11 @@ class TopInstruction(TypedDict):
 
 
 class CpuProfile(TypedDict):
-    """The ``cpu_profile`` block, the same keys and types for every sampler.
+    """A CPU sampler's summary of one profiling pass.
 
-    A figure the sampler can't measure is ``None``, a list it can't measure
-    empty, so archives mixing interpreters keep one column type.
+    Every sampler writes the same keys and types: a figure the sampler can't
+    measure is ``None``, a list it can't measure empty, so archives mixing
+    interpreters keep one column type.
 
     Attributes
     ----------
@@ -177,7 +180,7 @@ def _check_top_k(top_k: int) -> None:
         raise ValueError(f"top_k must be an integer >= 1, got {top_k!r}")
 
 
-class PyinstrumentManager:
+class PyinstrumentManager(ProfilerManager, PausableProfiler):
     """Profiler manager that samples with pyinstrument.
 
     Sampling covers the timing loop minus ``state.pause()`` regions, in a pass
@@ -236,7 +239,10 @@ class PyinstrumentManager:
         self._prof = None
 
     def pause(self) -> None:
-        """Suspend sampling for a ``state.pause()`` region."""
+        """Suspend sampling.
+
+        Called when the body enters a ``state.pause()`` scope.
+        """
         # The session continues across stop() and start(), without the gap.
         if self._prof is not None:
             self._prof.stop()
@@ -246,10 +252,13 @@ class PyinstrumentManager:
             self._prof.start()
 
     def get_result(self) -> CpuProfile | None:
-        """Summarize the pass that just ended, or ``None`` if none started.
+        """Summarize the pass that just ended.
 
-        A pass without samples gets a summary with ``sample_count`` 0 and no
-        ``top_function``.
+        Returns
+        -------
+        CpuProfile or None
+            The summary, or ``None`` if no pass started. A pass without samples
+            gets one with ``sample_count`` 0 and no ``top_function``.
         """
         # Taken, so a pass that skips before its loop can't report the last one's.
         session, self._session = self._session, None
@@ -291,31 +300,34 @@ def _hottest_frame(root: Frame) -> TopFunction | None:
     return {"function": function, "file": file_name, "line": None, "self_time": self_time}
 
 
-def require_tachyon() -> None:
-    """Check that this interpreter ships Tachyon, i.e. is Python 3.15+.
-
-    Raises
-    ------
-    RuntimeError
-        Before Python 3.15.
-    """
+def _require_tachyon() -> None:
+    """Raise :class:`RuntimeError` before Python 3.15, which has no Tachyon."""
+    # Not inlined: type checkers would take the code after the check as unreachable.
     if sys.version_info < (3, 15):
         raise RuntimeError("Tachyon CPU sampling requires Python 3.15 or newer")
 
 
 def reads_instructions() -> bool:
-    """Whether Tachyon reads bytecode instructions here: on free-threaded 3.15+.
+    """Return whether Tachyon reads bytecode instructions in this interpreter.
 
-    A GIL build is sampled only where the body hands over the GIL, so every
-    sample would name a call or a loop jump.
+    It does on free-threaded builds of Python 3.15+. A GIL build is sampled
+    only where the body hands over the GIL, so every sample would name a call
+    or a loop jump.
+
+    Returns
+    -------
+    bool
+        ``True`` on Python 3.15 or newer with the GIL disabled.
     """
     return sys.version_info >= (3, 15) and not gil_enabled()
 
 
 @functools.cache
 def _unwinder(pid: int) -> Any:
-    """The unwinder reading process ``pid``, created once: on macOS, creating one
-    fails after memray has tracked the process (3.15.0, memray 1.20).
+    """Return the unwinder that reads process ``pid``, created once per process.
+
+    On macOS, creating one fails after memray has tracked the process (3.15.0,
+    memray 1.20).
 
     ``<native>`` frames mark where C code calls back into Python.
     """
@@ -333,8 +345,10 @@ def _unwinder(pid: int) -> Any:
 
 @functools.cache
 def _opcode_tables() -> tuple[dict[int, str], frozenset[int]] | None:
-    """Every opcode's name, specialized forms included, and the generic opcodes
-    the interpreter can specialize; ``None`` if these undocumented tables moved."""
+    """Return every opcode's name and the set of opcodes the interpreter can specialize.
+
+    Names include the specialized forms. ``None`` if these undocumented tables moved.
+    """
     import opcode
 
     try:
@@ -418,7 +432,7 @@ def _summarize_instructions(
     return top, unspecialized / total
 
 
-class TachyonManager:
+class TachyonManager(ProfilerManager, PausableProfiler):
     """Profiler manager that samples with Tachyon (:mod:`profiling.sampling`).
 
     A background thread samples the benchmark's thread by reading this process's
@@ -463,7 +477,7 @@ class TachyonManager:
     def __init__(self, interval: float = 1e-4, *, top_k: int = 5) -> None:
         _check_interval(interval)
         _check_top_k(top_k)
-        require_tachyon()
+        _require_tachyon()
 
         from profiling.sampling.stack_collector import FlamegraphCollector
 
@@ -555,7 +569,10 @@ class TachyonManager:
         self._record()
 
     def pause(self) -> None:
-        """Drop samples for a ``state.pause()`` region."""
+        """Suspend sampling.
+
+        Called when the body enters a ``state.pause()`` scope.
+        """
         if self._thread is not None:
             self._active += time.perf_counter() - self._since
             self._paused = True
@@ -566,10 +583,13 @@ class TachyonManager:
             self._paused = False
 
     def get_result(self) -> CpuProfile | None:
-        """Summarize the pass that just ended, or ``None`` if none started.
+        """Summarize the pass that just ended.
 
-        A pass without samples gets a summary with ``sample_count`` 0 and no
-        ``top_function``.
+        Returns
+        -------
+        CpuProfile or None
+            The summary, or ``None`` if no pass started. A pass without samples
+            gets one with ``sample_count`` 0 and no ``top_function``.
         """
         # Taken, so a pass that skips before its loop can't report the last one's.
         result, self._result = self._result, None

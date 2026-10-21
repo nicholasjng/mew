@@ -1,4 +1,4 @@
-"""Benchmark and run option checks, shared by the decorators, :func:`mew.run` and the CLI.
+"""Validate and normalize benchmark and run options.
 
 A wrong type raises :class:`TypeError`, a value out of range :class:`ValueError`.
 """
@@ -7,10 +7,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from math import isfinite
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from mew._core import TimeUnit
+from mew._format import overflow
 from mew._typing import BenchmarkOptions
+from mew.machine import gil_enabled
+
+if TYPE_CHECKING:
+    from mew._registry import Entry
 
 _OPTION_KEYS = BenchmarkOptions.__required_keys__ | BenchmarkOptions.__optional_keys__
 _TIME_UNITS = tuple(unit.value for unit in TimeUnit)
@@ -30,8 +35,11 @@ def parse_seconds(text: str) -> float:
 
 
 def parse_min_time(value: str | float) -> str:
-    """Validate a duration (see :func:`parse_seconds`) or a fixed iteration count
-    like ``"100x"``, and return Google Benchmark's syntax: ``"0.5s"`` or ``"100x"``."""
+    """Convert a minimum time to Google Benchmark's syntax, ``"0.5s"`` or ``"100x"``.
+
+    The time is a duration that :func:`parse_seconds` reads, or a fixed iteration
+    count like ``"100x"``.
+    """
     if isinstance(value, bool) or not isinstance(value, str | int | float):
         raise TypeError(f"min_time must be seconds or a string like '100x', got {value!r}")
     text = str(value).strip()
@@ -66,7 +74,7 @@ def check_count(value: object, name: str) -> None:
 
 
 def check_session_tag(tag: object) -> None:
-    """Reject a session tag that ``mew compare path@<tag>`` can't select."""
+    """Reject a session tag that isn't a non-empty string, or is the reserved ``latest``."""
     if not isinstance(tag, str):
         raise TypeError(f"session_tag must be a string, got {tag!r}")
     if not tag.strip():
@@ -90,6 +98,29 @@ def is_threaded(opts: BenchmarkOptions) -> bool:
     return max(thread_counts(opts)) > 1
 
 
+THREADED_ON_GIL = (
+    "threaded benchmarks require a free-threaded interpreter; "
+    "this interpreter has the GIL enabled, where threaded mode "
+    "would deadlock on Google Benchmark's start barrier"
+)
+
+
+def threaded_on_gil(entries: Iterable[Entry]) -> tuple[list[Entry], str]:
+    """The threaded benchmarks this build can't run, and the first few names."""
+    threaded = [e for e in entries if is_threaded(e.options)] if gil_enabled() else []
+    return threaded, ", ".join(e.name for e in threaded[:3]) + overflow(len(threaded), 3)
+
+
+def check_strict(entries: Iterable[Entry]) -> None:
+    """Raise :class:`RuntimeError` if this build can't run some of the threaded ``entries``."""
+    threaded, names = threaded_on_gil(entries)
+    if threaded:
+        raise RuntimeError(
+            f"{THREADED_ON_GIL}. Affected: {names}. Run on a free-threaded build, "
+            "drop the threads option, or pass strict=False to skip them."
+        )
+
+
 def _normalize_threads(value: Any) -> tuple[int, ...]:
     """Coerce ``threads`` (an int or an iterable of ints) to a tuple of distinct counts.
 
@@ -107,7 +138,7 @@ def _normalize_threads(value: Any) -> tuple[int, ...]:
 
 
 def normalize_options(options: Mapping[str, Any]) -> BenchmarkOptions:
-    """Validate decorator options by :func:`mew.run`'s rules and normalize them.
+    """Validate benchmark options and normalize them.
 
     Unset (``None``) options are dropped, ``min_time`` becomes seconds, or
     ``iterations`` for ``"Nx"``, and ``threads`` becomes a tuple.
