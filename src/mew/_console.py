@@ -1,10 +1,9 @@
-"""Minimal terminal rendering, so the runtime needs no third-party dependency.
+"""Minimal terminal rendering: ANSI styles, column tables and line filling.
 
-Scope is only what mew renders: the streamed results table (:class:`~mew.reporter.RichReporter`),
-the comparison table, and colorized ``--help``. There is no markup language; a cell carries
-its style out of band, so ``[label]`` needs no escaping. Long cells in the one flexible column
-are left-ellipsized; :func:`fill` lays out lines of parts, such as a row's counters, that
-never split. There is no East-Asian width handling.
+It needs no third-party dependency. There is no markup language; a cell carries
+its style out of band, so ``[label]`` needs no escaping. Long cells in a
+table's one flexible column are left-ellipsized, and :func:`fill` lays out
+parts on lines without splitting any. There is no East-Asian width handling.
 """
 
 from __future__ import annotations
@@ -24,11 +23,6 @@ Cell = str | list[Span]
 COL_SEP = " │ "
 # Fewest columns a narrowed name keeps: below that it no longer identifies anything.
 _FLEX_FLOOR = 20
-
-
-def overflow(total: int, shown: int) -> str:
-    """`` (+N more)`` when a message previewed only ``shown`` of ``total`` items."""
-    return f" (+{total - shown} more)" if total > shown else ""
 
 
 def fill(parts: list[str], width: int, *, indent: str, hang: str, sep: str) -> list[str]:
@@ -69,8 +63,11 @@ def color_enabled(stream: TextIO) -> bool:
 
 
 def _terminal_width() -> int:
-    """``COLUMNS``, else the width of the terminal on stdout, stderr or ``/dev/tty``,
-    so that piped output (``mew run | tee run.log``) still fits the screen, else 80."""
+    """Return the width of the screen in columns.
+
+    The width is ``COLUMNS``, else the width of the terminal on stdout, stderr or
+    ``/dev/tty``, so piped output still fits the screen, else 80.
+    """
     import shutil
 
     if columns := shutil.get_terminal_size((0, 0)).columns:  # COLUMNS, else stdout
@@ -92,16 +89,23 @@ def _terminal_width() -> int:
 
 
 class Terminal:
-    """A thin stdout wrapper with a known width and a color gate.
+    """An output stream with a width in columns and a color setting.
+
+    Unless given, the width follows the terminal at each print, and colors
+    follow the stream and the ``NO_COLOR`` and ``FORCE_COLOR`` variables.
 
     Parameters
     ----------
     file : TextIO, optional
-        Sink to write to. Defaults to ``sys.stdout``.
+        The stream to write to; ``sys.stdout`` by default.
     width : int, optional
-        Fixed column count. Defaults to the detected terminal width per print.
+        A fixed width in columns. By default, the width is read at each print:
+        ``COLUMNS``, else the width of the terminal on stdout, stderr or
+        ``/dev/tty``, else 80.
     color : bool, optional
-        Force ANSI on/off. Defaults to auto-detection from ``file``.
+        Whether to print ANSI colors. By default, colors are off when
+        ``NO_COLOR`` is set, on when ``FORCE_COLOR`` is set, and otherwise on
+        when ``file`` is a terminal.
     """
 
     def __init__(
@@ -117,14 +121,23 @@ class Terminal:
 
     @property
     def width(self) -> int:
+        """The width in columns, fixed or else the terminal's current one."""
         return self._width if self._width is not None else _terminal_width()
 
     @property
     def color(self) -> bool:
+        """Whether this terminal prints ANSI colors."""
         return self._color
 
     def print(self, obj: object = "") -> None:
-        """Write ``obj`` and a newline. A :class:`Table` renders to multiple lines."""
+        """Write ``obj`` and a newline.
+
+        Parameters
+        ----------
+        obj : object, default ""
+            What to write, as ``str(obj)``. mew's own tables lay themselves out
+            over several lines, within :attr:`width`.
+        """
         lines = obj.render(self.width, color=self._color) if isinstance(obj, Table) else [str(obj)]
         for line in lines:
             self._file.write(line + "\n")

@@ -48,6 +48,9 @@ change between minor releases.
   warns when the compared files' models differ, as it does for the CPU count.
 - `mew.gil_enabled()` tells whether the GIL is enabled right now: `False` on a
   free-threaded build, unless an extension module enabled it on import.
+- `mew.Terminal`, which `RichReporter(terminal=...)` and
+  `mew.compare.compare(console=...)` take, is public and documented: it sets
+  the stream, width and colors of mew's console output.
 - Python 3.15 support, with a `cp315t` wheel for free-threaded 3.15t; the
   stable-ABI wheel already covers 3.15.
 - `mew run` captures what benchmarks write to stdout and stderr, native writes

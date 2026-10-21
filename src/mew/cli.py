@@ -26,10 +26,11 @@ from mew import (
     _discovery,
     run as _run,
 )
-from mew._options import check_session_tag, parse_min_time, parse_seconds
-from mew._registry import compile_name_filter, selected_cases
-from mew._results import result_format
-from mew.runner import check_strict, longest_row_name
+from mew._console import Table, Terminal, color_enabled, sgr
+from mew._options import check_session_tag, check_strict, parse_min_time, parse_seconds
+from mew._registry import compile_name_filter, longest_row_name, selected_cases
+from mew._results import result_format, session_summaries
+from mew._statistics import resolve_statistic
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -380,7 +381,6 @@ def compare(
     exit_non_zero_on_regression: bool,
 ) -> None:
     """Compare benchmark result files; the last file is the baseline."""
-    from mew._statistics import resolve_statistic
     from mew.compare import compare as _compare
 
     cfg = _load_config_or_exit()
@@ -418,9 +418,6 @@ def compare(
 
 def sessions(files: list[Path]) -> None:
     """List the sessions stored in result files, newest first."""
-    from mew._console import Table, Terminal
-    from mew._results import session_summaries
-
     term = Terminal()
     for path in files:
         table = Table(title=str(path) if len(files) > 1 else None)
@@ -464,8 +461,6 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
 
     def format_help(self) -> str:
         text = super().format_help()
-        from mew._console import color_enabled, sgr
-
         # Captured help and redirected output remain plain text.
         if not color_enabled(sys.stdout):
             return text
@@ -492,7 +487,7 @@ def completions(shell: str) -> None:
 
 
 def _warmup_seconds(value: str) -> float:
-    """argparse type for --min-warmup-time: '0.2', '200ms', '1m' → seconds."""
+    """Parse a ``--min-warmup-time`` value, such as ``0.2``, ``200ms`` or ``1m``, into seconds."""
     try:
         seconds = parse_seconds(value)
     except ValueError:
@@ -539,8 +534,10 @@ def _positive_float(value: str) -> float:
 
 
 def _percent(value: str) -> float:
-    """argparse type for --regression-threshold: '5%' → 5.0. Requires the '%' suffix
-    so the flag reads unambiguously at the call site, not just in --help."""
+    """Parse a ``--regression-threshold`` percent such as ``5%`` into 5.0.
+
+    The ``%`` suffix is required, so the flag reads unambiguously on the command line.
+    """
     try:
         if not value.endswith("%"):
             raise ValueError

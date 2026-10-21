@@ -23,10 +23,12 @@ from mew._console import Table, Terminal, _terminal_width, fill, truncate_left, 
     ],
 )
 def test_truncate(truncate, width, expected) -> None:
+    """`truncate_left` and `truncate_right` fit the width with an ellipsis, or a bare slice."""
     assert truncate("abcdef", width) == expected
 
 
 def test_table_narrows_the_flex_column_keeping_its_tail() -> None:
+    """A table wider than the width cuts the flex column from the left, keeping its tail."""
     table = Table()
     table.add_column("Benchmark", flex=True)
     table.add_column("Iters", justify="right")
@@ -35,6 +37,7 @@ def test_table_narrows_the_flex_column_keeping_its_tail() -> None:
 
 
 def test_table_too_narrow_keeps_fixed_columns_whole_and_a_floor_of_the_name() -> None:
+    """Fixed columns stay whole and the flex column keeps 20 characters, even if rows overflow."""
     # Only the flex column gives way, and it keeps 20 columns rather than
     # vanishing, even if the table then overflows.
     table = Table()
@@ -47,6 +50,7 @@ def test_table_too_narrow_keeps_fixed_columns_whole_and_a_floor_of_the_name() ->
 
 
 def test_fill_lays_out_whole_parts_within_the_width() -> None:
+    """`fill` packs whole parts into indented lines, and cuts a part too long for a line."""
     parts = ["alpha=1", "beta=22", "gamma=333", "delta=4444"]
     lines = fill(parts, 24, indent="  ", hang="    ", sep=" · ")
     assert lines == ["  alpha=1 · beta=22", "    gamma=333", "    delta=4444"]
@@ -56,6 +60,7 @@ def test_fill_lays_out_whole_parts_within_the_width() -> None:
 
 
 def test_terminal_prints_a_table_line_by_line() -> None:
+    """`Terminal.print` writes the title, header, rule and rows; with color the header is bold."""
     buf = io.StringIO()
     table = Table(title="My Table")
     table.add_column("A")
@@ -75,6 +80,8 @@ def test_terminal_prints_a_table_line_by_line() -> None:
     ],
 )
 def test_terminal_width_asks_stdout_then_stderr_then_the_tty(monkeypatch, sizes, width):
+    """`_terminal_width` takes `COLUMNS` or stdout, then stderr, then `/dev/tty`, else 80."""
+
     def get_terminal_size(fd):
         if fd not in sizes:
             raise OSError("not a terminal")
