@@ -89,7 +89,9 @@ $ uv run pytest tests/ -q
 $ uvx prek run --all-files
 ```
 
-These steps run in CI (`.github/workflows/ci.yml`) across Linux, macOS, and Windows on Python 3.11–3.15.
+These steps run in CI (`.github/workflows/ci.yml`) on Python 3.11–3.15 on Linux, and on
+3.11 and 3.15 on macOS and Windows. The ASAN build below runs in
+`.github/workflows/asan.yml` when native code or its build changes, and weekly.
 
 ## AddressSanitizer
 
