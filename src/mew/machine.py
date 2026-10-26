@@ -5,13 +5,28 @@ from __future__ import annotations
 import os
 import platform
 import sys
+import sysconfig
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from typing import Any
 
 from mew import _core
 
-__all__ = ["gil_enabled", "machine_context"]
+__all__ = ["gil_enabled", "is_free_threaded_build", "machine_context"]
+
+
+def is_free_threaded_build() -> bool:
+    """Return whether this interpreter was built with free-threading support.
+
+    This stays true when a free-threaded build runs with the GIL enabled.
+    Use :func:`gil_enabled` to check the current runtime state.
+
+    Returns
+    -------
+    bool
+        Whether ``Py_GIL_DISABLED`` is set in the interpreter's build configuration.
+    """
+    return bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
 
 
 def gil_enabled() -> bool:
@@ -20,6 +35,7 @@ def gil_enabled() -> bool:
     ``True`` on a stock interpreter. ``False`` on a free-threaded build, unless
     something enabled the GIL at run time, such as importing an extension module
     that doesn't declare free-threading support.
+    Use :func:`is_free_threaded_build` to check the interpreter's build configuration.
 
     Returns
     -------
@@ -99,7 +115,7 @@ def machine_context() -> dict[str, Any]:
         or ``None`` where it gives none, as on Linux on Arm; ``num_cpus``;
         ``cpu_scaling_enabled``, ``True`` only when frequency scaling was
         detected; and ``python``, the interpreter's ``version``,
-        ``implementation`` and ``gil_enabled``.
+        ``implementation``, ``free_threaded_build``, and ``gil_enabled``.
     """
     with _silence_native_stderr():
         info = _core.cpu_info()
@@ -110,6 +126,7 @@ def machine_context() -> dict[str, Any]:
         "python": {
             "version": platform.python_version(),
             "implementation": sys.implementation.name,
+            "free_threaded_build": is_free_threaded_build(),
             "gil_enabled": gil_enabled(),
         },
     }

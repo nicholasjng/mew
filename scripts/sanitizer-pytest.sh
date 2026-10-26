@@ -7,11 +7,11 @@
 #
 # Prerequisites: activate the uv-managed venv (VIRTUAL_ENV set) holding the
 # sanitizer's editable install:
-#     MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew-bench
-#     MEW_TSAN=1 uv sync --all-groups --reinstall-package=mew-bench
+#     MEW_ASAN=1 uv sync --group test --group duckdb --reinstall-package=mew-bench
+#     MEW_TSAN=1 uv sync --group test --reinstall-package=mew-bench
 # For races in threaded benchmarks, build TSAN into a free-threaded venv:
 #     UV_PROJECT_ENVIRONMENT=.venv-ft MEW_TSAN=1 \
-#         uv sync --python 3.14t --all-groups --no-install-package duckdb --reinstall-package=mew-bench
+#         uv sync --python 3.14t --group test --reinstall-package=mew-bench
 #
 # Usage: scripts/sanitizer-pytest.sh asan|tsan [pytest args]
 
