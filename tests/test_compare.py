@@ -211,7 +211,7 @@ _ROW_LINE = json.dumps(_row("b", 1.0))
         # Pure NDJSON: every line is a row with `name` and `benchmark`.
         ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', "a.jsonl:2: expected a mew result row"),
         # Cut off, as by a full disk or an interrupted copy.
-        # mtime=0: a timestamp in the header would vary the test ID between xdist workers.
+        # A fixed gzip timestamp keeps the test ID stable.
         ("a.jsonl.gz", gzip.compress(_ROW_LINE.encode(), mtime=0)[:-8], "cannot read result file"),
     ],
 )

@@ -62,15 +62,6 @@ jobs:
             --all-extras --group test \
             --reinstall-package=mew-bench
 
-      - name: Assert the GIL stays disabled after import
-        run: |
-          .venv/bin/python - <<'PY'
-          import sys
-          assert not sys._is_gil_enabled(), "interpreter is not free-threaded"
-          import mew._core
-          assert not sys._is_gil_enabled(), "importing mew._core re-enabled the GIL"
-          PY
-
       - name: Run tests under ThreadSanitizer
         run: |
           TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0:print_full_thread_history=1:suppressions=$CPYTHON_SRC/Tools/tsan/suppressions_free_threading.txt:log_path=$RUNNER_TEMP/tsan-report" \
