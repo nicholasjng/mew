@@ -405,6 +405,7 @@ def compare(
     exit_non_zero_on_regression: bool,
     layout: str,
     speedup: bool,
+    show_context: list[str],
 ) -> None:
     """Compare benchmark result files. The first file is the baseline."""
     from mew.compare import compare as _compare
@@ -428,6 +429,7 @@ def compare(
             counters=cfg.counters,
             layout=layout,
             speedup=speedup,
+            show_context=show_context,
         )
     # The regression panel is informational unless the caller opted into gating;
     # a `no overlap` (1) exit still propagates as-is.
@@ -859,6 +861,14 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         "--speedup",
         action="store_true",
         help="Show each file's speedup or ratio instead of its delta in the compact layout.",
+    )
+    p.add_argument(
+        "--show-context",
+        action="append",
+        default=[],
+        metavar="<path>",
+        help="Show the context field at <path>, or every field <path> globs or holds, "
+        "above the table (repeatable).",
     )
     p.set_defaults(_func=compare)
 

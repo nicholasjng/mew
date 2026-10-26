@@ -338,10 +338,10 @@ def test_compare_prints_context_and_warns_on_skew(
         },
     )
     console = Console(width=200)
-    assert compare([base, other], console=console) == 0
+    assert compare([base, other], show_context=["host", "engine"], console=console) == 0
     ctx = _context(console.export_text())
     assert (ctx["base"]["host"], ctx["other"]["host"]) == ("h1", "h2")
-    # Differing custom keys annotate the column labels.
+    # The fields asked for annotate the column labels.
     assert (ctx["base"]["engine"], ctx["other"]["engine"]) == ("ducky 0.1", "duckdb 1.5.3")
     err = capsys.readouterr().err
     assert "mew: warning: result files differ in host: base: h1, other: h2" in err
@@ -364,11 +364,11 @@ def test_compare_labels_columns_by_interpreter(
         base_context={"context": {**machine, "python": {**python, "version": "3.14.3"}}},
     )
     console = Console(width=200)
-    assert compare([base, other], console=console) == 0
+    assert compare([base, other], show_context=["python.version"], console=console) == 0
     out = console.export_text()
     ctx = _context(out)
     assert (ctx["base"]["python.version"], ctx["other"]["python.version"]) == ("3.14.3", "3.15.0")
-    # What both files share goes unsaid, and isn't warned on.
+    # What both files share isn't warned on, and fields not asked for go unsaid.
     assert "cpu_model" not in out
     assert "differ in" not in capsys.readouterr().err
 
@@ -841,7 +841,7 @@ def test_context_values_read_as_written(tmp_path: Path) -> None:
         _ctx_file(tmp_path, "b", devices=["cuda:0", "cuda:1"], dirty=True),
     ]
     console = Console(width=200)
-    compare(files, console=console)
+    compare(files, show_context=["devices", "dirty"], console=console)
     ctx = _context(console.export_text())
     assert ctx["a"] == {
         "run": "a",
@@ -860,7 +860,40 @@ def test_context_takes_the_widest_form_that_fits(tmp_path: Path, width, first) -
     """A line per file, else a line per field, else each file's fields wrapped."""
     files = [_ctx_file(tmp_path, n, engine=f"{n}-engine 1.0", commit=f"{n}123456") for n in "ab"]
     console = Console(width=width)
-    compare(files, console=console)
+    compare(files, show_context=["engine", "commit"], console=console)
     out = console.export_text()
     assert first in out.splitlines()[0]
     assert max(len(line) for line in out.split("\n\n", 1)[0].splitlines()) <= width
+
+
+def test_context_fields_show_only_when_asked_for(tmp_path: Path) -> None:
+    """Without show_context, a file's line is its run's name and date, however its context
+    differs. A field asked for shows even where every file has the same value."""
+    files = [_ctx_file(tmp_path, n, commit=f"{n}123", python={"version": "3.15"}) for n in "ab"]
+    console = Console(width=200)
+    compare(files, console=console)
+    assert _context(console.export_text())["a"] == {"run": "a", "date": "2026-01-01 00:00:00"}
+    console = Console(width=200)
+    compare(files, show_context=["python"], console=console)
+    assert _context(console.export_text())["b"]["python.version"] == "3.15"
+
+
+def test_context_fields_follow_the_order_asked_for(tmp_path: Path) -> None:
+    """Fields come in the order of the patterns that select them, a glob's sorted."""
+    files = [_ctx_file(tmp_path, n, jax={"version": "1", "backend": "cpu"}, z=n) for n in "ab"]
+    console = Console(width=200)
+    compare(files, show_context=["z", "jax.*"], console=console)
+    assert list(_context(console.export_text())["a"]) == [
+        "run",
+        "date",
+        "z",
+        "jax.backend",
+        "jax.version",
+    ]
+
+
+def test_context_pattern_matching_nothing_warns(tmp_path: Path, capsys) -> None:
+    """A pattern that selects no field, likely a typo, says so."""
+    files = [_ctx_file(tmp_path, n, engine=n) for n in "ab"]
+    compare(files, show_context=["engin"], console=Console(width=200))
+    assert "mew: warning: no context field matches 'engin'" in capsys.readouterr().err

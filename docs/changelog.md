@@ -110,6 +110,8 @@ releases may break the API.
 - `mew run --context <path>=<value>` records a string in one run's context, over
   the setup file's `context()`. A dot nests into the hook's tables, as in DuckDB,
   and a quoted key keeps its dots: `--context '"a.b"=1'`.
+- `mew compare --show-context <path>` shows context fields, by path or glob,
+  above the table.
 - Rows carry `params`, a family case's parameters; values JSON can't represent
   are stored as their type's qualified name, such as `"torch.Tensor"`.
 - `mew.grid(**axes)` gives every combination of some values as cases for
@@ -132,8 +134,9 @@ releases may break the API.
 - The `mew compare` ratio column shows `—` when a counter is negative.
 - A memory manager's `stop()` may return extra keys; mew ignores them.
 - `mew compare` shows each value's spread inline, as `±N%`, red past 25%.
-- `mew compare` context lines show a run's name and date, how many runs a file
-  pooled, and only the context values that differ between the files.
+- `mew compare` context lines show a run's name and date and how many runs a
+  file pooled. Context values show only when `--show-context` names them, since
+  a small change flips many.
 - `mew compare` reports skipped benchmarks with their reason instead of as missing.
 - `mew compare` names a file prefix all rows share once, in the title.
 - `mew compare` sums up the second file against the baseline under the table.
