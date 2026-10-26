@@ -122,6 +122,7 @@ def test_compare_pattern_is_a_regex_unless_literal(
         (2, {"metric": "bogus"}, "unknown metric"),
         (2, {"metric": "counters."}, "unknown metric"),
         (2, {"pattern": "foo("}, "invalid benchmark filter pattern"),
+        (2, {"layout": "wide"}, "unknown layout"),
     ],
 )
 def test_compare_rejects_bad_arguments(
@@ -738,3 +739,81 @@ def test_compare_summary_without_repetitions_says_there_is_no_test(tmp_path: Pat
     assert (
         last == "other against base: 1 compared, no significance test (needs 2+ repetitions a side)"
     )
+
+
+def _write_files(tmp_path: Path, n: int, *, name: str = "bench") -> list[Path]:
+    """A baseline at 100 ns and ``n - 1`` files a little slower each, 5 repetitions apiece."""
+    jitter = (0.99, 1.0, 1.01, 0.995, 1.005)
+    paths = [tmp_path / f"f{i}.json" for i in range(n)]
+    for i, p in enumerate(paths):
+        _write_json(p, [_row(name, 100.0 * (1 + i / 10) * j) for j in jitter])
+    return paths
+
+
+def _header(out: str) -> list[str]:
+    line = next(line for line in out.splitlines() if line.startswith("Benchmark"))
+    return [h.strip() for h in line.split("│")]
+
+
+@pytest.mark.parametrize(
+    ("width", "header"),
+    [
+        (200, ["Benchmark", "f0", "f1", "Δ%", "speedup", "f2", "Δ%", "speedup"]),
+        (60, ["Benchmark", "f0", "f1", "f2"]),
+        (40, ["Benchmark", "File", "Value", "Δ%", "speedup"]),
+    ],
+)
+def test_compare_picks_the_widest_layout_that_fits(tmp_path: Path, width, header) -> None:
+    """Every figure if it fits, else one cell per file, else a line per file."""
+    console = Console(width=width)
+    assert compare(_write_files(tmp_path, 3), console=console) == 0
+    assert _header(console.export_text()) == header
+
+
+@pytest.mark.parametrize(
+    ("layout", "second"), [("full", "f0"), ("compact", "f0"), ("long", "File")]
+)  # fmt: skip
+def test_compare_layout_overrides_the_width(tmp_path: Path, layout, second) -> None:
+    """An explicit layout renders as asked, whatever the width."""
+    console = Console(width=200 if layout != "full" else 40)
+    compare(_write_files(tmp_path, 3), layout=layout, console=console)
+    header = _header(console.export_text())
+    assert header[1] == second
+    assert ("Δ%" in header) is (layout != "compact")
+
+
+def test_compact_cells_mark_significant_changes(tmp_path: Path) -> None:
+    """A compact cell is the delta to one decimal, arrowed where significant."""
+    console = Console(width=200)
+    compare(_write_files(tmp_path, 3), layout="compact", console=console)
+    row = console.export_text().splitlines()[-2]
+    assert [c.strip() for c in row.split("│")][2:] == ["+10.0%▲", "+20.0%▲"]
+
+
+def test_compact_cells_leave_insignificant_changes_unmarked(tmp_path: Path) -> None:
+    """Without enough repetitions for a test, a cell is the bare delta."""
+    base, other = tmp_path / "base.json", tmp_path / "other.json"
+    _write_json(base, [_row("b", 100.0)])
+    _write_json(other, [_row("b", 120.0)])
+    console = Console(width=200)
+    compare([base, other], layout="compact", console=console)
+    assert console.export_text().splitlines()[-2].endswith("│ +20.0%")
+
+
+def test_compact_cells_show_the_speedup_on_request(tmp_path: Path) -> None:
+    """With ``speedup``, a compact cell is the ratio, arrowed the way the ratio moved."""
+    console = Console(width=200)
+    compare(_write_files(tmp_path, 2), layout="compact", speedup=True, console=console)
+    assert console.export_text().splitlines()[-2].endswith("│ ×0.909▼")
+
+
+def test_long_layout_gives_each_file_a_line(tmp_path: Path) -> None:
+    """The long layout names the benchmark once, then a line per file, dashes where missing."""
+    paths = _write_files(tmp_path, 3)
+    _write_json(paths[2], [_row("other", 1.0)])
+    console = Console(width=200)
+    compare(paths, layout="long", console=console)
+    lines = [line for line in console.export_text().splitlines() if "│" in line][1:]
+    cells = [[c.strip() for c in line.split("│")] for line in lines]
+    assert [c[:2] for c in cells] == [["bench", "f0"], ["", "f1"], ["", "f2"]]
+    assert cells[2][2:] == ["-", "-", "-"]

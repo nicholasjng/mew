@@ -740,10 +740,12 @@ def test_compare_gates_on_a_counter_in_its_configured_direction(
     [
         ("", (), "+0.00%", "+900.00%"),  # the median of 1, 1, 10 is 1
         ("", ("-k", "bench_a"), "bench_a", "bench_b"),
+        ("", ("--layout", "long"), "Benchmark │ File", None),
+        ("", ("--layout", "compact", "--speedup"), "×0.833", "+20"),
     ],
 )  # fmt: skip
 def test_compare_options_reach_the_comparison(mew_cli, tmp_path, pyproject, args, shown, hidden):
-    """`-k` changes what
+    """`-k`, `--layout` and `--speedup` change what
     `mew compare` prints, not only what it accepts."""
     other, base = _write_pair(
         tmp_path,
@@ -755,7 +757,7 @@ def test_compare_options_reach_the_comparison(mew_cli, tmp_path, pyproject, args
     res = mew_cli("compare", str(base), str(other), *args, cwd=tmp_path)
     output = res.stdout + res.stderr
     assert shown in output
-    assert hidden not in output
+    assert hidden is None or hidden not in output
 
 
 def test_log_lists_runs_newest_first(mew_cli, tmp_path):

@@ -43,6 +43,9 @@ from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, r
 
 __all__ = ["RunSummary", "compare", "read_results", "run_summaries"]
 
+# How `compare` lays out its table, widest first. "auto" picks the first that fits.
+LAYOUTS = ("auto", "full", "compact", "long")
+
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
 # `host` only where a suite records it; mew doesn't, since it often names a person.
@@ -156,9 +159,11 @@ def _compare_samples(base: Sample, other: Sample, higher_is_better: bool | None)
     return _Comparison(delta=delta, speedup=speedup, p_value=p_value)
 
 
-def _fmt_delta(delta: float, *, higher_is_better: bool | None = False) -> tuple[str, str]:
+def _fmt_delta(
+    delta: float, *, higher_is_better: bool | None = False, precision: int = 2
+) -> tuple[str, str]:
     pct = delta * 100.0
-    text = f"{pct:+.2f}%" if math.isfinite(pct) else "+∞%" if pct > 0 else "-∞%"
+    text = f"{pct:+.{precision}f}%" if math.isfinite(pct) else "+∞%" if pct > 0 else "-∞%"
     if higher_is_better is None:  # a counter without a direction: neither good nor bad
         return text, ""
     # Color by improvement direction: +20% throughput is green, +20% time red.
@@ -220,6 +225,150 @@ def _summary(outcomes: list[tuple[int, bool | None]], *, metric: str, has_direct
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _Cmp:
+    """One file's sample of a benchmark, compared against the baseline's."""
+
+    sample: Sample
+    result: _Comparison
+    #: None without a significance test, at fewer than 2 repetitions a side.
+    significant: bool | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Row:
+    """A benchmark's row: the baseline's sample and each other file's, None where missing."""
+
+    name: str
+    base: Sample
+    others: list[_Cmp | None]
+
+
+def _ratio_text(result: _Comparison) -> str:
+    return "—" if result.speedup is None else f"×{result.speedup:.3f}"
+
+
+def _delta_cell(c: _Cmp, higher_is_better: bool | None) -> list[Span]:
+    cell: list[Span] = [_fmt_delta(c.result.delta, higher_is_better=higher_is_better)]
+    if c.significant:
+        cell.append((" (signif.)", "bold"))
+    return cell
+
+
+def _full_table(
+    title: str,
+    labels: list[str],
+    rows: list[_Row],
+    *,
+    metric: str,
+    higher_is_better: bool | None,
+    ratio_label: str,
+) -> Table:
+    """Every file's value, delta and ratio side by side: about 37 columns a file."""
+    table = Table(title=title)
+    table.add_column("Benchmark", flex=True)
+    table.add_column(labels[0], justify="right")
+    for lbl in labels[1:]:
+        table.add_column(lbl, justify="right")
+        table.add_column("Δ%", justify="right")
+        table.add_column(ratio_label, justify="right")
+    for r in rows:
+        cells: list[Any] = [r.name, _value_cell(r.base, metric)]
+        for c in r.others:
+            if c is None:
+                cells.extend(["-"] * 3)
+                continue
+            cells.append(_value_cell(c.sample, metric))
+            cells.append(_delta_cell(c, higher_is_better))
+            cells.append(_ratio_text(c.result))
+        table.add_row(*cells)
+    return table
+
+
+def _compact_cell(c: _Cmp, *, higher_is_better: bool | None, speedup: bool) -> list[Span]:
+    """A file's delta, or its ratio, in one short cell.
+
+    A significant change is colored and marked ``▲`` or ``▼``, the way the shown
+    number moved. One that isn't is dim. Without a test the cell is colored as
+    in the full table. A spread too wide to trust adds a red ``(!)``.
+    """
+    pct, style = _fmt_delta(c.result.delta, higher_is_better=higher_is_better, precision=1)
+    if speedup:
+        text, up = _ratio_text(c.result), (c.result.speedup or 1.0) > 1.0
+    else:
+        text, up = pct, c.result.delta > 0
+    if c.significant is False:
+        style = "dim"
+    cell: list[Span] = [(text, style or None)]
+    if c.significant:
+        cell.append(("▲" if up else "▼", style or None))
+    if c.sample.cv is not None and c.sample.cv >= _CV_UNRELIABLE:
+        cell.append((" (!)", "red"))
+    return cell
+
+
+def _compact_table(
+    title: str,
+    labels: list[str],
+    rows: list[_Row],
+    *,
+    metric: str,
+    higher_is_better: bool | None,
+    speedup: bool,
+) -> Table:
+    """The baseline's values, then one cell a file: about 9 columns a file.
+
+    The title names the metric and each cell its unit, so there is no ratio label.
+    """
+    table = Table(title=title)
+    table.add_column("Benchmark", flex=True)
+    table.add_column(labels[0], justify="right")
+    for lbl in labels[1:]:
+        table.add_column(lbl, justify="right")
+    for r in rows:
+        cells: list[Any] = [r.name, _value_cell(r.base, metric)]
+        cells += [
+            "-"
+            if c is None
+            else _compact_cell(c, higher_is_better=higher_is_better, speedup=speedup)
+            for c in r.others
+        ]
+        table.add_row(*cells)
+    return table
+
+
+def _long_table(
+    title: str,
+    labels: list[str],
+    rows: list[_Row],
+    *,
+    metric: str,
+    higher_is_better: bool | None,
+    ratio_label: str,
+) -> Table:
+    """A line per benchmark and file, the full table's figures: as wide for any count."""
+    table = Table(title=title)
+    table.add_column("Benchmark", flex=True)
+    table.add_column("File")
+    table.add_column("Value", justify="right")
+    table.add_column("Δ%", justify="right")
+    table.add_column(ratio_label, justify="right")
+    for r in rows:
+        table.add_row(r.name, labels[0], _value_cell(r.base, metric), "", "")
+        for lbl, c in zip(labels[1:], r.others, strict=True):
+            if c is None:
+                table.add_row("", lbl, "-", "-", "-")
+            else:
+                table.add_row(
+                    "",
+                    lbl,
+                    _value_cell(c.sample, metric),
+                    _delta_cell(c, higher_is_better),
+                    _ratio_text(c.result),
+                )
+    return table
+
+
 def _render(
     columns: list[_Column],
     *,
@@ -228,6 +377,8 @@ def _render(
     regressions: RegressionConfig | None,
     console: Terminal | None,
     higher_is_better: bool | None,
+    layout: str = "auto",
+    speedup: bool = False,
 ) -> int:
     """Compare the first column against the rest and render the table.
 
@@ -281,27 +432,20 @@ def _render(
     prefix = _shared_file_prefix(shared)
     of = f" of {prefix.removesuffix('::')}" if prefix else ""
     labels = [c.label for c in columns]
-    table = Table(title=f"Comparison{of} ({metric}, baseline {labels[0]})")
-    table.add_column("Benchmark", flex=True)
-    table.add_column(labels[0], justify="right")
-    # Memory and counters: less isn't "faster".
-    ratio_label = "ratio" if metric in MEMORY_METRICS or counter is not None else "speedup"
-    for lbl in labels[1:]:
-        table.add_column(lbl, justify="right")
-        table.add_column("Δ%", justify="right")
-        table.add_column(ratio_label, justify="right")
+    title = f"Comparison{of} ({metric}, baseline {labels[0]})"
 
     baseline = columns[0].samples
     verdicts: list[BenchmarkVerdict] = []
     # The first file against the baseline: (direction, significant) per row.
     outcomes: list[tuple[int, bool | None]] = []
+    rows: list[_Row] = []
 
     for name in sorted(shared):
         base = baseline[name]
-        row: list[Any] = [name.removeprefix(prefix), _value_cell(base, metric)]
+        others: list[_Cmp | None] = []
         for idx, c in enumerate(columns[1:]):
             if name not in c.samples:
-                row.extend(["-"] * 3)
+                others.append(None)
                 continue
             s = c.samples[name]
             result = _compare_samples(base, s, higher_is_better)
@@ -316,14 +460,28 @@ def _render(
             if idx == 0:
                 worse = -result.delta if higher_is_better else result.delta
                 outcomes.append((0 if worse == 0 else (1 if worse > 0 else -1), significant))
-            delta_cell: list[Span] = [_fmt_delta(result.delta, higher_is_better=higher_is_better)]
-            if significant:
-                delta_cell.append((" (signif.)", "bold"))
-            row.append(_value_cell(s, metric))
-            row.append(delta_cell)
-            row.append("—" if result.speedup is None else f"×{result.speedup:.3f}")
-        table.add_row(*row)
+            others.append(_Cmp(s, result, significant))
+        rows.append(_Row(name.removeprefix(prefix), base, others))
 
+    # Memory and counters: less isn't "faster".
+    ratio_label = "ratio" if metric in MEMORY_METRICS or counter is not None else "speedup"
+    hib = higher_is_better
+    tables = {
+        "full": _full_table(
+            title, labels, rows, metric=metric, higher_is_better=hib, ratio_label=ratio_label
+        ),
+        "compact": _compact_table(
+            title, labels, rows, metric=metric, higher_is_better=hib, speedup=speedup
+        ),
+        "long": _long_table(
+            title, labels, rows, metric=metric, higher_is_better=hib, ratio_label=ratio_label
+        ),
+    }
+    if layout == "auto":
+        # The widest layout that fits: long grows down, so it is the last resort.
+        table = next((t for t in tables.values() if t.min_width() <= term.width), tables["long"])
+    else:
+        table = tables[layout]
     term.print(table)
     summary = _summary(outcomes, metric=metric, has_direction=higher_is_better is not None)
     term.print(sgr(f"{labels[1]} against {labels[0]}: {summary}", "dim", enabled=term.color))
@@ -344,6 +502,8 @@ def compare(
     literal: bool = False,
     regressions: RegressionConfig | None = None,
     counters: CounterConfig | None = None,
+    layout: str = "auto",
+    speedup: bool = False,
     console: Terminal | None = None,
 ) -> int:
     """Print a table comparing result files against the first one, the baseline.
@@ -380,6 +540,13 @@ def compare(
         Which direction is an improvement per counter, as ``[[tool.mew.counters]]``
         configures it. Without it, only ``items_per_second`` and
         ``bytes_per_second`` have one: higher is better.
+    layout : {"auto", "full", "compact", "long"}, default "auto"
+        ``"full"`` shows each file's value, delta and ratio. ``"compact"`` shows
+        one cell per file, its delta marked ``▲`` or ``▼`` where significant
+        and dim where not. ``"long"`` gives each file its own line under each
+        benchmark. ``"auto"`` picks the first of these that fits the width.
+    speedup : bool, default False
+        In the compact layout, show each file's ratio instead of its delta.
     console : mew.Terminal, optional
         Where to print, stdout by default.
 
@@ -413,6 +580,8 @@ def compare(
             f"{metric}: no direction to gate on\n"
             "hint: add a [[tool.mew.counters]] rule with higher-is-better"
         )
+    if layout not in LAYOUTS:
+        raise ValueError(f"unknown layout {layout!r}\nhint: use {', '.join(LAYOUTS)}")
     name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
 
     if len(files) < 2:
@@ -440,4 +609,6 @@ def compare(
         regressions=regressions,
         console=console,
         higher_is_better=higher_is_better,
+        layout=layout,
+        speedup=speedup,
     )
