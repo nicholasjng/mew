@@ -1,4 +1,4 @@
-"""Dotted paths into context, such as ``vcs.commit``, and matching them by glob.
+"""Dotted paths into result rows, such as ``context.vcs.commit``, and ``--where`` matching.
 
 A dot always nests, as in DuckDB. A key that itself holds a dot is quoted:
 ``context."a.b"``, with ``""`` for a quote inside one.
@@ -8,10 +8,15 @@ from __future__ import annotations
 
 import csv
 import fnmatch
+import json
 from collections.abc import Mapping
 from typing import Any
 
 Path = tuple[str, ...]
+
+
+class NoMatchError(ValueError):
+    """No row matched the ``where`` conditions."""
 
 
 def parse_path(text: str) -> Path:
@@ -52,6 +57,15 @@ def split_assignment(text: str) -> tuple[Path, str]:
     raise ValueError(f"expected <path>=<value>, got {text!r}")
 
 
+def lookup(obj: Any, path: Path) -> tuple[bool, Any]:
+    """The value at ``path`` in nested mappings, and whether there is one."""
+    for key in path:
+        if not isinstance(obj, Mapping) or key not in obj:
+            return False, None
+        obj = obj[key]
+    return True, obj
+
+
 def set_path(obj: dict[str, Any], path: Path, value: Any) -> None:
     """Set ``value`` at ``path``, creating mappings on the way and replacing other values."""
     for key in path[:-1]:
@@ -84,3 +98,30 @@ def matches_glob(path: str, patterns: list[str]) -> int | None:
         if fnmatch.fnmatchcase(path, pattern) or fnmatch.fnmatchcase(path, pattern + ".*"):
             return i
     return None
+
+
+def _as_text(value: Any) -> str | None:
+    """A leaf as ``--where`` matches it: a string as is, other scalars as JSON writes them."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool | int | float) or value is None:
+        return json.dumps(value)
+    return None  # a list or a mapping is not one value
+
+
+Where = list[tuple[Path, str]]
+
+
+def parse_where(where: Mapping[str, str] | None) -> Where:
+    """Parse ``{path: glob}`` conditions, checking each path."""
+    return [(parse_path(path), glob) for path, glob in (where or {}).items()]
+
+
+def row_matches(row: Mapping[str, Any], where: Where) -> bool:
+    """Whether every condition's path holds a value its glob matches."""
+    for path, glob in where:
+        found, value = lookup(row, path)
+        text = _as_text(value) if found else None
+        if text is None or not fnmatch.fnmatchcase(text, glob):
+            return False
+    return True

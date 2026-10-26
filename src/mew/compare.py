@@ -6,7 +6,7 @@ import math
 import re
 import sys
 from collections import Counter
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,7 +25,7 @@ from mew._console import (
     truncate_right,
     warn,
 )
-from mew._paths import flatten, matches_glob
+from mew._paths import flatten, matches_glob, parse_where
 from mew._registry import compile_name_filter
 from mew._results import (
     MEMORY_METRICS,
@@ -548,6 +548,7 @@ def compare(
     layout: str = "auto",
     speedup: bool = False,
     show_context: Sequence[str] = (),
+    where: Mapping[str, str] | None = None,
     console: Terminal | None = None,
 ) -> int:
     """Print a table comparing result files against the first one, the baseline.
@@ -565,7 +566,7 @@ def compare(
         ``compare(["base.json", "head.json"])`` compares head against base. A
         file is one sample: the runs appended to it pool as repetitions,
         with a warning when they differ in machine, interpreter, mew version
-        or commit. To compare one run of an archive, extract it first.
+        or commit. To compare one run of an archive, select it with ``where``.
     metric : str, default "real_time"
         ``"real_time"``, ``"cpu_time"``, or, for results with
         memory figures, ``"memory.peak_bytes"`` or
@@ -595,6 +596,9 @@ def compare(
         Context fields to show above the table, by path or glob, such as
         ``"vcs.commit"`` or ``"jax.*"``. A path selects every field below it.
         Without one, only each file's run name, date and run count show.
+    where : Mapping[str, str], optional
+        Compare only the rows these conditions match in every file, as
+        :func:`read_results` takes them.
     console : mew.Terminal, optional
         Where to print, stdout by default.
 
@@ -607,7 +611,8 @@ def compare(
     Raises
     ------
     ValueError
-        If an argument, such as ``pattern``, is invalid, if a file is not a
+        If an argument, such as ``pattern`` or a ``where`` path, is invalid,
+        if no row of a file matches ``where``, if a file is not a
         mew result file or holds no measurements, or if ``regressions`` gates
         on a counter without a direction.
     OSError
@@ -628,6 +633,7 @@ def compare(
             f"{metric}: no direction to gate on\n"
             "hint: add a [[tool.mew.counters]] rule with higher-is-better"
         )
+    conditions = parse_where(where)
     if layout not in LAYOUTS:
         raise ValueError(f"unknown layout {layout!r}\nhint: use {', '.join(LAYOUTS)}")
     name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
@@ -639,7 +645,7 @@ def compare(
 
     columns = []
     for path in paths:  # the baseline first, as git diff and pyperf take it
-        samples, ctx, skipped = load_column(path, metric)
+        samples, ctx, skipped = load_column(path, metric, conditions)
         columns.append(
             _Column(
                 source=str(path),

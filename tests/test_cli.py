@@ -778,6 +778,74 @@ def test_log_lists_runs_newest_first(mew_cli, tmp_path):
     assert lines[3].startswith("aaaaaaaa") and "before" in lines[3]
 
 
+def _commits(tmp_path):
+    """An archive of a run per commit, with `b` slower on the second."""
+    p = tmp_path / "history.jsonl"
+    _write_jsonl(
+        p,
+        [
+            *(
+                _row("x.py::b", v, date="2026-01-01T00:00:00", run_id="aaaaaaaa-1",
+                     run_name="before", custom={"vcs": {"commit": "abc1"}, "engine": "duck"})
+                for v in (100.0, 101.0)
+            ),
+            *(
+                _row("x.py::b", v, date="2026-02-01T00:00:00", run_id="bbbbbbbb-2",
+                     run_name="after", custom={"vcs": {"commit": "def2"}, "engine": "duck"})
+                for v in (200.0, 201.0)
+            ),
+        ],
+    )  # fmt: skip
+    return p
+
+
+@pytest.mark.parametrize("command", ["log", "show"])
+def test_where_narrows_log_and_show_to_matching_runs(mew_cli, tmp_path, command):
+    """`--where` keeps the rows whose value at a path matches a glob."""
+    p = _commits(tmp_path)
+    res = mew_cli(command, str(p), "--where", "context.vcs.commit=def*", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert ("after" if command == "log" else "200.00 ns") in res.stdout
+    assert ("before" if command == "log" else "100.00 ns") not in res.stdout
+
+
+def test_where_selects_the_rows_compare_pools(mew_cli, tmp_path):
+    """With `--where`, each file pools only its matching runs, without a skew warning."""
+    p = _commits(tmp_path)
+    base = tmp_path / "base.json"  # the condition applies to every file, the baseline too
+    _write_json(base, [_row("x.py::b", v, run_name="after") for v in (100.0, 101.0)])
+    args = ("compare", str(base), str(p), "--where", "run.name=after")
+    res = mew_cli(*args, "--show-context", "engine", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "+99.50%" in res.stdout
+    assert "engine" in res.stdout and "duck" in res.stdout
+    assert "pooled runs differ" not in res.stderr
+
+
+@pytest.mark.parametrize(
+    ("value", "code", "message"),
+    [
+        ("run.name=nope", 1, "no rows match run.name=nope"),
+        ("vcs.commit=abc1", 1, "hint: paths start at the row, such as context.vcs.commit"),
+        ("run..name=x", 2, "empty key in path"),
+        ("run.name", 2, "expected <path>=<value>"),
+    ],
+)
+def test_where_without_matches_or_with_a_bad_path_fails(mew_cli, tmp_path, value, code, message):
+    """No matching row exits 1, as `-k` matching nothing does. A malformed condition exits 2."""
+    res = mew_cli("log", str(_commits(tmp_path)), "--where", value, cwd=tmp_path)
+    assert res.returncode == code
+    assert message in res.stderr
+
+
+def test_where_given_twice_for_a_path_is_a_usage_error(mew_cli, tmp_path):
+    """A second `--where` for a path exits 2, rather than replacing the first one unseen."""
+    p = str(_commits(tmp_path))
+    res = mew_cli("log", p, "--where", "run.name=a", "--where", "run.name=b", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "--where: run.name given twice" in res.stderr
+
+
 def test_log_ids_tell_runs_from_the_same_minute_apart(mew_cli, tmp_path):
     """UUIDv7s of runs from the same minute share 8 digits, so `mew log` shows enough to tell
     them apart, without ending on a hyphen."""

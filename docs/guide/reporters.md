@@ -38,7 +38,8 @@ An exception from one stops the run, and `finalize()` still reaches every one.
 
 {func}`mew.compare.read_results` returns every stored row of a JSON, JSONL, or
 gzip-compressed result file. {func}`mew.compare.run_summaries`
-lists the runs a file holds, newest first (what `mew log` prints).
+lists the runs a file holds, newest first (what `mew log` prints). Both take
+`where`, the same conditions as [`--where`](regressions.md#select-rows), by path.
 
 ```python
 from statistics import median
@@ -47,12 +48,28 @@ from mew.compare import read_results, run_summaries
 
 newest = run_summaries("results.jsonl")[0]
 rows = [
-    r for r in read_results("results.jsonl")
-    if r["run"]["id"] == newest.id and r["skip"] is None
+    r for r in read_results("results.jsonl", where={"run.id": newest.id})
+    if r["skip"] is None
 ]
 for name in sorted({r["name"] for r in rows}):
     print(name, median(r["real_time"] for r in rows if r["name"] == name))
 ```
+
+To compare two runs of one archive, write each to its own file:
+
+```python
+import json
+
+from mew.compare import read_results
+
+for name in ("before", "after"):
+    with open(f"{name}.jsonl", "w") as f:
+        for row in read_results("history.jsonl.gz", where={"run.name": name}):
+            f.write(json.dumps(row) + "\n")
+```
+
+Then run `mew compare before.jsonl after.jsonl`. A glob selects a run by its
+id's prefix, as `mew log` shows it: `where={"run.id": "01a0c787*"}`.
 
 For anything beyond a few lines of Python, query the file directly; see the
 recipes below.

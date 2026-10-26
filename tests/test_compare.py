@@ -897,3 +897,53 @@ def test_context_pattern_matching_nothing_warns(tmp_path: Path, capsys) -> None:
     files = [_ctx_file(tmp_path, n, engine=n) for n in "ab"]
     compare(files, show_context=["engin"], console=Console(width=200))
     assert "mew: warning: no context field matches 'engin'" in capsys.readouterr().err
+
+
+def _history(tmp_path: Path) -> Path:
+    """An archive of two runs on two commits, the second with a slower `b`."""
+    p = tmp_path / "history.jsonl"
+    _write_jsonl(
+        p,
+        [
+            *(
+                _row("b", v, run_id="r1", run_name="before", custom={"vcs": {"commit": "abc1"}})
+                for v in (100.0, 101.0)
+            ),
+            *(
+                _row("b", v, run_id="r2", run_name="after", custom={"vcs": {"commit": "def2"}})
+                for v in (200.0, 201.0)
+            ),
+        ],
+    )
+    return p
+
+
+def test_where_selects_rows_by_path(tmp_path: Path) -> None:
+    """`where` keeps the rows whose value at each path matches its glob."""
+    p = _history(tmp_path)
+    assert {r["run"]["id"] for r in read_results(p, where={"context.vcs.commit": "abc*"})} == {"r1"}
+    assert [s.name for s in run_summaries(p, where={"run.name": "after"})] == ["after"]
+    assert len(read_results(p, where={"run.name": "*", "name": "b"})) == 4
+
+
+def test_where_compares_runs_of_one_archive(tmp_path: Path) -> None:
+    """An archive's runs compare against each other once `where` picks one per file."""
+    p = _history(tmp_path)
+    before, after = tmp_path / "before.jsonl", tmp_path / "after.jsonl"
+    before.write_text(
+        "".join(json.dumps(r) + "\n" for r in read_results(p, where={"run.name": "before"}))
+    )
+    after.write_text(
+        "".join(json.dumps(r) + "\n" for r in read_results(p, where={"run.name": "after"}))
+    )
+    console = Console(width=200)
+    compare([before, after], console=console)
+    assert "+99.50%" in console.export_text()
+
+
+def test_where_matching_no_row_raises(tmp_path: Path) -> None:
+    """A file none of whose rows match says which conditions matched nothing."""
+    from mew._paths import NoMatchError
+
+    with pytest.raises(NoMatchError, match=r"history.jsonl: no rows match run.name=nope"):
+        read_results(_history(tmp_path), where={"run.name": "nope"})

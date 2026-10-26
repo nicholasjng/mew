@@ -100,10 +100,31 @@ mew versions or commits would mix environments, so `mew compare` warns when the
 pooled runs differ in them, and each file's context line says how many runs it
 pooled.
 
-To compare runs against each other, write each to its own file. To pull one
-run out of a growing archive, extract it first, e.g. by its `--run-name`; for
-that and anything richer than "this file against that one", query the archive
-directly: see [](reporters.md#sql-and-dataframe-recipes).
+To compare runs against each other, write each to its own file. To pull runs
+out of a growing archive, select them with [`--where`](#select-rows) or extract
+them with `read_results()`, as in [](reporters.md#reading-results-back); for
+anything richer than "this file against that one", query the archive directly:
+see [](reporters.md#sql-and-dataframe-recipes).
+
+(select-rows)=
+### Select rows
+
+`mew log`, `mew show`, and `mew compare` take `--where <path>=<glob>` to keep
+only the rows whose value at a path matches a glob:
+
+```console
+$ mew log history.jsonl.gz --where run.name=nightly
+$ mew show history.jsonl.gz --where 'context.vcs.commit=abc12*'
+$ mew compare base.jsonl head.jsonl --where context.python.version='3.15.*'
+```
+
+Paths start at the row: `run.name`, `context.vcs.commit`, or `params.n`. A dot
+nests, and a key that holds a dot is quoted, as in DuckDB: `context."a.b"`. A
+string matches as it is, and a number, boolean, or null as JSON writes it, such
+as `true`. A missing path, a list, or a table matches nothing. Repeat `--where`
+for conditions that must all hold. In `mew compare`, the conditions apply to
+every file, and only the matching runs pool. No matching row in a file exits
+with code 1.
 
 ## Gating CI
 

@@ -110,6 +110,10 @@ releases may break the API.
 - `mew run --context <path>=<value>` records a string in one run's context, over
   the setup file's `context()`. A dot nests into the hook's tables, as in DuckDB,
   and a quoted key keeps its dots: `--context '"a.b"=1'`.
+- `mew log`, `mew show` and `mew compare` take `--where <path>=<glob>` to keep
+  the rows whose value at a path, such as `context.vcs.commit` or `run.name`,
+  matches a glob. `read_results()`, `run_summaries()` and `compare()` take the
+  same conditions as `where=`. No matching row exits 1.
 - `mew compare --show-context <path>` shows context fields, by path or glob,
   above the table.
 - Rows carry `params`, a family case's parameters; values JSON can't represent
