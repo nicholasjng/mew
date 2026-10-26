@@ -550,7 +550,7 @@ class TachyonManager(ProfilerManager, PausableProfiler):
                 now = time.perf_counter()
                 next_sample = max(next_sample + self._interval, now)
                 time.sleep(next_sample - now)
-        except BaseException as e:
+        except BaseException as e:  # ruff: ignore[BLE001]
             self._error = e
 
     def before_teardown_stop(self) -> None:

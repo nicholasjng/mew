@@ -119,7 +119,7 @@ def _rows_from_json(path: Path) -> list[dict[str, Any]]:
         raise ValueError(f"{path}: invalid JSON: {e}") from e
     rows = doc.get("benchmarks") if isinstance(doc, dict) else None
     if not isinstance(rows, list):
-        raise ValueError(f"{path}: missing 'benchmarks' array")
+        raise ValueError(f"{path}: missing 'benchmarks' array")  # ruff: ignore[TRY004]
     for i, row in enumerate(rows):
         _check_row(row, f"{path}: benchmarks[{i}]")
     return rows
