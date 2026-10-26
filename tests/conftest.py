@@ -1,4 +1,4 @@
-"""Shared fixtures. Globals (REGISTRY, context) reset between tests."""
+"""Shared fixtures and session checks."""
 
 from __future__ import annotations
 
@@ -9,14 +9,37 @@ import pytest
 
 from mew._registry import REGISTRY
 from mew.context import clear_context
-from mew.machine import gil_enabled
+from mew.machine import gil_enabled, is_free_threaded_build
 
-if sys.version_info >= (3, 15):
-    from mew.cpu import _unwinder
 
-    # Attach before any memray test runs in this worker: on macOS, Tachyon can't
-    # attach to a process memray has tracked. mew.cpu keeps this unwinder.
-    _unwinder(os.getpid())
+def _require_gil_disabled(when: str) -> None:
+    if is_free_threaded_build() and gil_enabled():
+        pytest.exit(
+            f"Free-threaded Python has the GIL enabled ({when})",
+            returncode=pytest.ExitCode.TESTS_FAILED,
+        )
+
+
+def pytest_sessionstart() -> None:
+    _require_gil_disabled("before collection")
+    if sys.version_info >= (3, 15):
+        from mew.cpu import _unwinder
+
+        # Attach before any Memray test runs because Tachyon cannot attach after Memray has tracked the process on macOS.
+        # mew.cpu keeps this unwinder.
+        _unwinder(os.getpid())
+
+
+def pytest_collection_finish() -> None:
+    _require_gil_disabled("after collection")
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_protocol(item: pytest.Item):
+    _require_gil_disabled(f"before {item.nodeid}")
+    result = yield
+    _require_gil_disabled(f"after {item.nodeid}")
+    return result
 
 
 @pytest.fixture(autouse=True)
@@ -26,12 +49,3 @@ def _clean_globals():
     yield
     REGISTRY.clear()
     clear_context()
-
-
-@pytest.fixture(autouse=True)
-def _gil_stays_disabled():
-    """Fail the test that enables the GIL (for example by importing pyinstrument),
-    rather than the threaded tests that later skip in the same worker."""
-    enabled = gil_enabled()
-    yield
-    assert enabled or not gil_enabled(), "this test enabled the GIL"

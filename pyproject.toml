@@ -63,7 +63,6 @@ duckdb = ["duckdb>=1.5"]
 test = [
     "numpy>=2.4.6",
     "pytest >=8",
-    "pytest-xdist>=3.8.0",
 ]
 
 [tool.uv]

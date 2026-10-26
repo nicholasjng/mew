@@ -68,7 +68,7 @@ jobs:
         run: uv sync --all-extras --group test --group duckdb
 
       - name: Run tests
-        run: uv run --no-sync pytest -n auto
+        run: uv run --no-sync pytest
 
   free-threaded:
     name: free-threaded · py${{ matrix.python-version }}
@@ -92,18 +92,8 @@ jobs:
       - name: Install project and its dependencies
         run: uv sync --all-extras --group test
 
-      - name: Assert the GIL stays disabled after import
-        run: |
-          uv run --no-sync python - <<'PY'
-          import sys
-          assert not sys._is_gil_enabled(), "interpreter is not free-threaded"
-          import mew._core
-          assert not sys._is_gil_enabled(), "importing mew._core re-enabled the GIL"
-          print("OK: GIL disabled after `import mew._core`")
-          PY
-
       - name: Run tests
-        run: uv run --no-sync pytest -n auto
+        run: uv run --no-sync pytest
 
   docs:
     name: docs · sphinx
