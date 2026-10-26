@@ -251,11 +251,13 @@ class Table:
         lines: list[str] = []
         if self.title:
             lines.append(sgr(self.title, "bold", enabled=color))
-        header = COL_SEP.join(
-            sgr(_format_cell(h, w, j, False), "bold", enabled=color)
+        cells = [
+            _format_cell(h, w, j, False)
             for h, w, j in zip(self._headers, widths, self._justify, strict=True)
-        )
-        lines.append(header)
+        ]
+        # Padding sits outside a cell's styling, so trailing padding strips from any line.
+        cells[-1] = cells[-1].rstrip(" ")
+        lines.append(COL_SEP.join(sgr(c, "bold", enabled=color) for c in cells))
         lines.append(
             sgr("─" * (sum(widths) + (len(widths) - 1) * len(COL_SEP)), "dim", enabled=color)
         )
@@ -263,7 +265,7 @@ class Table:
             COL_SEP.join(
                 _format_cell(c, w, j, color)
                 for c, w, j in zip(row, widths, self._justify, strict=True)
-            )
+            ).rstrip(" ")
             for row in self._rows
         )
         return lines
