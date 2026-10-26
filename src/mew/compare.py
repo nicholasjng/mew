@@ -7,6 +7,7 @@ import json
 import math
 import re
 import sys
+from collections import Counter
 from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
@@ -399,7 +400,7 @@ def compare(
     if len(files) < 2:
         raise ValueError(f"expected at least two result files, got {len(files)}")
     parsed = [split_selector(str(p)) for p in files]
-    stems = [p.stem for p, _ in parsed]
+    stems = Counter(p.stem for p, _ in parsed)
     # CLI convention: the last file is the baseline ("compare head against
     # baseline"), while `_render` expects columns[0] to be the baseline.
     ordered = [parsed[-1], *parsed[:-1]]
@@ -410,7 +411,7 @@ def compare(
     for path, selector in ordered:
         samples, ctx = load_column(path, metric, key, selector, statistic, reader=read_once)
         # Files that share a stem are told apart by their full path.
-        base = str(path) if stems.count(path.stem) > 1 else path.stem
+        base = str(path) if stems[path.stem] > 1 else path.stem
         label = f"{base}@{selector}" if selector else base
         columns.append(
             _Column(

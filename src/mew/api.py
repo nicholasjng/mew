@@ -6,6 +6,7 @@ import inspect
 import itertools
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
+from functools import wraps
 from pathlib import Path
 from typing import Any, Unpack, overload
 
@@ -206,16 +207,13 @@ def _register_family(
         )
 
     # The runner registers each case on its own, its index as the arg (`state.range(0)`).
+    @wraps(target)
     def trampoline(state, _fn=target, _cases=cases, _labels=labels):
         idx = state.range(0)
         # A default the body may override; the registered name carries the case.
         state.set_label(_labels[idx])
         return _fn(state, **_cases[idx])
 
-    trampoline.__module__ = target.__module__
-    trampoline.__doc__ = target.__doc__
-    trampoline.__name__ = target.__name__
-    trampoline.__qualname__ = target.__qualname__
     return _register(target, trampoline, name=name, options=options, tags=tags, case_labels=labels)
 
 
@@ -371,9 +369,11 @@ def product(
     )
 
     norm_tags = _normalize_tags(tags)
-    keys = list(iterables.keys())
-    value_lists = [list(v) for v in iterables.values()]
-    cases = [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*value_lists)]
+    keys = tuple(iterables)
+    # itertools.product snapshots each axis, including generators.
+    cases = [
+        dict(zip(keys, combo, strict=True)) for combo in itertools.product(*iterables.values())
+    ]
     return lambda target: _register_family(
         target, cases, name=name, ids=ids, options=options, tags=norm_tags
     )

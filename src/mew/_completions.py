@@ -48,17 +48,17 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
     sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
     help_by_name = {ca.dest: (ca.help or "") for ca in sub._choices_actions}
     # Group by parser identity: argparse stores aliases as extra keys → same parser.
-    grouped: dict[int, _Cmd] = {}
+    grouped: dict[argparse.ArgumentParser, _Cmd] = {}
     # The isinstance narrowing leaves _SubParsersAction unparameterized, so its
     # choices values type as `object`.
     choices = cast(dict[str, argparse.ArgumentParser], sub.choices)
     for name, subp in choices.items():
-        key = id(subp)
-        if key not in grouped:
-            grouped[key] = _Cmd(names=[], help=help_by_name.get(name, ""))
+        if subp not in grouped:
+            cmd = _Cmd(names=[], help=help_by_name.get(name, ""))
+            grouped[subp] = cmd
             for a in subp._actions:
                 if a.option_strings:
-                    grouped[key].opts.append(
+                    cmd.opts.append(
                         _Opt(
                             list(a.option_strings),
                             # Raw help keeps argparse's %-escapes.
@@ -69,8 +69,8 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
                         )
                     )
                 else:
-                    grouped[key].positional = _value_kind(a)
-        grouped[key].names.append(name)
+                    cmd.positional = _value_kind(a)
+        grouped[subp].names.append(name)
     return list(grouped.values())
 
 

@@ -5,7 +5,9 @@ from __future__ import annotations
 import contextlib
 import importlib
 import inspect
+import subprocess
 import sys
+import textwrap
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -88,6 +90,53 @@ def _register_noop(**options: Any) -> None:
 
 
 # --- manager registration and the Run stamp ----------------------------------
+
+
+def test_registered_managers_are_released_before_interpreter_teardown():
+    """Low-level registrations are released at exit, even without a mew.run() call."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent("""\
+                import atexit
+                import gc
+                import sys
+                import weakref
+
+                refs = []
+
+                def verify_cleanup():
+                    gc.collect()
+                    assert not sys.is_finalizing()
+                    assert all(ref() is None for ref in refs)
+                    print("managers released")
+
+                # Runs after mew's cleanup: atexit calls handlers in reverse order.
+                atexit.register(verify_cleanup)
+
+                from mew import _core
+
+                class Manager:
+                    pass
+
+                for register in (
+                    _core.register_memory_manager,
+                    _core.register_profiler_manager,
+                ):
+                    manager = Manager()
+                    refs.append(weakref.ref(manager))
+                    register(manager)
+                    del manager
+                """),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "managers released\n", result.stderr
+    assert result.stderr == ""
 
 
 def test_registering_a_manager_replaces_the_previous_one():

@@ -14,24 +14,6 @@ from typing import Any
 _CONTEXT: dict[str, Any] = {}
 
 
-def _set_nested(key: str, value: Any) -> None:
-    if not isinstance(key, str) or not key:
-        raise ValueError(f"context key must be a non-empty string, got {key!r}")
-    parts = key.split(".")
-    if any(not p for p in parts):
-        raise ValueError(f"context key has empty path segment: {key!r}")
-    cur: dict[str, Any] = _CONTEXT
-    for part in parts[:-1]:
-        # The last write wins, so a non-dict value on the path, None included,
-        # gives way to a dict.
-        if not isinstance(cur.get(part), dict):
-            cur[part] = {}
-        cur = cur[part]
-    # A copy, so neither the caller's later changes nor a later dotted write
-    # under this key reach the other side.
-    cur[parts[-1]] = copy.deepcopy(value)
-
-
 def set_context(key: str, value: Any) -> None:
     """Set one context value.
 
@@ -53,7 +35,21 @@ def set_context(key: str, value: Any) -> None:
     ValueError
         If ``key`` is empty or has an empty path segment.
     """
-    _set_nested(key, value)
+    if not isinstance(key, str) or not key:
+        raise ValueError(f"context key must be a non-empty string, got {key!r}")
+    parts = key.split(".")
+    if any(not p for p in parts):
+        raise ValueError(f"context key has empty path segment: {key!r}")
+    cur: dict[str, Any] = _CONTEXT
+    for part in parts[:-1]:
+        # The last write wins, so a non-dict value on the path, None included,
+        # gives way to a dict.
+        if not isinstance(cur.get(part), dict):
+            cur[part] = {}
+        cur = cur[part]
+    # A copy, so neither the caller's later changes nor a later dotted write
+    # under this key reach the other side.
+    cur[parts[-1]] = copy.deepcopy(value)
 
 
 def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
@@ -76,7 +72,7 @@ def update_context(*mapping: dict[str, Any], **kwargs: Any) -> None:
     """
     for m in (*mapping, kwargs):
         for k, v in m.items():
-            _set_nested(k, v)
+            set_context(k, v)
 
 
 def get_context() -> dict[str, Any]:

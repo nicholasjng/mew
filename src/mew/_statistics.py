@@ -6,6 +6,7 @@ import math
 import re
 import statistics
 from collections.abc import Callable
+from itertools import groupby
 from typing import SupportsFloat
 
 # Any float-castable result, e.g. a numpy scalar; callers convert it with float().
@@ -64,22 +65,18 @@ def _average_ranks(values: list[float]) -> tuple[list[float], float]:
     Returns ``(ranks, tie_term)``: ``tie_term`` is ``sum(t**3 - t)`` per tie
     group of size ``t``, the variance correction term.
     """
-    order = sorted(range(len(values)), key=lambda i: values[i])
+    order = sorted(range(len(values)), key=values.__getitem__)
     ranks = [0.0] * len(values)
     tie_term = 0.0
-    n = len(values)
-    i = 0
-    while i < n:
-        j = i
-        while j + 1 < n and values[order[j + 1]] == values[order[i]]:
-            j += 1
-        avg_rank = (i + j) / 2 + 1
-        for k in range(i, j + 1):
-            ranks[order[k]] = avg_rank
-        t = j - i + 1
-        if t > 1:
-            tie_term += t**3 - t
-        i = j + 1
+    next_rank = 1
+    for _, group in groupby(order, key=values.__getitem__):
+        tied = list(group)
+        count = len(tied)
+        avg_rank = next_rank + (count - 1) / 2
+        for i in tied:
+            ranks[i] = avg_rank
+        tie_term += count**3 - count
+        next_rank += count
     return ranks, tie_term
 
 

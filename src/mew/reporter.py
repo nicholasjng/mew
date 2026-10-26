@@ -123,19 +123,13 @@ def _indent_block(text: str, spaces: int) -> str:
     return text.replace("\n", "\n" + " " * spaces)
 
 
-def _open_sink(output: Path | TextIO | None, mode: str = "w") -> tuple[TextIO, bool]:
-    """Resolve ``output`` to a stream and an ownership flag."""
+def _open_sink(
+    output: Path | TextIO | None, mode: str = "w"
+) -> contextlib.AbstractContextManager[TextIO]:
+    """Close paths after the run, while leaving caller-owned streams open."""
     if isinstance(output, Path):
-        return open_text(output, mode), True
-    if output is None:
-        return sys.stdout, False
-    return output, False
-
-
-def _close_sink(fh: TextIO | None, owns_fh: bool) -> None:
-    """Close ``fh`` only if this reporter opened it."""
-    if owns_fh and fh is not None:
-        fh.close()
+        return open_text(output, mode)
+    return contextlib.nullcontext(sys.stdout if output is None else output)
 
 
 class JSONReporter(Reporter):
@@ -156,12 +150,12 @@ class JSONReporter(Reporter):
     def __init__(self, *, output: Path | TextIO | None = None) -> None:
         self._output = output
         self._fh: TextIO | None = None
-        self._owns_fh = False
+        self._stack = contextlib.ExitStack()
         self._first_row = True
         self._stamp: dict[str, Any] = {}
 
     def report_context(self, context: dict[str, Any]) -> None:
-        self._fh, self._owns_fh = _open_sink(self._output)
+        self._fh = self._stack.enter_context(_open_sink(self._output))
         # Reset comma state when the reporter is reused.
         self._first_row = True
         self._stamp = {k: context[k] for k in ROW_STAMP_FIELDS if k in context}
@@ -184,12 +178,13 @@ class JSONReporter(Reporter):
 
     def finalize(self) -> None:
         """Close the JSON document, and the output file if this reporter opened it."""
-        if self._fh is not None:
-            self._fh.write(_JSON_CLOSER)
-            self._fh.flush()
-        _close_sink(self._fh, self._owns_fh)
-        self._fh = None
-        self._owns_fh = False
+        try:
+            if self._fh is not None:
+                self._fh.write(_JSON_CLOSER)
+                self._fh.flush()
+        finally:
+            self._fh = None
+            self._stack.close()
 
 
 class JSONLReporter(Reporter):
@@ -217,11 +212,11 @@ class JSONLReporter(Reporter):
         self._output = output
         self._append = append
         self._fh: TextIO | None = None
-        self._owns_fh = False
+        self._stack = contextlib.ExitStack()
         self._stamp: dict[str, Any] = {}
 
     def report_context(self, context: dict[str, Any]) -> None:
-        self._fh, self._owns_fh = _open_sink(self._output, "a" if self._append else "w")
+        self._fh = self._stack.enter_context(_open_sink(self._output, "a" if self._append else "w"))
         self._stamp = {k: context[k] for k in ROW_STAMP_FIELDS if k in context}
 
     def report_runs(self, runs: list[BenchmarkResult]) -> None:
@@ -233,9 +228,8 @@ class JSONLReporter(Reporter):
 
     def finalize(self) -> None:
         """Close the output file if this reporter opened it."""
-        _close_sink(self._fh, self._owns_fh)
         self._fh = None
-        self._owns_fh = False
+        self._stack.close()
 
 
 class RichReporter(Reporter):

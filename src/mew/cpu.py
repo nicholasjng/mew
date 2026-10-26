@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from collections import Counter, defaultdict
+from heapq import nlargest
 from importlib.util import find_spec
 from math import isfinite
 from pathlib import Path
@@ -283,7 +284,7 @@ def _hottest_frame(root: Frame) -> TopFunction | None:
     N times. Synthetic ``[self]`` frames are skipped; their parent already counts
     them. Its ``line`` stays ``None``: pyinstrument's is the ``def`` line.
     """
-    totals: dict[tuple[str, str | None, int | None], float] = {}
+    totals: defaultdict[tuple[str, str | None, int | None], float] = defaultdict(float)
     stack = [root]
     while stack:
         f = stack.pop()
@@ -293,7 +294,7 @@ def _hottest_frame(root: Frame) -> TopFunction | None:
             continue
         # The def line keeps apart same-named functions in one file.
         key = (f.function, path.name if path is not None else None, f.line_no)
-        totals[key] = totals.get(key, 0.0) + f.total_self_time
+        totals[key] += f.total_self_time
     if not totals:
         return None
     (function, file_name, _), self_time = max(totals.items(), key=lambda kv: kv[1])
@@ -416,7 +417,7 @@ def _summarize_instructions(
     if not instructions or not total or (tables := _opcode_tables()) is None:
         return [], None
     names, generic = tables
-    hottest = sorted(instructions.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
+    hottest = nlargest(top_k, instructions.items(), key=lambda kv: kv[1])
     unspecialized = sum(t for (_, _, op), t in instructions.items() if op in generic)
     top: list[TopInstruction] = [
         {

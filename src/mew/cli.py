@@ -516,10 +516,10 @@ def _min_time(value: str) -> str:
 def _positive_int(value: str) -> int:
     try:
         parsed = int(value)
+        if parsed < 1:
+            raise ValueError
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}") from None
-    if parsed < 1:
-        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
     return parsed
 
 
