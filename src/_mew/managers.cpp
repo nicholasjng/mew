@@ -29,20 +29,14 @@ class PyManager {
    public:
     explicit PyManager(nb::object obj) : py_(std::move(obj)) {}
     virtual ~PyManager() {
-        // Static destruction after Py_Finalize: leak rather than touch the interpreter.
-        if (!Py_IsInitialized()) {
-            py_.release();
-            return;
-        }
         nb::gil_scoped_acquire gil;
         py_.reset();
     }
 
    protected:
-    template <typename... Args>
-    nb::object call(const char* name, Args&&... args) {
+    nb::object call(const char* name) {
         try {
-            return py_.attr(name)(std::forward<Args>(args)...);
+            return py_.attr(name)();
         } catch (...) {
             mew_set_pending_abort(std::current_exception());
             return nb::none();
@@ -164,7 +158,8 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
     bool paused_ = false;
 };
 
-// GB holds raw pointers to these for the length of the run.
+// GB holds raw pointers; Python's exit hooks unregister any managers left behind
+// by low-level callers, releasing these owners before interpreter teardown.
 std::unique_ptr<PyMemoryManager> g_memory;
 std::unique_ptr<PyProfilerManager> g_profiler;
 

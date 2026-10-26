@@ -5,8 +5,8 @@
 #include <nanobind/stl/string.h>
 
 #include <exception>
-#include <memory>
 #include <string>
+#include <utility>
 
 #include "abort.h"
 
@@ -48,9 +48,8 @@ void register_registry(nb::module_& m) {
     m.def(
         "register_benchmark",
         [](const std::string& name, nb::callable fn) -> benchmark::Benchmark* {
-            // GB stores a copyable std::function, so share the callable.
-            auto holder = std::make_shared<nb::callable>(std::move(fn));
-            return benchmark::RegisterBenchmark(name, [holder](benchmark::State& s) {
+            // GB owns the lambda until clear_registered_benchmarks().
+            return benchmark::RegisterBenchmark(name, [fn = std::move(fn)](benchmark::State& s) {
                 // Avoid Python calls while an abort is pending.
                 if (mew_abort_pending()) {
                     s.SkipWithError("aborted");
@@ -58,7 +57,7 @@ void register_registry(nb::module_& m) {
                 }
                 nb::gil_scoped_acquire gil;
                 try {
-                    (*holder)(nb::cast(&s, nb::rv_policy::reference));
+                    fn(nb::cast(&s, nb::rv_policy::reference));
                     // A return or break in the final iteration leaves the timer
                     // running with a complete iteration count, which GB would
                     // report as a near-zero time.
