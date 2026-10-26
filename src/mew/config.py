@@ -154,7 +154,7 @@ def _parse_config(raw: Mapping[str, Any], *, project_root: Path) -> Config:
 def _parse_regressions(raw: Any) -> RegressionConfig:
     """Validate the ``[tool.mew.regressions]`` table into a :class:`RegressionConfig`."""
     if not isinstance(raw, dict):
-        raise ValueError("[tool.mew.regressions] must be a table")
+        raise ValueError("[tool.mew.regressions] must be a table")  # ruff: ignore[TRY004]
     table = _read_table(raw, ("default-threshold", "allow"), "[tool.mew.regressions]")
     allow = table.get("allow", [])
     if not isinstance(allow, list) or not all(isinstance(r, dict) for r in allow):
