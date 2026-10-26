@@ -1,7 +1,8 @@
 # Registry
 
 The registry is the process-global collection of registered benchmarks.
-Decorators add to it; the runner reads from it.
+Decorators add to it.
+The runner reads from it.
 
 ```{eval-rst}
 .. currentmodule:: mew

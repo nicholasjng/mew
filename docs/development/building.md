@@ -26,9 +26,7 @@ Configure the stable developer tree for C++ language servers:
 $ uv run --no-sync python scripts/configure-clangd.py
 ```
 
-This copies `build/clangd/compile_commands.json` to the repository root. Its
-nanobind paths refer to the project environment rather than a temporary build
-environment.
+This copies `build/clangd/compile_commands.json` to the repository root.
 
 ## Rebuilding after a C++ change
 
@@ -36,22 +34,22 @@ environment.
 $ uv sync --reinstall-package=mew-bench  # editable install picks up the rebuilt .so
 ```
 
-To check that the C++ compiles without reinstalling, build the stable developer
-tree directly. The editable install does not load this tree's extension, so run
-the `uv sync` above before testing:
+To check that the C++ compiles without reinstalling, build the stable developer tree directly.
+The editable install does not load this tree's extension, so run the `uv sync` above before testing:
 
 ```console
 $ cmake --build build/clangd
 ```
 
-The normal build generates `_core.pyi` in the build tree, while installs use the
-checked-in, formatted copy. After changing the native API, refresh that copy explicitly:
+The normal build generates `_core.pyi` in the build tree, while installs use the checked-in, formatted copy.
+After changing the native API, refresh that copy explicitly:
 
 ```console
 $ cmake --build build/clangd --target update_mew_core_stub
 ```
 
-CI verifies that the generated and checked-in files match. Run the same check locally with:
+CI verifies that the generated and checked-in files match.
+Run the same check locally with:
 
 ```console
 $ cmake --build build/clangd --target check_mew_core_stub
@@ -59,8 +57,7 @@ $ cmake --build build/clangd --target check_mew_core_stub
 
 ## Rebuilding after a dependency bump
 
-After bumping a native dependency (for example, nanobind), clean `build/`:
-Ninja can retain objects compiled against older headers.
+After bumping a native dependency (for example, nanobind), clean `build/`: Ninja can retain objects compiled against older headers.
 
 ```console
 $ rm -rf build/
@@ -69,18 +66,16 @@ $ uv sync --reinstall-package=nanobind --reinstall-package=mew-bench
 
 ## Building without network access
 
-A build fetches Google Benchmark from GitHub at the commit pinned in
-`CMakeLists.txt` and applies the patches in `patches/`. To build offline, as for
-a distribution's package, point CMake at a copy of that commit's source with the
-patches applied in order:
+A build fetches Google Benchmark from GitHub at the commit pinned in `CMakeLists.txt` and applies the patches in `patches/`.
+To build offline, as for a distribution's package, point CMake at a copy of that commit's source with the patches applied in order:
 
 ```console
 $ git -C /path/to/benchmark apply "$PWD"/patches/*.patch
 $ CMAKE_ARGS="-DFETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK=/path/to/benchmark" pip install .
 ```
 
-CMake uses that tree as it is and doesn't patch it, so the build checks that the
-patches are there and stops if they're not; mew depends on them.
+CMake uses that tree as it is and doesn't patch it, so the build checks that the patches are there and stops if they're not.
+mew depends on them.
 
 ## Test, lint, type-check
 
@@ -89,44 +84,20 @@ $ uv run pytest tests/ -q
 $ uvx prek run --all-files
 ```
 
-These steps run in CI (`.github/workflows/ci.yml`) on Python 3.11–3.15 on Linux, and on
-3.11 and 3.15 on macOS and Windows. The ASAN build below runs in
-`.github/workflows/asan.yml` when native code or its build changes, and weekly.
-
-## AddressSanitizer
-
-Build a separate ASAN wheel (lands in `build/asan/`, leaving the Release wheel
-alone; `uv sync --all-groups --reinstall-package=mew-bench` without `MEW_ASAN`
-swaps the editable install back to Release):
-
-```console
-$ MEW_ASAN=1 uv sync --all-groups --reinstall-package=mew-bench
-```
-
-`uv run pytest` alone does *not* preload the ASAN runtime, so the test process
-aborts at the first import of an ASAN-built extension. Preload it and `libstdc++`
-explicitly, invoking the venv's python directly rather than through `uv run`:
-
-```bash
-LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libstdc++.so)" \
-    ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" .venv/bin/python -m pytest --capture no
-
-# for macOS, there's a wrapper script to work around SIP.
-scripts/sanitizer-pytest.sh asan
-```
+These steps run in CI (`.github/workflows/ci.yml`) on Python 3.11–3.15 on Linux, and on 3.11 and 3.15 on macOS and Windows.
+The ASAN and UBSAN [sanitizer builds](sanitizers.md) run in `.github/workflows/asan.yml` and `ubsan.yml` when native code or its build changes, and weekly.
+The TSAN build in `tsan.yml` runs weekly.
 
 ## Free-threaded (3.14t+) build
 
 Free-threaded Python builds a version-specific extension.
-Use `.venv-ft` to keep it separate from the normal environment.
-
-Build a separate free-threaded editable install in `.venv-ft` so it doesn't
-clobber the default `.venv`:
+Build a separate free-threaded editable install in `.venv-ft` so it doesn't clobber the default `.venv`:
 
 ```console
-# duckdb does not ship wheels with free-threading support yet.
-$ UV_PROJECT_ENVIRONMENT=.venv-ft uv sync --python 3.14t --all-extras --all-groups --no-install-package duckdb
+$ UV_PROJECT_ENVIRONMENT=.venv-ft uv sync --python 3.14t --all-extras --group test
 ```
+
+The optional `duckdb` dependency group is for GIL builds, so omit it when testing free-threaded Python.
 
 Confirm the GIL stays disabled after importing the extension:
 
@@ -134,33 +105,11 @@ Confirm the GIL stays disabled after importing the extension:
 $ .venv-ft/bin/python -c "import sys, mew._core; assert not sys._is_gil_enabled()"
 ```
 
-Threaded benchmarks (the `threads` option) only run here; on a GIL
-interpreter, mew skips them with a warning to avoid deadlocking on Google Benchmark's start barrier.
+Threaded benchmarks (the `threads` option) only run here.
+On a GIL interpreter, mew skips them with a warning to avoid deadlocking on Google Benchmark's start barrier.
 
 ```console
-$ UV_PROJECT_ENVIRONMENT=.venv-ft uv run pytest
-```
-
-## ThreadSanitizer
-
-Once threaded-mode benchmarks are in play, a TSAN build smokes out data races
-the ASAN build can't see. It mirrors the ASAN flow (lands in `build/tsan/`, and
-is mutually exclusive with ASAN):
-
-```console
-$ MEW_TSAN=1 uv sync --all-extras --all-groups --no-install-package duckdb --reinstall-package=mew-bench
-```
-
-Preload the TSAN runtime when running, the same way ASAN needs preloading
-(`gcc -print-file-name=libtsan.so` on Linux);
-on macOS, there's a wrapper script that handles the SIP workaround:
-
-```bash
-LD_PRELOAD="$(gcc -print-file-name=libtsan.so) $(gcc -print-file-name=libstdc++.so)" \
-    TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0" .venv/bin/python -m pytest --capture no
-
-# macOS
-scripts/sanitizer-pytest.sh tsan
+$ UV_PROJECT_ENVIRONMENT=.venv-ft uv run --no-sync pytest
 ```
 
 ## Building the documentation locally
