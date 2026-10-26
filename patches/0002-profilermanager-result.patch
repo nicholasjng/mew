@@ -46,10 +46,10 @@ index 3faa21d..49f6572 100644
  
    struct PerFamilyRunReports {
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index 0d267a3..98f0623 100644
+index 1f0be5e..ad58120 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
-@@ -83,12 +83,28 @@ constexpr IterationCount kMaxIterations = 1000000000000;
+@@ -83,11 +83,27 @@ constexpr IterationCount kMaxIterations = 1000000000000;
  const double kDefaultMinTime =
      std::strtod(::benchmark::kDefaultMinTimeStr, /*p_end*/ nullptr);
  
@@ -71,7 +71,6 @@ index 0d267a3..98f0623 100644
  BenchmarkReporter::Run CreateRunReport(
      const benchmark::internal::BenchmarkInstance& b,
      const internal::ThreadManager::Result& results,
-     IterationCount memory_iterations,
      const MemoryManager::Result& memory_result, double seconds,
 -    int64_t repetition_index, int64_t repeats) {
 +    int64_t repetition_index, int64_t repeats,
@@ -79,24 +78,24 @@ index 0d267a3..98f0623 100644
    // Create report about this benchmark run.
    BenchmarkReporter::Run report;
  
-@@ -118,6 +134,7 @@ BenchmarkReporter::Run CreateRunReport(
+@@ -117,6 +133,7 @@ BenchmarkReporter::Run CreateRunReport(
      report.complexity_lambda = b.complexity_lambda();
      report.statistics = &b.statistics();
      report.counters = results.counters;
 +    report.profile_result = profile_result;
  
-     if (memory_iterations > 0) {
-       report.memory_result = memory_result;
-@@ -460,32 +477,32 @@ void BenchmarkRunner::RunWarmUp() {
+     report.memory_result = memory_result;
+     report.allocs_per_iter =
+@@ -456,35 +473,39 @@ void BenchmarkRunner::RunWarmUp() {
    }
  }
  
 -MemoryManager::Result BenchmarkRunner::RunMemoryManager(
 -    IterationCount memory_iterations) {
-+// Runs one memory or profiler pass.
-+void BenchmarkRunner::RunManagerPass(IterationCount pass_iters,
-+                                     ProfilerManager* pm,
-+                                     PerfCountersMeasurement* pcm) {
++// Runs one memory or profiler pass and returns the iterations it ran.
++IterationCount BenchmarkRunner::RunManagerPass(IterationCount pass_iters,
++                                               ProfilerManager* pm,
++                                               PerfCountersMeasurement* pcm) {
    std::unique_ptr<internal::ThreadManager> manager;
    manager.reset(new internal::ThreadManager(1));
    b.Setup();
@@ -107,10 +106,16 @@ index 0d267a3..98f0623 100644
 -  MemoryManager::Result memory_result;
 -  memory_manager->Stop(memory_result);
 +  RunInThread(&b, pass_iters, 0, manager.get(), pcm, pm);
++  IterationCount iterations;
+   {
+     MutexLock l(manager->GetBenchmarkMutex());
+-    memory_result.memory_iterations = manager->results.iterations;
++    iterations = manager->results.iterations;
+   }
    manager.reset();
    b.Teardown();
--  memory_result.memory_iterations = memory_iterations;
 -  return memory_result;
++  return iterations;
  }
  
 -void BenchmarkRunner::RunProfilerManager(IterationCount profile_iterations) {
@@ -125,8 +130,9 @@ index 0d267a3..98f0623 100644
 +MemoryManager::Result BenchmarkRunner::RunMemoryManager(
 +    IterationCount memory_iterations) {
 +  MemoryLoopScope scope(memory_manager);
-+  RunManagerPass(memory_iterations, &scope, perf_counters_measurement_ptr);
-+  scope.result.memory_iterations = memory_iterations;
++  // Includes any overshoot from KeepRunningBatch().
++  scope.result.memory_iterations = RunManagerPass(
++      memory_iterations, &scope, perf_counters_measurement_ptr);
 +  return scope.result;
 +}
 +
@@ -139,7 +145,7 @@ index 0d267a3..98f0623 100644
  }
  
  void BenchmarkRunner::DoOneRepetition() {
-@@ -546,17 +563,18 @@ void BenchmarkRunner::DoOneRepetition() {
+@@ -545,16 +566,18 @@ void BenchmarkRunner::DoOneRepetition() {
      memory_result = RunMemoryManager(memory_iterations);
    }
  
@@ -153,23 +159,23 @@ index 0d267a3..98f0623 100644
    }
  
    // Ok, now actually report.
-   BenchmarkReporter::Run report =
-       CreateRunReport(b, i.results, memory_iterations, memory_result, i.seconds,
--                      num_repetitions_done, repeats);
-+                      num_repetitions_done, repeats, profile_result);
+   BenchmarkReporter::Run report = CreateRunReport(
+-      b, i.results, memory_result, i.seconds, num_repetitions_done, repeats);
++      b, i.results, memory_result, i.seconds, num_repetitions_done, repeats,
++      profile_result);
  
    if (reports_for_family != nullptr) {
      ++reports_for_family->num_runs_done;
 diff --git a/src/benchmark_runner.h b/src/benchmark_runner.h
-index 9a2231a..5afb734 100644
+index 9a2231a..9ac94ee 100644
 --- a/src/benchmark_runner.h
 +++ b/src/benchmark_runner.h
 @@ -105,9 +105,12 @@ class BenchmarkRunner {
    };
    IterationResults DoNIterations();
  
-+  void RunManagerPass(IterationCount pass_iters, ProfilerManager* pm,
-+                      PerfCountersMeasurement* pcm);
++  IterationCount RunManagerPass(IterationCount pass_iters, ProfilerManager* pm,
++                                PerfCountersMeasurement* pcm);
 +
    MemoryManager::Result RunMemoryManager(IterationCount memory_iterations);
  

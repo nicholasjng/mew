@@ -68,7 +68,7 @@ find_package(nanobind CONFIG REQUIRED)
 # --- Google Benchmark ---------------------------------------------------------
 include(FetchContent)
 
-set(_mew_benchmark_default_commit "00aed1d2cc650262186fa35338a178425270415a")
+set(_mew_benchmark_default_commit "3251a251c4499a7b63b5e37b3d818b7a48b0c477")
 
 # A plain CACHE default would keep an existing build tree on the old pin after
 # a bump. Follow the default unless the cached value was overridden, i.e. it
@@ -89,13 +89,12 @@ set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 set(MEW_BENCHMARK_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profiler-stop-on-early-exit.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-profilermanager-result.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-memory-pass-iterations.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0004-memory-iterations-flag.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-skip-passes-after-failure.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-timer-running.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-manager-pass-thread-count.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0008-start-timer-cpu-first.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0009-skip-cpu-frequency-estimate.patch")
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-memory-iterations-flag.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0004-skip-passes-after-failure.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-timer-running.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-manager-pass-thread-count.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-start-timer-cpu-first.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0008-skip-cpu-frequency-estimate.patch")
 
 string(JOIN "|" _mew_patches_arg ${MEW_BENCHMARK_PATCHES})
 

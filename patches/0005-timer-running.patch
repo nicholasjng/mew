@@ -13,10 +13,10 @@ index 7921d3d..ef9e40a 100644
  
    void SetIterationTime(double seconds);
 diff --git a/src/benchmark.cc b/src/benchmark.cc
-index 9389b69..a1543f0 100644
+index b814916..7be5d0c 100644
 --- a/src/benchmark.cc
 +++ b/src/benchmark.cc
-@@ -294,6 +294,11 @@ void State::SkipWithError(const std::string& msg) {
+@@ -297,6 +297,11 @@ void State::SkipWithError(const std::string& msg) {
    }
  }
  
@@ -28,7 +28,7 @@ index 9389b69..a1543f0 100644
  void State::SetIterationTime(double seconds) {
    timer_->SetIterationTime(seconds);
  }
-@@ -321,7 +326,9 @@ void State::FinishKeepRunning() {
+@@ -324,7 +329,9 @@ void State::FinishKeepRunning() {
    BM_CHECK(started_);
    // A second request for iterations must not stop timing or profiling again.
    if (finished_) return;
