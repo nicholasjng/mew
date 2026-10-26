@@ -1,4 +1,4 @@
-"""Tests for dotted paths."""
+"""Tests for dotted paths and `where` matching."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from mew._paths import (
     format_path,
     matches_glob,
     parse_path,
+    parse_where,
+    row_matches,
     set_path,
     split_assignment,
 )
@@ -77,3 +79,32 @@ def test_globs_select_a_path_or_what_it_holds(path: str, index: int | None) -> N
     """A field is selected by the first pattern it or a path above it matches, else by none."""
     patterns = ["vcs.*", "jax"]
     assert matches_glob(path, patterns) == index
+
+
+@pytest.mark.parametrize(
+    ("where", "matched"),
+    [
+        ({"context.dirty": "true"}, True),
+        ({"context.n": "1?"}, True),
+        ({"context.none": "null"}, True),
+        ({"context.name": "duck*"}, True),
+        ({"context.devices": "*"}, False),  # a list is not one value
+        ({"context.vcs": "*"}, False),
+        ({"context.missing": "*"}, False),
+        ({"context.name": "duck*", "context.n": "2"}, False),  # all must match
+    ],
+)
+def test_where_matches_leaves_as_json_writes_them(where: dict, matched: bool) -> None:
+    """A glob matches a string as is and other scalars as JSON writes them, and every condition
+    must hold. A list, a table, or a missing path matches nothing."""
+    row = {
+        "context": {
+            "dirty": True,
+            "n": 12,
+            "none": None,
+            "name": "duckdb",
+            "devices": ["a"],
+            "vcs": {"commit": "x"},
+        }
+    }
+    assert row_matches(row, parse_where(where)) is matched

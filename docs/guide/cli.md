@@ -210,6 +210,6 @@ outcomes apart:
 | Code | Meaning                                                                                                  |
 | ---- | -------------------------------------------------------------------------------------------------------- |
 | `0`  | Success.                                                                                                 |
-| `1`  | Nothing matched: `mew run` or `mew list` selected no benchmark, `mew show`'s filter matched none, or `mew compare`'s candidate and baseline share none. |
+| `1`  | Nothing matched: `mew run` or `mew list` selected no benchmark, `mew show`'s filter matched none, `--where` matched no row in a file, or `mew compare`'s candidate and baseline share none. |
 | `2`  | Usage or environment error, explained on stderr: a bad flag, filter or `[tool.mew]` config, a benchmark or setup file that raises on import (after its traceback), a missing or malformed result file, an unknown `@<tag>`, a profiler that can't run here, or `--strict` with threaded benchmarks on a GIL build. |
 | `3`  | `mew compare --exit-non-zero-on-regression` found a regression.                                          |

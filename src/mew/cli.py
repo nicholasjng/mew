@@ -65,13 +65,13 @@ def _usage_error(*errors: type[Exception]) -> Generator[None]:
     """Turn ``errors`` into a ``mew: error: ...`` message and exit 2.
 
     2 is the usage-or-environment code. Uncaught, they would exit 1, the code
-    for "nothing matched".
+    for "nothing matched", which a ``--where`` that matches no row exits with.
     """
     try:
         yield
     except errors as e:
         error(str(e))
-        raise SystemExit(2) from e
+        raise SystemExit(1 if isinstance(e, _paths.NoMatchError) else 2) from e
 
 
 def _import_or_exit(path: Path) -> None:
@@ -406,6 +406,7 @@ def compare(
     layout: str,
     speedup: bool,
     show_context: list[str],
+    where_args: list[tuple[str, str]],
 ) -> None:
     """Compare benchmark result files. The first file is the baseline."""
     from mew.compare import compare as _compare
@@ -430,6 +431,7 @@ def compare(
             layout=layout,
             speedup=speedup,
             show_context=show_context,
+            where=_where(where_args),
         )
     # The regression panel is informational unless the caller opted into gating;
     # a `no overlap` (1) exit still propagates as-is.
@@ -439,14 +441,22 @@ def compare(
         raise SystemExit(code)
 
 
-def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: bool) -> None:
+def show(
+    files: list[str],
+    *,
+    pattern: str | None,
+    literal: bool,
+    summary_only: bool,
+    where_args: list[tuple[str, str]],
+) -> None:
     """Print the results stored in files as ``mew run`` printed them."""
+    where = _paths.parse_where(_where(where_args))
     with _usage_error(ValueError):
         name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
     shown = 0
     for file in files:
         with _usage_error(ValueError, OSError):
-            runs = load_runs(Path(file))
+            runs = load_runs(Path(file), where)
         named = False
         for rows, context in runs:  # oldest first, so the newest ends next to the prompt
             if name_filter is not None:
@@ -490,9 +500,10 @@ def _unique_prefix_width(ids: list[str]) -> int:
     return width
 
 
-def log(files: list[Path]) -> None:
+def log(files: list[Path], *, where_args: list[tuple[str, str]]) -> None:
     """List the runs stored in result files, newest first."""
     term = Terminal()
+    where = _where(where_args)
     for path in files:
         table = Table(title=str(path) if len(files) > 1 else None)
         table.add_column("Id")
@@ -501,7 +512,7 @@ def log(files: list[Path]) -> None:
         table.add_column("Benchmarks", justify="right")
         table.add_column("Rows", justify="right")
         with _usage_error(ValueError, OSError):
-            summaries = run_summaries(path)
+            summaries = run_summaries(path, where=where)
         width = _unique_prefix_width([s.id for s in summaries if s.id])
         for s in summaries:
             table.add_row(
@@ -618,6 +629,23 @@ def _context_arg(value: str) -> tuple[tuple[str, ...], str]:
         raise argparse.ArgumentTypeError(str(e)) from None
 
 
+def _where_arg(value: str) -> tuple[str, str]:
+    """Parse a ``--where`` value: ``path=glob``, the path checked but kept as written."""
+    path, glob = _context_arg(value)
+    return _paths.format_path(path), glob
+
+
+def _where(conditions: list[tuple[str, str]]) -> dict[str, str]:
+    """``--where`` conditions by path. A path given twice is a usage error."""
+    where: dict[str, str] = {}
+    for path, glob in conditions:
+        if path in where:
+            error(f"--where: {path} given twice")
+            raise SystemExit(2)
+        where[path] = glob
+    return where
+
+
 def _warmup_seconds(value: str) -> float:
     """Parse a ``--min-warmup-time`` value, such as ``0.2``, ``200ms`` or ``1m``, into seconds."""
     try:
@@ -676,6 +704,19 @@ def _add_filter_args(p: argparse.ArgumentParser, *, verb: str) -> None:
         "-k", "--pattern", metavar="<regex>", help=f"{verb} benchmarks whose name matches <regex>."
     )
     p.add_argument("-F", "--literal", action="store_true", help="Treat -k as a literal string.")
+
+
+def _add_where_arg(p: argparse.ArgumentParser, *, verb: str) -> None:
+    p.add_argument(
+        "--where",
+        dest="where_args",
+        action="append",
+        default=[],
+        type=_where_arg,
+        metavar="<path>=<glob>",
+        help=f"{verb} only rows whose value at <path>, such as context.vcs.commit or run.name, "
+        "matches <glob> (repeatable, once per path; all must match).",
+    )
 
 
 def _add_summary_only_arg(p: argparse.ArgumentParser) -> None:
@@ -870,6 +911,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         help="Show the context field at <path>, or every field <path> globs or holds, "
         "above the table (repeatable).",
     )
+    _add_where_arg(p, verb="Compare")
     p.set_defaults(_func=compare)
 
 
@@ -881,6 +923,7 @@ def _add_show_cmd(sub: argparse._SubParsersAction) -> None:
         help="Print every run stored in result files, oldest first.",
     )
     _add_filter_args(p, verb="Show")
+    _add_where_arg(p, verb="Show")
     _add_summary_only_arg(p)
     p.set_defaults(_func=show)
 
@@ -888,6 +931,7 @@ def _add_show_cmd(sub: argparse._SubParsersAction) -> None:
 def _add_log_cmd(sub: argparse._SubParsersAction) -> None:
     p = _add_command(sub, "log", help="List the runs stored in result files.")
     p.add_argument("files", nargs="+", type=Path, help="Result files to inspect.")
+    _add_where_arg(p, verb="List")
     p.set_defaults(_func=log)
 
 

@@ -17,6 +17,13 @@ from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
 from mew._console import warn
+from mew._paths import (
+    NoMatchError,
+    Where,
+    format_path,
+    parse_where,
+    row_matches,
+)
 from mew._typing import BenchmarkResult
 
 # Stamped onto every row so each one stands alone, in JSON and JSONL alike.
@@ -210,19 +217,20 @@ def _number(value: Any, row: dict[str, Any], metric: str) -> float:
         raise ValueError(f"{row.get('name')!r}: {metric} is {value!r}, not a number") from None
 
 
-def read_rows(path: Path) -> list[dict[str, Any]]:
-    """Read a result file's rows.
+def read_rows(path: Path, where: Where | None = None) -> list[dict[str, Any]]:
+    """Read a result file's rows, only those every ``where`` condition matches.
 
     Errors carry a one-line message naming the file: :class:`ValueError` for an
     unsupported extension or malformed contents, :class:`OSError` (of the
-    original subclass) if the file can't be read.
+    original subclass) if the file can't be read, and :class:`NoMatchError`
+    when a file with rows has none that match.
     """
     fmt = result_format(path.name)
     if fmt is None:
         raise ValueError(f"{path}: not a .json, .jsonl or .jsonl.gz file")
     reader = _rows_from_json if fmt == "json" else _rows_from_jsonl
     try:
-        return reader(path)
+        rows = reader(path)
     except FileNotFoundError as e:
         raise FileNotFoundError(f"no such file or directory: {path}") from e
     except OSError as e:
@@ -231,6 +239,19 @@ def read_rows(path: Path) -> list[dict[str, Any]]:
     # A truncated or corrupt archive, or a file that isn't UTF-8 text.
     except (EOFError, zlib.error, UnicodeDecodeError) as e:
         raise ValueError(f"cannot read {path}: {e}") from e
+    if not where:
+        return rows
+    selected = [r for r in rows if row_matches(r, where)]
+    if rows and not selected:
+        conditions = " ".join(f"{format_path(p)}={g}" for p, g in where)
+        msg = f"{path}: no rows match {conditions}"
+        # Paths start at the row, so a context path without its `context.` misses.
+        top = {k for r in rows for k in r}
+        if missing := [p for p, _ in where if p[0] not in top]:
+            example = format_path(("context", *missing[0]))
+            msg += f"\nhint: paths start at the row, such as {example}"
+        raise NoMatchError(msg)
+    return selected
 
 
 def _samples_from_groups(
@@ -301,14 +322,16 @@ def _skew_value(row: dict[str, Any], field: str) -> Any:
 def load_column(
     path: Path,
     metric: str,
+    where: Where | None = None,
 ) -> tuple[dict[str, Sample], dict[str, Any], dict[str, str]]:
     """Load one comparison column from a result file: every run in it, reduced.
 
     Returns the samples by name, the provenance of the newest measured row, and
     the benchmarks the file has only as skipped, by name, with their reasons, so
-    a caller can tell a skipped benchmark from a missing one.
+    a caller can tell a skipped benchmark from a missing one. Only the rows
+    ``where`` matches count, and only their runs pool.
     """
-    selected = _pooled_rows(path, read_rows(path))
+    selected = _pooled_rows(path, read_rows(path, where))
     measured = [r for r in selected if _is_measurement_row(r)]
     if not measured:
         raise ValueError(f"{path}: no measurements, only skipped rows")
@@ -332,10 +355,13 @@ def load_column(
     return samples, provenance, skipped
 
 
-def load_runs(path: Path) -> list[tuple[list[BenchmarkResult], dict[str, Any]]]:
+def load_runs(
+    path: Path, where: Where | None = None
+) -> list[tuple[list[BenchmarkResult], dict[str, Any]]]:
     """Load each run in a result file, oldest first, as ``mew run`` reported it.
 
-    Skipped rows stay, since the run reported them too.
+    Skipped rows stay, since the run reported them too. Only the rows ``where``
+    matches load.
 
     Returns
     -------
@@ -343,8 +369,8 @@ def load_runs(path: Path) -> list[tuple[list[BenchmarkResult], dict[str, Any]]]:
         Per run, its rows in file order and their provenance (``run`` and
         ``context``).
     """
-    rows = read_rows(path)
-    if not rows:
+    rows = read_rows(path, where)
+    if not rows:  # a file with rows that `where` all misses raised already
         raise ValueError(f"{path}: no measurements in file")
     return [
         (cast("list[BenchmarkResult]", run), _provenance(run))
@@ -383,7 +409,7 @@ class RunSummary:
     rows: int
 
 
-def run_summaries(path: str | Path) -> list[RunSummary]:
+def run_summaries(path: str | Path, *, where: Mapping[str, str] | None = None) -> list[RunSummary]:
     """Summarize every run in a result file, newest first.
 
     ``rows`` counts every stored row of the run, and ``benchmarks`` the
@@ -393,6 +419,9 @@ def run_summaries(path: str | Path) -> list[RunSummary]:
     ----------
     path : str or Path
         Result file to read: ``.json``, ``.jsonl``, or ``.jsonl.gz``.
+    where : Mapping[str, str], optional
+        Summarize only the rows these conditions match, as :func:`read_results`
+        takes them. A run none of whose rows match is left out.
 
     Returns
     -------
@@ -403,11 +432,13 @@ def run_summaries(path: str | Path) -> list[RunSummary]:
     Raises
     ------
     ValueError
-        If the file has another extension or is not a mew result file.
+        If the file has another extension or is not a mew result file, if a
+        ``where`` path is malformed, or if no row matches ``where``.
     OSError
         If the file can't be read, :class:`FileNotFoundError` if it doesn't exist.
     """
-    by_run = _group_by_run(read_rows(Path(path)))
+    path = Path(path)
+    by_run = _group_by_run(read_rows(path, parse_where(where)))
     out: list[RunSummary] = []
     for (date, run_id), run_rows in reversed(by_run.items()):
         measured = {r["name"] for r in run_rows if _is_measurement_row(r)}
@@ -423,7 +454,9 @@ def run_summaries(path: str | Path) -> list[RunSummary]:
     return out
 
 
-def read_results(path: str | Path) -> list[BenchmarkResult]:
+def read_results(
+    path: str | Path, *, where: Mapping[str, str] | None = None
+) -> list[BenchmarkResult]:
     """Read result rows in file order.
 
     Accepts JSON, JSONL, and gzip-compressed results. Every row carries its own
@@ -433,6 +466,12 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
     ----------
     path : str or Path
         Result file to read.
+    where : Mapping[str, str], optional
+        Read only the rows whose value at each path matches its glob, such as
+        ``{"context.vcs.commit": "abc*", "run.name": "nightly"}``. A dot
+        nests, and a key holding a dot is quoted: ``'context."a.b"'``. A
+        string matches as it is, and a number, boolean or null as JSON writes
+        it. A path that is missing or holds a list or mapping doesn't match.
 
     Returns
     -------
@@ -442,11 +481,13 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
     Raises
     ------
     ValueError
-        If the file has another extension or is not a mew result file.
+        If the file has another extension or is not a mew result file, if a
+        ``where`` path is malformed, or if no row matches ``where``.
     OSError
         If the file can't be read, :class:`FileNotFoundError` if it doesn't exist.
     """
-    return cast("list[BenchmarkResult]", read_rows(Path(path)))
+    path = Path(path)
+    return cast("list[BenchmarkResult]", read_rows(path, parse_where(where)))
 
 
 def _average_ranks(values: list[float]) -> tuple[list[float], float]:
