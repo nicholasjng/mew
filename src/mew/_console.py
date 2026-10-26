@@ -217,18 +217,36 @@ class Table:
     def add_row(self, *cells: Cell) -> None:
         self._rows.append(list(cells))
 
-    def render(self, width: int, *, color: bool = True) -> list[str]:
+    def _natural_widths(self) -> list[int]:
+        """Each column's width with nothing narrowed: its widest cell or header."""
         widths = [len(h) for h in self._headers]
         for row in self._rows:
             for i, cell in enumerate(row):
                 widths[i] = max(widths[i], _visible_len(cell))
+        return widths
+
+    def _flex_floor(self, widths: list[int]) -> int:
+        assert self._flex is not None
+        return min(widths[self._flex], max(len(self._headers[self._flex]), _FLEX_FLOOR))
+
+    def min_width(self) -> int:
+        """The narrowest the table renders, its flexible column at its floor.
+
+        A table wider than the screen at this width overflows it.
+        """
+        widths = self._natural_widths()
+        if self._flex is not None:
+            widths[self._flex] = self._flex_floor(widths)
+        return sum(widths) + (len(widths) - 1) * len(COL_SEP)
+
+    def render(self, width: int, *, color: bool = True) -> list[str]:
+        widths = self._natural_widths()
 
         if (flex := self._flex) is not None:
             overhead = (len(self._headers) - 1) * len(COL_SEP)
             fixed = sum(w for i, w in enumerate(widths) if i != flex)
             avail = width - fixed - overhead
-            floor = min(widths[flex], max(len(self._headers[flex]), _FLEX_FLOOR))
-            widths[flex] = max(floor, min(widths[flex], avail))
+            widths[flex] = max(self._flex_floor(widths), min(widths[flex], avail))
 
         lines: list[str] = []
         if self.title:

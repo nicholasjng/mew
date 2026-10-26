@@ -45,6 +45,7 @@ from mew._options import (
 )
 from mew._registry import compile_name_filter, longest_row_name, selected_cases
 from mew._results import load_runs, result_format, run_summaries
+from mew.compare import LAYOUTS
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -399,6 +400,8 @@ def compare(
     literal: bool,
     regression_threshold: float | None,
     exit_non_zero_on_regression: bool,
+    layout: str,
+    speedup: bool,
 ) -> None:
     """Compare benchmark result files. The first file is the baseline."""
     from mew.compare import compare as _compare
@@ -420,6 +423,8 @@ def compare(
             literal=literal,
             regressions=gate,
             counters=cfg.counters,
+            layout=layout,
+            speedup=speedup,
         )
     # The regression panel is informational unless the caller opted into gating;
     # a `no overlap` (1) exit still propagates as-is.
@@ -839,6 +844,18 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         "--exit-non-zero-on-regression",
         action="store_true",
         help="Exit with status 3 when a regression is found.",
+    )
+    p.add_argument(
+        "--layout",
+        default="auto",
+        choices=LAYOUTS,
+        help="Lay the table out with every figure (full), one cell per file (compact), "
+        "or a line per file (long), or pick the first that fits (auto, default).",
+    )
+    p.add_argument(
+        "--speedup",
+        action="store_true",
+        help="Show each file's speedup or ratio instead of its delta in the compact layout.",
     )
     p.set_defaults(_func=compare)
 
