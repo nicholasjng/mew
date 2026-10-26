@@ -947,15 +947,17 @@ def test_a_failing_context_hook_exits_2_before_any_benchmark(
 
 
 def test_context_option_adds_to_and_overrides_the_hook(mew_cli, benchdir, tmp_path):
-    """`--context key=value` records strings as given, over the setup file's `context()`: a
-    later repeat wins, the value may hold `=`, and a dotted key stays one key."""
+    """`--context path=value` records strings over the hook's `context()`: a later repeat wins,
+    a value may hold `=`, a dot nests into the hook's mappings, and a quoted key keeps its dot."""
     (tmp_path / "pyproject.toml").write_text('[tool.mew]\nsetup = "benchmarks/conf.py"\n')
     (benchdir / "conf.py").write_text(
-        'def context():\n    return {"engine": "from the hook", "team": "perf"}\n'
+        "def context():\n"
+        '    return {"engine": "from the hook", "team": "perf", "jax": {"version": "0.4"}}\n'
     )
     out = tmp_path / "out.json"
     args = ["--context", "engine=alpha 1.5.3", "--context", "n=8", "--context", "n=16"]
-    args += ["--context", "expr=a=b", "--context", "ci.job=42"]
+    args += ["--context", "expr=a=b", "--context", "ci.job=42", "--context", "jax.backend=gpu"]
+    args += ["--context", '"a.b"=literal']
     res = mew_cli("run", "-k", "bench_one", "--min-time=1x", *args, "-o", str(out), cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     context = json.loads(out.read_text())["benchmarks"][0]["context"]
@@ -963,15 +965,25 @@ def test_context_option_adds_to_and_overrides_the_hook(mew_cli, benchdir, tmp_pa
     assert context["team"] == "perf"
     assert context["n"] == "16"  # a string: --context doesn't guess types
     assert context["expr"] == "a=b"
-    assert context["ci.job"] == "42" and "ci" not in context
+    assert context["ci"] == {"job": "42"}
+    assert context["jax"] == {"version": "0.4", "backend": "gpu"}
+    assert context["a.b"] == "literal"
 
 
-@pytest.mark.parametrize("value", ["no-equals", "=value"])
-def test_context_option_needs_a_key_and_a_value(mew_cli, benchdir, tmp_path, value):
-    """A `--context` without `=`, or without a key, is a usage error."""
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("no-equals", "expected <path>=<value>"),
+        ("=value", "expected <path>=<value>"),
+        ("a..b=1", "empty key in path 'a..b'"),
+        ('"a=1', "expected <path>=<value>"),
+    ],
+)
+def test_context_option_needs_a_path_and_a_value(mew_cli, benchdir, tmp_path, value, message):
+    """A `--context` without `=`, without a path, or with a malformed path is a usage error."""
     res = mew_cli("run", str(benchdir), "--context", value, cwd=tmp_path)
     assert res.returncode == 2
-    assert "expected <key>=<value>" in res.stderr
+    assert message in res.stderr
 
 
 def test_list_never_calls_the_context_hook(mew_cli, benchdir, tmp_path):

@@ -78,7 +78,7 @@ debugging a crash: captured output is lost if the process dies.
 
 `--append` adds the run to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). `mew compare` pools a file's runs as one sample; see [](regressions.md#files-with-several-runs). `--run-name` labels the run in `mew log`, `mew show` and `mew compare`.
 
-`--context <key>=<value>` records a string in the run's context, over what the setup file's `context()` returns, and repeats; see [](context.md#the-context-hook).
+`--context <path>=<value>` records a string in the run's context, over what the setup file's `context()` returns, and repeats; a dot nests, so `--context ci.job=42` sets `job` inside `ci`. See [](context.md#the-context-hook).
 
 ### Selecting from stdin
 

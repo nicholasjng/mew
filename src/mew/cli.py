@@ -32,6 +32,7 @@ from mew import (
     __version__ as _mew_version,
     _completions,
     _managers,
+    _paths,
     _registry,
     run as _run,
 )
@@ -303,7 +304,7 @@ def run(
     repetitions: int | None,
     summary_only: bool,
     run_name: str | None,
-    context_args: list[tuple[str, str]],
+    context_args: list[tuple[tuple[str, ...], str]],
     append: bool,
     strict: bool,
     capture: str,
@@ -350,7 +351,9 @@ def run(
         profiler_manager = managers["cpu"].manager if "cpu" in managers else None
         memory_manager = managers["memory"].manager if "memory" in managers else None
         # --context wins over the setup file's context(), as the more specific source.
-        context = {**_setup_context(cfg), **dict(context_args)}
+        context = _setup_context(cfg)
+        for path, text in context_args:  # over the hook's values, nesting at each dot
+            _paths.set_path(context, path, text)
         if managers:
             # Provenance, as the machine's: `mew compare` shows where files differ.
             context["profilers"] = {slot: m.record for slot, m in managers.items()}
@@ -601,16 +604,16 @@ def completions(shell: str) -> None:
     sys.stdout.write(_completions.generate(shell, _build_parser()))
 
 
-def _context_arg(value: str) -> tuple[str, str]:
-    """Parse a ``--context`` value: ``key=value``, split at the first ``=``.
+def _context_arg(value: str) -> tuple[tuple[str, ...], str]:
+    """Parse a ``--context`` value: ``path=value``, split at the first ``=``.
 
-    The value stays a string, whatever it looks like, and the key is used as
-    written: a dot doesn't nest it, as a Python dict's key wouldn't.
+    The value stays a string, whatever it looks like. A dot in the path nests,
+    as it does in ``--where`` and DuckDB, and a quoted key keeps its dots.
     """
-    key, sep, text = value.partition("=")
-    if not sep or not key.strip():
-        raise argparse.ArgumentTypeError(f"expected <key>=<value>, got {value!r}")
-    return key, text
+    try:
+        return _paths.split_assignment(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
 
 
 def _warmup_seconds(value: str) -> float:
@@ -779,9 +782,9 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         action="append",
         default=[],
         type=_context_arg,
-        metavar="<key>=<value>",
-        help="Record <key>=<value> in the run's context, over the setup file's context() "
-        "(repeatable; the value is a string).",
+        metavar="<path>=<value>",
+        help="Record <value> at <path> in the run's context, over the setup file's context() "
+        "(repeatable; a dot nests, and the value is a string).",
     )
     p.add_argument(
         "--append",

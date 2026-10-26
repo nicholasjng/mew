@@ -107,8 +107,9 @@ releases may break the API.
 
 ### Added
 
-- `mew run --context <key>=<value>` records a string in one run's context, over
-  the setup file's `context()`.
+- `mew run --context <path>=<value>` records a string in one run's context, over
+  the setup file's `context()`. A dot nests into the hook's tables, as in DuckDB,
+  and a quoted key keeps its dots: `--context '"a.b"=1'`.
 - Rows carry `params`, a family case's parameters; values JSON can't represent
   are stored as their type's qualified name, such as `"torch.Tensor"`.
 - `mew.grid(**axes)` gives every combination of some values as cases for

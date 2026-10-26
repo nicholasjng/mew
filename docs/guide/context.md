@@ -93,7 +93,7 @@ def context() -> dict:
 
 ### One run's values: `--context`
 
-`--context <key>=<value>` adds a value to one run's context, over what
+`--context <path>=<value>` adds a value to one run's context, over what
 `context()` returns, for what differs between invocations of the same suite,
 such as the side of an A/B comparison:
 
@@ -102,9 +102,10 @@ $ mew run bench_alpha.py --context engine="alpha 1.5.3" -o alpha.json
 ```
 
 It repeats, and a later value for a key wins. Values stay strings, `8` and
-`true` included, since the shell can't say whether you meant a number, and a
-key is used as written: `--context ci.job=42` records the key `ci.job`, not a
-nested `ci` table. Compute anything richer in `context()`.
+`true` included, since the shell can't say whether you meant a number. A dot
+nests, as in DuckDB and as `context()` writes it: `--context ci.job=42` sets
+`job` in the hook's `ci` table and keeps its other keys. Quote a key that holds
+a dot: `--context '"a.b"=1'`. Compute anything richer in `context()`.
 
 (recording-the-host)=
 ### Recording the host
