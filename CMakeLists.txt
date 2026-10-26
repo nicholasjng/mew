@@ -34,6 +34,15 @@ if(MEW_ASAN)
     add_link_options(-fsanitize=address)
 endif()
 
+# pyproject.toml passes -DMEW_UBSAN=ON for MEW_UBSAN=1.
+# Fail the process on the first finding rather than letting a test pass after undefined behavior.
+option(MEW_UBSAN "Build with UndefinedBehaviorSanitizer" OFF)
+if(MEW_UBSAN)
+    add_compile_options(-fsanitize=undefined -fno-sanitize-recover=undefined
+                        -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=undefined)
+endif()
+
 # pyproject.toml passes -DMEW_TSAN=ON for MEW_TSAN=1.
 option(MEW_TSAN "Build with ThreadSanitizer" OFF)
 if(MEW_TSAN AND MEW_ASAN)

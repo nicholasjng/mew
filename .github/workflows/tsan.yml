@@ -73,5 +73,14 @@ jobs:
 
       - name: Run tests under ThreadSanitizer
         run: |
-          TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0:suppressions=$CPYTHON_SRC/Tools/tsan/suppressions_free_threading.txt" \
+          TSAN_OPTIONS="halt_on_error=1:detect_deadlocks=0:print_full_thread_history=1:suppressions=$CPYTHON_SRC/Tools/tsan/suppressions_free_threading.txt:log_path=$RUNNER_TEMP/tsan-report" \
             .venv/bin/python -m pytest --capture no
+
+      - name: Print ThreadSanitizer reports
+        if: always()
+        run: |
+          for report in "$RUNNER_TEMP"/tsan-report.*; do
+            if [[ -f "$report" ]]; then
+              cat "$report"
+            fi
+          done
