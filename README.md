@@ -3,7 +3,8 @@
 [![Documentation Status](https://readthedocs.org/projects/mew/badge/?version=latest)](https://mew.readthedocs.io/en/latest/)
 [![CI](https://github.com/nicholasjng/mew/actions/workflows/ci.yml/badge.svg)](https://github.com/nicholasjng/mew/actions/workflows/ci.yml)
 
-A tool for microbenchmarking Python code, powered by [Google Benchmark](https://github.com/google/benchmark).
+mew measures the cost of Python code using [Google Benchmark](https://github.com/google/benchmark).
+Write a benchmark function and run it from Python or the command line.
 
 ```python
 import mew
@@ -16,35 +17,45 @@ def bench_sorted(state: mew.State) -> None:
         sorted(data)
 ```
 
+Save this as `benchmarks/bench_sort.py`, then run:
+
 ```console
-$ mew run
-mew · host=laptop cpus=10 scaling=enabled
-Benchmark                              │        Iters │       Real │        CPU
-───────────────────────────────────────────────────────────────────────────────
-benchmarks/bench_sort.py::bench_sorted │    1,000,000 │   32.10 ns │   32.05 ns
+$ mew run --repetitions 10 -o baseline.json
 ```
 
-- **Decorate**: `@mew.benchmark`, `@mew.parametrize`, `@mew.product` register one benchmark or a benchmark family.
-- **Run**: `mew run` discovers `bench_*.py` files, streams results to a formatted table, JSON, or a JSONL archive.
-- **Profiling**: `mew run --sample` (in-process Tachyon on Python 3.15+, pyinstrument before) and `--profile-memory` (memray allocations) in the same run, driven by Google Benchmark's own profiler/memory managers.
-- **Compare**: `mew compare head.json baseline.json --regression-threshold 5% --exit-non-zero-on-regression` for CI jobs; it exits with code 3 on a regression.
+Setup before the loop is excluded from timing.
+mew chooses an iteration count and reports wall-clock and CPU time per iteration.
+After changing the code under test, measure again and compare against the baseline:
+
+```console
+$ mew run --repetitions 10 -o candidate.json
+$ mew compare --stddev candidate.json baseline.json
+```
+
+You can parametrize inputs, run benchmarks from a Python script, and save results as JSON or an appendable JSONL archive.
+Optional CPU and memory profilers help investigate changes.
 
 ## Installation
 
 ```console
-$ uv add mew-bench                 # or: pip install mew-bench
-$ uv add 'mew-bench[cpu,memory]'   # opt-in profilers
+$ pip install mew-bench
+# Or, in a uv project:
+$ uv add --dev mew-bench
 ```
 
-Requires Python 3.11+. A pre-built wheel is installed where available;
-otherwise the C++ extension is compiled via CMake + nanobind.
+Requires Python 3.11 or later.
+A prebuilt wheel is installed where available; other platforms compile the C++ extension from source.
 
-## Docs
+## Documentation
 
-- Quickstart, concepts, user guide: <https://mew.readthedocs.io/>
-- API reference: <https://mew.readthedocs.io/en/latest/reference/api/>
-- CLI reference: <https://mew.readthedocs.io/en/latest/reference/cli.html>
+- [First benchmark](https://mew.readthedocs.io/en/latest/getting-started/quickstart.html)
+- [Microbenchmark setup](https://mew.readthedocs.io/en/latest/guide/microbenchmarking.html)
+- [Using the Python API](https://mew.readthedocs.io/en/latest/guide/python-api.html)
+- [API reference](https://mew.readthedocs.io/en/latest/reference/api/index.html)
+- [Recipes](https://mew.readthedocs.io/en/latest/recipes/index.html), including [tracking JAX through Git history and bisecting regressions](https://mew.readthedocs.io/en/latest/recipes/git-history.html)
+- [CLI reference](https://mew.readthedocs.io/en/latest/reference/cli.html)
 
 ## License
 
-This project is licensed under the Apache-2.0 license.
+The project license is Apache-2.0.
+Bundled third-party code also carries BSD-3-Clause and MIT licenses; see [LICENSE](LICENSE) and [licenses/](licenses/).
