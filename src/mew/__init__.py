@@ -10,6 +10,8 @@ from mew._core import (
     CounterOneK,
     TimeUnit,
     clear_registered_benchmarks as _clear_registered_benchmarks,
+    unregister_memory_manager as _unregister_memory_manager,
+    unregister_profiler_manager as _unregister_profiler_manager,
 )
 from mew._registry import REGISTRY, Entry, Registry
 from mew._typing import (
@@ -41,7 +43,9 @@ __version__ = "0.3.0"
 
 # Registrations hold Python callables; release them while the interpreter is alive.
 atexit.register(_clear_registered_benchmarks)
-del _clear_registered_benchmarks
+atexit.register(_unregister_memory_manager)
+atexit.register(_unregister_profiler_manager)
+del _clear_registered_benchmarks, _unregister_memory_manager, _unregister_profiler_manager
 
 __all__ = [
     "BENCHMARK_COMMIT",
