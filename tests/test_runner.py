@@ -33,6 +33,7 @@ def test_run_reports_rows_and_the_session_context():
     assert cap.context["context"]["python"] == {
         "version": platform.python_version(),
         "implementation": sys.implementation.name,
+        "free_threaded_build": mew.is_free_threaded_build(),
         "gil_enabled": mew.gil_enabled(),
     }
 

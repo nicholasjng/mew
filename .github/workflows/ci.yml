@@ -21,12 +21,12 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
 
       - name: Install project and its dependencies
-        run: uv sync --all-extras --all-groups
+        run: uv sync --all-extras --group test --group docs
 
       - name: Run linters, formatter and type checker
         run: uvx prek run --all-files --show-diff-on-failure
@@ -60,15 +60,15 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install project and its dependencies
-        run: uv sync --all-extras --group test
+        run: uv sync --all-extras --group test --group duckdb
 
       - name: Run tests
-        run: uv run pytest -n auto
+        run: uv run --no-sync pytest -n auto
 
   free-threaded:
     name: free-threaded · py${{ matrix.python-version }}
@@ -84,13 +84,13 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
 
-      # duckdb has no free-threaded wheels yet.
+      # The optional DuckDB integration group is only installed on GIL builds.
       - name: Install project and its dependencies
-        run: uv sync --all-extras --group test --no-install-package duckdb
+        run: uv sync --all-extras --group test
 
       - name: Assert the GIL stays disabled after import
         run: |
@@ -114,7 +114,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
 

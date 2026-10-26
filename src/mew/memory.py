@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import sys
-import sysconfig
 import tempfile
 from contextlib import ExitStack
 from importlib.util import find_spec
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from mew._typing import MemoryManager, MemoryMetrics
+from mew.machine import is_free_threaded_build
 
 if TYPE_CHECKING:
     from memray import Tracker
@@ -21,7 +21,7 @@ Frame = tuple[str, str, int]
 
 # Free-threaded CPython serves object allocations from mimalloc, which never
 # reaches the system allocator memray hooks by default, so track them separately.
-_TRACE_PYTHON_ALLOCATORS = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
+_TRACE_PYTHON_ALLOCATORS = is_free_threaded_build()
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
