@@ -108,6 +108,7 @@ def _render_cli_help() -> None:
         "run": (["run", "--help"], "mew run --help"),
         "ls": (["list", "--help"], "mew list --help"),
         "compare": (["compare", "--help"], "mew compare --help"),
+        "show": (["show", "--help"], "mew show --help"),
         "log": (["log", "--help"], "mew log --help"),
         "completions": (["completions", "--help"], "mew completions --help"),
     }

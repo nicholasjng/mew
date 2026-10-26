@@ -1,11 +1,28 @@
 # CLI reference
 
-Auto-generated from `mew … --help`. For an introduction and examples,
-see [](../guide/cli.md).
+The command sections below are generated from `mew … --help`.
+For examples, see [writing and measuring benchmarks](../guide/writing-benchmarks.md#run-and-select) and [comparing and gating](../guide/comparing.md).
 
-Every command exits with 0 on success, 1 when nothing matched, and 2 on a usage
-or environment error; `mew compare --exit-non-zero-on-regression` exits with 3 on
-a regression. See [](../guide/cli.md#exit-codes).
+(exit-codes)=
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success. |
+| `1` | Nothing matched: no benchmark selected, a `mew show` filter matched none, or the files in a comparison share no benchmark. |
+| `2` | Usage, configuration, import, environment, or result-file error, explained on stderr. |
+| `3` | `mew compare --exit-non-zero-on-regression` found a regression. |
+
+## Shell completions
+
+`mew completions bash`, `zsh`, or `fish` prints a completion script:
+
+```console
+$ mew completions fish > ~/.config/fish/completions/mew.fish
+```
+
+Completions cover commands, flags, paths, and fixed choices.
+They never import benchmarks, so they do not complete benchmark names.
 
 (cli-root)=
 ## `mew`
@@ -32,6 +49,13 @@ a regression. See [](../guide/cli.md#exit-codes).
 ## `mew compare`
 
 ```{literalinclude} ../_generated/cli-help-compare.txt
+:language: console
+```
+
+(cli-show)=
+## `mew show`
+
+```{literalinclude} ../_generated/cli-help-show.txt
 :language: console
 ```
 

@@ -44,18 +44,19 @@ $ uv add --dev mew-bench
 ```
 
 Requires Python 3.11 or later.
-A prebuilt wheel is installed where available; other platforms compile the C++ extension from source.
+A prebuilt wheel is installed where available.
+Other platforms compile the C++ extension from source.
 
 ## Documentation
 
-- [First benchmark](https://mew.readthedocs.io/en/latest/getting-started/quickstart.html)
-- [Microbenchmark setup](https://mew.readthedocs.io/en/latest/guide/microbenchmarking.html)
+- [Quickstart](https://mew.readthedocs.io/en/latest/quickstart.html)
+- [Writing and measuring benchmarks](https://mew.readthedocs.io/en/latest/guide/writing-benchmarks.html)
+- [Comparing and gating](https://mew.readthedocs.io/en/latest/guide/comparing.html)
 - [Using the Python API](https://mew.readthedocs.io/en/latest/guide/python-api.html)
-- [API reference](https://mew.readthedocs.io/en/latest/reference/api/index.html)
-- [Recipes](https://mew.readthedocs.io/en/latest/recipes/index.html), including [tracking JAX through Git history and bisecting regressions](https://mew.readthedocs.io/en/latest/recipes/git-history.html)
-- [CLI reference](https://mew.readthedocs.io/en/latest/reference/cli.html)
+- [Recipes](https://mew.readthedocs.io/en/latest/recipes/index.html), including [gating pull requests on regressions](https://mew.readthedocs.io/en/latest/recipes/ci-gate.html) and [tracking JAX through Git history](https://mew.readthedocs.io/en/latest/recipes/git-history.html)
+- [API reference](https://mew.readthedocs.io/en/latest/reference/api/index.html) and [CLI reference](https://mew.readthedocs.io/en/latest/reference/cli.html)
 
 ## License
 
 The project license is Apache-2.0.
-Bundled third-party code also carries BSD-3-Clause and MIT licenses; see [LICENSE](LICENSE) and [licenses/](licenses/).
+Bundled third-party code also carries BSD-3-Clause and MIT licenses, see [LICENSE](LICENSE) and [licenses/](licenses/).

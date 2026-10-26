@@ -1,10 +1,7 @@
-# Introduction
+# mew
 
-> Simple microbenchmarking of Python snippets, powered by [Google Benchmark](https://github.com/google/benchmark).
-
-`mew` is a small Python library and CLI for writing microbenchmarks the way you
-write tests: decorate a function, run `mew`, get reliable timings, backed by
-Google Benchmark and built with nanobind.
+mew measures the cost of Python code using [Google Benchmark](https://github.com/google/benchmark).
+Write a function, put the work you want to measure inside its loop, and run it from Python or the command line.
 
 ```python
 import mew
@@ -17,77 +14,44 @@ def bench_sorted(state: mew.State) -> None:
         sorted(data)
 ```
 
-```console
-$ mew run
-mew · cpu=Apple M1 Pro cpus=10 scaling=enabled
-Benchmark                              │        Iters │       Real │        CPU
-───────────────────────────────────────────────────────────────────────────────
-benchmarks/bench_sort.py::bench_sorted │    1,000,000 │   32.10 ns │   32.05 ns
-```
+Save this as `benchmarks/bench_sort.py` and run `mew run`.
+mew chooses an iteration count and reports the time per iteration.
 
-## At a glance
+## Where to start
 
-::::{grid} 2
-:gutter: 3
-
-:::{grid-item-card} Decorate
-:link: guide/writing-benchmarks
-:link-type: doc
-Register one benchmark with `@mew.benchmark`, or a family with
-`@mew.parametrize`.
-:::
-
-:::{grid-item-card} Run
-:link: guide/cli
-:link-type: doc
-`mew run` discovers `bench_*.py` files, runs them with Google Benchmark, and
-streams results to the terminal, JSON, or a JSONL archive.
-:::
-
-:::{grid-item-card} Profile
-:link: guide/profiling-cpu
-:link-type: doc
-`--cpu-profiler sample` for CPU sampling, `--memory-profiler memray` for `memray`
-allocations, or a profiler of your own. For native C frames, sample the process from outside (see the native-profiling recipe).
-:::
-
-:::{grid-item-card} Compare
-:link: guide/regressions
-:link-type: doc
-`mew compare baseline.json head.json --regression-threshold 5% --exit-non-zero-on-regression` for CI
-regression gates with an allowlist.
-:::
-
-::::
-
-## Table of Contents
+- [Quickstart](quickstart.md): install mew, write a benchmark, and compare two runs.
+- [Writing and measuring benchmarks](guide/writing-benchmarks.md): measure the work you intended and know when to trust the result.
+- [Comparing and gating](guide/comparing.md): compare result files and fail CI on regressions.
+- [Using mew from Python](guide/python-api.md): select, run, and read results in your own scripts.
+- [How-tos](howto/profiling.md) for profiling and comparing implementations, and [recipes](recipes/index.md) for running mew in production.
 
 ```{toctree}
-:caption: Getting started
+:caption: Guide
 :maxdepth: 1
 
-getting-started/installation
-getting-started/quickstart
-getting-started/concepts
-```
-
-```{toctree}
-:caption: User guide
-:maxdepth: 1
-
+quickstart
 guide/writing-benchmarks
-guide/parametrize
-guide/state-and-timing
-guide/context
-guide/configuration
-guide/cli
-guide/ab-comparison
-guide/reporters
-guide/trusting-results
-guide/profiling-cpu
-guide/profiling-memory
-guide/profiling-native
-guide/regressions
+guide/comparing
+guide/python-api
+```
+
+```{toctree}
+:caption: How-tos
+:maxdepth: 1
+
+howto/profiling
+howto/ab-comparison
+howto/native-profiling
+```
+
+```{toctree}
+:caption: Recipes
+:maxdepth: 1
+
+recipes/index
+recipes/ci-gate
+recipes/git-history
+recipes/analyzing-results
 ```
 
 ```{toctree}
@@ -96,6 +60,8 @@ guide/regressions
 
 reference/api/index
 reference/cli
+reference/configuration
+reference/results
 ```
 
 ```{toctree}
@@ -103,13 +69,9 @@ reference/cli
 :maxdepth: 1
 
 development/building
+development/sanitizers
 development/patches
 development/contributing
 development/releasing
-```
-
-```{toctree}
-:hidden:
-
 changelog
 ```

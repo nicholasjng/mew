@@ -6,8 +6,9 @@
 #     swamps most real regressions.
 #   * Both runs must execute on the same physical machine for the comparison
 #     to be meaningful — keep them in one job, not two.
-#   * --repetitions 5 gives `mew compare` enough samples to compute
-#     a useful stddev. Tune up for noisier hardware.
+#   * --repetitions 5 gives `mew compare` enough samples for its spread
+#     and significance test. Tune up for noisier hardware.
+#   * docs/recipes/ci-gate.md describes an alternating variant.
 
 name: benchmarks
 
@@ -62,8 +63,7 @@ jobs:
         # gating merges. Per-benchmark allowlists live in
         # `[tool.mew.regressions]` in pyproject.toml.
         run: |
-          uv run mew compare pr.jsonl master.jsonl \
-            --stddev \
+          uv run mew compare master.jsonl pr.jsonl \
             --regression-threshold 5% \
             --exit-non-zero-on-regression \
             2>&1 | tee compare.txt
