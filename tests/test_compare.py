@@ -7,6 +7,7 @@ import json
 import math
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from _helpers import (
@@ -27,6 +28,14 @@ from mew.compare import (
     run_summaries,
 )
 from mew.regressions import CounterConfig, CounterRule, RegressionConfig
+
+
+def _context(out: str) -> dict[str, dict[str, str]]:
+    """The context table above the comparison, a line per file, by file and field."""
+    lines = out.split("\n\n", 1)[0].splitlines()
+    header = [h.strip() for h in lines[0].split("│")]
+    rows = [[c.strip() for c in line.split("│")] for line in lines[2:]]
+    return {r[0]: dict(zip(header[1:], r[1:], strict=True)) for r in rows}
 
 
 def test_load_skips_skipped_rows(tmp_path: Path) -> None:
@@ -264,7 +273,9 @@ def test_a_file_pools_every_run(tmp_path: Path, capsys) -> None:
     _write_json(base, [_row("b", 15.0)])
     console = Console(width=200)
     compare([base, p], console=console)
-    assert "2 runs, newest 2026-02-01" in console.export_text()
+    ctx = _context(console.export_text())
+    assert (ctx["r"]["runs"], ctx["r"]["date"]) == ("2", "2026-02-01 00:00:00")
+    assert ctx["base"]["runs"] == "1"
 
 
 @pytest.mark.parametrize(
@@ -328,12 +339,10 @@ def test_compare_prints_context_and_warns_on_skew(
     )
     console = Console(width=200)
     assert compare([base, other], console=console) == 0
-    out = console.export_text()
-    assert "host=h1" in out
-    assert "host=h2" in out
+    ctx = _context(console.export_text())
+    assert (ctx["base"]["host"], ctx["other"]["host"]) == ("h1", "h2")
     # Differing custom keys annotate the column labels.
-    assert "engine=ducky 0.1" in out
-    assert "engine=duckdb 1.5.3" in out
+    assert (ctx["base"]["engine"], ctx["other"]["engine"]) == ("ducky 0.1", "duckdb 1.5.3")
     err = capsys.readouterr().err
     assert "mew: warning: result files differ in host: base: h1, other: h2" in err
     assert "result files differ in cpu_model: base: Apple M1, other: Apple M2" in err
@@ -357,8 +366,8 @@ def test_compare_labels_columns_by_interpreter(
     console = Console(width=200)
     assert compare([base, other], console=console) == 0
     out = console.export_text()
-    assert "python.version=3.14.3" in out
-    assert "python.version=3.15.0" in out
+    ctx = _context(out)
+    assert (ctx["base"]["python.version"], ctx["other"]["python.version"]) == ("3.14.3", "3.15.0")
     # What both files share goes unsaid, and isn't warned on.
     assert "cpu_model" not in out
     assert "differ in" not in capsys.readouterr().err
@@ -817,3 +826,41 @@ def test_long_layout_gives_each_file_a_line(tmp_path: Path) -> None:
     cells = [[c.strip() for c in line.split("│")] for line in lines]
     assert [c[:2] for c in cells] == [["bench", "f0"], ["", "f1"], ["", "f2"]]
     assert cells[2][2:] == ["-", "-", "-"]
+
+
+def _ctx_file(tmp_path: Path, name: str, **custom: Any) -> Path:
+    p = tmp_path / f"{name}.json"
+    _write_json(p, [_row("b", 1.0, date="2026-01-01T00:00:00", run_name=name, custom=custom)])
+    return p
+
+
+def test_context_values_read_as_written(tmp_path: Path) -> None:
+    """Context values show without Python's repr: lists joined, booleans in lowercase."""
+    files = [
+        _ctx_file(tmp_path, "a", devices=["cuda:0"], dirty=False),
+        _ctx_file(tmp_path, "b", devices=["cuda:0", "cuda:1"], dirty=True),
+    ]
+    console = Console(width=200)
+    compare(files, console=console)
+    ctx = _context(console.export_text())
+    assert ctx["a"] == {
+        "run": "a",
+        "date": "2026-01-01 00:00:00",
+        "devices": "cuda:0",
+        "dirty": "false",
+    }
+    assert (ctx["b"]["devices"], ctx["b"]["dirty"]) == ("cuda:0, cuda:1", "true")
+
+
+@pytest.mark.parametrize(
+    ("width", "first"),
+    [(200, "│ run"), (50, "│ a"), (40, "a: run=a")],
+)
+def test_context_takes_the_widest_form_that_fits(tmp_path: Path, width, first) -> None:
+    """A line per file, else a line per field, else each file's fields wrapped."""
+    files = [_ctx_file(tmp_path, n, engine=f"{n}-engine 1.0", commit=f"{n}123456") for n in "ab"]
+    console = Console(width=width)
+    compare(files, console=console)
+    out = console.export_text()
+    assert first in out.splitlines()[0]
+    assert max(len(line) for line in out.split("\n\n", 1)[0].splitlines()) <= width

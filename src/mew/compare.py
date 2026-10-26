@@ -23,6 +23,7 @@ from mew._console import (
     fmt_time,
     overflow,
     sgr,
+    truncate_right,
     warn,
 )
 from mew._registry import compile_name_filter
@@ -46,6 +47,9 @@ __all__ = ["RunSummary", "compare", "read_results", "run_summaries"]
 # How `compare` lays out its table, widest first. "auto" picks the first that fits.
 LAYOUTS = ("auto", "full", "compact", "long")
 
+# Longest a context value shows, past which it is cut with an ellipsis.
+_CTX_VALUE_WIDTH = 40
+
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
 # `host` only where a suite records it; mew doesn't, since it often names a person.
@@ -63,23 +67,71 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def _ctx_summary(ctx: dict[str, Any], differing: dict[str, Any]) -> list[str]:
-    """The parts of a comparison column's provenance line: its run, and the
-    context values that differ from another column's. What every column shares
-    goes unsaid. The skew warnings flag a machine that differs.
+def _ctx_value(value: Any) -> str:
+    """A context value as a person reads it: ``true``, ``a, b``, not Python's repr."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "-"
+    if isinstance(value, list | tuple):
+        return ", ".join(_ctx_value(v) for v in value)
+    return truncate_right(str(value), _CTX_VALUE_WIDTH)
+
+
+def _ctx_fields(ctx: dict[str, Any], differing: dict[str, Any]) -> dict[str, str]:
+    """A column's provenance: how many runs it pooled, its run's name and date,
+    and the context values that differ from another column's. What every column
+    shares goes unsaid. The skew warnings flag a machine that differs.
 
     An unnamed run goes by its date: a short id would not tell runs apart, as a
     UUIDv7's leading digits are its time to about a minute."""
     run = ctx.get("run") or {}
-    parts: list[str] = []
-    if (runs := ctx.get("runs", 1)) > 1:
-        parts.append(f"{runs} runs, newest")
-    elif run.get("name"):
-        parts.append(f"run={run['name']}")
-    if run.get("date"):
-        parts.append(str(run["date"])[:19])
-    parts += [f"{k}={v}" for k, v in differing.items()]
-    return parts
+    fields = {
+        "runs": str(ctx.get("runs", 1)),
+        "run": run.get("name") or "",
+        "date": str(run.get("date") or "")[:19].replace("T", " "),
+    }
+    fields |= {k: _ctx_value(v) for k, v in differing.items()}
+    return fields
+
+
+def _context_lines(columns: list[_Column], diffs: list[dict[str, Any]], term: Terminal) -> None:
+    """Print the columns' provenance, the widest of three forms that fits.
+
+    A line per file, aligned, else a line per field, else each file's fields as
+    ``key=value``, wrapped. The run count shows only if a file pooled runs, and
+    the name only if a run has one.
+    """
+    rows = {c.label: _ctx_fields(c.context, d) for c, d in zip(columns, diffs, strict=True)}
+    keys = list(dict.fromkeys(k for fields in rows.values() for k in fields))
+    if all(f.get("runs", "1") == "1" for f in rows.values()):
+        keys.remove("runs")
+    if not any(f.get("run") for f in rows.values()):
+        keys.remove("run")
+
+    def cell(text: str) -> list[Span]:
+        return [(text or "-", "dim")]
+
+    by_file = Table()
+    by_file.add_column("")
+    for key in keys:
+        by_file.add_column(key)
+    for label, fields in rows.items():
+        by_file.add_row(label, *(cell(fields.get(k, "")) for k in keys))
+    by_field = Table()
+    by_field.add_column("")
+    for label in rows:
+        by_field.add_column(label)
+    for key in keys:
+        by_field.add_row(key, *(cell(fields.get(key, "")) for fields in rows.values()))
+    for table in (by_file, by_field):
+        if table.min_width() <= term.width:
+            term.print(table)
+            return
+    for label, fields in rows.items():
+        parts = [f"{label}:", *(f"{k}={fields[k]}" for k in keys if fields.get(k))]
+        for line in fill(parts, term.width, indent="", hang="  ", sep=" "):
+            term.print(sgr(line, "dim", enabled=term.color))
 
 
 def _warn_context_skew(columns: list[_Column]) -> None:
@@ -422,11 +474,9 @@ def _render(
     _warn_context_skew(columns)
     diffs = _custom_diffs([c.context for c in columns])
     term = console or Terminal()
-    for c, diff in zip(columns, diffs, strict=True):
-        if c.context:
-            parts = [f"{c.label}:", *_ctx_summary(c.context, diff)]
-            for line in fill(parts, term.width, indent="", hang="  ", sep=" "):
-                term.print(sgr(line, "dim", enabled=term.color))
+    if any(c.context for c in columns):
+        _context_lines(columns, diffs, term)
+        term.print("")
 
     # One file's benchmarks share its `path.py::` prefix: said once, in the title.
     prefix = _shared_file_prefix(shared)
