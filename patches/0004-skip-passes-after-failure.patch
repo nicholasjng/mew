@@ -1,8 +1,8 @@
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index 49de078..4edbd0a 100644
+index 13b4dd3..099a766 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
-@@ -561,10 +561,13 @@ void BenchmarkRunner::DoOneRepetition() {
+@@ -557,9 +557,12 @@ void BenchmarkRunner::DoOneRepetition() {
             "then we should have accepted the current iteration run.");
    }
  
@@ -11,13 +11,12 @@ index 49de078..4edbd0a 100644
 +
    // Produce memory measurements if requested.
    MemoryManager::Result memory_result;
-   IterationCount memory_iterations = 0;
 -  if (memory_manager != nullptr) {
 +  if (memory_manager != nullptr && run_passes) {
      // Only run a few iterations to reduce the impact of one-time
      // allocations in benchmarks that are not properly managed.
-     memory_iterations = std::min<IterationCount>(
-@@ -573,7 +576,7 @@ void BenchmarkRunner::DoOneRepetition() {
+     const IterationCount memory_iterations = std::min<IterationCount>(
+@@ -568,7 +571,7 @@ void BenchmarkRunner::DoOneRepetition() {
    }
  
    ProfilerManager::Result profile_result;

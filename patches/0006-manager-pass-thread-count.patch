@@ -64,10 +64,10 @@ index 0dd950c..08b8a0e 100644
              ProfilerManager* profiler_manager) const;
  
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index 4edbd0a..7c129f3 100644
+index 099a766..06672fe 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
-@@ -160,7 +160,7 @@ BenchmarkReporter::Run CreateRunReport(
+@@ -157,7 +157,7 @@ BenchmarkReporter::Run CreateRunReport(
  // Execute one thread of benchmark b for the specified number of iterations.
  // Adds the stats collected for the thread into manager->results.
  void RunInThread(const BenchmarkInstance* b, IterationCount iters,
@@ -76,7 +76,7 @@ index 4edbd0a..7c129f3 100644
                   PerfCountersMeasurement* perf_counters_measurement,
                   ProfilerManager* profiler_manager_) {
    internal::ThreadTimer timer(
-@@ -168,7 +168,7 @@ void RunInThread(const BenchmarkInstance* b, IterationCount iters,
+@@ -165,7 +165,7 @@ void RunInThread(const BenchmarkInstance* b, IterationCount iters,
            ? internal::ThreadTimer::CreateProcessCpuTime()
            : internal::ThreadTimer::Create());
  
@@ -85,7 +85,7 @@ index 4edbd0a..7c129f3 100644
                      perf_counters_measurement, profiler_manager_);
    if (!(st.skipped() || st.iterations() >= st.max_iterations)) {
      st.SkipWithError(
-@@ -356,7 +356,7 @@ BenchmarkRunner::IterationResults BenchmarkRunner::DoNIterations() {
+@@ -352,7 +352,7 @@ BenchmarkRunner::IterationResults BenchmarkRunner::DoNIterations() {
    manager.reset(new internal::ThreadManager(b.threads()));
  
    thread_runner->RunThreads([&](int thread_idx) {
@@ -94,7 +94,7 @@ index 4edbd0a..7c129f3 100644
                  perf_counters_measurement_ptr, /*profiler_manager=*/nullptr);
    });
  
-@@ -455,9 +455,9 @@ void BenchmarkRunner::RunWarmUp() {
+@@ -451,9 +451,9 @@ void BenchmarkRunner::RunWarmUp() {
    const IterationCount i_backup = iters;
  
    for (;;) {
@@ -106,7 +106,7 @@ index 4edbd0a..7c129f3 100644
  
      const bool finish = ShouldReportIterationResults(i_warmup);
  
-@@ -484,15 +484,18 @@ IterationCount BenchmarkRunner::RunManagerPass(IterationCount pass_iters,
+@@ -480,15 +480,18 @@ IterationCount BenchmarkRunner::RunManagerPass(IterationCount pass_iters,
                                                 PerfCountersMeasurement* pcm) {
    std::unique_ptr<internal::ThreadManager> manager;
    manager.reset(new internal::ThreadManager(1));
@@ -128,7 +128,7 @@ index 4edbd0a..7c129f3 100644
    return iterations;
  }
  
-@@ -535,9 +538,9 @@ void BenchmarkRunner::DoOneRepetition() {
+@@ -531,9 +534,9 @@ void BenchmarkRunner::DoOneRepetition() {
    // is *only* calculated for the *first* repetition, and other repetitions
    // simply use that precomputed iteration count.
    for (;;) {

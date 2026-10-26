@@ -1,8 +1,8 @@
 diff --git a/src/benchmark.cc b/src/benchmark.cc
-index 4f2f175..9389b69 100644
+index a23506b..b814916 100644
 --- a/src/benchmark.cc
 +++ b/src/benchmark.cc
-@@ -106,6 +106,9 @@ BM_DEFINE_double(benchmark_min_warmup_time, 0.0);
+@@ -109,6 +109,9 @@ BM_DEFINE_double(benchmark_min_warmup_time, 0.0);
  // standard deviation of the runs will be reported.
  BM_DEFINE_int32(benchmark_repetitions, 1);
  
@@ -12,7 +12,7 @@ index 4f2f175..9389b69 100644
  // If enabled, forces each benchmark to execute exactly one iteration and one
  // repetition, bypassing any configured
  // MinTime()/MinWarmUpTime()/Iterations()/Repetitions()
-@@ -750,6 +753,8 @@ void ParseCommandLineFlags(int* argc, char** argv) {
+@@ -753,6 +756,8 @@ void ParseCommandLineFlags(int* argc, char** argv) {
                          &FLAGS_benchmark_min_warmup_time) ||
          ParseInt32Flag(argv[i], "benchmark_repetitions",
                         &FLAGS_benchmark_repetitions) ||
@@ -21,7 +21,7 @@ index 4f2f175..9389b69 100644
          ParseBoolFlag(argv[i], "benchmark_dry_run", &FLAGS_benchmark_dry_run) ||
          ParseBoolFlag(argv[i], "benchmark_enable_random_interleaving",
                        &FLAGS_benchmark_enable_random_interleaving) ||
-@@ -953,6 +958,7 @@ void PrintDefaultHelp() {
+@@ -956,6 +961,7 @@ void PrintDefaultHelp() {
            "          [--benchmark_min_time=`<integer>x` OR `<float>s` ]\n"
            "          [--benchmark_min_warmup_time=<min_warmup_time>]\n"
            "          [--benchmark_repetitions=<num_repetitions>]\n"
@@ -30,7 +30,7 @@ index 4f2f175..9389b69 100644
            "          [--benchmark_enable_random_interleaving={true|false}]\n"
            "          [--benchmark_report_aggregates_only={true|false}]\n"
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index aacfee8..49de078 100644
+index ad58120..13b4dd3 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
 @@ -67,6 +67,7 @@ BM_DECLARE_bool(benchmark_dry_run);
@@ -41,12 +41,13 @@ index aacfee8..49de078 100644
  BM_DECLARE_bool(benchmark_report_aggregates_only);
  BM_DECLARE_bool(benchmark_display_aggregates_only);
  BM_DECLARE_string(benchmark_perf_counters);
-@@ -566,7 +567,8 @@ void BenchmarkRunner::DoOneRepetition() {
+@@ -561,8 +562,8 @@ void BenchmarkRunner::DoOneRepetition() {
    if (memory_manager != nullptr) {
      // Only run a few iterations to reduce the impact of one-time
      // allocations in benchmarks that are not properly managed.
--    memory_iterations = std::min<IterationCount>(16, iters);
-+    memory_iterations = std::min<IterationCount>(
+-    const IterationCount memory_iterations =
+-        std::min<IterationCount>(16, iters);
++    const IterationCount memory_iterations = std::min<IterationCount>(
 +        std::max<int32_t>(1, FLAGS_benchmark_memory_iterations), iters);
      memory_result = RunMemoryManager(memory_iterations);
    }

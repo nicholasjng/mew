@@ -2,7 +2,7 @@ diff --git a/include/benchmark/benchmark_api.h b/include/benchmark/benchmark_api
 index d7ba187..7eca648 100644
 --- a/include/benchmark/benchmark_api.h
 +++ b/include/benchmark/benchmark_api.h
-@@ -267,6 +267,7 @@
+@@ -267,6 +267,7 @@ class Fixture : public Benchmark {
    void Run(State& st) override {
      this->SetUp(st);
      this->BenchmarkCase(st);
@@ -11,10 +11,10 @@ index d7ba187..7eca648 100644
    }
    virtual void SetUp(const State&) {}
 diff --git a/include/benchmark/state.h b/include/benchmark/state.h
-index 69c4211..828c644 100644
+index c0837d8..7921d3d 100644
 --- a/include/benchmark/state.h
 +++ b/include/benchmark/state.h
-@@ -179,6 +179,9 @@
+@@ -181,6 +181,9 @@ class BENCHMARK_EXPORT BENCHMARK_INTERNAL_CACHELINE_ALIGNED State {
    inline bool KeepRunningInternal(IterationCount n, bool is_batch);
    void FinishKeepRunning();
  
@@ -24,7 +24,7 @@ index 69c4211..828c644 100644
    // The checked entry points above forward here; keeping the bodies out of
    // line keeps the assertions with the caller, whose NDEBUG decides whether
    // they are compiled in.
-@@ -194,6 +197,9 @@
+@@ -196,6 +199,9 @@ class BENCHMARK_EXPORT BENCHMARK_INTERNAL_CACHELINE_ALIGNED State {
    internal::PerfCountersMeasurement* const perf_counters_measurement_;
    ProfilerManager* const profiler_manager_;
  
@@ -35,10 +35,10 @@ index 69c4211..828c644 100644
  };
  
 diff --git a/src/benchmark.cc b/src/benchmark.cc
-index 4a6789f..4f2f175 100644
+index e49cbdc..a23506b 100644
 --- a/src/benchmark.cc
 +++ b/src/benchmark.cc
-@@ -305,6 +305,7 @@
+@@ -308,6 +308,7 @@ void State::StartKeepRunning() {
    started_ = true;
    total_iterations_ = skipped() ? 0 : max_iterations;
    if (BENCHMARK_BUILTIN_EXPECT(profiler_manager_ != nullptr, false)) {
@@ -46,7 +46,7 @@ index 4a6789f..4f2f175 100644
      profiler_manager_->AfterSetupStartWithState(*this);
    }
    manager_->StartStopBarrier();
-@@ -314,7 +315,9 @@
+@@ -317,7 +318,9 @@ void State::StartKeepRunning() {
  }
  
  void State::FinishKeepRunning() {
@@ -57,7 +57,7 @@ index 4a6789f..4f2f175 100644
    if (!skipped()) {
      PauseTiming();
    }
-@@ -322,7 +325,12 @@
+@@ -325,7 +328,12 @@ void State::FinishKeepRunning() {
    total_iterations_ = 0;
    finished_ = true;
    manager_->StartStopBarrier();
@@ -75,7 +75,7 @@ diff --git a/src/benchmark_api_internal.cc b/src/benchmark_api_internal.cc
 index f9c4990..e6ec602 100644
 --- a/src/benchmark_api_internal.cc
 +++ b/src/benchmark_api_internal.cc
-@@ -97,6 +97,7 @@
+@@ -97,6 +97,7 @@ State BenchmarkInstance::Run(
    State st(name_.function_name, iters, args_, thread_id, threads_, timer,
             manager, perf_counters_measurement, profiler_manager);
    benchmark_.Run(st);
