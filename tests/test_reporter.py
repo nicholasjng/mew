@@ -80,6 +80,23 @@ def test_json_reporter_leaves_a_stream_open():
     assert json.loads(buf.getvalue())["benchmarks"][0]["name"] == "a::one"
 
 
+def test_json_reporter_closes_its_file_if_finalizing_the_document_fails(tmp_path, monkeypatch):
+    """A failed final write must still release the owned file, and allow another run."""
+    failed, next_run = io.StringIO(), io.StringIO()
+    open_sink = mock.Mock(side_effect=[failed, next_run])
+    monkeypatch.setattr("mew.reporter.open_text", open_sink)
+    reporter = JSONReporter(output=tmp_path / "results.json")
+    reporter.report_context({})
+    with (
+        mock.patch.object(failed, "write", side_effect=OSError("disk full")),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        reporter.finalize()
+    assert failed.closed
+    _feed(reporter, _fake_row("a::one"))
+    assert next_run.closed
+
+
 @pytest.mark.parametrize(
     ("reporter", "suffix"), [(JSONReporter, ".json"), (JSONLReporter, ".jsonl")]
 )

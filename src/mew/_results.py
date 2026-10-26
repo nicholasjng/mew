@@ -6,6 +6,7 @@ import dataclasses
 import json
 import statistics
 import zlib
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -263,10 +264,10 @@ def _group_by_session(
 
     ISO-8601 dates lead the key, so it sorts chronologically.
     """
-    buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    buckets: defaultdict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
         if not measured_only or _is_measurement_row(r):
-            buckets.setdefault(_session_key(r), []).append(r)
+            buckets[_session_key(r)].append(r)
     return dict(sorted(buckets.items()))
 
 
@@ -330,9 +331,9 @@ def load_column(
     # The newest selected row speaks for the column's provenance.
     rep_row = max(selected, key=_session_key)
     # Repetitions of one benchmark share its `name[label]`.
-    groups: dict[str, list[dict[str, Any]]] = {}
+    groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in selected:
-        groups.setdefault(r["benchmark"], []).append(r)
+        groups[r["benchmark"]].append(r)
     samples = _samples_from_groups(groups, metric, statistic)
     ctx = {k: rep_row[k] for k in ROW_STAMP_FIELDS if k in rep_row}
     return _normalize_samples(samples, key, str(path)), ctx

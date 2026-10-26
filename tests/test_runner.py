@@ -2,14 +2,42 @@
 
 from __future__ import annotations
 
+import gc
 import platform
 import sys
 import time
+import weakref
 
 import pytest
 from _helpers import Capture
 
 import mew
+
+
+def test_native_registry_keeps_the_callable_alive_until_cleared():
+    """A native registration owns its callable, even without a Python-side registry entry."""
+    from mew import _core
+
+    calls = []
+
+    def bench(state):
+        calls.append("ran")
+        for _ in state:
+            pass
+
+    ref = weakref.ref(bench)
+    _core.clear_registered_benchmarks()
+    try:
+        _core.register_benchmark("owned_callable", bench).iterations(1).repetitions(1)
+        del bench
+        gc.collect()
+        assert ref() is not None
+        _core.run_benchmarks(["mew"], Capture())
+        assert calls == ["ran"]
+    finally:
+        _core.clear_registered_benchmarks()
+    gc.collect()
+    assert ref() is None
 
 
 def test_run_reports_rows_and_the_session_context():
