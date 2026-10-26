@@ -1,4 +1,4 @@
-"""Dotted paths into context, such as ``vcs.commit``.
+"""Dotted paths into context, such as ``vcs.commit``, and matching them by glob.
 
 A dot always nests, as in DuckDB. A key that itself holds a dot is quoted:
 ``context."a.b"``, with ``""`` for a quote inside one.
@@ -7,6 +7,8 @@ A dot always nests, as in DuckDB. A key that itself holds a dot is quoted:
 from __future__ import annotations
 
 import csv
+import fnmatch
+from collections.abc import Mapping
 from typing import Any
 
 Path = tuple[str, ...]
@@ -58,3 +60,27 @@ def set_path(obj: dict[str, Any], path: Path, value: Any) -> None:
         child = obj[key] = dict(child) if isinstance(child, dict) else {}
         obj = child
     obj[path[-1]] = value
+
+
+def flatten(obj: Mapping[str, Any], prefix: Path = ()) -> dict[str, Any]:
+    """Every leaf of nested mappings, by its formatted path."""
+    out: dict[str, Any] = {}
+    for key, value in obj.items():
+        path = (*prefix, key)
+        if isinstance(value, Mapping) and value:
+            out.update(flatten(value, path))
+        else:
+            out[format_path(path)] = value
+    return out
+
+
+def matches_glob(path: str, patterns: list[str]) -> int | None:
+    """The index of the first pattern that selects ``path``, a leaf's formatted path.
+
+    A pattern selects a leaf it matches, or one below a path it matches, so
+    ``jax`` selects ``jax.version``.
+    """
+    for i, pattern in enumerate(patterns):
+        if fnmatch.fnmatchcase(path, pattern) or fnmatch.fnmatchcase(path, pattern + ".*"):
+            return i
+    return None

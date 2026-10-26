@@ -74,9 +74,14 @@ against each; see {doc}`ab-comparison`.
 ## Context and noise
 
 Each file gets a context line above the table: its run's name (or ID) and
-date, then only the context values that differ between the files. `compare`
-warns when machine properties differ. When all rows share one file prefix, such
-as `benchmarks/bench_sort.py::`, the title names it once and the rows drop it.
+date. `--show-context` adds context fields by path, such as
+`--show-context vcs.commit`, or by glob, such as `jax.*`. A path also selects
+every field below it, so `--show-context python` shows the interpreter's version
+and build. Named fields show even where every file has the same value. They are
+opt-in because a small change, such as a new commit, changes many values at
+once. `compare` warns when machine properties differ. When all rows share one
+file prefix, such as `benchmarks/bench_sort.py::`, the title names it once and
+the rows drop it.
 
 A benchmark that a file has as skipped is reported with its reason
 (`mew: warning: skipped in head.json: …`), apart from benchmarks the file lacks.

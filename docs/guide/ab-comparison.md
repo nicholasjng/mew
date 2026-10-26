@@ -49,12 +49,12 @@ def context() -> dict:
 ```console
 $ ENGINE=alpha mew run --repetitions 10 --context engine="alpha 1.5.3" -o alpha.json
 $ ENGINE=beta  mew run --repetitions 10 --context engine="beta 2.0.0"  -o beta.json
-$ mew compare alpha.json beta.json
+$ mew compare --show-context engine alpha.json beta.json
 ```
 
 Repetitions give each value its spread and the comparison its significance
-test. Each file's context line above the table shows only the values that
-differ between the files, here `engine=…`:
+test. `--show-context engine` adds the recorded side to each file's context line
+above the table:
 
 ```console
 alpha: 2026-11-09T14:44:34 engine=alpha 1.5.3

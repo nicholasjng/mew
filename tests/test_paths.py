@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from mew._paths import (
+    flatten,
     format_path,
+    matches_glob,
     parse_path,
     set_path,
     split_assignment,
@@ -60,3 +62,18 @@ def test_set_path_copies_the_mappings_it_changes() -> None:
     set_path(outer, ("n", "x"), "y")  # a value in the way is replaced
     assert outer == {"jax": {"version": "1", "backend": "gpu"}, "n": {"x": "y"}}
     assert inner == {"version": "1"}
+
+
+def test_flatten_quotes_keys_holding_dots() -> None:
+    """Leaves come out by formatted path, a key holding a dot quoted, and an empty table kept."""
+    assert flatten({"a": {"b": 1, "c.d": 2}, "e": {}}) == {"a.b": 1, 'a."c.d"': 2, "e": {}}
+
+
+@pytest.mark.parametrize(
+    ("path", "index"),
+    [("jax.version", 1), ("jax", 1), ("vcs.commit", 0), ("python.version", None)],
+)
+def test_globs_select_a_path_or_what_it_holds(path: str, index: int | None) -> None:
+    """A field is selected by the first pattern it or a path above it matches, else by none."""
+    patterns = ["vcs.*", "jax"]
+    assert matches_glob(path, patterns) == index

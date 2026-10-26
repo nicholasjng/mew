@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import re
 import sys
@@ -26,6 +25,7 @@ from mew._console import (
     truncate_right,
     warn,
 )
+from mew._paths import flatten, matches_glob
 from mew._registry import compile_name_filter
 from mew._results import (
     MEMORY_METRICS,
@@ -55,18 +55,6 @@ _CV_UNRELIABLE = 0.25
 # `host` only where a suite records it; mew doesn't, since it often names a person.
 
 
-def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    """Flatten nested user-context values to dotted keys for display."""
-    out: dict[str, Any] = {}
-    for k, v in d.items():
-        dotted = f"{prefix}{k}"
-        if isinstance(v, dict):
-            out.update(_flatten(v, f"{dotted}."))
-        else:
-            out[dotted] = v
-    return out
-
-
 def _ctx_value(value: Any) -> str:
     """A context value as a person reads it: ``true``, ``a, b``, not Python's repr."""
     if isinstance(value, bool):
@@ -78,10 +66,9 @@ def _ctx_value(value: Any) -> str:
     return truncate_right(str(value), _CTX_VALUE_WIDTH)
 
 
-def _ctx_fields(ctx: dict[str, Any], differing: dict[str, Any]) -> dict[str, str]:
+def _ctx_fields(ctx: dict[str, Any], shown: dict[str, str]) -> dict[str, str]:
     """A column's provenance: how many runs it pooled, its run's name and date,
-    and the context values that differ from another column's. What every column
-    shares goes unsaid. The skew warnings flag a machine that differs.
+    and the context values asked for.
 
     An unnamed run goes by its date: a short id would not tell runs apart, as a
     UUIDv7's leading digits are its time to about a minute."""
@@ -91,18 +78,35 @@ def _ctx_fields(ctx: dict[str, Any], differing: dict[str, Any]) -> dict[str, str
         "run": run.get("name") or "",
         "date": str(run.get("date") or "")[:19].replace("T", " "),
     }
-    fields |= {k: _ctx_value(v) for k, v in differing.items()}
-    return fields
+    return fields | shown
 
 
-def _context_lines(columns: list[_Column], diffs: list[dict[str, Any]], term: Terminal) -> None:
+def _shown_context(columns: list[_Column], patterns: Sequence[str]) -> list[dict[str, str]]:
+    """Per column, the context values ``patterns`` select, by path, in pattern order.
+
+    A value is shown whether or not it differs between the columns: a small
+    change flips many, so a reader names the few that matter.
+    """
+    flats = [flatten(c.context.get("context") or {}) for c in columns]
+    order: dict[str, int] = {}
+    for path in set().union(*flats):
+        if (i := matches_glob(path, list(patterns))) is not None:
+            order[path] = i
+    for i, pattern in enumerate(patterns):
+        if i not in order.values():
+            warn(f"no context field matches {pattern!r}")
+    paths = sorted(order, key=lambda p: (order[p], p))
+    return [{p: _ctx_value(f[p]) if p in f else "" for p in paths} for f in flats]
+
+
+def _context_lines(columns: list[_Column], shown: list[dict[str, str]], term: Terminal) -> None:
     """Print the columns' provenance, the widest of three forms that fits.
 
     A line per file, aligned, else a line per field, else each file's fields as
     ``key=value``, wrapped. The run count shows only if a file pooled runs, and
     the name only if a run has one.
     """
-    rows = {c.label: _ctx_fields(c.context, d) for c, d in zip(columns, diffs, strict=True)}
+    rows = {c.label: _ctx_fields(c.context, d) for c, d in zip(columns, shown, strict=True)}
     keys = list(dict.fromkeys(k for fields in rows.values() for k in fields))
     if all(f.get("runs", "1") == "1" for f in rows.values()):
         keys.remove("runs")
@@ -144,18 +148,6 @@ def _warn_context_skew(columns: list[_Column]) -> None:
         if len({v for v in values.values() if v is not None}) > 1:
             detail = ", ".join(f"{label}: {v}" for label, v in values.items())
             warn(f"result files differ in {fld}: {detail}")
-
-
-def _custom_diffs(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per-column dict of the context keys whose values differ across columns."""
-    flats = [_flatten(ctx.get("context") or {}) for ctx in contexts]
-    all_keys: set[str] = set().union(*flats)
-    differing = sorted(
-        k
-        for k in all_keys
-        if len({json.dumps(f.get(k), sort_keys=True, default=str) for f in flats}) > 1
-    )
-    return [{k: f.get(k) for k in differing if k in f} for f in flats]
 
 
 def _fmt_value(sample: Sample, metric: str) -> str:
@@ -431,6 +423,7 @@ def _render(
     higher_is_better: bool | None,
     layout: str = "auto",
     speedup: bool = False,
+    show_context: Sequence[str] = (),
 ) -> int:
     """Compare the first column against the rest and render the table.
 
@@ -472,10 +465,10 @@ def _render(
             warn(f"{c.source}: missing {len(missing)} benchmark(s): {preview}{extra}")
 
     _warn_context_skew(columns)
-    diffs = _custom_diffs([c.context for c in columns])
+    shown = _shown_context(columns, show_context)
     term = console or Terminal()
     if any(c.context for c in columns):
-        _context_lines(columns, diffs, term)
+        _context_lines(columns, shown, term)
         term.print("")
 
     # One file's benchmarks share its `path.py::` prefix: said once, in the title.
@@ -554,6 +547,7 @@ def compare(
     counters: CounterConfig | None = None,
     layout: str = "auto",
     speedup: bool = False,
+    show_context: Sequence[str] = (),
     console: Terminal | None = None,
 ) -> int:
     """Print a table comparing result files against the first one, the baseline.
@@ -597,6 +591,10 @@ def compare(
         benchmark. ``"auto"`` picks the first of these that fits the width.
     speedup : bool, default False
         In the compact layout, show each file's ratio instead of its delta.
+    show_context : Sequence[str], default ()
+        Context fields to show above the table, by path or glob, such as
+        ``"vcs.commit"`` or ``"jax.*"``. A path selects every field below it.
+        Without one, only each file's run name, date and run count show.
     console : mew.Terminal, optional
         Where to print, stdout by default.
 
@@ -661,4 +659,5 @@ def compare(
         higher_is_better=higher_is_better,
         layout=layout,
         speedup=speedup,
+        show_context=show_context,
     )
