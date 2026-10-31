@@ -92,6 +92,12 @@ cmake.build-type = "Debug"
 cmake.args = ["-DMEW_ASAN=ON"]
 
 [[tool.scikit-build.overrides]]
+if.env.MEW_UBSAN = "1"
+build-dir = "build/ubsan"
+cmake.build-type = "Debug"
+cmake.args = ["-DMEW_UBSAN=ON"]
+
+[[tool.scikit-build.overrides]]
 if.env.MEW_TSAN = "1"
 build-dir = "build/tsan"
 cmake.build-type = "Debug"

@@ -55,7 +55,18 @@ jobs:
 
       # libstdc++ must be preloaded alongside libasan.
       - name: Run tests under AddressSanitizer
+        env:
+          PYTHONMALLOC: malloc
         run: |
           LD_PRELOAD="$(gcc -print-file-name=libasan.so) $(gcc -print-file-name=libstdc++.so)" \
-          ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" \
+          ASAN_OPTIONS="detect_leaks=0:halt_on_error=1:detect_stack_use_after_return=1:strict_string_checks=1:log_path=$RUNNER_TEMP/asan-report" \
             .venv/bin/python -m pytest --capture no
+
+      - name: Print AddressSanitizer reports
+        if: always()
+        run: |
+          for report in "$RUNNER_TEMP"/asan-report.*; do
+            if [[ -f "$report" ]]; then
+              cat "$report"
+            fi
+          done

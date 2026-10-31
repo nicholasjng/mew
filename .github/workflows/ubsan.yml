@@ -1,0 +1,69 @@
+name: UndefinedBehaviorSanitizer check
+
+# Only changes to native code or its build can introduce what UBSAN finds; the weekly run covers new tests that reach existing native code.
+on:
+  push:
+    branches: [master]
+    paths:
+      - "src/_mew/**"
+      - "patches/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/ubsan.yml"
+  pull_request:
+    paths:
+      - "src/_mew/**"
+      - "patches/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/ubsan.yml"
+  schedule:
+    - cron: "11 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubsan:
+    name: ubsan · ubuntu
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+
+      - name: Build the UBSAN editable install
+        env:
+          CC: gcc
+          CXX: g++
+        run: MEW_UBSAN=1 uv sync --group test --group duckdb --reinstall-package=mew-bench
+
+      # Preload the GCC runtime and libstdc++ used by the instrumented extension.
+      - name: Run tests under UndefinedBehaviorSanitizer
+        run: |
+          LD_PRELOAD="$(gcc -print-file-name=libubsan.so) $(gcc -print-file-name=libstdc++.so)" \
+          UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1:log_path=$RUNNER_TEMP/ubsan-report" \
+            .venv/bin/python -m pytest --capture no
+
+      - name: Print UndefinedBehaviorSanitizer reports
+        if: always()
+        run: |
+          for report in "$RUNNER_TEMP"/ubsan-report.*; do
+            if [[ -f "$report" ]]; then
+              cat "$report"
+            fi
+          done
