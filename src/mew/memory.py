@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import sys
 import tempfile
-from contextlib import ExitStack
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -53,20 +52,17 @@ class MemrayManager(MemoryManager):
     ``allocations_per_iteration`` divides by the iterations that ran, which a
     batched loop can push past that cap.
 
-    Parameters
-    ----------
-    tmpdir : Path
-        Directory for the capture files, which the caller keeps alive; see
-        :func:`manager`.
+    The capture files live in a temporary directory that goes with the manager.
     """
 
-    def __init__(self, tmpdir: Path) -> None:
-        self._dir = tmpdir
+    def __init__(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="mew-memray-")
+        self._dir = Path(self._tmp.name)
         self._i = 0
         self._dest: Path | None = None
         self._tracker: Tracker | None = None
         #: Accepted captures as ``(path, root_frame)``, one per (benchmark,
-        #: repetition), in run order. :func:`write_flamegraph` renders them.
+        #: repetition), in run order. :meth:`write_flamegraph` renders them.
         self.captures: list[tuple[Path, Frame]] = []
 
     def start(self) -> None:
@@ -100,15 +96,69 @@ class MemrayManager(MemoryManager):
             "total_allocations": meta.total_allocations,
         }
 
+    def write_flamegraph(self, path: Path) -> None:
+        """Render the captures as one HTML allocation flame graph.
 
-def manager(stack: ExitStack) -> MemrayManager:
-    """Create a memray manager whose capture files live as long as ``stack``.
+        When nothing was captured, nothing is written and a warning goes to stderr.
 
-    Parameters
-    ----------
-    stack : ExitStack
-        Keeps the capture files until it closes, after the run and any
-        :func:`write_flamegraph`.
+        Parameters
+        ----------
+        path : Path
+            Destination HTML file.
+        """
+        if not self.captures:
+            print(
+                "warning: no memory captures recorded; skipping flame graph "
+                "(did any benchmark body enter its timing loop?)",
+                file=sys.stderr,
+            )
+            return
+
+        import memray
+        from memray.reporters.flamegraph import FlameGraphReporter
+
+        metas = []
+        records: list[_RootedRecord] = []
+        for capture, root in self.captures:
+            with memray.FileReader(capture) as reader:
+                metas.append(reader.metadata)
+                for rec in reader.get_high_watermark_allocation_records(merge_threads=True):
+                    records.append(
+                        _RootedRecord(
+                            size=rec.size,
+                            n_allocations=rec.n_allocations,
+                            tid=rec.tid,
+                            thread_name=rec.thread_name,
+                            stack=(*rec.stack_trace(), root),
+                        )
+                    )
+
+        # Process fields are shared; the figures must cover every capture.
+        metadata = dataclasses.replace(
+            metas[0],
+            start_time=min(m.start_time for m in metas),
+            end_time=max(m.end_time for m in metas),
+            total_allocations=sum(m.total_allocations for m in metas),
+            peak_memory=max(m.peak_memory for m in metas),
+        )
+        reporter = FlameGraphReporter.from_snapshot(
+            # Duck-typed stand-ins for AllocationRecord; see _RootedRecord.
+            cast("Any", records),
+            memory_records=(),
+            native_traces=False,
+        )
+        with path.open("w") as f:
+            reporter.render(
+                f,
+                metadata=metadata,
+                show_memory_leaks=False,
+                merge_threads=True,
+                inverted=False,
+            )
+
+
+def manager() -> MemrayManager:
+    """Create a memray manager, checking that memray is installed.
 
     Returns
     -------
@@ -124,68 +174,4 @@ def manager(stack: ExitStack) -> MemrayManager:
         raise ImportError(
             "memray is required for memory profiling. Install it with: uv add 'mew-bench[memory]'"
         )
-    tmpdir = stack.enter_context(tempfile.TemporaryDirectory())
-    return MemrayManager(Path(tmpdir))
-
-
-def write_flamegraph(manager: MemrayManager, path: Path) -> None:
-    """Render ``manager``'s captures as one HTML allocation flame graph.
-
-    When nothing was captured, nothing is written and a warning goes to stderr.
-
-    Parameters
-    ----------
-    manager : MemrayManager
-        Manager containing completed captures.
-    path : Path
-        Destination HTML file.
-    """
-    if not manager.captures:
-        print(
-            "warning: no memory captures recorded; skipping flame graph "
-            "(did any benchmark body enter its timing loop?)",
-            file=sys.stderr,
-        )
-        return
-
-    import memray
-    from memray.reporters.flamegraph import FlameGraphReporter
-
-    metas = []
-    records: list[_RootedRecord] = []
-    for capture, root in manager.captures:
-        with memray.FileReader(capture) as reader:
-            metas.append(reader.metadata)
-            for rec in reader.get_high_watermark_allocation_records(merge_threads=True):
-                records.append(
-                    _RootedRecord(
-                        size=rec.size,
-                        n_allocations=rec.n_allocations,
-                        tid=rec.tid,
-                        thread_name=rec.thread_name,
-                        stack=(*rec.stack_trace(), root),
-                    )
-                )
-
-    # Process fields are shared; the figures must cover every capture.
-    metadata = dataclasses.replace(
-        metas[0],
-        start_time=min(m.start_time for m in metas),
-        end_time=max(m.end_time for m in metas),
-        total_allocations=sum(m.total_allocations for m in metas),
-        peak_memory=max(m.peak_memory for m in metas),
-    )
-    reporter = FlameGraphReporter.from_snapshot(
-        # Duck-typed stand-ins for AllocationRecord; see _RootedRecord.
-        cast("Any", records),
-        memory_records=(),
-        native_traces=False,
-    )
-    with path.open("w") as f:
-        reporter.render(
-            f,
-            metadata=metadata,
-            show_memory_leaks=False,
-            merge_threads=True,
-            inverted=False,
-        )
+    return MemrayManager()

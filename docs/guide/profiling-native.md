@@ -16,7 +16,7 @@ runs its body directly — no timing loop, no Google Benchmark.
 ```python
 """Run one benchmark body so an external profiler can sample it.
 
-Usage: python profile_one.py <file.py> <benchmark-name> [iterations]
+Usage: python profile_one.py <file.py> <benchmark-name> [iterations [case]]
 """
 
 import sys
@@ -29,15 +29,14 @@ from mew._registry import REGISTRY
 class State:
     """Minimal stand-in for mew's State: iterate N times, no timing."""
 
-    range_size = 0
     threads = 1
     thread_index = 0
     name = ""
     skipped = False
     error_occurred = False
 
-    def __init__(self, n: int = 100_000, case: int = 0) -> None:
-        self._n, self._i, self._case = n, 0, case
+    def __init__(self, n: int = 100_000) -> None:
+        self._n, self._i = n, 0
 
     @property
     def iterations(self) -> int:
@@ -58,9 +57,6 @@ class State:
             self._i += n
             yield n
 
-    def range(self, pos: int = 0) -> int:
-        return self._case
-
     def pause(self):
         import contextlib
 
@@ -73,13 +69,15 @@ class State:
 def main() -> int:
     file, name, *rest = sys.argv[1:]
     iterations = int(rest[0]) if rest else 100_000
+    case = int(rest[1]) if len(rest) > 1 else 0
     REGISTRY.clear()
     _discovery.import_file(Path(file))
     entry = next((e for e in REGISTRY.all() if e.name.endswith(name)), None)
     if entry is None:
         print(f"no benchmark matching {name!r}", file=sys.stderr)
         return 1
-    entry.fn(State(iterations))
+    # A @parametrize family's function takes the case's index as `case`.
+    entry.fn(State(iterations), **({"case": case} if entry.case_labels else {}))
     return 0
 
 
@@ -89,9 +87,8 @@ if __name__ == "__main__":
 
 Find the name to pass with `mew list -n`.
 
-For a `@parametrize` family, pass the case index to `State(iterations, case=i)` —
-that is what `state.range(0)` returns, which is how the family trampoline picks
-its variant.
+For a `@parametrize` family, pass the case's index as a third argument, after
+the iterations: the family's function takes it as `case` to pick its variant.
 
 ## Recording
 
