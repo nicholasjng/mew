@@ -74,8 +74,7 @@ What benchmarked code writes to stdout or stderr, such as a library's warning on
 first use, is captured during the run, native writes included, and printed to
 stderr after the run under `output from benchmarks:`. It can neither break up the
 table nor corrupt JSON on stdout. `--capture=no` shows it live instead, e.g. when
-debugging a crash: captured output is lost if the process dies. To make that the
-project default, set `capture = "no"` in [`[tool.mew]`](configuration.md).
+debugging a crash: captured output is lost if the process dies.
 
 `--append` adds the run as a new session to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-sessions-in-one-file). `latest` is reserved and can't be a session tag: `path@latest` always selects the newest session.
 
@@ -115,7 +114,6 @@ frames, sample the process from outside: see {doc}`profiling-native`.
 | `--sampler NAME`        | `tachyon` (3.15+), `pyinstrument`, or `auto`: Tachyon on 3.15+, else pyinstrument (default). |
 | `--sample-html FILE`    | Write an HTML CPU profile: a Tachyon flame graph or a pyinstrument call tree. |
 | `--sample-interval F`   | Sampling interval seconds (default `1e-4`).                                 |
-| `--sample-top-k K`      | Hottest bytecode instructions per row with Tachyon on free-threaded 3.15+ (default 5). |
 | `--profile-memory`      | Run each benchmark under `memray`.                                          |
 | `--memory-iterations N` | Cap the memory pass at `N` iterations (default 16).                         |
 | `--flamegraph FILE`     | Write an HTML flame graph with allocation data.                             |

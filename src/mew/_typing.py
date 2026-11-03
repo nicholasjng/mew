@@ -170,8 +170,8 @@ class MemoryManager(Protocol):
         """Stop measuring and return the figures.
 
         Called after the pass's last loop step. A dict with a missing required
-        key, an unknown key or a value that isn't an int fails the run with
-        ``TypeError``.
+        key or a value that isn't an int fails the run with ``TypeError``;
+        other keys are ignored.
 
         Returns
         -------

@@ -81,7 +81,6 @@ $ mew run --sample-html cpu.html
 | Flag                  | Default | Notes                                     |
 | --------------------- | ------- | ----------------------------------------- |
 | `--sample-interval F` | `1e-4`  | Smaller = more samples = higher overhead. |
-| `--sample-top-k K`    | `5`     | Instructions per row; see below. Must be at least 1, also for pyinstrument, which reads none. |
 
 The profiling pass is **separate** from the timing pass, so profiler overhead doesn't pollute timing numbers.
 It repeats the iteration count selected by the timing pass; don't read timings out
@@ -152,8 +151,9 @@ instruction's share of the body's time. `generic` is the share of the body's
 time spent in any instruction the interpreter can specialize but ran
 unspecialized; the console leaves it out when it rounds to 0%.
 
-JSON rows carry the `--sample-top-k` hottest instructions (default 5) in
-`cpu_profile.top_instructions`, hottest first, plus `unspecialized_share`; see
+JSON rows carry the five hottest instructions in
+`cpu_profile.top_instructions`, hottest first (from Python,
+`mew.cpu.manager(top_k=...)` sets another count), plus `unspecialized_share`; see
 [Row schema](#row-schema). `source` is the code the instruction covers, cut to
 its first line and 40 characters. `unspecialized` marks a generic instruction
 the interpreter can specialize. DuckDB reads the list as a list of structs:

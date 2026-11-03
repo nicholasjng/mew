@@ -52,6 +52,22 @@ change between minor releases.
   sinks for one file are an error.
 - `--sample-interval` and `--sample-top-k` are range-checked by `mew.cpu`, as
   from Python, so an invalid value fails once the benchmarks are discovered.
+- `[tool.mew] capture` is gone: `--capture` defaults to `fd`, and a project
+  that wants `no` sets it where it invokes mew, as pytest's `-s` is.
+- `mew compare` no longer notes that files declare different time units; it
+  normalizes them, as before.
+- A memory manager's `stop()` may return keys beyond the four mew reads; they
+  are ignored instead of failing the run. A profiler's `get_result()` keys go
+  through `json.dumps` as they are, so an int key becomes a string.
+- Stacking two of `@benchmark`, `@parametrize` and `@product` on one function
+  raises `ValueError`, as for any name registered twice, instead of
+  `RuntimeError`.
+- `python-files` patterns match a file's name only, as pytest's `python_files`
+  do; a pattern with `/` no longer matches against the path below the searched
+  directory.
+- `mew run --sample-top-k` is gone: rows list the five hottest instructions.
+  The count is a setting of the Tachyon sampler, so it stays as `top_k=` on
+  `mew.cpu.manager()` and `TachyonManager()`.
 - The CLI no longer accepts abbreviated long options, such as `--rep` for
   `--repetitions`: spell each option out in full. An abbreviation would break
   whenever a new option sharing its prefix is added. Shell completion

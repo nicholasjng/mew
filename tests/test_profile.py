@@ -298,12 +298,10 @@ def test_memory_manager_stop_exception_propagates_out_of_run():
     ("kind", "result"),
     [
         ("memory", {"peak_bytes": 1024}),  # total_allocations is required
-        ("memory", {**_MEMORY, "backend": "custom"}),
         ("memory", {**_REQUIRED_MEMORY, "peak_bytes": 1024.0}),
         ("memory", {**_REQUIRED_MEMORY, "total_bytes": "2048"}),  # optional keys too
         ("memory", [("peak_bytes", 1)]),
         ("profiler", {"top": [object()]}),  # json.dumps rejects it, at any depth
-        ("profiler", {1: 2.0}),  # json.dumps would turn the key into "1"
         ("profiler", [("sample_count", 1)]),
     ],
 )

@@ -15,8 +15,6 @@ from mew._options import normalize_options
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
 
-_REGISTERED_ATTR = "__mew_registered__"
-
 
 def _format_id_value(value: Any) -> str:
     if isinstance(value, str):
@@ -74,14 +72,7 @@ def _register(
     tags: frozenset[str],
     case_labels: list[str] | None = None,
 ) -> BenchmarkFn:
-    """Add ``target`` to the registry as ``fn`` and mark it registered."""
-    # Guard before adding: a failed double-registration must not leave a
-    # second entry in the registry.
-    if getattr(target, _REGISTERED_ATTR, False):
-        raise RuntimeError(
-            f"{target.__qualname__} is already registered; apply only one of "
-            "@benchmark / @parametrize / @product."
-        )
+    """Add ``target`` to the registry as ``fn``."""
     try:
         file = inspect.getsourcefile(target)
     except TypeError:
@@ -96,9 +87,6 @@ def _register(
             case_labels=case_labels,
         )
     )
-    # Marked only once added: a rejected name must leave the function
-    # available for a corrected attempt.
-    setattr(target, _REGISTERED_ATTR, True)
     return target
 
 
@@ -148,10 +136,9 @@ def benchmark(
     TypeError
         If an option is unknown or has the wrong type.
     ValueError
-        If an option is out of range or contradicts another, or ``name``
-        contains ``::``, brackets or a newline.
-    RuntimeError
-        If another decorator already registered the function.
+        If an option is out of range or contradicts another, ``name``
+        contains ``::``, brackets or a newline, or a benchmark of that name is
+        already registered, as when another decorator registered the function.
 
     Examples
     --------
@@ -253,11 +240,10 @@ def parametrize(
     ValueError
         If there are no cases, ``ids`` doesn't have one label per case, two
         labels are equal, a name or label contains ``::``, brackets or a
-        newline, or an option is out of range or contradicts another.
+        newline, an option is out of range or contradicts another, or a
+        benchmark of that name is already registered.
     TypeError
         If an option is unknown or has the wrong type.
-    RuntimeError
-        If another decorator already registered the function.
 
     Examples
     --------
@@ -339,9 +325,8 @@ def product(
         If no iterables are given, or an option has the wrong type.
     ValueError
         If an option is out of range or contradicts another, two labels are
-        equal, or a name or label contains ``::``, brackets or a newline.
-    RuntimeError
-        If another decorator already registered the function.
+        equal, a name or label contains ``::``, brackets or a newline, or a
+        benchmark of that name is already registered.
 
     Examples
     --------

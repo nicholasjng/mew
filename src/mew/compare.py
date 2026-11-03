@@ -297,10 +297,8 @@ def _render(
         if show_stddev:
             table.add_column("± stddev", justify="right")
 
-    is_time_metric = metric in TIME_METRICS
     baseline = columns[0].samples
     verdicts: list[BenchmarkVerdict] = []
-    unit_skew: dict[str, tuple[Any, Any]] = {}
 
     for name in sorted(shared):
         base = baseline[name]
@@ -312,8 +310,6 @@ def _render(
                 row.extend(["-"] * (4 if show_stddev else 3))
                 continue
             s = c.samples[name]
-            if is_time_metric and base.time_unit != s.time_unit:
-                unit_skew[name] = (base.time_unit, s.time_unit)
             result = _compare_samples(base, s, metric, higher_is_better)
             if idx == 0 and regressions is not None:
                 # compare() refuses a gate without a direction.
@@ -331,16 +327,6 @@ def _render(
             if show_stddev:
                 row.append(_fmt_stddev(s, metric))
         table.add_row(*row)
-
-    if unit_skew:
-        name, (a, b) = next(iter(unit_skew.items()))
-        extra = overflow(len(unit_skew), 1)
-        print(
-            f"note: {len(unit_skew)} benchmark(s) declare different time units "
-            f"across files (e.g. {name!r}: {a!r} vs {b!r}){extra}; values are "
-            "normalized to a common unit before comparing",
-            file=sys.stderr,
-        )
 
     term.print(table)
 

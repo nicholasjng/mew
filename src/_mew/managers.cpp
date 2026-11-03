@@ -67,26 +67,20 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
             out.num_allocs = TombstoneValue;
             return;
         }
-        // A cast_error must not unwind through Google Benchmark.
+        // Neither a cast_error nor a missing key's KeyError may unwind through
+        // Google Benchmark. Other keys are ignored.
         try {
             auto metrics = nb::cast<nb::dict>(r);
-            for (auto [key, value] : metrics) {
-                std::string name = nb::cast<std::string>(key);
-                if (name != "peak_bytes" && name != "total_allocations" && name != "total_bytes" &&
-                    name != "net_heap_growth")
-                    return abort_with_type_error(kShape);
-            }
-            if (!metrics.contains("peak_bytes") || !metrics.contains("total_allocations"))
-                return abort_with_type_error(kShape);
+            out.num_allocs = nb::cast<int64_t>(metrics["total_allocations"]);
+            out.max_bytes_used = nb::cast<int64_t>(metrics["peak_bytes"]);
             // The optional two keep their tombstone when omitted; the row leaves them out.
-            auto take = [&](const char* key, int64_t& target) {
-                if (metrics.contains(key)) target = nb::cast<int64_t>(metrics[key]);
-            };
-            take("total_allocations", out.num_allocs);
-            take("peak_bytes", out.max_bytes_used);
-            take("total_bytes", out.total_allocated_bytes);
-            take("net_heap_growth", out.net_heap_growth);
+            if (metrics.contains("total_bytes"))
+                out.total_allocated_bytes = nb::cast<int64_t>(metrics["total_bytes"]);
+            if (metrics.contains("net_heap_growth"))
+                out.net_heap_growth = nb::cast<int64_t>(metrics["net_heap_growth"]);
         } catch (const nb::cast_error&) {
+            abort_with_type_error(kShape);
+        } catch (const nb::python_error&) {
             abort_with_type_error(kShape);
         }
     }
@@ -94,8 +88,7 @@ class PyMemoryManager final : public benchmark::MemoryManager, public PyManager 
 
 class PyProfilerManager final : public benchmark::ProfilerManager, public PyManager {
     static constexpr const char* kResultShape =
-        "profiler manager get_result() must return a dict with string keys and "
-        "JSON-serializable values, or None";
+        "profiler manager get_result() must return a JSON-serializable dict, or None";
 
    public:
     using PyManager::PyManager;
@@ -137,9 +130,6 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
         if (r.is_none()) return;
         if (!nb::isinstance<nb::dict>(r)) return abort_with_type_error(kResultShape);
         nb::dict summary = nb::borrow<nb::dict>(r);
-        // json.dumps would turn an int key into a string; nested keys follow JSON's rules.
-        for (auto [k, v] : summary)
-            if (!nb::isinstance<nb::str>(k)) return abort_with_type_error(kResultShape);
         // GB only carries the text; the reporter decodes it. json.dumps' error
         // must not unwind through Google Benchmark.
         try {

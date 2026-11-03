@@ -37,7 +37,6 @@ def test_load_reads_every_setting(tmp_path: Path):
         'python-files = ["bench_*.py", "*_perf.py"]\n'
         'setup = "benchmarks/conf.py"\n'
         'statistic = "gmean"\n'
-        'capture = "no"\n'
         "[tool.mew.regressions]\n"
         "default-threshold = 7.5\n"
         "[[tool.mew.counters]]\n"
@@ -52,7 +51,6 @@ def test_load_reads_every_setting(tmp_path: Path):
         python_files=["bench_*.py", "*_perf.py"],
         setup="benchmarks/conf.py",
         statistic="gmean",
-        capture="no",
         regressions=RegressionConfig(default_threshold=7.5),
         counters=CounterConfig(
             rules=(CounterRule("*_misses", False), CounterRule("*_per_second", True))
@@ -67,7 +65,6 @@ def test_load_reads_every_setting(tmp_path: Path):
         ("benchpaths = 42", "benchpaths must be a string or a list of strings"),
         ("statistic = 95", "statistic must be a string"),
         ('statistic = "average"', "[tool.mew] statistic 'average': unknown name"),
-        ('capture = "sys"', "capture must be one of fd, no"),
         # A typo would otherwise load the default.
         ('benchpath = "perf"', "unknown key 'benchpath' in [tool.mew]; did you mean 'benchpaths'?"),
         # Keys are dashed, as TOML spells them.

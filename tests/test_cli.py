@@ -413,20 +413,14 @@ def test_run_format_without_stdout_sink_warns(mew_cli, benchdir, tmp_path):
     assert res.stdout.strip() == ""
 
 
-@pytest.mark.parametrize(
-    ("config", "flag", "captured"),
-    [("", None, True), ('capture = "no"', None, False), ('capture = "no"', "fd", True)],
-)
-def test_capture_setting_and_flag_precedence(
-    monkeypatch, capfd: pytest.CaptureFixture[str], tmp_path, config, flag, captured
-):
-    """Benchmark output is captured by default, `capture = "no"` turns that off, and the
-    `--capture` flag overrides the setting."""
+@pytest.mark.parametrize(("flag", "captured"), [(None, True), ("no", False)])
+def test_capture_flag(monkeypatch, capfd: pytest.CaptureFixture[str], tmp_path, flag, captured):
+    """Benchmark output is captured and printed after the run by default; `--capture no` shows
+    it live."""
     # `main()` directly, not `mew_cli`: uncaptured, the body writes to the real
     # fd 2, which only capfd sees (and capfd cannot share a test with capsys).
     from mew.cli import main
 
-    (tmp_path / "pyproject.toml").write_text(f"[tool.mew]\n{config}\n")
     (tmp_path / "bench_noisy.py").write_text(
         textwrap.dedent(
             """
@@ -516,7 +510,7 @@ def test_run_flamegraph_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
 )
 def test_run_sample_html_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     """`--sample-html` writes a CPU profile report and adds the hottest function to the rows and
-    console table, with at most `--sample-top-k` instructions."""
+    console table."""
     pytest.importorskip("profiling.sampling" if sys.version_info >= (3, 15) else "pyinstrument")
     from mew.cpu import reads_instructions
 
@@ -529,8 +523,6 @@ def test_run_sample_html_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
         _SAMPLED_ITERATIONS,
         "--sample-interval",
         "1e-5",
-        "--sample-top-k",
-        "2",
         "--sample-html",
         str(report),
         "-o",
@@ -545,10 +537,10 @@ def test_run_sample_html_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     (row,) = json.loads(out.read_text())["benchmarks"]
     top = row["cpu_profile"]["top_function"]
     assert f"{top['function']} ({top['file']}" in res.stdout
-    # Only free-threaded Tachyon reads bytecode instructions, at most --sample-top-k.
+    # Only free-threaded Tachyon reads bytecode instructions, at most five.
     instructions = row["cpu_profile"]["top_instructions"]
     assert bool(instructions) is reads_instructions()
-    assert len(instructions) <= 2
+    assert len(instructions) <= 5
 
 
 @pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon runs here")
@@ -600,8 +592,6 @@ def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
         "--sample",
         "--sampler",
         "pyinstrument",
-        "--sample-top-k",
-        "2",
         "-o",
         str(out),
         cwd=tmp_path,
@@ -609,7 +599,7 @@ def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
     assert res.returncode == 0, res.stderr
     (row,) = json.loads(out.read_text())["benchmarks"]
     assert row["cpu_profile"]["profiler"] == "pyinstrument"
-    # pyinstrument reads no instructions, whatever --sample-top-k says.
+    # pyinstrument reads no instructions.
     assert row["cpu_profile"]["top_instructions"] == []
 
 
