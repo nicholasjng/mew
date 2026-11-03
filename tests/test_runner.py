@@ -192,17 +192,11 @@ def threaded_bench_on_gil_build(monkeypatch):
 @pytest.mark.usefixtures("threaded_bench_on_gil_build")
 def test_threaded_benchmark_skipped_on_gil_build():
     """Threaded mode would deadlock on GB's start barrier under the GIL, so mew
-    warns and emits a skipped row instead."""
+    warns and drops the benchmark, without a row."""
     cap = Capture()
     with pytest.warns(RuntimeWarning, match="skipping 1 threaded benchmark"):
-        n = mew.run(min_time="1x", reporter=cap)
-
-    assert n == 0  # nothing actually executed by GB
-    (row,) = cap.runs
-    assert row["skipped"] is True
-    assert row["threads"] == 4
-    assert "free-threaded" in row["skip_message"]
-    assert cap.finalized
+        assert mew.run(min_time="1x", reporter=cap) == 0
+    assert cap.runs == []
 
 
 @pytest.mark.usefixtures("threaded_bench_on_gil_build")
@@ -213,42 +207,18 @@ def test_threaded_benchmark_strict_raises_on_gil_build():
 
 
 @pytest.mark.usefixtures("threaded_bench_on_gil_build")
-def test_all_skipped_finalizes_reporter_when_report_runs_raises():
-    """The Python-driven all-skipped lifecycle must close reporters on errors,
-    just like Google Benchmark's normal reporter lifecycle does."""
-
-    class RaisingReporter(Capture):
-        def report_runs(self, runs):
-            raise RuntimeError("report failed")
-
-    rep = RaisingReporter()
-    with pytest.warns(RuntimeWarning), pytest.raises(RuntimeError, match="report failed"):
-        mew.run(min_time="1x", reporter=rep)
-
-    assert rep.finalized
-
-
-@pytest.mark.usefixtures("threaded_bench_on_gil_build")
 def test_mixed_suite_skips_threaded_runs_rest_on_gil_build():
-    """Only threaded benchmarks are skipped. Skipped rows flush from `report_context`,
-    the only callback guaranteed to fire after a sink opens and before it writes."""
-    events: list[object] = []
-
-    class Recording(Capture):
-        def report_context(self, context):
-            events.append("context")
-
-        def report_runs(self, runs):
-            events.extend((r["benchmark"].rsplit(".", 1)[-1], r["skipped"]) for r in runs)
+    """Only threaded benchmarks are dropped; the rest run."""
 
     @mew.benchmark(iterations=1)
     def bench_plain(state):
         for _ in state:
             pass
 
+    cap = Capture()
     with pytest.warns(RuntimeWarning, match="threaded"):
-        assert mew.run(min_time="1x", reporter=Recording()) == 1
-    assert events == ["context", ("bench_threaded", True), ("bench_plain", False)]
+        assert mew.run(min_time="1x", reporter=cap) == 1
+    assert [r["benchmark"].rsplit(".", 1)[-1] for r in cap.runs] == ["bench_plain"]
 
 
 @pytest.mark.skipif(

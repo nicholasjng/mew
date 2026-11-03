@@ -33,35 +33,9 @@ from mew.machine import machine_context
 from mew.reporter import Fanout, Reporter, RichReporter
 
 if TYPE_CHECKING:
-    from mew._typing import BenchmarkOptions, BenchmarkResult
+    from mew._typing import BenchmarkOptions
 
 __all__ = ["run"]
-
-
-def _skipped_row(name: str, threads: int, message: str) -> BenchmarkResult:
-    """Build a skipped result row for a benchmark that never reaches Google Benchmark."""
-    return {
-        "name": name,
-        "run_name": name,
-        "benchmark": name,
-        "family_index": 0,
-        "per_family_instance_index": 0,
-        "run_type": "iteration",
-        "aggregate_name": "",
-        "repetitions": 0,
-        "repetition_index": 0,
-        "threads": threads,
-        "iterations": 0,
-        "real_time": 0.0,
-        "cpu_time": 0.0,
-        "real_accumulated_time": 0.0,
-        "cpu_accumulated_time": 0.0,
-        "time_unit": "ns",
-        "label": "",
-        "skipped": True,
-        "skip_message": message,
-        "counters": [],
-    }
 
 
 def _new_session_id() -> str:
@@ -182,8 +156,8 @@ def run(
         ``"latest"``, which selects the newest session.
     strict : bool, default False
         Raise when threaded benchmarks are selected on a GIL build, where they
-        can't run, instead of warning and reporting them as skipped: in CI, a
-        skip can hide a misconfiguration.
+        can't run, instead of warning and leaving them out of the results: in
+        CI, that can hide a misconfiguration.
     memory_manager : MemoryManager, optional
         Measures memory in an extra, untimed pass, e.g.
         :class:`mew.memory.MemrayManager`; its figures land in each row's
@@ -225,20 +199,18 @@ def run(
 
     if strict:
         check_strict(selected)
-    skipped_rows: list[BenchmarkResult] = []
     skipped, names = threaded_on_gil(selected)
     if skipped:
+        # Dropped without rows: they never ran, so they have nothing to report.
         warnings.warn(
             f"skipping {len(skipped)} threaded benchmark(s) on a GIL interpreter "
             f"({names}), run on a free-threaded build to execute them; {THREADED_ON_GIL}.",
             RuntimeWarning,
             stacklevel=2,
         )
-        skip_msg = f"skipped: {THREADED_ON_GIL}"
-        skipped_rows = [
-            _skipped_row(e.name, max(thread_counts(e.options)), skip_msg) for e in skipped
-        ]
         selected = [e for e in selected if not is_threaded(e.options)]
+        if not selected:
+            return 0
     threaded = any(is_threaded(e.options) for e in selected)
 
     # Anything with the reporter callbacks is a single reporter, even if iterable.
@@ -251,13 +223,10 @@ def run(
     elif reps:
         rep = reps[0]
     else:
-        # A threaded benchmark skipped above shows its plain name.
-        widths = [longest_row_name(selected)]
-        widths += [len(row["benchmark"]) for row in skipped_rows]
         rep = RichReporter(
             show_memory=memory_manager is not None,
             show_cpu=profiler_manager is not None,
-            name_width=max(widths),
+            name_width=longest_row_name(selected),
         )
 
     from mew import __version__  # deferred: mew imports this module
@@ -272,19 +241,6 @@ def run(
     # Machine context first so a suite's providers can override it. It also loads
     # GB's CPU info, whose probes print to fd 2, silenced, before the run.
     session_context = {"session": session, "context": {**machine_context(), **get_context()}}
-
-    if not selected:
-        # All skipped: GB emits no context for an empty registry, so drive the
-        # reporter lifecycle here to surface the skipped rows.
-        try:
-            rep.report_context(session_context)
-            rep.report_runs(skipped_rows)
-        finally:
-            # As in GB's lifecycle, finalize even if a callback raised, so
-            # owned sinks close and streamed JSON documents are terminated.
-            if fn := getattr(rep, "finalize", None):
-                fn()
-        return 0
 
     # Clear before registering so a second mew.run() in the same process
     # doesn't double-register entries.
@@ -317,4 +273,4 @@ def run(
         if capture_output:
             capture = OutputCapture(stack.enter_context(tempfile.TemporaryFile()))
             stack.callback(capture.close)
-        return _core.run_benchmarks(cli, rep, session_context, skipped_rows, capture)
+        return _core.run_benchmarks(cli, rep, session_context, capture)
