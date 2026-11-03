@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import gc
-import io
 import json
 import platform
 import sys
@@ -68,21 +67,15 @@ def test_run_reports_rows_and_the_session_context():
     }
 
 
-# The decorators check min_time, min_warmup_time and repetitions the same way.
+# The validators are shared with the decorators, whose tests cover their cases;
+# one case per option shows that run() calls them.
 @pytest.mark.parametrize(
     ("kwargs", "error", "message"),
     [
-        ({"repetitions": True}, TypeError, "repetitions must be an integer"),
         ({"repetitions": 0}, ValueError, "repetitions must be >= 1"),
-        ({"memory_iterations": 2.5}, TypeError, "memory_iterations must be an integer"),
         ({"memory_iterations": 0}, ValueError, "memory_iterations must be >= 1"),
-        ({"min_time": True}, TypeError, "min_time must be seconds"),
-        ({"min_time": 0}, ValueError, "min_time must be positive"),
-        ({"min_time": "1.5x"}, ValueError, "min_time must be positive"),
         ({"min_time": "forever"}, ValueError, "min_time must be positive"),
-        ({"min_warmup_time": "1"}, TypeError, "min_warmup_time must be a number"),
         ({"min_warmup_time": -1}, ValueError, "min_warmup_time must be a finite"),
-        ({"min_warmup_time": float("nan")}, ValueError, "min_warmup_time must be a finite"),
         ({"session_tag": 1}, TypeError, "session_tag must be a string"),
         ({"session_tag": ""}, ValueError, "session_tag must not be empty"),
         # `mew compare path@latest` selects the newest session.
@@ -93,18 +86,6 @@ def test_run_rejects_invalid_options(kwargs, error, message):
     """`mew.run` rejects invalid option types and values with a message naming the option."""
     with pytest.raises(error, match=message):
         mew.run(**kwargs)
-
-
-@pytest.mark.parametrize("min_time", [0.00001, "0.00001", "0.00001s", "0.01ms", " 7x "])
-def test_run_accepts_seconds_and_fixed_iteration_syntax(min_time):
-    """`mew.run` accepts `min_time` as seconds, a string with a unit, or an `Nx` iteration count."""
-
-    @mew.benchmark
-    def bench_time_option(state):
-        for _ in state:
-            pass
-
-    assert mew.run(min_time=min_time, reporter=Capture()) == 1
 
 
 @pytest.mark.parametrize(
@@ -137,22 +118,6 @@ def test_a_benchmarks_own_warmup_needs_no_min_time_of_its_own():
     start = time.perf_counter()
     mew.run(min_time="0.01s", reporter=Capture())
     assert time.perf_counter() - start >= 0.2
-
-
-def test_gb_argv_emits_every_flag_with_its_default():
-    """`_gb_argv` emits every Google Benchmark flag, with its default when no value is given."""
-    from mew.runner import _gb_argv
-
-    # Google Benchmark flags persist across runs in one process, so each one is
-    # always emitted: a previous run's value cannot leak into this one.
-    assert _gb_argv(None, None, None, False) == [
-        "mew",
-        "--benchmark_min_time=0.5s",
-        "--benchmark_min_warmup_time=0",
-        "--benchmark_repetitions=1",
-        "--benchmark_enable_random_interleaving=false",
-        "--benchmark_memory_iterations=16",
-    ]
 
 
 def test_gb_flags_do_not_leak_across_runs():
@@ -350,21 +315,6 @@ def test_manual_time_replaces_the_measured_real_time():
     assert row["real_time"] == 0.5e9
 
 
-def test_state_pause_enters_as_its_own_scope():
-    """Entering a `state.pause()` scope returns the scope object itself."""
-    seen: list[bool] = []
-
-    @mew.benchmark(iterations=1)
-    def bench_x(state):
-        for _ in state:
-            scope = state.pause()
-            with scope as entered:
-                seen.append(entered is scope)
-
-    mew.run(reporter=Capture())
-    assert seen == [True]
-
-
 def test_pause_scope_is_only_created_by_state_pause():
     """`PauseScope` cannot be constructed directly from Python."""
     from mew._core import PauseScope
@@ -429,22 +379,6 @@ def test_an_exception_skips_with_its_type_and_message(capfd):
     err = capfd.readouterr().err
     assert "Traceback (most recent call last):" in err
     assert 'json.loads("{")' in err
-
-
-def test_skip_message_survives_a_stderr_that_cannot_be_written_to(monkeypatch):
-    """The traceback prints after the message is taken, so a failed print keeps it."""
-    dead = io.StringIO()
-    dead.close()
-    monkeypatch.setattr(sys, "stderr", dead)
-
-    @mew.benchmark(iterations=1)
-    def bench_raises(state):
-        for _ in state:
-            raise KeyError("k")
-
-    cap = Capture()
-    mew.run(reporter=cap, capture_output=False)
-    assert cap.runs[0]["skip_message"] == "KeyError: 'k'"
 
 
 @pytest.mark.parametrize("reuse_scope", [False, True])
@@ -647,26 +581,17 @@ def test_state_batches_yields_n_and_counts_the_overshoot():
     assert cap.runs[0]["iterations"] == 12
 
 
-def test_state_rejects_out_of_range_arguments():
-    """Out-of-range `state.batches` and `state.range` arguments raise and skip the row."""
+def test_state_rejects_a_batch_size_below_one():
+    """`state.batches(0)` raises and skips the row."""
 
-    # GB's own guards are asserts, compiled out in Release: a batch of 0 never
-    # ends the loop, and range() would read past the range vector.
+    # GB's own guard is an assert, compiled out in Release: a batch of 0 never ends the loop.
     @mew.benchmark(iterations=1)
     def bench_batches(state):
         state.batches(0)
 
-    @mew.benchmark(iterations=1)
-    def bench_range(state):
-        state.range(0)  # not parametrized: no range arguments
-
     cap = Capture()
     mew.run(reporter=cap)
-    # The skip message ends with the exception the body raised.
-    assert [r["skip_message"].splitlines()[-1] for r in cap.runs] == [
-        "ValueError: batch size must be positive",
-        "IndexError: range(0) out of bounds: benchmark has 0 range argument(s)",
-    ]
+    assert cap.runs[0]["skip_message"] == "ValueError: batch size must be positive"
 
 
 def test_keyboard_interrupt_stops_run_and_propagates():

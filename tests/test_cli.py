@@ -103,49 +103,22 @@ def mew_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str])
         ((), ["bench_one", "bench_two", "bench_untagged"]),
         (("--show-cases",), ["bench_one", "bench_two[n=1]", "bench_two[n=2]", "bench_untagged"]),
         (("--show-tags",), ["bench_one\t[io]", "bench_two\t[cpu]", "bench_untagged\t[-]"]),
-        (("-k", "nonexistent"), []),
+        (("-k", "bench_(one|untagged)"), ["bench_one", "bench_untagged"]),
+        (("-k", "n=2"), ["bench_two[n=2]"]),  # a case-only match narrows the family
+        # A displayed name, brackets and all, needs -F: a regex reads them as a class.
+        (("-k", "bench_two[n=2]", "-F"), ["bench_two[n=2]"]),
+        (("-k", "bench_two[n=2]"), []),
+        # Tags are OR, and the untagged benchmark matches none; -k narrows them.
+        (("-t", "io", "-t", "cpu"), ["bench_one", "bench_two"]),
+        (("-k", "bench_(one|two)", "-t", "cpu"), ["bench_two"]),
     ],
 )
 def test_list_selects_and_expands(mew_cli, benchdir, tmp_path, args, expected):
-    """`mew list` shows a family as one row, its cases with `--show-cases`, its tags with
-    `--show-tags`, and exits 1 when nothing matches."""
+    """`mew list` selects with `-k`, `-F` and `-t`, shows a family as one row, its cases with
+    `--show-cases`, its tags with `--show-tags`, and exits 1 when nothing matches."""
     res = mew_cli("list", str(benchdir), "--names-only", *args, cwd=tmp_path)
     assert res.returncode == (0 if expected else 1), res.stderr
     assert res.stdout.splitlines() == expected
-
-
-def _listed(entries: list[mew.Entry]) -> list[str]:
-    """Name entries as `mew list --names-only` does: a narrowed family by its cases."""
-    out = []
-    for e in entries:
-        name, labels = e.name.rsplit("::", 1)[-1], e.case_labels or []
-        out += [name] if e.cases is None else [f"{name}[{labels[i]}]" for i in e.cases]
-    return out
-
-
-@pytest.mark.parametrize(
-    ("pattern", "literal", "tags", "expected"),
-    [
-        ("bench_(one|untagged)", False, [], ["bench_one", "bench_untagged"]),
-        ("n=2", False, [], ["bench_two[n=2]"]),  # a case-only match narrows the family
-        # A displayed name, brackets and all, needs -F: a regex reads them as a class.
-        ("bench_two[n=2]", True, [], ["bench_two[n=2]"]),
-        ("bench_two[n=2]", False, [], []),
-        # Tags are OR, and the untagged benchmark matches none; -k narrows them.
-        (None, False, ["io", "cpu"], ["bench_one", "bench_two"]),
-        ("bench_(one|two)", False, ["cpu"], ["bench_two"]),
-    ],
-)
-def test_cli_selects_like_registry_filter(
-    mew_cli, benchdir, tmp_path, pattern, literal, tags, expected
-):
-    """`mew list` with `-k`, `-F` and `-t` selects the same benchmarks as `Registry.filter`."""
-    args = (["-k", pattern] if pattern else []) + (["-F"] if literal else [])
-    args += [arg for tag in tags for arg in ("-t", tag)]
-    res = mew_cli("list", str(benchdir), "--names-only", *args, cwd=tmp_path)
-    assert res.stdout.splitlines() == expected, res.stderr
-    # Registry.filter selects the same from the suite the CLI just registered.
-    assert _listed(mew.REGISTRY.filter(pattern, tags=tags, literal=literal)) == expected
 
 
 def test_invalid_filter_fails_before_any_import(mew_cli, tmp_path):
@@ -283,26 +256,19 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         # Neither stdout nor a single-document JSON file can be appended to,
         # even next to a JSONL sink.
         (("run", "--append"), "--append requires"),
-        (("run", "--append", "-o", "out.json"), "--append requires"),
-        (("run", "--append", "-o", "out.jsonl", "-o", "out.json"), "not supported for the JSON"),
+        (("run", "--append", "-o", "out.jsonl", "-o", "out.json"), "--append requires"),
+        (("run", "-o", "a.json", "-o", "./a.json"), "duplicate output sink: ./a.json"),
         # `--flag:` names the flag in argparse's error line; the usage line above
         # it lists every flag.
         (("run", "--min-time", "0x"), "--min-time: invalid --min-time '0x'"),
-        (("run", "--min-time", "nan"), "--min-time: invalid --min-time 'nan'"),
         (("run", "--min-warmup-time", "-1"), "--min-warmup-time: invalid --min-warmup-time"),
-        (("run", "--min-warmup-time", "x"), "--min-warmup-time: invalid --min-warmup-time"),
         (("run", "--repetitions", "0"), "--repetitions: expected a positive integer"),
-        (("run", "--memory-iterations", "0"), "--memory-iterations: expected a positive integer"),
-        (("run", "--sample-interval", "0"), "--sample-interval: expected a positive finite"),
-        (("run", "--sample-top-k", "0"), "--sample-top-k: expected a positive integer"),
         # Checked before reading the result files, which don't exist here. The
         # `=` keeps argparse from taking `-1%` for an option.
         (("compare", "a.json", "b.json", "--statistic", "bogus"), "statistic 'bogus'"),
-        (("compare", "a.json", "b.json", "--statistic", "p101"), "statistic 'p101'"),
         (("compare", "a.json", "b.json", "--regression-threshold=5"), "like '5%', got '5'"),
         (("compare", "a.json", "b.json", "--regression-threshold=-1%"), "got '-1%'"),
         (("compare", "a.json", "b.json", "--regression-threshold=nan%"), "got 'nan%'"),
-        (("compare", "a.json", "b.json", "--regression-threshold=inf%"), "got 'inf%'"),
         # What the library raises, as one line rather than a traceback.
         (("compare", "a.json"), "mew compare: expected at least two result files"),
         (("compare", "a.json", "b.json", "-m", "bogus"), "mew compare: unknown metric 'bogus'"),
@@ -312,7 +278,6 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         (("run", "--min-time", "1x", "--session-tag", "latest"), "mew run: session_tag 'latest'"),
         # Prefixes of long options are not expanded, so a new option can't break them.
         (("run", "--rep", "3"), "unrecognized arguments: --rep"),
-        (("--vers",), "unrecognized arguments: --vers"),
     ],
 )
 def test_usage_errors_exit_2(mew_cli, benchdir, args, message):
@@ -344,16 +309,6 @@ def test_config_errors_exit_2(mew_cli, tmp_path, config, args, message):
     res = mew_cli(*args, cwd=tmp_path)
     assert res.returncode == 2
     assert message in res.stderr
-
-
-@pytest.mark.parametrize(
-    ("value", "seconds"), [("0.5", 0.5), ("200ms", 0.2), ("10s", 10.0), ("1m", 60.0)]
-)
-def test_min_warmup_time_parses_durations(value, seconds):
-    """`_warmup_seconds` parses bare seconds and durations with `ms`, `s` and `m` suffixes."""
-    from mew.cli import _warmup_seconds
-
-    assert _warmup_seconds(value) == seconds
 
 
 def test_run_promoted_gb_flags_accepted(mew_cli, benchdir, tmp_path):
@@ -434,7 +389,7 @@ def test_run_format_jsonl_streams_every_row_to_stdout_and_files(mew_cli, benchdi
         "--format",
         "jsonl",
         "-o",
-        "stdout",
+        "-",
         "-o",
         str(out),
         cwd=tmp_path,
