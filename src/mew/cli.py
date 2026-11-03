@@ -29,7 +29,7 @@ from mew import (
 from mew._console import Table, Terminal, color_enabled, sgr
 from mew._options import check_session_tag, check_strict, parse_min_time, parse_seconds
 from mew._registry import compile_name_filter, longest_row_name, selected_cases
-from mew._results import result_format, session_summaries
+from mew._results import load_session, result_format, session_summaries, split_selector
 from mew._statistics import resolve_statistic
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
@@ -417,6 +417,39 @@ def compare(
         raise SystemExit(code)
 
 
+def show(files: list[Path], *, pattern: str | None, literal: bool, summary_only: bool) -> None:
+    """Print the results stored in files as ``mew run`` printed them."""
+    with _usage_error("show", ValueError):
+        name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
+    shown = 0
+    for file in files:
+        path, selector = split_selector(str(file))
+        with _usage_error("show", ValueError, OSError):
+            rows, context = load_session(path, selector)
+        if name_filter is not None:
+            rows = [r for r in rows if name_filter.search(r["benchmark"])]
+        if not rows:
+            continue
+        if len(files) > 1:
+            # Which file each banner belongs to, a blank line apart.
+            if shown:
+                print()
+            print(file)
+        reporter = RichReporter(
+            show_memory=any(r.get("memory") for r in rows),
+            show_cpu=any(r.get("cpu_profile") for r in rows),
+            name_width=max(len(r["benchmark"]) for r in rows),
+            show_repetitions=not summary_only,
+        )
+        reporter.report_context(context)
+        reporter.report_runs(rows)
+        reporter.finalize()
+        shown += len(rows)
+    if not shown:
+        print(f"mew show: no benchmarks match {pattern!r}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def sessions(files: list[Path]) -> None:
     """List the sessions stored in result files, newest first."""
     term = Terminal()
@@ -771,6 +804,23 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(_func=compare)
 
 
+def _add_show_cmd(sub: argparse._SubParsersAction) -> None:
+    p = _add_command(sub, "show", help="Print the results stored in result files.")
+    p.add_argument(
+        "files",
+        nargs="+",
+        type=Path,
+        help="Print result files' newest session (<file>@<tag> picks a session).",
+    )
+    _add_filter_args(p, verb="Show")
+    p.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Show repeated benchmarks only in the closing summary, not each repetition.",
+    )
+    p.set_defaults(_func=show)
+
+
 def _add_sessions_cmd(sub: argparse._SubParsersAction) -> None:
     p = _add_command(sub, "sessions", help="List the sessions stored in result files.")
     p.add_argument("files", nargs="+", type=Path, help="Result files to inspect.")
@@ -813,6 +863,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_list_cmd(sub)
     _add_run_cmd(sub)
     _add_compare_cmd(sub)
+    _add_show_cmd(sub)
     _add_sessions_cmd(sub)
     _add_completions_cmd(sub)
 

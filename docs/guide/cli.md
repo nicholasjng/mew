@@ -149,17 +149,34 @@ $ mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json 
 See [](regressions.md) for matching, metrics, the regression gate, and allowlist.
 With `--exit-non-zero-on-regression`, a regression exits with code 3.
 
+## `mew show`
+
+Print what a result file holds as `mew run` printed it: the newest session by
+default, or the one a `@<tag>` selector names. Skipped benchmarks show with
+their reason, and repeated ones get the closing summary.
+
+```console
+$ mew show results.jsonl
+$ mew show results.jsonl@before -k sort
+$ mew show --summary-only results.jsonl
+```
+
+`-k/--pattern` and `-F/--literal` filter as in `mew compare`; a filter that
+matches nothing exits with code 1. The `Peak Mem` column and the CPU profile
+lines appear when the rows have them. With several files, each prints after
+its name.
+
 ## `mew sessions`
 
 List what a result file holds, newest session first, to pick a `@<tag>`
-selector for `mew compare`:
+selector for `mew compare` or `mew show`:
 
 ```console
 $ mew sessions results.jsonl
-Id       │ Date                │ Host   │ Tag    │ Benchmarks │ Rows
-──────────────────────────────────────────────────────────────────────
-01a0c787 │ 2026-09-22T05:12:29 │ laptop │ after  │          7 │   63
-01a0c786 │ 2026-09-22T05:12:28 │ laptop │ before │          7 │   63
+Id       │ Date                │ Tag    │ Benchmarks │ Rows
+───────────────────────────────────────────────────────────
+01a0c787 │ 2026-09-22T05:12:29 │ after  │          7 │   63
+01a0c786 │ 2026-09-22T05:12:28 │ before │          7 │   63
 ```
 
 ## `mew completions`
@@ -199,6 +216,6 @@ outcomes apart:
 | Code | Meaning                                                                                                  |
 | ---- | -------------------------------------------------------------------------------------------------------- |
 | `0`  | Success.                                                                                                 |
-| `1`  | Nothing matched: `mew run` or `mew list` selected no benchmark, or `mew compare`'s candidate and baseline share none. |
+| `1`  | Nothing matched: `mew run` or `mew list` selected no benchmark, `mew show`'s filter matched none, or `mew compare`'s candidate and baseline share none. |
 | `2`  | Usage or environment error, explained on stderr: a bad flag, filter or `[tool.mew]` config, a benchmark or setup file that raises on import (after its traceback), a missing or malformed result file, an unknown `@<tag>`, a profiler that can't run here, or `--strict` with threaded benchmarks on a GIL build. |
 | `3`  | `mew compare --exit-non-zero-on-regression` found a regression.                                          |

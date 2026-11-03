@@ -16,6 +16,7 @@ import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from _helpers import (
@@ -733,6 +734,104 @@ def test_sessions_lists_newest_first(mew_cli, tmp_path):
     assert lines[0].startswith("Id")
     assert lines[2].startswith("bbbbbbbb") and "after" in lines[2]
     assert lines[3].startswith("aaaaaaaa") and "before" in lines[3]
+
+
+def _reported_row(name: str, real_time: float, **extra: Any) -> dict:
+    """A row with every field the console reporter reads, as `mew run` writes them."""
+    fields = {
+        "repetitions": 1,
+        "family_index": 0,
+        "per_family_instance_index": 0,
+        "label": "",
+        "skipped": False,
+        "skip_message": "",
+        "counters": [],
+    }
+    return _row(name, real_time, **{**fields, **extra})
+
+
+def _two_sessions(path: Path) -> None:
+    """`before` with `old`, then `after` with `new` (counted) and `broken` (skipped)."""
+    before = {"date": "2026-01-01T00:00:00", "session_id": "a-1", "session_tag": "before"}
+    after = {"date": "2026-02-01T00:00:00", "session_id": "b-2", "session_tag": "after"}
+    hits = [{"name": "hits", "value": 42.0}]
+    _write_json(
+        path,
+        [
+            _reported_row("old", 1.0, **before),
+            _reported_row("new", 2.0, counters=hits, **after),
+            _reported_row("broken", 0.0, skipped=True, skip_message="no GPU", **after),
+        ],
+    )
+
+
+def test_show_prints_the_newest_session_as_run_printed_it(mew_cli, tmp_path):
+    """`mew show` prints the newest session's rows, counters and skips like `mew run`."""
+    _two_sessions(tmp_path / "r.json")
+    res = mew_cli("show", "r.json", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.startswith("mew · ")
+    assert "hits=42" in res.stdout
+    assert "no GPU" in res.stdout
+    assert "old" not in res.stdout
+
+
+def test_show_picks_a_tagged_session_and_filters_it(mew_cli, tmp_path):
+    """`file@tag` picks a session and `-k` narrows its rows, as in `mew compare`."""
+    _two_sessions(tmp_path / "r.json")
+    res = mew_cli("show", "r.json@before", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "old" in res.stdout
+    assert "new" not in res.stdout
+    res = mew_cli("show", "r.json@after", "-k", "new", cwd=tmp_path)
+    assert "new" in res.stdout
+    assert "broken" not in res.stdout
+
+
+@pytest.mark.parametrize(
+    ("args", "code", "message"),
+    [
+        (("r.json", "-k", "nothing"), 1, "no benchmarks match 'nothing'"),
+        (("r.json@nope",), 2, "no session tagged 'nope'"),
+        (("missing.json",), 2, "result file not found"),
+    ],
+)
+def test_show_errors(mew_cli, tmp_path, args, code, message):
+    """No match exits 1; a bad file or selector is a usage error."""
+    _two_sessions(tmp_path / "r.json")
+    res = mew_cli("show", *args, cwd=tmp_path)
+    assert res.returncode == code
+    assert message in res.stderr
+
+
+def test_show_heads_each_of_several_files_with_its_name(mew_cli, tmp_path):
+    """Several files print in order, each after its name; one the filter empties is left out."""
+    _write_json(tmp_path / "a.json", [_reported_row("alpha", 1.0)])
+    _write_json(tmp_path / "b.json", [_reported_row("beta", 2.0)])
+    res = mew_cli("show", "a.json", "b.json", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    lines = res.stdout.splitlines()
+    assert lines[0] == "a.json"
+    assert lines[lines.index("b.json") - 1] == ""  # a blank line apart
+    assert res.stdout.index("alpha") < res.stdout.index("b.json") < res.stdout.index("beta")
+    res = mew_cli("show", "a.json", "b.json", "-k", "beta", cwd=tmp_path)
+    assert res.stdout.splitlines()[0] == "b.json"
+    assert "a.json" not in res.stdout
+
+
+def test_show_summarizes_repetitions_and_reads_0_2_0_counters(mew_cli, tmp_path):
+    """`--summary-only` leaves repetitions to the summary, and a 0.2.0 counter mapping shows."""
+    reps = [
+        _reported_row("rep", t, repetitions=3, repetition_index=i, counters={"hits": 7.0})
+        for i, t in enumerate((1.0, 2.0, 3.0))
+    ]
+    _write_json(tmp_path / "r.json", reps)
+    res = mew_cli("show", "r.json", cwd=tmp_path)
+    assert res.stdout.count("hits=7") == 3
+    res = mew_cli("show", "r.json", "--summary-only", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "hits=7" not in res.stdout
+    assert "Median of repetitions" in res.stdout
 
 
 @pytest.mark.parametrize(

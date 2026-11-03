@@ -8,6 +8,9 @@ change between minor releases.
 
 ### Added
 
+- `mew show FILE[@tag]` prints a result file's newest session, or a tagged
+  one, as `mew run` printed it, with `-k/-F` filters and `--summary-only`.
+
 - `mew compare -m counters.<name>` (`compare(metric="counters.<name>")`)
   compares a counter, such as `counters.items_per_second`, and gates on it.
   Values show as the console shows counters (`1.2Gi/s`), under a `ratio`
