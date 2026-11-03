@@ -72,8 +72,6 @@ class Sample:
         ``file.py::func[label]``, without ``file.py::`` when matching by function.
     value : float
         The statistic over the repetitions, the median by default.
-    stddev : float or None
-        Sample stddev across repetitions; ``None`` for a single repetition.
     time_unit : str or None
         The unit of ``value`` for ``real_time`` and ``cpu_time``, e.g. ``"ns"``;
         ``None`` for the other metrics, which are counts or bytes.
@@ -87,10 +85,14 @@ class Sample:
 
     name: str
     value: float
-    stddev: float | None
     time_unit: str | None
     values: tuple[float, ...] = ()
     counter_format: dict[str, Any] | None = None
+
+    @property
+    def stddev(self) -> float | None:
+        """The sample stddev of ``values``; ``None`` for a single repetition."""
+        return statistics.stdev(self.values) if len(self.values) > 1 else None
 
     @property
     def cv(self) -> float | None:
@@ -100,10 +102,10 @@ class Sample:
         statistic does not move the noise marker. ``None`` without repetitions
         or for a zero mean.
         """
-        if self.stddev is None or not self.values:
+        if (stddev := self.stddev) is None:
             return None
         mean = statistics.fmean(self.values)
-        return self.stddev / abs(mean) if mean else None
+        return stddev / abs(mean) if mean else None
 
 
 def _is_measurement_row(row: dict[str, Any]) -> bool:
@@ -209,16 +211,6 @@ def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
     ]
 
 
-def _aggregate_values(
-    values: list[float], statistic: Statistic | None = None
-) -> tuple[float, float | None]:
-    """Return the selected center and sample standard deviation of measurements."""
-    # A user reducer may return e.g. a numpy scalar.
-    center = float((statistic or statistics.median)(values))
-    stddev = statistics.stdev(values) if len(values) > 1 else None
-    return center, stddev
-
-
 def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dict[str, Sample]:
     """Re-key samples for the requested match key, erroring on collisions.
 
@@ -278,14 +270,14 @@ def _samples_from_groups(
             # From the first row that has the counter: flags don't change between repetitions.
             fmt = next((r.get("format") for g in group if (r := _counter(g, counter))), None)
         try:
-            center, stddev = _aggregate_values(values, statistic)
+            # A user reducer may return e.g. a numpy scalar.
+            center = float((statistic or statistics.median)(values))
         except statistics.StatisticsError as e:
             # E.g. gmean over a zero before Python 3.13; fail rather than drop the benchmark.
             raise ValueError(f"statistic failed on {name!r}: {e}") from e
         samples[name] = Sample(
             name=name,
             value=center,
-            stddev=stddev,
             time_unit=group[0].get("time_unit") if metric in TIME_METRICS else None,
             values=tuple(values),
             counter_format=fmt,
