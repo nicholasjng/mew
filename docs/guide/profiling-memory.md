@@ -36,16 +36,20 @@ Benchmark            │        Iters │       Real │        CPU │   Peak M
 bench_alloc_list     │       50,000 │    8.01 us │    7.99 us │     3.2 MB
 ```
 
-Write a flame graph:
+Write a flame graph per benchmark:
 
 ```console
-$ mew run --flamegraph alloc.html
+$ mew run --profile-memory --profile-dir profiles/
 ```
 
-This implies `--profile-memory`. The self-contained HTML report combines the
-captures from the selected benchmarks.
+Each benchmark gets a self-contained HTML report in `profiles/memory/`, numbered in run order and named after its function, such
+as `0-bench_alloc_list.html`; the report's header names the benchmark, case
+label included, and its navbar switches to any other benchmark by name;
+`profiles/memory/index.html` opens the first. A benchmark's first repetition stands for the others. The
+graph's root under memray's `<tracker>` is the benchmark body, so what the body
+allocates itself shows there.
 A benchmark whose timed run fails or is skipped gets no memory pass, so it
-contributes neither row metrics nor captures to the flame graph.
+contributes neither row metrics nor a flame graph.
 
 ## Caveats
 

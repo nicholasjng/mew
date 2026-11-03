@@ -67,14 +67,11 @@ bench_sort_quick     │      100,000 │   24.10 us │   24.05 us
 Write a self-contained HTML report:
 
 ```console
-$ mew run --sample --sample-html cpu.html
+$ mew run --sample --profile-dir profiles/
 ```
 
-This implies `--sample`, so you can drop it:
-
-```console
-$ mew run --sample-html cpu.html
-```
+`profiles/profiler/index.html` is a Tachyon flame graph with a root per
+benchmark, or a pyinstrument call tree.
 
 ## Tuning the sampler
 

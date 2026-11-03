@@ -7,8 +7,11 @@ repetition's `Run`. Reporters see them as the `memory` and `cpu_profile` blocks 
 a {class}`mew.BenchmarkResult`.
 
 Custom managers implement the {class}`mew.MemoryManager` or
-{class}`mew.ProfilerManager` protocol. A profiler may additionally implement
-{class}`mew.ProfilerResultProvider` and {class}`mew.PausableProfiler`.
+{class}`mew.ProfilerManager` protocol. Only starting and stopping are
+required: a subclass of a protocol inherits the other hooks, which do nothing,
+and overrides the ones it supports. A manager that doesn't subclass may leave
+out `get_result()`, `pause()` and `resume()`, which mew then doesn't call, but
+type checkers expect every method of the protocol.
 
 - A memory manager's `stop()` returns {class}`mew.MemoryMetrics`, a dict of
   ints with `peak_bytes` and `total_allocations` and optionally `total_bytes`
@@ -21,10 +24,14 @@ Custom managers implement the {class}`mew.MemoryManager` or
   scope open at the end of its loop, mew calls `resume()` before
   `before_teardown_stop()`, so a manager never stops while paused.
 
-`write_html()` on either of mew's two samplers renders their passes as one HTML
-report. A sampler's pass that caught no sample
-still gets a {class}`mew.cpu.CpuProfile`, with `sample_count` 0 and no
-`top_function`.
+- `write_outputs(directory)` writes a manager's files, such as HTML reports,
+  after the run; `mew run --profile-dir DIR` passes `DIR/profiler` and
+  `DIR/memory`. mew's
+  samplers write their passes as one HTML report, `index.html`, and
+  `MemrayManager` a flame graph per benchmark.
+
+A sampler's pass that caught no sample still gets a {class}`mew.cpu.CpuProfile`,
+with `sample_count` 0 and no `top_function`.
 
 ```{eval-rst}
 .. currentmodule:: mew
@@ -33,23 +40,23 @@ still gets a {class}`mew.cpu.CpuProfile`, with `sample_count` 0 and no
 
 .. autoclass:: ProfilerManager
 
-.. autoclass:: ProfilerResultProvider
-
-.. autoclass:: PausableProfiler
-
 .. autoclass:: MemoryMetrics
 
 .. py:data:: ProfilerSummary
-   :type: dict[str, Any]
+   :type: Mapping[str, Any]
 
-   Free-form summary a :class:`ProfilerResultProvider` returns from ``get_result()``;
-   it lands in each row's ``cpu_profile`` block, an empty one included. Keys are
+   Free-form summary a :class:`ProfilerManager` returns from ``get_result()``;
+   it lands in each row's ``cpu_profile`` block, an empty one included. It must
+   be a ``dict``, a TypedDict such as :class:`mew.cpu.CpuProfile` included;
+   another mapping fails the run with ``TypeError``. Keys are
    strings and values anything :func:`json.dumps` accepts, ``None`` included, and
    they arrive with their JSON types. A value ``json.dumps`` rejects, such as a
    NumPy integer, fails the run with ``TypeError``.
 
 .. autoclass:: mew.memory.MemrayManager
    :members:
+
+.. autoclass:: mew.memory.Capture
 
 .. autofunction:: mew.memory.manager
 

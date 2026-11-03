@@ -10,7 +10,7 @@ benchpaths = ["benchmarks"]
 # Glob patterns for benchmark file discovery.
 python-files = ["bench_*.py", "*_bench.py"]
 # Default reducer `mew compare` applies over per-repetition values: min, max,
-# mean, median, gmean, or a pNN percentile like p95.
+# mean, median, or gmean.
 # Omit to keep the median; --statistic wins.
 statistic = "median"
 

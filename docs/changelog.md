@@ -39,10 +39,23 @@ change between minor releases.
 - `State.range()` and `State.range_size` are gone: they existed only to pick a
   `@parametrize` case, whose index mew now binds directly. A case's raw `name`
   drops its `/case:N` part; its `benchmark` is unchanged.
-- `mew.cpu.write_html(manager, path)` is now a method,
-  `manager.write_html(path)`, on `TachyonManager` and `PyinstrumentManager`,
-  and `mew.memory.write_flamegraph(manager, path)` is
-  `manager.write_flamegraph(path)`. `mew.memory.manager()` takes no
+- `mew run --profile-dir DIR` replaces `--sample-html FILE` and
+  `--flamegraph DIR`: the CPU report goes to `DIR/profiler/index.html`, the
+  memory flame graphs to `DIR/memory/`. It needs `--sample` or
+  `--profile-memory`, which it no longer implies. It calls the new
+  `write_outputs(directory)` method of `mew.MemoryManager` and
+  `mew.ProfilerManager`, so a custom manager can write files of its own; a
+  subclass of either protocol inherits a no-op.
+- `mew.ProfilerResultProvider` and `mew.PausableProfiler` are gone:
+  `get_result()`, `pause()` and `resume()` are methods of `mew.ProfilerManager`,
+  and a subclass inherits defaults that do nothing (`get_result()` returns
+  `None`), so a profiler subclasses one class and overrides what it supports.
+  A manager that doesn't subclass may still leave them out.
+  `mew.ProfilerSummary` is typed `Mapping[str, Any]`, so a TypedDict summary
+  type-checks; at runtime it is still a dict. `mew.cpu.write_html(manager,
+  path)` and `mew.memory.write_flamegraph(manager, path)` are now
+  `manager.write_outputs(directory)` on `TachyonManager`,
+  `PyinstrumentManager` and `MemrayManager`. `mew.memory.manager()` takes no
   `ExitStack`: a `MemrayManager()` keeps its captures in a temporary directory
   of its own.
 - `mew.compare.Sample.stddev` is derived from `values`, so `Sample()` no longer
@@ -68,6 +81,26 @@ change between minor releases.
 - `mew run --sample-top-k` is gone: rows list the five hottest instructions.
   The count is a setting of the Tachyon sampler, so it stays as `top_k=` on
   `mew.cpu.manager()` and `TachyonManager()`.
+- On a GIL build, threaded benchmarks are left out of the run with a warning,
+  as before, but no longer get a skipped row in the results. `--strict` still
+  raises instead.
+- `mew compare --statistic` and `[tool.mew] statistic` no longer take `pNN`
+  percentiles: over a run's few repetitions they only interpolate between its
+  largest values. `min`, `max`, `mean`, `median` and `gmean` remain, and
+  `compare(statistic=...)` takes any callable.
+- Every `mew run --stdin` line is a selector, like a positional path:
+  `file.py::name`, as `mew list` prints it. Path-free names, as
+  `mew list --names-only` prints them, no longer filter the configured
+  discovery; such a line names a path that doesn't exist and exits 2.
+- Memory profiling writes one memray flame graph per benchmark,
+  `DIR/memory/<n>-<function>.html` in run order, instead of one combined report. Each
+  is rooted at the benchmark body, so allocations the body makes itself show
+  there, carries memray's memory-over-time chart, and names the benchmark in its
+  header, with a picker in memray's navbar to switch between benchmarks;
+  `DIR/memory/index.html` opens the first. `MemrayManager.captures` holds `mew.memory.Capture` tuples, which add
+  the benchmark's name.
+- `mew list --names-only` (`-n`) is gone; `mew list` prints `file.py::name`,
+  which `mew run --stdin` takes as is.
 - The CLI no longer accepts abbreviated long options, such as `--rep` for
   `--repetitions`: spell each option out in full. An abbreviation would break
   whenever a new option sharing its prefix is added. Shell completion

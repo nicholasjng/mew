@@ -32,8 +32,6 @@ importable from `mew` directly:
    BenchmarkFn
    MemoryManager
    ProfilerManager
-   ProfilerResultProvider
-   PausableProfiler
    run
    Reporter
    RichReporter
@@ -61,8 +59,8 @@ importable from `mew` directly:
    machine_context
 ```
 
-{data}`mew.ProfilerSummary` describes the free-form dictionary returned by a
-{class}`mew.ProfilerResultProvider`.
+{data}`mew.ProfilerSummary` describes the free-form dictionary a
+{class}`mew.ProfilerManager` returns from `get_result()`.
 
 ## Build information
 
