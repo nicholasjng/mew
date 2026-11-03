@@ -28,6 +28,11 @@ change between minor releases.
   `mew.compare.SessionSummary` drops `host`. To keep telling machines apart,
   record one with `mew.set_context("host", ...)`; `mew compare` warns when it
   differs. Files with `session.host` still read.
+- A raising benchmark's row records only the end of its traceback,
+  `Type: message` (`json.decoder.JSONDecodeError: ...`) and any notes, as its
+  `skip_message`, since the traceback's absolute paths name the home directory
+  and checkout. The full traceback goes to stderr, which `--capture fd` prints
+  after the run.
 - The CLI no longer accepts abbreviated long options, such as `--rep` for
   `--repetitions`: spell each option out in full. An abbreviation would break
   whenever a new option sharing its prefix is added. Shell completion

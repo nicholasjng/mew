@@ -51,6 +51,16 @@ def whatever(state): ...
 
 Variants from `@parametrize` / `@product` always get a `[label]` suffix.
 
+## When a benchmark raises
+
+An exception skips the benchmark, and the run goes on. The row records the
+end of its traceback, such as `KeyError: 'k'` and any notes, as its `skip_message`,
+which the console prints in place of the timings. The full traceback goes to
+stderr, so with the default `--capture fd` it shows under "output from
+benchmarks" after the table. It stays out of the result file, which gets
+shared: its paths name your home directory and checkout.
+`KeyboardInterrupt` and `SystemExit` stop the whole run instead.
+
 ## Tags
 
 `mew run --tag` filters by tag.

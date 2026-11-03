@@ -13,6 +13,24 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 
+namespace {
+
+// Only use the formatted exception as skip message, not the full traceback.
+std::string skip_message(const nb::python_error& e) noexcept {
+    std::string message = "the benchmark raised an exception";
+    try {
+        nb::module_ traceback = nb::module_::import_("traceback");
+        nb::object lines = traceback.attr("format_exception_only")(e.value());
+        message = nb::cast<std::string>(nb::str("").attr("join")(lines).attr("rstrip")());
+        // Last, so that a stderr that can't be written to keeps the message.
+        traceback.attr("print_exception")(e.value());
+    } catch (const std::exception&) {
+    }
+    return message;
+}
+
+}  // namespace
+
 void register_registry(nb::module_& m) {
     nb::class_<benchmark::Benchmark>(
         m, "BenchmarkHandle",
@@ -65,8 +83,7 @@ void register_registry(nb::module_& m) {
                         s.SkipWithError("The benchmark did not complete its loop.");
                     }
                 } catch (nb::python_error& e) {
-                    // The skip message carries the formatted traceback.
-                    s.SkipWithError(e.what());
+                    s.SkipWithError(skip_message(e));
                     // BaseException-only (KeyboardInterrupt, SystemExit) must
                     // stop the whole run, not skip one benchmark.
                     if (!e.matches(PyExc_Exception)) {
