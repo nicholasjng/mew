@@ -4,6 +4,15 @@ All notable changes to `mew` are documented here. Versions follow
 [semantic versioning](https://semver.org/); until 1.0 the public API may still
 change between minor releases.
 
+## Unreleased
+
+### Changed
+
+- The CLI no longer accepts abbreviated long options, such as `--rep` for
+  `--repetitions`: spell each option out in full. An abbreviation would break
+  whenever a new option sharing its prefix is added. Shell completion
+  (`mew completions`) still saves typing.
+
 ## Version 0.3.0 (Oct 21, 2026)
 
 ### Added
