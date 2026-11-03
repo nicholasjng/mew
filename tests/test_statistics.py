@@ -2,28 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Any
+import statistics
+from fractions import Fraction
+from pathlib import Path
 
-import numpy as np
 import pytest
+from _helpers import row, write_json
 
-from mew._results import _aggregate_values
+from mew._results import load_column
 from mew._statistics import resolve_statistic
 
 
-def test_statistic_replaces_the_median_but_not_the_stddev() -> None:
+def test_statistic_replaces_the_median_but_not_the_stddev(tmp_path: Path) -> None:
     """A custom statistic replaces the median as a `float`; the stddev does not change."""
     values = [1.0, 2.0, 3.0, 100.0]
-    median, stddev = _aggregate_values(values)
-    assert median == 2.5
-
-    def numpy_max(values: list[float]) -> Any:
-        # np.float32, unlike np.float64, is not a float subclass, so this
-        # catches a dropped cast.
-        return np.float32(max(values))
-
-    center, same_stddev = _aggregate_values(values, numpy_max)
-    assert (type(center), center, same_stddev) == (float, 100.0, stddev)
+    write_json(tmp_path / "r.json", [row("b", v) for v in values])
+    (median,) = load_column(tmp_path / "r.json", "real_time")[0].values()
+    assert median.value == 2.5
+    # A Fraction, like a numpy scalar, is no float subclass, so this catches a dropped cast.
+    samples, _ = load_column(tmp_path / "r.json", "real_time", statistic=lambda v: Fraction(max(v)))
+    (center,) = samples.values()
+    assert (type(center.value), center.value) == (float, 100.0)
+    assert center.stddev == median.stddev == statistics.stdev(values)
 
 
 @pytest.mark.parametrize(

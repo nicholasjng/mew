@@ -112,20 +112,15 @@ _ALLOW = '[[tool.mew.regressions.allow]]\npattern = "b*"\n'
         (_ALLOW + 'reason = "r"\nthreshold = -1.0', "finite, non-negative"),
         ('[tool.mew.regressions]\nallow = "b*"', "allow must be an array of tables"),
         ("[tool.mew]\nregressions = 5", "[tool.mew.regressions] must be a table"),
-        # Typos fail, in the table and in its rules alike, and keys are dashed.
+        # The table and its rules both reject typos (test_config covers the rest).
         (
             "[tool.mew.regressions]\ndefault-treshold = 7.5",
             "in [tool.mew.regressions]; did you mean 'default-threshold'?",
         ),
         (
-            "[tool.mew.regressions]\ndefault_threshold = 7.5",
-            "unknown key 'default_threshold' in [tool.mew.regressions]; did you mean 'default-threshold'?",
-        ),
-        (
             _ALLOW + 'reason = "r"\ntreshold = 10.0',
             "unknown key 'treshold' in [[tool.mew.regressions.allow]]; did you mean 'threshold'?",
         ),
-        ("[tool.mew.regressions]\ndefault-threshold = ", "(at line 2"),
     ],
 )
 def test_load_rejects_invalid_regressions_config(tmp_path: Path, body: str, match: str) -> None:

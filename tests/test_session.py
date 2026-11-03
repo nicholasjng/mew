@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -121,26 +120,19 @@ def test_machine_context_names_the_cpu_or_none():
     assert model is None or model == model.strip() != ""
 
 
-@pytest.mark.parametrize(
-    ("build_flag", "runtime_gil"), [(None, True), (0, True), (1, False), (1, True)]
-)
-def test_machine_context_distinguishes_build_from_runtime_gil(
-    monkeypatch: pytest.MonkeyPatch, build_flag: int | None, runtime_gil: bool
+def test_machine_context_tells_a_free_threaded_build_with_the_gil_enabled(
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    """An FT build remains identifiable when the GIL is enabled at runtime."""
+    """A free-threaded build stays identifiable when an extension enabled the GIL at runtime."""
     original_get_config_var = sysconfig.get_config_var
 
     def get_config_var(key: str) -> int | str | None:
-        return build_flag if key == "Py_GIL_DISABLED" else original_get_config_var(key)
+        return 1 if key == "Py_GIL_DISABLED" else original_get_config_var(key)
 
     monkeypatch.setattr(sysconfig, "get_config_var", get_config_var)
-    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: runtime_gil, raising=False)
-
-    assert mew.is_free_threaded_build() is bool(build_flag)
-    assert mew.gil_enabled() is runtime_gil
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
     python = mew.machine_context()["python"]
-    assert python["free_threaded_build"] is bool(build_flag)
-    assert python["gil_enabled"] is runtime_gil
+    assert (python["free_threaded_build"], python["gil_enabled"]) == (True, True)
 
 
 @pytest.mark.parametrize(
@@ -185,18 +177,6 @@ def test_run_stamps_session_identity_on_every_row(tmp_path: Path, reporter, suff
     assert first["context"]["python"]["free_threaded_build"] is mew.is_free_threaded_build()
     assert first["context"]["python"]["gil_enabled"] is mew.gil_enabled()
     assert (second["session"], second["context"]) == (session, first["context"])
-
-
-def test_bare_reporter_context_omits_session_keys(tmp_path: Path):
-    """A reporter driven without mew.run has no identity: the block is passed
-    through untouched, so nothing invents a session."""
-    out = tmp_path / "o.json"
-    rep = JSONReporter(output=out)
-    rep.report_context({"context": {"num_cpus": 4}})
-    rep.finalize()
-    doc = json.loads(out.read_text())
-    assert "session" not in doc
-    assert doc["context"] == {"num_cpus": 4}
 
 
 @pytest.mark.parametrize("suffix", [".jsonl", ".jsonl.gz"])

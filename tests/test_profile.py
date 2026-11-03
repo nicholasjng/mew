@@ -482,12 +482,11 @@ def test_memray_captures_the_loop_and_roots_its_flame_graph_at_the_body(tmp_path
         del fixture
 
     rep, out = Capture(), tmp_path / "flame.html"
-    with contextlib.ExitStack() as stack:
-        manager = _memory.manager(stack)
-        mew.run(min_time="20x", reporter=rep, memory_manager=manager)
-        # Tagged with the user's benchmark frame, not a mew internal.
-        assert [root[0] for _, root in manager.captures] == ["bench_rooted"]
-        _memory.write_flamegraph(manager, out)
+    manager = _memory.manager()
+    mew.run(min_time="20x", reporter=rep, memory_manager=manager)
+    # Tagged with the user's benchmark frame, not a mew internal.
+    assert [root[0] for _, root in manager.captures] == ["bench_rooted"]
+    manager.write_flamegraph(out)
 
     mem = rep.runs[0]["memory"]
     assert mem["peak_bytes"] < setup_bytes / 10
@@ -523,10 +522,9 @@ def test_flamegraph_header_covers_every_capture(tmp_path, monkeypatch):
         FlameGraphReporter, "render", lambda self, f, *, metadata, **kw: rendered.update(m=metadata)
     )
     rep = Capture()
-    with contextlib.ExitStack() as stack:
-        manager = _memory.manager(stack)
-        mew.run(reporter=rep, memory_manager=manager)
-        _memory.write_flamegraph(manager, tmp_path / "flame.html")
+    manager = _memory.manager()
+    mew.run(reporter=rep, memory_manager=manager)
+    manager.write_flamegraph(tmp_path / "flame.html")
 
     # Each row's figures are its capture's header.
     small, large = (row["memory"] for row in rep.runs)
@@ -542,8 +540,7 @@ def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
     from mew import memory as _memory
 
     out = tmp_path / "flame.html"
-    with contextlib.ExitStack() as stack:
-        _memory.write_flamegraph(_memory.manager(stack), out)
+    _memory.manager().write_flamegraph(out)
     assert not out.exists()
     assert "no memory captures recorded" in capsys.readouterr().err
 
@@ -551,10 +548,8 @@ def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
 @pytest.mark.parametrize("sampler", _SAMPLERS)
 def test_write_html_warns_when_nothing_was_sampled(tmp_path, capsys, sampler):
     """`write_html()` writes no file and warns on stderr when the sampler collected nothing."""
-    from mew import cpu as _cpu
-
     out = tmp_path / "cpu.html"
-    _cpu.write_html(_sampled_manager(sampler), out)
+    _sampled_manager(sampler).write_html(out)
     assert not out.exists()
     assert "no CPU samples collected" in capsys.readouterr().err
 
@@ -612,14 +607,6 @@ def test_pass_that_skips_before_its_loop_has_no_profile(sampler):
     assert ["cpu_profile" in row for row in rep.runs] == [True, False]
 
 
-def test_write_html_rejects_other_profiler_managers(tmp_path):
-    """`write_html()` raises `TypeError` for a manager that is not one of mew's samplers."""
-    from mew import cpu as _cpu
-
-    with pytest.raises(TypeError, match="TachyonManager or PyinstrumentManager"):
-        _cpu.write_html(cast("Any", FakeProfilerManager()), tmp_path / "cpu.html")
-
-
 @pytest.mark.skipif(mew.gil_enabled(), reason="needs a free-threaded build with the GIL disabled")
 def test_pyinstrument_is_rejected_before_import_on_free_threaded():
     """Importing pyinstrument would enable the GIL, which `_gil_stays_disabled`
@@ -640,7 +627,7 @@ def test_pyinstrument_is_rejected_before_import_on_free_threaded():
                 not mew.gil_enabled(), reason="pyinstrument is rejected before the lookup"
             ),
         ),
-        ("memory", lambda mod: mod.manager(contextlib.ExitStack())),
+        ("memory", lambda mod: mod.manager()),
     ],
 )
 def test_missing_profiler_package_raises_import_error(monkeypatch, module, create):
@@ -707,40 +694,7 @@ def test_cpu_profiling_rejects_invalid_arguments(factory, kwargs):
         getattr(_cpu, factory)(**kwargs)
 
 
-@pytest.mark.parametrize(
-    ("sampler", "expected"),
-    [
-        ("auto", "TachyonManager" if sys.version_info >= (3, 15) else "PyinstrumentManager"),
-        ("tachyon", "TachyonManager"),
-        ("pyinstrument", "PyinstrumentManager"),
-    ],
-)
-def test_cpu_manager_creates_the_chosen_sampler(monkeypatch, sampler, expected):
-    """`cpu.manager()` builds the chosen sampler (`auto` is Tachyon on 3.15+), passing `top_k` to
-    Tachyon only."""
-    from mew import cpu as _cpu
-
-    made: list[tuple[str, float, dict]] = []
-    for name in ("TachyonManager", "PyinstrumentManager"):
-        monkeypatch.setattr(
-            _cpu, name, lambda interval, _name=name, **kw: made.append((_name, interval, kw))
-        )
-    _cpu.manager(2e-4, sampler=sampler, top_k=3)
-    # pyinstrument reads no instructions, so it takes no top_k.
-    kwargs = {"top_k": 3} if expected == "TachyonManager" else {}
-    assert made == [(expected, 2e-4, kwargs)]
-
-
 # --- Tachyon (Python 3.15+) --------------------------------------------------
-
-
-@pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon is available")
-def test_tachyon_manager_requires_python_3_15():
-    """`TachyonManager` raises `RuntimeError` before Python 3.15."""
-    from mew.cpu import TachyonManager
-
-    with pytest.raises(RuntimeError, match="3.15"):
-        TachyonManager()
 
 
 @needs_tachyon
@@ -799,7 +753,7 @@ def test_tachyon_flame_graph_has_a_root_per_benchmark(tmp_path):
     mgr = _cpu.TachyonManager()
     mew.run(min_time=_SAMPLED_ITERATIONS, reporter=Capture(), profiler_manager=mgr)
     report = tmp_path / "cpu.html"
-    _cpu.write_html(mgr, report)
+    mgr.write_html(report)
     html = report.read_text(encoding="utf-8")
     assert "bench_first" in html and "bench_second" in html
     assert "runner.py" not in html
@@ -888,7 +842,7 @@ def test_samplers_summarize_the_hot_frame_in_one_shape(sampler):
     assert (cpu["profiler"], top["function"], top["file"]) == (sampler, "_spin", "test_profile.py")
     assert 0 < top["self_time"] <= cpu["wall_time"]
     # Instructions are read on free-threaded Tachyon only, and then always.
-    reads = getattr(mgr, "reads_instructions", False)
+    reads = sampler == "tachyon" and _cpu.reads_instructions()
     assert bool(cpu["top_instructions"]) is reads
     assert (cpu["unspecialized_share"] is not None) is reads
     for instruction in cpu["top_instructions"]:

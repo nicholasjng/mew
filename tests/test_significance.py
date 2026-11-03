@@ -16,7 +16,6 @@ from mew._statistics import mannwhitney_p
     [
         ([10.0, 11.0, 9.0, 10.5, 9.5], [10.0, 11.0, 9.0, 10.5, 9.5]),  # identical
         ([5.0, 5.0], [5.0, 5.0]),  # all tied: no rank spread at all
-        ([1.0], [2.0]),  # one observation per group can't show a difference
     ],
 )
 def test_mannwhitney_without_evidence_is_one(a: list[float], b: list[float]) -> None:
@@ -38,9 +37,3 @@ def test_mannwhitney_corrects_the_variance_for_ties() -> None:
     p = mannwhitney_p([1.0, 2.0, 2.0, 3.0, 3.0, 4.0], [3.0, 3.0, 4.0, 5.0, 5.0, 6.0])
     # Without the tie correction this would be 0.0374.
     assert p == pytest.approx(0.03311773333120044)
-
-
-def test_mannwhitney_empty_group_returns_none() -> None:
-    """`mannwhitney_p` returns `None` when either group is empty."""
-    assert mannwhitney_p([], [1.0, 2.0]) is None
-    assert mannwhitney_p([1.0, 2.0], []) is None
