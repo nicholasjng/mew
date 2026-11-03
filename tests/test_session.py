@@ -178,7 +178,9 @@ def test_run_stamps_session_identity_on_every_row(tmp_path: Path, reporter, suff
     session = first["session"]
     assert uuid.UUID(session["id"]).version == 7
     assert session["tag"] == "before"
-    assert session["host"] and session["date"]
+    assert session["date"]
+    # The host name often names a person, so mew doesn't record it.
+    assert "host" not in session
     assert first["context"]["build"] == "asan"
     assert first["context"]["python"]["free_threaded_build"] is mew.is_free_threaded_build()
     assert first["context"]["python"]["gil_enabled"] is mew.gil_enabled()

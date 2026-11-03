@@ -57,7 +57,7 @@ free-threaded builds the hottest instructions. The `profiler` key and
 
 ```console
 $ mew run --sample
-mew · host=laptop cpus=10 scaling=enabled
+mew · cpu=Apple M1 Pro cpus=10 scaling=enabled
 Benchmark            │        Iters │       Real │        CPU
 ─────────────────────────────────────────────────────────────
 bench_sort_quick     │      100,000 │   24.10 us │   24.05 us

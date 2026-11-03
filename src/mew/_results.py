@@ -157,14 +157,14 @@ def _rows_from_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _session_key(row: dict[str, Any]) -> tuple[str, str, str]:
-    """Return ``(date, id, host)`` for a result row.
+def _session_key(row: dict[str, Any]) -> tuple[str, str]:
+    """Return ``(date, id)`` for a result row.
 
     Sorts oldest first: the ISO-8601 date leads, and the time-ordered UUIDv7 id
     breaks ties between equal dates.
     """
     sess = _session_block(row)
-    return (str(sess.get("date") or ""), str(sess.get("id") or ""), str(sess.get("host") or ""))
+    return (str(sess.get("date") or ""), str(sess.get("id") or ""))
 
 
 def _session_block(row: dict[str, Any]) -> dict[str, Any]:
@@ -295,12 +295,12 @@ def _samples_from_groups(
 
 def _group_by_session(
     rows: list[dict[str, Any]], *, measured_only: bool = True
-) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
     """Group rows by session, oldest key first; only successful measurements by default.
 
     ISO-8601 dates lead the key, so it sorts chronologically.
     """
-    buckets: defaultdict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    buckets: defaultdict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
         if not measured_only or _is_measurement_row(r):
             buckets[_session_key(r)].append(r)
@@ -321,7 +321,7 @@ def split_selector(raw: str) -> tuple[Path, str | None]:
 
 def _select_rows(
     path: Path,
-    by_session: dict[tuple[str, str, str], list[dict[str, Any]]],
+    by_session: dict[tuple[str, str], list[dict[str, Any]]],
     selector: str | None,
 ) -> list[dict[str, Any]]:
     """Pick the rows a ``path@selector`` names.
@@ -364,15 +364,42 @@ def load_column(
     """
     by_session = _group_by_session(reader(path))
     selected = _select_rows(path, by_session, selector)
-    # The newest selected row speaks for the column's provenance.
-    rep_row = max(selected, key=_session_key)
     # Repetitions of one benchmark share its `name[label]`.
     groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in selected:
         groups[r["benchmark"]].append(r)
     samples = _samples_from_groups(groups, metric, statistic)
-    ctx = {k: rep_row[k] for k in ROW_STAMP_FIELDS if k in rep_row}
-    return _normalize_samples(samples, key, str(path)), ctx
+    return _normalize_samples(samples, key, str(path)), _provenance(selected)
+
+
+def load_session(
+    path: Path, selector: str | None = None
+) -> tuple[list[BenchmarkResult], dict[str, Any]]:
+    """Load the rows a ``path@selector`` names, as ``mew run`` reported them.
+
+    Skipped rows stay, since the run reported them too; Google Benchmark's
+    aggregate rows don't. A 0.2.0 archive's counter mapping becomes the list of
+    ``{"name", "value"}`` records that later versions write.
+
+    Returns
+    -------
+    tuple[list[BenchmarkResult], dict]
+        The rows in file order, and the provenance (``session`` and
+        ``context``) of the newest one.
+    """
+    rows = [r for r in read_rows(path) if not r.get("aggregate_name")]
+    selected = _select_rows(path, _group_by_session(rows, measured_only=False), selector)
+    for i, r in enumerate(selected):
+        if isinstance(counters := r.get("counters"), dict):
+            records = [{"name": k, "value": v} for k, v in sorted(counters.items())]
+            selected[i] = {**r, "counters": records}
+    return cast("list[BenchmarkResult]", selected), _provenance(selected)
+
+
+def _provenance(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The ``session`` and ``context`` of the newest row, which speaks for all of them."""
+    newest = max(rows, key=_session_key)
+    return {k: newest[k] for k in ROW_STAMP_FIELDS if k in newest}
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,8 +412,6 @@ class SessionSummary:
         The session's time-ordered id.
     date : str or None
         When the session started, in ISO 8601.
-    host : str or None
-        The machine it ran on.
     tag : str or None
         Its ``--session-tag``.
     benchmarks : int
@@ -397,7 +422,6 @@ class SessionSummary:
 
     id: str | None
     date: str | None
-    host: str | None
     tag: str | None
     benchmarks: int
     rows: int
@@ -429,13 +453,12 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
     """
     by_session = _group_by_session(read_rows(Path(path)), measured_only=False)
     out: list[SessionSummary] = []
-    for (date, sid, host), session_rows in reversed(by_session.items()):
+    for (date, sid), session_rows in reversed(by_session.items()):
         measured = {r["benchmark"] for r in session_rows if _is_measurement_row(r)}
         out.append(
             SessionSummary(
                 id=sid or None,
                 date=date or None,
-                host=host or None,
                 tag=_session_block(session_rows[0]).get("tag"),
                 benchmarks=len(measured),
                 rows=len(session_rows),
