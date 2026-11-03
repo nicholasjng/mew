@@ -13,8 +13,8 @@ Custom managers implement the {class}`mew.MemoryManager` or
 - A memory manager's `stop()` returns {class}`mew.MemoryMetrics`, a dict of
   ints with `peak_bytes` and `total_allocations` and optionally `total_bytes`
   and `net_heap_growth`. `None` means it measured nothing, and the row gets no
-  `memory` block. A missing required key, an unknown key or a value that isn't
-  an int fails the run with `TypeError`.
+  `memory` block. A missing required key or a value that isn't an int fails
+  the run with `TypeError`; other keys are ignored.
 - A profiler's `get_result()` summary becomes the row's `cpu_profile` block,
   even when empty; `None` leaves the block out.
 - `pause()` and `resume()` come in pairs. When a body leaves a `state.pause()`

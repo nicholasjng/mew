@@ -275,14 +275,13 @@ def run(
     session_tag: str | None,
     append: bool,
     strict: bool,
-    capture: str | None,
+    capture: str,
     profile_memory: bool,
     memory_iterations: int | None,
     flamegraph: Path | None,
     sample: bool,
     sample_interval: float,
     sampler: str,
-    sample_top_k: int,
     sample_html: Path | None,
 ) -> None:
     """Discover and run benchmarks."""
@@ -314,9 +313,7 @@ def run(
 
             # A sampler that can't run here, or a bad setting for it.
             with _usage_error("run", ImportError, RuntimeError, ValueError):
-                profiler_manager = _cpu.manager(
-                    interval=sample_interval, sampler=sampler, top_k=sample_top_k
-                )
+                profiler_manager = _cpu.manager(interval=sample_interval, sampler=sampler)
 
         with _usage_error("run", ValueError):
             reporters = _build_reporters(
@@ -345,7 +342,7 @@ def run(
             random_interleaving=random_interleaving,
             session_tag=session_tag,
             strict=strict,
-            capture_output=(capture or cfg.capture or "fd") == "fd",
+            capture_output=capture == "fd",
             memory_manager=memory_manager,
             memory_iterations=memory_iterations,
             profiler_manager=profiler_manager,
@@ -687,7 +684,8 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--capture",
-        choices=_config.CAPTURE_MODES,
+        choices=("fd", "no"),
+        default="fd",
         help="Print benchmark stdout/stderr after the run (fd, default), or live (no).",
     )
     p.add_argument(
@@ -726,14 +724,6 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         default=1e-4,
         metavar="<seconds>",
         help="Set the sampling interval (default 1e-4).",
-    )
-    p.add_argument(
-        "--sample-top-k",
-        type=int,
-        default=5,
-        metavar="<k>",
-        help="Report the <k> hottest bytecode instructions with Tachyon on free-threaded "
-        "3.15+ (default 5).",
     )
     p.add_argument(
         "--sample-html",

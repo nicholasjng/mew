@@ -91,5 +91,6 @@ Combine with `-k` for AND across tag and name.
   a few nanoseconds, per-iteration dispatch dominates; use
   [](state-and-timing.md#batched-iteration-for-very-fast-bodies).
 - **One decorator per function.** Applying both `@benchmark` and
-  `@parametrize` to the same function raises a `RuntimeError` at import
-  time. Split into two functions if you need both shapes.
+  `@parametrize` to the same function raises a `ValueError` at import time,
+  since both register its name. Split into two functions if you need both
+  shapes.

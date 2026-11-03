@@ -6,7 +6,6 @@ import contextlib
 import fnmatch
 import hashlib
 import importlib.util
-import os
 import re
 import sys
 from collections.abc import Generator, Iterable, Sequence
@@ -88,9 +87,8 @@ def collect_files(
 ) -> list[Path]:
     """Return the files the selectors name, and the matching files beneath their directories.
 
-    A file matches when its name, or its path below the directory for a pattern
-    with ``/``, matches one of ``file_patterns``. A path that doesn't exist
-    raises :class:`FileNotFoundError`.
+    A file matches when its name matches one of ``file_patterns``, as pytest's
+    ``python_files`` do. A path that doesn't exist raises :class:`FileNotFoundError`.
     """
     patterns = list(file_patterns)
     out: dict[Path, None] = {}  # an ordered set: the first selector to reach a file wins
@@ -101,15 +99,11 @@ def collect_files(
         if path.is_file():
             out[path] = None
             continue
-        found: list[Path] = []
-        for dirpath, _, filenames in os.walk(path):
-            reldir = os.path.relpath(dirpath, path)
-            for fname in filenames:
-                rel = fname if reldir == os.curdir else os.path.join(reldir, fname)
-                # Slash-separated for matching, so `/` patterns work on Windows.
-                rel = rel.replace(os.sep, "/")
-                if any(fnmatch.fnmatch(rel if "/" in pat else fname, pat) for pat in patterns):
-                    found.append(Path(dirpath, fname))
+        found = (
+            p
+            for p in path.rglob("*")
+            if p.is_file() and any(fnmatch.fnmatch(p.name, pat) for pat in patterns)
+        )
         out.update(dict.fromkeys(sorted(found)))
     return list(out)
 

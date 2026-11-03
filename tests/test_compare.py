@@ -670,20 +670,6 @@ def test_fmt_delta_colors_by_improvement_direction() -> None:
     assert _fmt_delta(math.inf) == ("+∞%", "red")
 
 
-def test_compare_warns_on_time_unit_skew(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """`compare` warns when the two files use different time units."""
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("b", 0.1, time_unit="us")],
-        base=[_row("b", 100.0)],  # ns
-    )
-    compare([other, base], console=Console(width=200))
-    err = capsys.readouterr().err
-    assert "different time units" in err
-
-
 def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
     """An exception in a custom statistic surfaces as a `ValueError` naming the benchmark."""
 

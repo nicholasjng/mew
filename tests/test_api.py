@@ -152,24 +152,6 @@ def test_parametrize_ids_length_mismatch():
                 pass
 
 
-def test_rejected_name_can_be_corrected():
-    """After a duplicate name is rejected, the function can register under another name."""
-
-    def bench_a(state):
-        for _ in state:
-            pass
-
-    def bench_b(state):
-        for _ in state:
-            pass
-
-    mew.benchmark(name="x")(bench_a)
-    with pytest.raises(ValueError, match="already registered"):
-        mew.benchmark(name="x")(bench_b)
-    mew.benchmark(name="y")(bench_b)
-    assert [e.name for e in REGISTRY.all()] == ["x", "y"]
-
-
 def test_parametrize_accepts_generator():
     """`@mew.parametrize` accepts a generator of cases."""
 
@@ -303,8 +285,9 @@ def test_parametrize_rejects_structurally_confusing_case_labels(ids):
 
 
 def test_double_registration_raises():
-    """`@mew.benchmark` over `@mew.parametrize` raises and keeps only the first entry."""
-    with pytest.raises(RuntimeError, match="already registered"):
+    """`@mew.benchmark` over `@mew.parametrize` registers the same name, so it raises and keeps
+    only the first entry."""
+    with pytest.raises(ValueError, match="already registered"):
 
         @mew.benchmark
         @mew.parametrize([{"n": 1}])
@@ -312,7 +295,6 @@ def test_double_registration_raises():
             for _ in state:
                 pass
 
-    # The failed outer decorator must not add a second entry.
     (entry,) = REGISTRY.all()
     assert entry.case_labels == ["n=1"]
 

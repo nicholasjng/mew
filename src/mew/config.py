@@ -11,16 +11,12 @@ from typing import Any, cast
 from mew._statistics import resolve_statistic
 from mew.regressions import AllowRule, CounterConfig, CounterRule, RegressionConfig
 
-#: The ``mew run --capture`` values, also accepted as ``[tool.mew] capture``.
-CAPTURE_MODES = ("fd", "no")
-
 # `[tool.mew]` keys.
 _KEYS = (
     "benchpaths",
     "python-files",
     "setup",
     "statistic",
-    "capture",
     "regressions",
     "counters",
 )
@@ -43,9 +39,6 @@ class Config:
         benchmarks it selects.
     statistic : str or None
         Default ``mew compare`` reducer; ``None`` keeps the median.
-    capture : str or None
-        Default for ``mew run --capture``: ``"fd"`` captures benchmark output and
-        prints it after the run, ``"no"`` shows it live; ``None`` keeps ``"fd"``.
     regressions : RegressionConfig
         The ``[tool.mew.regressions]`` gate: default threshold and allowlist rules.
     counters : CounterConfig
@@ -60,7 +53,6 @@ class Config:
     python_files: list[str] = field(default_factory=lambda: ["bench_*.py", "*_bench.py"])
     setup: str | None = None
     statistic: str | None = None
-    capture: str | None = None
     regressions: RegressionConfig = field(default_factory=RegressionConfig)
     counters: CounterConfig = field(default_factory=CounterConfig)
     project_root: Path | None = None
@@ -144,13 +136,10 @@ def _parse_config(raw: Mapping[str, Any], *, project_root: Path) -> Config:
     cfg = Config(
         statistic=_parse_str(tool, "statistic"),
         setup=_parse_str(tool, "setup"),
-        capture=_parse_str(tool, "capture"),
         regressions=_parse_regressions(tool.get("regressions", {})),
         counters=_parse_counters(tool.get("counters", [])),
         project_root=project_root,
     )
-    if cfg.capture not in (None, *CAPTURE_MODES):
-        raise ValueError(f"[tool.mew] capture must be one of {', '.join(CAPTURE_MODES)}")
     if cfg.statistic is not None:
         # Fail at load, not at the first `mew compare`.
         try:
