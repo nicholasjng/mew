@@ -36,10 +36,32 @@ change between minor releases.
   `skip_message`, since the traceback's absolute paths name the home directory
   and checkout. The full traceback goes to stderr, which `--capture fd` prints
   after the run.
+- `State.range()` and `State.range_size` are gone: they existed only to pick a
+  `@parametrize` case, whose index mew now binds directly. A case's raw `name`
+  drops its `/case:N` part; its `benchmark` is unchanged.
+- `mew.cpu.write_html(manager, path)` is now a method,
+  `manager.write_html(path)`, on `TachyonManager` and `PyinstrumentManager`,
+  and `mew.memory.write_flamegraph(manager, path)` is
+  `manager.write_flamegraph(path)`. `mew.memory.manager()` takes no
+  `ExitStack`: a `MemrayManager()` keeps its captures in a temporary directory
+  of its own.
+- `mew.compare.Sample.stddev` is derived from `values`, so `Sample()` no longer
+  takes it.
+- `mew run -o stdout` is gone; `-o -` is standard output. `--append` without a
+  `.jsonl` sink, or with a `.json` one, fails with one message, and two `-o`
+  sinks for one file are an error.
+- `--sample-interval` and `--sample-top-k` are range-checked by `mew.cpu`, as
+  from Python, so an invalid value fails once the benchmarks are discovered.
 - The CLI no longer accepts abbreviated long options, such as `--rep` for
   `--repetitions`: spell each option out in full. An abbreviation would break
   whenever a new option sharing its prefix is added. Shell completion
   (`mew completions`) still saves typing.
+
+### Fixed
+
+- pyinstrument's `top_function` sums self time per function by its file's full
+  path, as Tachyon does, so same-named functions in same-named files from two
+  directories no longer merge.
 
 ## Version 0.3.0 (Oct 21, 2026)
 
