@@ -72,7 +72,7 @@ class BenchmarkResult(TypedDict):
         something.
     cpu_profile : dict, optional
         The profiler manager's summary, when it returned one; a
-        :class:`mew.cpu.CpuProfile` under ``--sample``.
+        :class:`mew.cpu.CpuProfile` under ``--cpu-profiler sample``.
     """
 
     name: str
@@ -263,7 +263,7 @@ class ProfilerManager(Protocol):
         """Write the manager's files, such as an HTML report, to ``directory``.
 
         Called after the run by ``mew run --profile-dir DIR``, with
-        ``DIR/profiler``. Only for files: the row's figures come from
+        ``DIR/cpu``. Only for files: the row's figures come from
         :meth:`get_result`. Does nothing unless a subclass overrides it.
 
         Parameters

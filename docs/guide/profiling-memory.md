@@ -1,6 +1,6 @@
 # Memory profiling
 
-`--profile-memory` measures each benchmark with
+`--memory-profiler memray` measures each benchmark with
 [memray](https://bloomberg.github.io/memray/) in a separate, untimed pass.
 Tracking covers the timing loop, not fixture setup.
 The pass requests `min(--memory-iterations, iterations)` iterations, 16 by
@@ -23,13 +23,13 @@ $ uv add 'mew-bench[memory]'    # or: pip install 'mew-bench[memory]'
 ```
 
 Note: `memray` is not available on Windows. Without memray, `mew run
---profile-memory` stops with exit code 2 and the install hint, before any
+--memory-profiler memray` stops with exit code 2 and the install hint, before any
 benchmark runs; from Python, {func}`mew.memory.manager` raises `ImportError`.
 
 ## Basics
 
 ```console
-$ mew run --profile-memory
+$ mew run --memory-profiler memray
 mew · cpu=Apple M1 Pro cpus=10 scaling=enabled
 Benchmark            │        Iters │       Real │        CPU │   Peak Mem
 ──────────────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ bench_alloc_list     │       50,000 │    8.01 us │    7.99 us │     3.2 
 Write a flame graph per benchmark:
 
 ```console
-$ mew run --profile-memory --profile-dir profiles/
+$ mew run --memory-profiler memray --profile-dir profiles/
 ```
 
 Each benchmark gets a self-contained HTML report in `profiles/memory/`, numbered in run order and named after its function, such

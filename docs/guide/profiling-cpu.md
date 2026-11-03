@@ -1,12 +1,12 @@
 # CPU profiling
 
-`--sample` profiles each benchmark in a separate pass and attaches the sample
+`--cpu-profiler sample` profiles each benchmark in a separate pass and attaches the sample
 count and hottest frame to its result, and on free-threaded 3.15+ the hottest
 bytecode instruction. It samples with
 [Tachyon](https://docs.python.org/3.15/library/profiling.sampling.html), the
 standard library's sampling profiler, on Python 3.15+, and with
-[pyinstrument](https://pyinstrument.readthedocs.io/) before. `--sampler` picks
-one explicitly; see [Choosing a sampler](#choosing-a-sampler).
+[pyinstrument](https://pyinstrument.readthedocs.io/) before. Naming a sampler's
+class picks one explicitly; see [Choosing a sampler](#choosing-a-sampler).
 
 This is **in-process** sampling: it sees Python frames only. To capture native
 (C/C++) frames from a compiled extension, see {doc}`profiling-native`.
@@ -20,7 +20,7 @@ with the `cpu` extra:
 $ uv add 'mew-bench[cpu]'    # or: pip install 'mew-bench[cpu]'
 ```
 
-On free-threaded Python, `--sample` needs 3.15t and Tachyon. Pyinstrument's
+On free-threaded Python, CPU sampling needs 3.15t and Tachyon. Pyinstrument's
 native sampler would enable the GIL, so mew rejects pyinstrument on
 free-threaded builds rather than letting the import change what is measured.
 
@@ -31,11 +31,11 @@ interpreter rejects.
 
 ## Choosing a sampler
 
-| `--sampler`      | Python 3.11–3.14 | Python 3.15+ | Free-threaded 3.15t |
-| ---------------- | ---------------- | ------------ | ------------------- |
-| `auto` (default) | pyinstrument     | Tachyon      | Tachyon             |
-| `tachyon`        | rejected         | Tachyon      | Tachyon             |
-| `pyinstrument`   | pyinstrument     | pyinstrument | rejected            |
+| `--cpu-profiler`               | Python 3.11–3.14 | Python 3.15+ | Free-threaded 3.15t |
+| ------------------------------ | ---------------- | ------------ | ------------------- |
+| `sample`                       | pyinstrument     | Tachyon      | Tachyon             |
+| `mew.cpu:TachyonManager`       | rejected         | Tachyon      | Tachyon             |
+| `mew.cpu:PyinstrumentManager`  | pyinstrument     | pyinstrument | rejected            |
 
 The samplers attach the same `cpu_profile` keys (see [Row schema](#row-schema)),
 but not always the same figures. pyinstrument records a sample only when a
@@ -47,16 +47,16 @@ There, pyinstrument's pass can take 4 to 8 times as long as the timed run;
 Tachyon's takes 1.1 to 1.3 times as long.
 
 So to compare CPU profiles of a suite across interpreter versions, sample every
-version with one sampler: with `--sampler pyinstrument` on 3.15+, differences
-between versions come from the code and the interpreter, not from the sampler.
-Otherwise keep `auto`: Tachyon also names the hottest line, and on
+version with one sampler: with `--cpu-profiler mew.cpu:PyinstrumentManager` on 3.15+,
+differences between versions come from the code and the interpreter, not from
+the sampler. Otherwise keep `sample`: Tachyon also names the hottest line, and on
 free-threaded builds the hottest instructions. The `profiler` key and
 `context.python` tell the rows apart.
 
 ## Basics
 
 ```console
-$ mew run --sample
+$ mew run --cpu-profiler sample
 mew · cpu=Apple M1 Pro cpus=10 scaling=enabled
 Benchmark            │        Iters │       Real │        CPU
 ─────────────────────────────────────────────────────────────
@@ -67,17 +67,29 @@ bench_sort_quick     │      100,000 │   24.10 us │   24.05 us
 Write a self-contained HTML report:
 
 ```console
-$ mew run --sample --profile-dir profiles/
+$ mew run --cpu-profiler sample --profile-dir profiles/
 ```
 
-`profiles/profiler/index.html` is a Tachyon flame graph with a root per
+`profiles/cpu/index.html` is a Tachyon flame graph with a root per
 benchmark, or a pyinstrument call tree.
 
 ## Tuning the sampler
 
-| Flag                  | Default | Notes                                     |
-| --------------------- | ------- | ----------------------------------------- |
-| `--sample-interval F` | `1e-4`  | Smaller = more samples = higher overhead. |
+Sampler settings are a preset's options in `pyproject.toml` (see
+{doc}`configuration`):
+
+```toml
+[tool.mew.profilers.fine]
+class = "mew.cpu:TachyonManager"
+interval = 1e-5   # seconds between samples; default 1e-4
+top-k = 10        # hottest instructions listed; default 5, Tachyon only
+```
+
+```console
+$ mew run --cpu-profiler fine
+```
+
+A smaller `interval` takes more samples at more overhead.
 
 The profiling pass is **separate** from the timing pass, so profiler overhead doesn't pollute timing numbers.
 It repeats the iteration count selected by the timing pass; don't read timings out
@@ -133,7 +145,7 @@ On free-threaded 3.15+, each row also names the bytecode instruction that took
 the most time, last on the line below it:
 
 ```console
-$ mew run --sample
+$ mew run --cpu-profiler sample
 Benchmark            │        Iters │       Real │        CPU
 ─────────────────────────────────────────────────────────────
 bench_small_ints     │      100,000 │   15.60 us │   15.58 us
@@ -211,4 +223,4 @@ interpreter wrote a row; see {doc}`context`.
 A pass shorter than the sampling interval can end without a sample. Its row
 still has a `cpu_profile`, with `sample_count` 0, `top_function` `null`,
 `top_instructions` empty and `unspecialized_share` `null`, and the console
-shows `0 samples`. Raise `--min-time` or lower `--sample-interval` to sample it.
+shows `0 samples`. Raise `--min-time` or lower the sampler's `interval` to sample it.
