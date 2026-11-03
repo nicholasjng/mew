@@ -48,7 +48,7 @@ An unfiltered path selects all benchmarks within it.
 
 Pass `-o` (repeatable):
 
-- `-` or `stdout`: terminal output, formatted by `--format`.
+- `-`: terminal output, formatted by `--format`.
 - `*.json`: one JSON document per run.
 - `*.jsonl`: one self-contained row per line.
 - `*.jsonl.gz`: same rows, gzip-compressed (appends add a new gzip member).

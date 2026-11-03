@@ -10,7 +10,7 @@ import re
 import sys
 import traceback
 from collections.abc import Generator
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 
 import mew.config as _config
@@ -23,11 +23,18 @@ from mew import (
     Reporter,
     RichReporter,
     __version__ as _mew_version,
+    _completions,
     _discovery,
     run as _run,
 )
 from mew._console import Table, Terminal, color_enabled, sgr
-from mew._options import check_session_tag, check_strict, parse_min_time, parse_seconds
+from mew._options import (
+    check_min_warmup_time,
+    check_session_tag,
+    check_strict,
+    parse_min_time,
+    parse_seconds,
+)
 from mew._registry import compile_name_filter, longest_row_name, selected_cases
 from mew._results import load_session, result_format, session_summaries, split_selector
 from mew._statistics import resolve_statistic
@@ -188,9 +195,6 @@ def list_(
                 print(f"{name.rsplit('::', 1)[-1] if names_only else name}{tags_suffix}")
 
 
-_STDOUT_SENTINELS = frozenset({"-", "stdout"})
-
-
 def _build_reporters(
     outputs: list[str],
     *,
@@ -201,63 +205,51 @@ def _build_reporters(
     show_repetitions: bool = True,
     append: bool = False,
 ) -> list[Reporter]:
-    """Resolve ``-o`` sinks into reporters; file format follows the extension.
+    """Resolve ``-o`` sinks into reporters; ``-`` is stdout, a file's format its extension.
 
-    Raises :class:`ValueError` for a sink the run can't write to. ``append`` is
-    rejected for ``.json``, which is a single streamed document.
+    Raises :class:`ValueError` for a sink the run can't write to, and for
+    ``append`` without a ``.jsonl`` sink or with a ``.json`` one, which is a
+    single streamed document.
     """
-
-    def _stdout() -> Reporter:
-        if stdout_format == "json":
-            return JSONReporter(output=None)
-        if stdout_format == "jsonl":
-            return JSONLReporter(output=None)
-        return RichReporter(
-            show_memory=show_memory,
-            show_cpu=show_cpu,
-            name_width=name_width,
-            show_repetitions=show_repetitions,
-        )
-
-    if append and not any(result_format(raw) == "jsonl" for raw in outputs):
-        raise ValueError("--append requires a .jsonl or .jsonl.gz output sink")
-
-    if not outputs:
-        return [_stdout()]
+    formats = [None if raw == "-" else result_format(raw) for raw in outputs]
+    if append and ("jsonl" not in formats or "json" in formats):
+        raise ValueError("--append requires a .jsonl or .jsonl.gz sink and no .json sink")
 
     reps: list[Reporter] = []
-    seen_stdout = False
-    seen_files: set[Path] = set()
-    for raw in outputs:
-        if raw in _STDOUT_SENTINELS:
-            if seen_stdout:
-                raise ValueError("duplicate stdout sink")
-            seen_stdout = True
-            reps.append(_stdout())
-            continue
-        path = Path(raw).resolve()
-        if path in seen_files:
-            raise ValueError(f"duplicate file sink: {raw}")
-        # Opened only once the run starts; fail before it does.
-        if not path.parent.is_dir():
-            raise ValueError(f"output directory does not exist: {path.parent}")
-        seen_files.add(path)
-        fmt = result_format(path.name)
-        if fmt == "json":
-            if append:
-                raise ValueError(
-                    f"--append is not supported for the JSON sink {raw} "
-                    "(a single streamed document); use *.jsonl or *.jsonl.gz"
+    seen: set[str | Path] = set()
+    for raw in outputs or ["-"]:
+        sink = raw if raw == "-" else Path(raw).resolve()
+        if sink in seen:
+            raise ValueError(f"duplicate output sink: {raw}")
+        seen.add(sink)
+        if isinstance(sink, str):  # stdout
+            if stdout_format == "json":
+                reps.append(JSONReporter(output=None))
+            elif stdout_format == "jsonl":
+                reps.append(JSONLReporter(output=None))
+            else:
+                reps.append(
+                    RichReporter(
+                        show_memory=show_memory,
+                        show_cpu=show_cpu,
+                        name_width=name_width,
+                        show_repetitions=show_repetitions,
+                    )
                 )
+            continue
+        # Opened only once the run starts; fail before it does.
+        if not sink.parent.is_dir():
+            raise ValueError(f"output directory does not exist: {sink.parent}")
+        fmt = result_format(raw)
+        if fmt == "json":
             reps.append(JSONReporter(output=Path(raw)))
         elif fmt == "jsonl":
             reps.append(JSONLReporter(output=Path(raw), append=append))
         else:
             raise ValueError(
-                f"unsupported output format: {raw} "
-                "(use `-`/`stdout`, *.json, *.jsonl, or *.jsonl.gz)"
+                f"unsupported output format: {raw} (use `-`, *.json, *.jsonl, or *.jsonl.gz)"
             )
-    if stdout_format != "rich" and not seen_stdout:
+    if stdout_format != "rich" and "-" not in seen:
         print(
             f"warning: --format {stdout_format} has no effect without a stdout sink "
             "(every -o target is a file); add `-o -` to also stream to stdout",
@@ -337,35 +329,34 @@ def run(
                 append=append,
             )
 
-        with ExitStack() as stack:
-            memory_manager = None
-            if profile_memory:
-                from mew import memory as _memory
+        memory_manager = None
+        if profile_memory:
+            from mew import memory as _memory
 
-                with _usage_error("run", ImportError, RuntimeError):
-                    memory_manager = _memory.manager(stack)
+            with _usage_error("run", ImportError, RuntimeError):
+                memory_manager = _memory.manager()
 
-            _run(
-                entries,
-                reporter=reporters,
-                min_time=min_time,
-                min_warmup_time=min_warmup_time,
-                repetitions=repetitions,
-                random_interleaving=random_interleaving,
-                session_tag=session_tag,
-                strict=strict,
-                capture_output=(capture or cfg.capture or "fd") == "fd",
-                memory_manager=memory_manager,
-                memory_iterations=memory_iterations,
-                profiler_manager=profiler_manager,
-            )
+        _run(
+            entries,
+            reporter=reporters,
+            min_time=min_time,
+            min_warmup_time=min_warmup_time,
+            repetitions=repetitions,
+            random_interleaving=random_interleaving,
+            session_tag=session_tag,
+            strict=strict,
+            capture_output=(capture or cfg.capture or "fd") == "fd",
+            memory_manager=memory_manager,
+            memory_iterations=memory_iterations,
+            profiler_manager=profiler_manager,
+        )
 
-            # Both artifacts render from what the run already captured, so
-            # neither re-executes the suite.
-            if profiler_manager is not None and sample_html is not None:
-                _cpu.write_html(profiler_manager, sample_html)
-            if memory_manager is not None and flamegraph is not None:
-                _memory.write_flamegraph(memory_manager, flamegraph)
+        # Both artifacts render from what the run already captured, so
+        # neither re-executes the suite.
+        if profiler_manager is not None and sample_html is not None:
+            profiler_manager.write_html(sample_html)
+        if memory_manager is not None and flamegraph is not None:
+            memory_manager.write_flamegraph(flamegraph)
 
 
 def compare(
@@ -508,13 +499,8 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
         return text
 
 
-_SHELLS = ("bash", "zsh", "fish")
-
-
 def completions(shell: str) -> None:
     """Print a shell-completion script for ``shell`` to stdout."""
-    from mew import _completions
-
     sys.stdout.write(_completions.generate(shell, _build_parser()))
 
 
@@ -522,15 +508,14 @@ def _warmup_seconds(value: str) -> float:
     """Parse a ``--min-warmup-time`` value, such as ``0.2``, ``200ms`` or ``1m``, into seconds."""
     try:
         seconds = parse_seconds(value)
+        check_min_warmup_time(seconds)
     except ValueError:
-        seconds = math.nan
-    if not math.isfinite(seconds) or seconds < 0:
         # ArgumentTypeError gets argparse's usage-error exit (2); SystemExit
         # would exit 1, colliding with the "nothing matched" code.
         raise argparse.ArgumentTypeError(
             f"invalid --min-warmup-time {value!r}; use seconds ('10s', '0.5'), "
             "milliseconds ('500ms'), or minutes ('1m')"
-        )
+        ) from None
     return seconds
 
 
@@ -552,16 +537,6 @@ def _positive_int(value: str) -> int:
             raise ValueError
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}") from None
-    return parsed
-
-
-def _positive_float(value: str) -> float:
-    try:
-        parsed = float(value)
-    except ValueError:
-        parsed = math.nan
-    if not math.isfinite(parsed) or parsed <= 0:
-        raise argparse.ArgumentTypeError(f"expected a positive finite number, got {value!r}")
     return parsed
 
 
@@ -591,6 +566,15 @@ def _add_filter_args(p: argparse.ArgumentParser, *, verb: str) -> None:
         "-k", "--pattern", metavar="<regex>", help=f"{verb} benchmarks whose name matches <regex>."
     )
     p.add_argument("-F", "--literal", action="store_true", help="Treat -k as a literal string.")
+
+
+def _add_summary_only_arg(p: argparse.ArgumentParser) -> None:
+    """Add ``--summary-only`` (identical across run and show)."""
+    p.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Show repeated benchmarks only in the closing summary, not each repetition.",
+    )
 
 
 def _add_tag_arg(p: argparse.ArgumentParser) -> None:
@@ -685,11 +669,7 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Randomly interleave benchmark repetitions.",
     )
-    p.add_argument(
-        "--summary-only",
-        action="store_true",
-        help="Show repeated benchmarks only in the closing summary, not each repetition.",
-    )
+    _add_summary_only_arg(p)
     p.add_argument(
         "--session-tag",
         metavar="<tag>",
@@ -741,14 +721,15 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--sample-interval",
-        type=_positive_float,
+        # mew.cpu checks the range, as for the Python API.
+        type=float,
         default=1e-4,
         metavar="<seconds>",
         help="Set the sampling interval (default 1e-4).",
     )
     p.add_argument(
         "--sample-top-k",
-        type=_positive_int,
+        type=int,
         default=5,
         metavar="<k>",
         help="Report the <k> hottest bytecode instructions with Tachyon on free-threaded "
@@ -813,11 +794,7 @@ def _add_show_cmd(sub: argparse._SubParsersAction) -> None:
         help="Print result files' newest session (<file>@<tag> picks a session).",
     )
     _add_filter_args(p, verb="Show")
-    p.add_argument(
-        "--summary-only",
-        action="store_true",
-        help="Show repeated benchmarks only in the closing summary, not each repetition.",
-    )
+    _add_summary_only_arg(p)
     p.set_defaults(_func=show)
 
 
@@ -831,9 +808,9 @@ def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
     p = _add_command(sub, "completions", help="Print a shell-completion script for eval/install.")
     p.add_argument(
         "shell",
-        choices=list(_SHELLS),
+        choices=_completions.SHELLS,
         metavar="<shell>",
-        help=f"Generate completions for {', '.join(_SHELLS)}.",
+        help=f"Generate completions for {', '.join(_completions.SHELLS)}.",
     )
     p.set_defaults(_func=completions)
 
