@@ -17,7 +17,7 @@ class _Opt:
     flags: list[str]
     help: str
     takes_value: bool
-    # "file", "selector", a list of choices, or None (freeform / no value).
+    # "file", a list of choices, or None (freeform / no value).
     value: str | list[str] | None
     repeat: bool = False  # action="append": may be given more than once
 
@@ -31,15 +31,11 @@ class _Cmd:
 
 
 def _value_kind(action: argparse.Action) -> str | list[str] | None:
-    """Completion kind for an action's value: choices, ``"file"``, ``"selector"``, or None."""
+    """Completion kind for an action's value: choices, ``"file"``, or None."""
     if action.choices:
         return [str(c) for c in action.choices]
-    dest = action.dest
-    if getattr(action, "type", None) is Path:
-        return "file"
-    if dest == "paths":  # list/run's positional accepts `file::name` selectors
-        return "selector"
-    if dest == "output":  # run's `-o` takes `-`/`stdout` and file paths
+    # list/run's `file::name` selectors complete their path half; `-o` also takes `-`.
+    if action.type is Path or action.dest in ("paths", "output"):
         return "file"
     return None
 
@@ -123,8 +119,7 @@ def _bash(parser: argparse.ArgumentParser) -> str:
         out.append(f'            COMPREPLY=( $(compgen -W "{" ".join(flags)}" -- "$cur") )')
         out.append("            return")
         out.append("        fi")
-        if c.positional in ("file", "selector"):
-            # Only the path half of `path::filter` is completable statically.
+        if c.positional == "file":
             out.append('        COMPREPLY=( $(compgen -f -- "$cur") )')
         elif isinstance(c.positional, list):
             out.append(f'        COMPREPLY=( $(compgen -W "{" ".join(c.positional)}" -- "$cur") )')
@@ -184,9 +179,6 @@ def _zsh(parser: argparse.ArgumentParser) -> str:
         specs = [_zsh_spec(o) for o in c.opts]
         if c.positional == "file":
             specs.append("'*:path:_files'")
-        elif c.positional == "selector":
-            # Only the path half of `path::filter` is completable statically.
-            specs.append("'*:selector:_files'")
         elif isinstance(c.positional, list):
             specs.append(f"'*:value:({' '.join(c.positional)})'")
         out.append("          _arguments \\")
@@ -229,6 +221,8 @@ def _fish(parser: argparse.ArgumentParser) -> str:
 
 
 _GENERATORS = {"bash": _bash, "zsh": _zsh, "fish": _fish}
+#: The shells ``mew completions`` writes scripts for.
+SHELLS = tuple(_GENERATORS)
 
 
 def generate(shell: str, parser: argparse.ArgumentParser) -> str:

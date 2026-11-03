@@ -206,13 +206,12 @@ def _register_family(
             "(non-scalar parameter values collapse to their type name)"
         )
 
-    # The runner registers each case on its own, its index as the arg (`state.range(0)`).
+    # The runner registers each case on its own, with its index bound as `case`.
     @wraps(target)
-    def trampoline(state, _fn=target, _cases=cases, _labels=labels):
-        idx = state.range(0)
+    def trampoline(state, case, _fn=target, _cases=cases, _labels=labels):
         # A default the body may override; the registered name carries the case.
-        state.set_label(_labels[idx])
-        return _fn(state, **_cases[idx])
+        state.set_label(_labels[case])
+        return _fn(state, **_cases[case])
 
     return _register(target, trampoline, name=name, options=options, tags=tags, case_labels=labels)
 

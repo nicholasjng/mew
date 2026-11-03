@@ -225,30 +225,6 @@ class State:
             Whether the console scales the value with decimal or binary prefixes.
         """
 
-    def range(self, pos: int = 0) -> int:
-        """
-        Return a range argument.
-
-        Parameters
-        ----------
-        pos : int, default 0
-            The argument's index, below :attr:`range_size`.
-
-        Returns
-        -------
-        int
-            The argument at ``pos``.
-
-        Raises
-        ------
-        IndexError
-            If ``pos`` is out of bounds.
-        """
-
-    @property
-    def range_size(self) -> int:
-        """Number of range arguments available to :meth:`range`."""
-
     @property
     def iterations(self) -> int:
         """Iterations completed so far; the total once the loop finishes."""
@@ -320,14 +296,6 @@ class BenchmarkHandle:
         Run the benchmark with `n` threads, each with its own State and timer.
         Repeat to run once per thread count. Requires a free-threaded interpreter; mew skips it otherwise.
         """
-
-    def arg(self, value: int) -> BenchmarkHandle:
-        """
-        Register one case with a single range argument, readable via `State.range`.
-        """
-
-    def arg_name(self, name: str) -> BenchmarkHandle:
-        """Name the first range argument; appears in the reported benchmark name."""
 
 def register_benchmark(name: str, fn: Callable) -> BenchmarkHandle:
     """
