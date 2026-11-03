@@ -102,20 +102,20 @@ def test_collect_files_missing_path_raises(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("stdin_name", "expected_cases"),
+    ("name_filter", "expected_cases"),
     [(None, None), ("f[n=10]", [1])],
 )
-def test_select_entries_is_independent_of_discovery(tmp_path, stdin_name, expected_cases):
-    """`select_entries` matches by lexical path and narrows cases by stdin name, without changing
-    the entry."""
+def test_select_entries_is_independent_of_discovery(tmp_path, name_filter, expected_cases):
+    """`select_entries` matches by lexical path and narrows cases by a selector's filter, without
+    changing the entry."""
     from mew._registry import Entry, compile_name_filter
 
     # These paths do not exist: selection uses already-resolved lexical paths.
     source = tmp_path / "suite" / "bench_example.py"
     entry = Entry("f", lambda s: None, case_labels=["n=1", "n=10"])
-    selector = discovery.Selector(source.parent, True, None)
-    names = [compile_name_filter(stdin_name, literal=True)] if stdin_name else []
-    selected = discovery.select_entries([(entry, source)], [selector], names=names)
+    pattern = compile_name_filter(name_filter, literal=True) if name_filter else None
+    selector = discovery.Selector(source.parent, True, pattern)
+    selected = discovery.select_entries([(entry, source)], [selector])
     assert len(selected) == 1
     assert selected[0].cases == expected_cases
     assert entry.cases is None

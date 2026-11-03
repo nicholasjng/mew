@@ -116,9 +116,9 @@ def mew_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str])
 def test_list_selects_and_expands(mew_cli, benchdir, tmp_path, args, expected):
     """`mew list` selects with `-k`, `-F` and `-t`, shows a family as one row, its cases with
     `--show-cases`, its tags with `--show-tags`, and exits 1 when nothing matches."""
-    res = mew_cli("list", str(benchdir), "--names-only", *args, cwd=tmp_path)
+    res = mew_cli("list", str(benchdir), *args, cwd=tmp_path)
     assert res.returncode == (0 if expected else 1), res.stderr
-    assert res.stdout.splitlines() == expected
+    assert [line.rsplit("::", 1)[-1] for line in res.stdout.splitlines()] == expected
 
 
 def test_invalid_filter_fails_before_any_import(mew_cli, tmp_path):
@@ -356,27 +356,6 @@ def test_run_stdin_empty_runs_nothing(mew_cli, benchdir):
     assert "no benchmarks found" in res.stderr
 
 
-def test_run_stdin_names_only_round_trip_is_cwd_independent(mew_cli, benchdir, tmp_path):
-    """Names from `list --names-only` select the same benchmark on `run --stdin` from any cwd."""
-    # A path-free name selects against run's own discovery, so the run cwd
-    # need not match the bench dir.
-    listing = mew_cli("list", str(benchdir), "--names-only", "-k", "bench_one", cwd=tmp_path)
-    res = mew_cli(
-        "run",
-        str(benchdir),
-        "--stdin",
-        "--min-time",
-        "1x",
-        "--format",
-        "json",
-        stdin=listing.stdout,
-        cwd=tmp_path,  # cwd != benchdir
-    )
-    assert res.returncode == 0, res.stderr
-    (row,) = json.loads(res.stdout)["benchmarks"]
-    assert row["benchmark"].endswith("::bench_one")
-
-
 def test_run_format_jsonl_streams_every_row_to_stdout_and_files(mew_cli, benchdir, tmp_path):
     """`--format jsonl` writes one row per stdout line, the same rows as a gzipped JSONL file."""
     # Every stdout line is a row (no console banner), so it pipes into `jq`.
@@ -476,20 +455,22 @@ _ALLOCATING = """
 _SAMPLED_ITERATIONS = "200x"
 
 
-def test_run_flamegraph_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
-    """`--flamegraph` writes a memray report and adds peak memory to the rows and console table."""
+def test_run_profile_memory_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
+    """`--profile-dir` with `--profile-memory` writes a memray report per benchmark to
+    `<dir>/memory`, and the rows and console table show peak memory."""
     pytest.importorskip("memray")
     from mew._format import fmt_bytes
 
     (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_ALLOCATING))
-    report, out = tmp_path / "flame.html", tmp_path / "rows.json"
+    reports, out = tmp_path / "flames", tmp_path / "rows.json"
     res = mew_cli(
         "run",
         "bench_profiled.py",
         "--min-time",
         "20x",
-        "--flamegraph",
-        str(report),
+        "--profile-memory",
+        "--profile-dir",
+        str(reports),
         "-o",
         "-",
         "-o",
@@ -497,7 +478,9 @@ def test_run_flamegraph_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
         cwd=tmp_path,
     )
     assert res.returncode == 0, res.stderr
-    assert "bench_hot" in report.read_text()
+    # Numbered in run order, named after the function; the header names the benchmark.
+    assert "bench_profiled.py::bench_hot" in (reports / "memory" / "0-bench_hot.html").read_text()
+    assert not (reports / "profiler").exists()
     # The row carries the profile, and the console table shows it.
     (row,) = json.loads(out.read_text())["benchmarks"]
     assert row["memory"]["peak_bytes"] >= 1 << 20  # the loop's 1 MiB buffer
@@ -508,14 +491,14 @@ def test_run_flamegraph_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     sys.version_info < (3, 15) and not mew.gil_enabled(),
     reason="pyinstrument's native sampler enables the GIL",
 )
-def test_run_sample_html_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
-    """`--sample-html` writes a CPU profile report and adds the hottest function to the rows and
-    console table."""
+def test_run_sample_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
+    """`--profile-dir` with `--sample` writes a CPU profile report to `<dir>/profiler`, and the
+    rows and console table show the hottest function."""
     pytest.importorskip("profiling.sampling" if sys.version_info >= (3, 15) else "pyinstrument")
     from mew.cpu import reads_instructions
 
     (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_SAMPLED))
-    report, out = tmp_path / "profile.html", tmp_path / "rows.json"
+    reports, out = tmp_path / "profiles", tmp_path / "rows.json"
     res = mew_cli(
         "run",
         "bench_profiled.py",
@@ -523,8 +506,9 @@ def test_run_sample_html_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
         _SAMPLED_ITERATIONS,
         "--sample-interval",
         "1e-5",
-        "--sample-html",
-        str(report),
+        "--sample",
+        "--profile-dir",
+        str(reports),
         "-o",
         "-",
         "-o",
@@ -532,7 +516,7 @@ def test_run_sample_html_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
         cwd=tmp_path,
     )
     assert res.returncode == 0, res.stderr
-    assert "bench_hot" in report.read_text()
+    assert "bench_hot" in (reports / "profiler" / "index.html").read_text()
     # The row carries the profile, and the console table shows it.
     (row,) = json.loads(out.read_text())["benchmarks"]
     top = row["cpu_profile"]["top_function"]
@@ -541,6 +525,14 @@ def test_run_sample_html_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     instructions = row["cpu_profile"]["top_instructions"]
     assert bool(instructions) is reads_instructions()
     assert len(instructions) <= 5
+
+
+def test_run_profile_dir_needs_a_profiler(mew_cli, benchdir, tmp_path):
+    """`--profile-dir` alone exits 2 before running anything: no manager would write to it."""
+    res = mew_cli("run", str(benchdir), "--profile-dir", str(tmp_path / "out"), cwd=tmp_path)
+    assert res.returncode == 2
+    assert "--profile-dir needs --sample or --profile-memory" in res.stderr
+    assert not (tmp_path / "out").exists()
 
 
 @pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon runs here")
