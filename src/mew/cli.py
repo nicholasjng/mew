@@ -111,22 +111,20 @@ def _collect(
     and ``2`` if a file fails to import; ``command`` names the command in
     that message.
 
-    Stdin lines are always literal. A path-less line (``mew list --names-only``
-    output) filters names over the normal discovery, so it round-trips from any cwd.
+    Stdin lines are selectors, as positional paths are, but always literal.
     """
     lines = [line.strip() for line in sys.stdin.read().splitlines()] if stdin else []
-    names = [compile_name_filter(line, literal=True) for line in lines if line and "::" not in line]
     # Keep each filter attached to its discovery path. Otherwise selecting
     # a.py::x and b.py::y also selects a.py::y and b.py::x. Compiled before any
     # import, so a bad pattern fails before benchmark code runs.
     with _usage_error(command, ValueError):
         selectors = [_discovery.parse(p, literal=literal) for p in paths]
-        selectors += [_discovery.parse(line, literal=True) for line in lines if "::" in line]
+        selectors += [_discovery.parse(line, literal=True) for line in lines if line]
         if pattern:
             compile_name_filter(pattern, literal=literal)
-    # Files to import come from positional args and `::` stdin selectors, else
+    # Files to import come from positional args and stdin selectors, else
     # benchpaths; an empty stdin pipe must select nothing, not the whole suite.
-    if not selectors and (names or not stdin):
+    if not selectors and not stdin:
         # Benchpaths resolve against pyproject.toml, not the cwd, so a subdirectory
         # works. A missing one means "nothing to discover" in a fresh project, not
         # a hard error like a mistyped positional path.
@@ -152,7 +150,7 @@ def _collect(
         (entry, Path(os.path.abspath(entry.file)) if entry.file else None)
         for entry in REGISTRY.filter(pattern, tags=tags, literal=literal)
     ]
-    entries = _discovery.select_entries(candidates, selectors, names=names)
+    entries = _discovery.select_entries(candidates, selectors)
     if not entries:
         print("no benchmarks found", file=sys.stderr)
         raise SystemExit(1)
@@ -170,7 +168,6 @@ def list_(
     tag: list[str],
     show_tags: bool,
     show_cases: bool,
-    names_only: bool,
 ) -> None:
     """List discovered benchmarks without running them."""
     with _discovery.discovered():
@@ -191,8 +188,7 @@ def list_(
             else:
                 names = [e.name]
             for name in names:
-                # --names-only drops the `file.py::` prefix for a cwd-independent id.
-                print(f"{name.rsplit('::', 1)[-1] if names_only else name}{tags_suffix}")
+                print(f"{name}{tags_suffix}")
 
 
 def _build_reporters(
@@ -611,12 +607,6 @@ def _add_list_cmd(sub: argparse._SubParsersAction) -> None:
         "--show-cases",
         action="store_true",
         help="Show every case in a parametrized family.",
-    )
-    p.add_argument(
-        "-n",
-        "--names-only",
-        action="store_true",
-        help="Omit the file.py:: prefix from benchmark names.",
     )
     p.set_defaults(_func=list_)
 

@@ -41,16 +41,13 @@ class Selector:
 def select_entries(
     candidates: Iterable[tuple[Entry, Path | None]],
     selectors: Sequence[Selector],
-    *,
-    names: Sequence[re.Pattern[str]] = (),
 ) -> list[Entry]:
     """Scope entries to path selectors without filesystem access, imports, or registry mutation.
 
     Each candidate pairs an entry, already selected by ``-k`` and ``--tag`` through
     :meth:`Registry.filter`, with its resolved source path. The filters of the path
-    selectors that include it and the stdin names form an OR group. An unfiltered
-    path selects everything beneath it unless stdin names restrict that discovery
-    path. Family filters produce views without changing entries.
+    selectors that include it form an OR group, and an unfiltered path selects
+    everything beneath it. Family filters produce views without changing entries.
     """
     selected = []
     for entry, source in candidates:
@@ -61,10 +58,10 @@ def select_entries(
         ]
         if not applicable:
             continue
-        if None in applicable and not names:
+        if None in applicable:
             selected.append(entry)
             continue
-        filters = [f for f in applicable if f is not None] + list(names)
+        filters = [f for f in applicable if f is not None]
         if (narrowed := narrow_entry(entry, filters)) is not None:
             selected.append(narrowed)
     return selected
