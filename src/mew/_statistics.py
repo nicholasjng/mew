@@ -80,16 +80,14 @@ def _average_ranks(values: list[float]) -> tuple[list[float], float]:
     return ranks, tie_term
 
 
-def mannwhitney_p(a: list[float], b: list[float]) -> float | None:
-    """Return a two-sided p-value, or ``None`` if either sample is empty."""
+def mannwhitney_p(a: list[float], b: list[float]) -> float:
+    """Return a two-sided p-value; compare passes two or more values per sample."""
     n1, n2 = len(a), len(b)
-    if n1 == 0 or n2 == 0:
-        return None
     ranks, tie_term = _average_ranks([*a, *b])
     u1 = sum(ranks[:n1]) - n1 * (n1 + 1) / 2
     n = n1 + n2
     mu = n1 * n2 / 2
-    sigma2 = (n1 * n2 / 12) * ((n + 1) - tie_term / (n * (n - 1)))  # n >= 2 here
+    sigma2 = (n1 * n2 / 12) * ((n + 1) - tie_term / (n * (n - 1)))
     if sigma2 <= 0:
         # No spread across combined ranks: no evidence of a difference, i.e. p=1.0.
         return 1.0
