@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import gc
+import io
+import json
 import platform
 import sys
 import time
@@ -400,6 +402,49 @@ def test_state_pause_resumes_on_exception():
     assert row["iterations"] == 1
     assert row["time_unit"] == "ns"
     assert row["cpu_time"] >= 0.04e9
+
+
+def test_an_exception_skips_with_its_type_and_message(capfd):
+    """A raising benchmark records `Type: message`, which has no paths to leak from a shared
+    result file; the traceback goes to stderr."""
+
+    @mew.benchmark(iterations=1)
+    def bench_raises(state):
+        for _ in state:
+            json.loads("{")
+
+    @mew.benchmark(iterations=1)
+    def bench_asserts(state):
+        for _ in state:
+            raise AssertionError
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    messages = {r["benchmark"].rsplit(".", 1)[-1]: r["skip_message"] for r in cap.runs}
+    assert messages == {
+        "bench_asserts": "AssertionError",
+        "bench_raises": "json.decoder.JSONDecodeError: Expecting property name enclosed in "
+        "double quotes: line 1 column 2 (char 1)",
+    }
+    err = capfd.readouterr().err
+    assert "Traceback (most recent call last):" in err
+    assert 'json.loads("{")' in err
+
+
+def test_skip_message_survives_a_stderr_that_cannot_be_written_to(monkeypatch):
+    """The traceback prints after the message is taken, so a failed print keeps it."""
+    dead = io.StringIO()
+    dead.close()
+    monkeypatch.setattr(sys, "stderr", dead)
+
+    @mew.benchmark(iterations=1)
+    def bench_raises(state):
+        for _ in state:
+            raise KeyError("k")
+
+    cap = Capture()
+    mew.run(reporter=cap, capture_output=False)
+    assert cap.runs[0]["skip_message"] == "KeyError: 'k'"
 
 
 @pytest.mark.parametrize("reuse_scope", [False, True])
