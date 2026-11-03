@@ -759,7 +759,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--statistic",
         metavar="<name>",
-        help="Reduce repetitions with min, max, mean, median, gmean, or pNN.",
+        help="Reduce repetitions with min, max, mean, median or gmean.",
     )
     p.add_argument(
         "--regression-threshold",
