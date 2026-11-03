@@ -582,6 +582,7 @@ def _add_command(
         help=help,
         formatter_class=_CommandHelpFormatter,
         add_help=False,
+        allow_abbrev=False,
     )
     p.add_argument("-h", "--help", action="help", help="Show this help.")
     return p
@@ -795,6 +796,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Microbenchmarking for Python via Google Benchmark.",
         formatter_class=_CommandHelpFormatter,
         add_help=False,
+        allow_abbrev=False,
         # git-style, instead of argparse's `{list,ls,run,…} ...` enumeration.
         usage="mew [-h] [--version] <command> [<args>]",
     )

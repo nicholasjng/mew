@@ -304,6 +304,9 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         (("sessions", "a.json"), "mew sessions: result file not found: a.json"),
         # `@latest` selects the newest session, so no session may carry the tag.
         (("run", "--min-time", "1x", "--session-tag", "latest"), "mew run: session_tag 'latest'"),
+        # Prefixes of long options are not expanded, so a new option can't break them.
+        (("run", "--rep", "3"), "unrecognized arguments: --rep"),
+        (("--vers",), "unrecognized arguments: --vers"),
     ],
 )
 def test_usage_errors_exit_2(mew_cli, benchdir, args, message):
