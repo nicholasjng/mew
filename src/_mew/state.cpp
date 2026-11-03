@@ -266,38 +266,6 @@ void register_state(nb::module_& m) {
             "    whether the console shows it in exponent notation.\n"
             "one_k : CounterOneK, default CounterOneK.kIs1000\n"
             "    Whether the console scales the value with decimal or binary prefixes.")
-        .def(
-            "range",
-            [](const benchmark::State& self, std::size_t pos) {
-                // GB's own guard is an assert, compiled out in release builds;
-                // an unchecked call would read out of bounds.
-                if (pos >= self.range_size()) {
-                    throw nb::index_error(("range(" + std::to_string(pos) +
-                                           ") out of bounds: benchmark has " +
-                                           std::to_string(self.range_size()) + " range argument(s)")
-                                              .c_str());
-                }
-                return self.range(pos);
-            },
-            "pos"_a = 0,
-            "Return a range argument.\n"
-            "\n"
-            "Parameters\n"
-            "----------\n"
-            "pos : int, default 0\n"
-            "    The argument's index, below :attr:`range_size`.\n"
-            "\n"
-            "Returns\n"
-            "-------\n"
-            "int\n"
-            "    The argument at ``pos``.\n"
-            "\n"
-            "Raises\n"
-            "------\n"
-            "IndexError\n"
-            "    If ``pos`` is out of bounds.")
-        .def_prop_ro("range_size", &benchmark::State::range_size,
-                     "Number of range arguments available to :meth:`range`.")
         .def_prop_ro("iterations", &benchmark::State::iterations,
                      "Iterations completed so far; the total once the loop finishes.")
         .def_prop_ro("threads", &benchmark::State::threads,

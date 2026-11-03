@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import tempfile
 import time
@@ -292,12 +293,11 @@ def run(
         if entry.case_labels is None:
             _apply_options(_core.register_benchmark(entry.name, entry.fn), entry.options)
             continue
-        # One benchmark per case, named `name[label]`; the trampoline reads the
-        # case index from state.range(0). A name filter may have narrowed the cases.
+        # One benchmark per case, named `name[label]`, its index bound for the
+        # trampoline. A name filter may have narrowed the cases.
         for i, case_name in selected_cases(entry):
-            handle = _core.register_benchmark(case_name, entry.fn)
+            handle = _core.register_benchmark(case_name, functools.partial(entry.fn, case=i))
             _apply_options(handle, entry.options)
-            handle.arg(i).arg_name("case")
 
     # On free-threaded builds the first second-thread creation runs a
     # stop-the-world pass that deadlocks GB's attaching workers; trigger it here.

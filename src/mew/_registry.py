@@ -55,7 +55,7 @@ class Entry:
     file: str | None = None
     options: BenchmarkOptions = field(default_factory=lambda: BenchmarkOptions())
     tags: frozenset[str] = field(default_factory=frozenset)
-    # Set on parametrized families: `fn` is a trampoline keyed by state.range(0).
+    # Set on parametrized families: `fn` is a trampoline that takes the case index.
     case_labels: list[str] | None = None
     # ``None`` runs every case; a subset only exists on views from narrow_entry().
     cases: list[int] | None = None
@@ -93,14 +93,6 @@ def longest_row_name(entries: Iterable[Entry]) -> int:
     return longest
 
 
-def _match_cases(entry: Entry, rx: re.Pattern[str], n: int) -> set[int]:
-    """Return the indices of the ``n`` cases a regex selects; a plain benchmark has one."""
-    # Plain benchmark, or a family whose own name matches → the whole entry.
-    if rx.search(entry.name):
-        return set(range(n))
-    return {i for i, name in case_names(entry) if rx.search(name)}
-
-
 def narrow_entry(entry: Entry, filters: Iterable[re.Pattern[str]]) -> Entry | None:
     """Narrow an entry to the cases any of ``filters`` selects, or return ``None``.
 
@@ -110,7 +102,14 @@ def narrow_entry(entry: Entry, filters: Iterable[re.Pattern[str]]) -> Entry | No
     """
     n = len(entry.case_labels) if entry.case_labels is not None else 1
     current = set(range(n)) if entry.cases is None else set(entry.cases)
-    cases = current & set().union(*(_match_cases(entry, f, n) for f in filters))
+    selected: set[int] = set()
+    for rx in filters:
+        # A plain benchmark, or a family whose own name matches: the whole entry.
+        if rx.search(entry.name):
+            selected.update(range(n))
+        else:
+            selected.update(i for i, name in case_names(entry) if rx.search(name))
+    cases = current & selected
     if not cases:
         return None
     return entry if cases == current else dataclasses.replace(entry, cases=sorted(cases))

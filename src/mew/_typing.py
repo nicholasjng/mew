@@ -261,11 +261,6 @@ class State(Protocol):
 
     # Keep the docstrings in sync with src/_mew/state.cpp.
     @property
-    def range_size(self) -> int:
-        """Number of range arguments available to :meth:`range`."""
-        ...
-
-    @property
     def threads(self) -> int:
         """Threads in this run; 1 without threaded mode or in a profiling pass."""
         ...
@@ -418,26 +413,6 @@ class State(Protocol):
         ----------
         msg : str
             The reason, reported as the row's ``skip_message``.
-        """
-        ...
-
-    def range(self, pos: int = 0) -> int:
-        """Return a range argument.
-
-        Parameters
-        ----------
-        pos : int, default 0
-            The argument's index, below :attr:`range_size`.
-
-        Returns
-        -------
-        int
-            The argument at ``pos``.
-
-        Raises
-        ------
-        IndexError
-            If ``pos`` is out of bounds.
         """
         ...
 

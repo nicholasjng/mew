@@ -57,11 +57,7 @@ void register_registry(nb::module_& m) {
         .def("threads", &benchmark::Benchmark::Threads, "n"_a, nb::rv_policy::reference,
              "Run the benchmark with `n` threads, each with its own State and timer.\n"
              "Repeat to run once per thread count. Requires a free-threaded "
-             "interpreter; mew skips it otherwise.")
-        .def("arg", &benchmark::Benchmark::Arg, "value"_a, nb::rv_policy::reference,
-             "Register one case with a single range argument, readable via `State.range`.")
-        .def("arg_name", &benchmark::Benchmark::ArgName, "name"_a, nb::rv_policy::reference,
-             "Name the first range argument; appears in the reported benchmark name.");
+             "interpreter; mew skips it otherwise.");
 
     m.def(
         "register_benchmark",
