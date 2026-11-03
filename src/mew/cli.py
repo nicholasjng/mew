@@ -274,11 +274,10 @@ def run(
     capture: str,
     profile_memory: bool,
     memory_iterations: int | None,
-    flamegraph: Path | None,
     sample: bool,
     sample_interval: float,
     sampler: str,
-    sample_html: Path | None,
+    profile_dir: Path | None,
 ) -> None:
     """Discover and run benchmarks."""
     # argparse checks the other options mew.run takes. Before discovery, so a
@@ -286,8 +285,9 @@ def run(
     if session_tag is not None:
         with _usage_error("run", TypeError, ValueError):
             check_session_tag(session_tag)
-    profile_memory = profile_memory or flamegraph is not None
-    sample = sample or sample_html is not None
+    if profile_dir is not None and not (sample or profile_memory):
+        print("mew run: --profile-dir needs --sample or --profile-memory", file=sys.stderr)
+        raise SystemExit(2)
     cfg = _load_config_or_exit()
     with _discovery.discovered():
         entries = _collect(
@@ -344,12 +344,13 @@ def run(
             profiler_manager=profiler_manager,
         )
 
-        # Both artifacts render from what the run already captured, so
-        # neither re-executes the suite.
-        if profiler_manager is not None and sample_html is not None:
-            profiler_manager.write_html(sample_html)
-        if memory_manager is not None and flamegraph is not None:
-            memory_manager.write_flamegraph(flamegraph)
+        # The outputs render from what the run already recorded, so none
+        # re-executes the suite.
+        if profile_dir is not None:
+            if profiler_manager is not None:
+                profiler_manager.write_outputs(profile_dir / "profiler")
+            if memory_manager is not None:
+                memory_manager.write_outputs(profile_dir / "memory")
 
 
 def compare(
@@ -690,12 +691,6 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         help="Run at most <n> iterations under the memory profiler (default 16).",
     )
     p.add_argument(
-        "--flamegraph",
-        type=Path,
-        metavar="<file>",
-        help="Write an allocation flame graph to <file> (implies --profile-memory).",
-    )
-    p.add_argument(
         "--sample",
         action="store_true",
         help="Sample Python CPU usage (see --sampler).",
@@ -716,10 +711,10 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         help="Set the sampling interval (default 1e-4).",
     )
     p.add_argument(
-        "--sample-html",
+        "--profile-dir",
         type=Path,
-        metavar="<file>",
-        help="Write an HTML CPU profile to <file> (implies --sample).",
+        metavar="<dir>",
+        help="Write the profilers' reports to <dir>/profiler and <dir>/memory.",
     )
     p.set_defaults(_func=run)
 

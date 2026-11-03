@@ -26,7 +26,7 @@ from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from mew._typing import PausableProfiler, ProfilerManager
+from mew._typing import ProfilerManager
 from mew.machine import gil_enabled
 
 if TYPE_CHECKING:
@@ -181,7 +181,7 @@ def _check_top_k(top_k: int) -> None:
         raise ValueError(f"top_k must be an integer >= 1, got {top_k!r}")
 
 
-class PyinstrumentManager(ProfilerManager, PausableProfiler):
+class PyinstrumentManager(ProfilerManager):
     """Profiler manager that samples with pyinstrument.
 
     Sampling covers the timing loop minus ``state.pause()`` regions, in a pass
@@ -195,7 +195,7 @@ class PyinstrumentManager(ProfilerManager, PausableProfiler):
     Attributes
     ----------
     sessions : list[Session]
-        Every pass's session, for :meth:`write_html`.
+        Every pass's session, for :meth:`write_outputs`.
 
     Raises
     ------
@@ -275,15 +275,15 @@ class PyinstrumentManager(ProfilerManager, PausableProfiler):
             "unspecialized_share": None,
         }
 
-    def write_html(self, path: Path) -> None:
-        """Render every pass as one combined pyinstrument call tree.
+    def write_outputs(self, directory: Path) -> None:
+        """Write every pass as one combined pyinstrument call tree, ``index.html``.
 
         When no pass collected samples, nothing is written and a warning goes to stderr.
 
         Parameters
         ----------
-        path : Path
-            Destination HTML file.
+        directory : Path
+            Where to write the report; created if missing.
         """
         if not any(session.sample_count for session in self.sessions):
             _warn_no_samples()
@@ -292,7 +292,8 @@ class PyinstrumentManager(ProfilerManager, PausableProfiler):
         from pyinstrument.session import Session
 
         combined = functools.reduce(Session.combine, self.sessions)
-        path.write_text(HTMLRenderer().render(combined), encoding="utf-8")
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "index.html").write_text(HTMLRenderer().render(combined), encoding="utf-8")
 
 
 def _hottest_frame(root: Frame) -> TopFunction | None:
@@ -453,7 +454,7 @@ def _summarize_instructions(
     return top, unspecialized / total
 
 
-class TachyonManager(ProfilerManager, PausableProfiler):
+class TachyonManager(ProfilerManager):
     """Profiler manager that samples with Tachyon (:mod:`profiling.sampling`).
 
     A background thread samples the benchmark's thread by reading this process's
@@ -479,7 +480,7 @@ class TachyonManager(ProfilerManager, PausableProfiler):
     Attributes
     ----------
     flamegraph : profiling.sampling.stack_collector.FlamegraphCollector
-        Every pass's samples, cut at the benchmark body, for :meth:`write_html`.
+        Every pass's samples, cut at the benchmark body, for :meth:`write_outputs`.
         Its stacks carry ``<native>`` frames and, on free-threaded builds, each
         frame's bytecode instructions.
 
@@ -659,20 +660,21 @@ class TachyonManager(ProfilerManager, PausableProfiler):
                 return frames[: i + 1]
         return frames
 
-    def write_html(self, path: Path) -> None:
-        """Render every pass as one flame graph, with a root per benchmark.
+    def write_outputs(self, directory: Path) -> None:
+        """Write every pass as one flame graph, with a root per benchmark, ``index.html``.
 
-        When no pass collected samples, nothing is written and a warning goes to stderr.
+        When no pass collected samples, no report is written and a warning goes to stderr.
 
         Parameters
         ----------
-        path : Path
-            Destination HTML file.
+        directory : Path
+            Where to write the report; created if missing.
         """
+        directory.mkdir(parents=True, exist_ok=True)
         # export() reports progress on stdout, which may carry a JSON result
         # stream, and returns whether it wrote the file.
         with contextlib.redirect_stdout(io.StringIO()):
-            if not self.flamegraph.export(str(path)):
+            if not self.flamegraph.export(str(directory / "index.html")):
                 _warn_no_samples()
 
 

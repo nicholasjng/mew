@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import inspect
+import re
 import subprocess
 import sys
 import textwrap
@@ -29,7 +30,7 @@ _PROFILE = {
 }
 
 
-class FakeMemoryManager:
+class FakeMemoryManager(mew.MemoryManager):
     """Memory manager returning ``result`` from stop(), so the stamp path is
     testable without memray. ``calls`` logs each hook."""
 
@@ -45,7 +46,7 @@ class FakeMemoryManager:
         return self.result
 
 
-class FakeProfilerManager:
+class FakeProfilerManager(mew.ProfilerManager):
     """Profiler manager returning ``result`` from get_result(), standing in for a
     sampler. ``calls`` logs each hook."""
 
@@ -69,7 +70,7 @@ class FakeProfilerManager:
         return self.result
 
 
-class _RequiredHooksOnly:
+class _RequiredHooksOnly(mew.ProfilerManager):
     """A profiler manager without the optional get_result(), pause() and resume()."""
 
     def after_setup_start(self) -> None:
@@ -479,76 +480,69 @@ def test_memray_captures_the_loop_and_roots_its_flame_graph_at_the_body(tmp_path
             del inline, nested
         del fixture
 
-    rep, out = Capture(), tmp_path / "flame.html"
+    rep = Capture()
     manager = _memory.manager()
     mew.run(min_time="20x", reporter=rep, memory_manager=manager)
     # Tagged with the user's benchmark frame, not a mew internal.
-    assert [root[0] for _, root in manager.captures] == ["bench_rooted"]
-    manager.write_flamegraph(out)
+    (capture,) = manager.captures
+    assert capture.root[0] == "bench_rooted"
+    assert capture.benchmark == rep.runs[0]["benchmark"]
+    manager.write_outputs(tmp_path)
 
     mem = rep.runs[0]["memory"]
     assert mem["peak_bytes"] < setup_bytes / 10
     assert "total_bytes" not in mem  # read from the capture's metadata alone
-    html = out.read_text()
+    html = (tmp_path / "0-bench_rooted.html").read_text()
     assert "bench_rooted" in html
     # A multi-frame stack renders through memray's real reporter, which pins the
     # attributes `_RootedRecord` must duck-type from `AllocationRecord`.
     assert "nested_alloc_helper" in html
 
 
-def test_flamegraph_header_covers_every_capture(tmp_path, monkeypatch):
-    """The combined report's header totals span all captures, not the first."""
+def test_flamegraphs_are_one_file_per_benchmark(tmp_path):
+    """Each case gets one report, numbered in run order, from its first repetition; its header
+    names the case, which the file name can't hold on every platform."""
     pytest.importorskip("memray")
-    from memray.reporters.flamegraph import FlameGraphReporter
-
     from mew import memory as _memory
 
-    @mew.benchmark(iterations=2)
-    def bench_small(state):
+    @mew.parametrize([{"n": 1_000}, {"n": 100_000}])
+    def bench_buf(state, n):
         for _ in state:
-            buf = bytearray(1_000)
+            buf = bytearray(n)
             del buf
 
-    @mew.benchmark(iterations=2)
-    def bench_large(state):
-        for _ in state:
-            buf = bytearray(5_000_000)
-            del buf
-
-    rendered = {}
-    monkeypatch.setattr(
-        FlameGraphReporter, "render", lambda self, f, *, metadata, **kw: rendered.update(m=metadata)
-    )
-    rep = Capture()
     manager = _memory.manager()
-    mew.run(reporter=rep, memory_manager=manager)
-    manager.write_flamegraph(tmp_path / "flame.html")
+    mew.run(min_time="2x", repetitions=2, reporter=Capture(), memory_manager=manager)
+    assert len(manager.captures) == 4
+    manager.write_outputs(tmp_path)
+    files = ["0-bench_buf.html", "1-bench_buf.html", "index.html"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == files
+    assert "bench_buf[n=1000]" in (tmp_path / "0-bench_buf.html").read_text()
+    assert "bench_buf[n=100000]" in (tmp_path / "1-bench_buf.html").read_text()
+    # Each report's navbar picks another by the case's full name, its own selected; this
+    # also pins the memray template block mew extends.
+    picker = re.compile(r'<option value="1-bench_buf.html"( selected)?>[^<]*bench_buf\[n=100000\]<')
+    assert picker.findall((tmp_path / "0-bench_buf.html").read_text()) == [""]
+    assert picker.findall((tmp_path / "1-bench_buf.html").read_text()) == [" selected"]
+    assert 'url=0-bench_buf.html"' in (tmp_path / "index.html").read_text()
 
-    # Each row's figures are its capture's header.
-    small, large = (row["memory"] for row in rep.runs)
-    assert (
-        rendered["m"].total_allocations == small["total_allocations"] + large["total_allocations"]
-    )
-    assert rendered["m"].peak_memory == large["peak_bytes"] > small["peak_bytes"]
 
-
-def test_write_flamegraph_warns_when_nothing_was_captured(tmp_path, capsys):
-    """`write_flamegraph()` writes no file and warns on stderr when memray captured nothing."""
+def test_memray_write_outputs_warns_when_nothing_was_captured(tmp_path, capsys):
+    """`write_outputs()` writes nothing and warns on stderr when memray captured nothing."""
     pytest.importorskip("memray")
     from mew import memory as _memory
 
-    out = tmp_path / "flame.html"
-    _memory.manager().write_flamegraph(out)
+    out = tmp_path / "flames"
+    _memory.manager().write_outputs(out)
     assert not out.exists()
     assert "no memory captures recorded" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("sampler", _SAMPLERS)
-def test_write_html_warns_when_nothing_was_sampled(tmp_path, capsys, sampler):
-    """`write_html()` writes no file and warns on stderr when the sampler collected nothing."""
-    out = tmp_path / "cpu.html"
-    _sampled_manager(sampler).write_html(out)
-    assert not out.exists()
+def test_sampler_write_outputs_warns_when_nothing_was_sampled(tmp_path, capsys, sampler):
+    """`write_outputs()` writes no report and warns on stderr when the sampler collected nothing."""
+    _sampled_manager(sampler).write_outputs(tmp_path)
+    assert not (tmp_path / "index.html").exists()
     assert "no CPU samples collected" in capsys.readouterr().err
 
 
@@ -750,9 +744,8 @@ def test_tachyon_flame_graph_has_a_root_per_benchmark(tmp_path):
 
     mgr = _cpu.TachyonManager()
     mew.run(min_time=_SAMPLED_ITERATIONS, reporter=Capture(), profiler_manager=mgr)
-    report = tmp_path / "cpu.html"
-    mgr.write_html(report)
-    html = report.read_text(encoding="utf-8")
+    mgr.write_outputs(tmp_path)
+    html = (tmp_path / "index.html").read_text(encoding="utf-8")
     assert "bench_first" in html and "bench_second" in html
     assert "runner.py" not in html
 

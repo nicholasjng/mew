@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager
+from pathlib import Path
 from typing import (
     Any,
     Literal,
@@ -147,7 +148,8 @@ class MemoryMetrics(TypedDict):
     net_heap_growth: NotRequired[int]
 
 
-ProfilerSummary: TypeAlias = dict[str, Any]
+# Mapping, so a TypedDict such as mew.cpu.CpuProfile matches; at runtime, a dict.
+ProfilerSummary: TypeAlias = Mapping[str, Any]
 
 
 @runtime_checkable
@@ -156,7 +158,8 @@ class MemoryManager(Protocol):
 
     :func:`mew.run` calls ``start()`` and ``stop()`` around the timing loop of an
     extra, untimed pass per benchmark and repetition, and stores the figures in
-    the row's ``memory`` block.
+    the row's ``memory`` block. A subclass may override :meth:`write_outputs`
+    to write files after the run.
     """
 
     def start(self) -> None:
@@ -181,14 +184,32 @@ class MemoryManager(Protocol):
         """
         ...
 
+    def write_outputs(self, directory: Path) -> None:
+        """Write the manager's files, such as an HTML report, to ``directory``.
+
+        Called after the run by ``mew run --profile-dir DIR``, with
+        ``DIR/memory``. Only for files: the row's figures come from
+        :meth:`stop`.
+        Does nothing unless a subclass overrides it.
+
+        Parameters
+        ----------
+        directory : Path
+            Where to write; it may not exist yet.
+        """
+        return
+
 
 @runtime_checkable
 class ProfilerManager(Protocol):
     """Protocol for profiling a benchmark body.
 
     :func:`mew.run` starts and stops the profiler around the timing loop of an
-    extra, untimed pass per benchmark and repetition. A profiler may also
-    implement :class:`ProfilerResultProvider` and :class:`PausableProfiler`.
+    extra, untimed pass per benchmark and repetition. Beyond starting and
+    stopping, each hook does nothing unless a subclass overrides it: a
+    profiler that summarizes its passes overrides :meth:`get_result`, one that
+    can pause overrides :meth:`pause` and :meth:`resume`, and one that writes
+    files overrides :meth:`write_outputs`.
     """
 
     def after_setup_start(self) -> None:
@@ -205,17 +226,11 @@ class ProfilerManager(Protocol):
         """
         ...
 
-
-@runtime_checkable
-class ProfilerResultProvider(Protocol):
-    """Protocol for profilers that summarize each profiling pass.
-
-    ``get_result()`` is called after each pass, and its summary stored in the
-    row's ``cpu_profile`` block.
-    """
-
     def get_result(self) -> ProfilerSummary | None:
         """Summarize the pass that just ended.
+
+        Called after each pass; the summary goes into the row's ``cpu_profile``
+        block. Returns ``None`` unless a subclass overrides it.
 
         Returns
         -------
@@ -223,32 +238,40 @@ class ProfilerResultProvider(Protocol):
             The summary, an empty dict included, or ``None`` to leave the row
             without a ``cpu_profile`` block.
         """
-        ...
-
-
-@runtime_checkable
-class PausableProfiler(Protocol):
-    """Protocol for profilers that pause during ``state.pause()`` scopes.
-
-    Calls come from the profiling thread only, and in pairs: every ``pause()``
-    is followed by a ``resume()`` before ``before_teardown_stop()``. When a
-    body leaves a pause scope open at the end of its loop, mew calls
-    ``resume()`` itself before ``before_teardown_stop()``.
-    """
+        return None
 
     def pause(self) -> None:
-        """Suspend profiling.
+        """Suspend profiling during a ``state.pause()`` scope.
 
-        Called when the body enters a ``state.pause()`` scope.
+        Calls come from the profiling thread only, and in pairs: every
+        ``pause()`` is followed by a ``resume()`` before
+        ``before_teardown_stop()``. When a body leaves a pause scope open at
+        the end of its loop, mew calls ``resume()`` itself before
+        ``before_teardown_stop()``. Does nothing unless a subclass overrides
+        it, so the paused region is profiled.
         """
-        ...
+        return
 
     def resume(self) -> None:
-        """Resume profiling.
+        """Resume profiling when a ``state.pause()`` scope exits.
 
-        Called when the pause scope exits.
+        Does nothing unless a subclass overrides it.
         """
-        ...
+        return
+
+    def write_outputs(self, directory: Path) -> None:
+        """Write the manager's files, such as an HTML report, to ``directory``.
+
+        Called after the run by ``mew run --profile-dir DIR``, with
+        ``DIR/profiler``. Only for files: the row's figures come from
+        :meth:`get_result`. Does nothing unless a subclass overrides it.
+
+        Parameters
+        ----------
+        directory : Path
+            Where to write; it may not exist yet.
+        """
+        return
 
 
 @runtime_checkable
