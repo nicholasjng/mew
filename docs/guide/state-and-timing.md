@@ -135,8 +135,9 @@ through 8.
 
 :::{warning}
 **Threaded mode requires a free-threaded interpreter (CPython 3.14t+).**
-On a GIL build, mew warns and emits skipped rows because Google Benchmark's
-worker barrier would deadlock. Use `--strict` (or `strict=True`) to raise instead.
+On a GIL build, mew warns and leaves threaded benchmarks out of the run, and so
+out of the results, because Google Benchmark's worker barrier would deadlock.
+Use `--strict` (or `strict=True`) to raise instead.
 :::
 
 Counters are summed across threads. Set per-thread values, or guard one-time

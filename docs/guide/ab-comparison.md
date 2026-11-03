@@ -84,8 +84,8 @@ mew.set_context("build", "free-threaded" if not sys._is_gil_enabled() else "gil"
 The profiling flags work per invocation, so give each side its own artifact path:
 
 ```console
-$ mew run bench_alpha.py -o alpha.jsonl --profile-memory --flamegraph alloc.alpha.html
-$ mew run bench_beta.py  -o beta.jsonl  --profile-memory --flamegraph alloc.beta.html
+$ mew run bench_alpha.py -o alpha.jsonl --profile-memory --profile-dir profiles.alpha/
+$ mew run bench_beta.py  -o beta.jsonl  --profile-memory --profile-dir profiles.beta/
 $ mew compare --key func --metric memory.allocations_per_iteration beta.jsonl alpha.jsonl
 ```
 

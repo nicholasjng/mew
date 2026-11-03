@@ -88,20 +88,10 @@ $ mew list -k slow | mew run --stdin                    # file.py::name selector
 $ mew list --show-cases -k 'n=1000' | mew run --stdin   # one case; no -F needed
 ```
 
-- A line **with `::`** (`file.py::name`, the default `mew list` output) is a
-  selector: `mew run` imports that path and filters by the name. The path is
-  relative, so run from the directory you listed from.
-- A **path-free** line (`mew list --names-only` output) filters benchmarks
-  discovered from positional paths or `[tool.mew] benchpaths`:
-
-```console
-$ mew list --names-only -k slow | mew run benchmarks/ --stdin
-$ mew list --names-only | mew run --stdin       # discovery via benchpaths
-```
-
-A path-free name matches by substring, so a function name shared across files
-selects all of them. (Don't pipe `--show-tags` output; the trailing `[tags]`
-column isn't a selector.)
+Each line is a selector, like a positional path: `file.py::name`, the default
+`mew list` output, imports that path and filters by the name. The path is
+relative, so run from the directory you listed from. (Don't pipe `--show-tags`
+output: a line with a trailing `[tags]` column isn't a selector.)
 
 ### Profiling flags
 
@@ -112,13 +102,15 @@ frames, sample the process from outside: see {doc}`profiling-native`.
 | ----------------------- | --------------------------------------------------------------------------- |
 | `--sample`              | Sample each benchmark in-process with the `--sampler`.                      |
 | `--sampler NAME`        | `tachyon` (3.15+), `pyinstrument`, or `auto`: Tachyon on 3.15+, else pyinstrument (default). |
-| `--sample-html FILE`    | Write an HTML CPU profile: a Tachyon flame graph or a pyinstrument call tree. |
 | `--sample-interval F`   | Sampling interval seconds (default `1e-4`).                                 |
 | `--profile-memory`      | Run each benchmark under `memray`.                                          |
 | `--memory-iterations N` | Cap the memory pass at `N` iterations (default 16).                         |
-| `--flamegraph FILE`     | Write an HTML flame graph with allocation data.                             |
+| `--profile-dir DIR`     | Write the profilers' reports to `DIR/profiler` and `DIR/memory`.           |
 
-`--sample-html`/`--flamegraph` imply `--sample` / `--profile-memory` respectively.
+`--profile-dir` needs `--sample` or `--profile-memory`. With `--sample`,
+`DIR/profiler/index.html` is a Tachyon flame graph or a pyinstrument call tree;
+with `--profile-memory`, `DIR/memory/` holds an allocation flame graph per
+benchmark.
 For a cross-engine memory/CPU comparison, run each suite separately with its own artifact paths and compare the result files; see {doc}`ab-comparison`.
 
 ## `mew list` (alias `ls`)
@@ -203,7 +195,7 @@ $ command -v mew >/dev/null 2>&1 && eval "$(mew completions zsh)"
 ```
 
 Because completion never runs the suite, it won't complete benchmark *names*.
-Pipe `mew list --names-only` if you want those.
+Pipe `mew list` if you want those.
 
 (exit-codes)=
 ## Exit codes
