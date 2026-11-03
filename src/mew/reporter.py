@@ -312,11 +312,10 @@ class RichReporter(Reporter):
             self._term.print(line)
 
     def _print_banner(self, context: dict[str, Any]) -> None:
-        session = context.get("session", {})
         machine = context.get("context", {})
         scaling = machine.get("cpu_scaling_enabled")
         fields = {
-            "host": session.get("host") or "?",
+            "cpu": machine.get("cpu_model") or "?",
             "cpus": machine.get("num_cpus", "?"),
             "scaling": "enabled" if scaling is True else "disabled" if scaling is False else "?",
         }

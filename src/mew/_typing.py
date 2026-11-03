@@ -28,8 +28,6 @@ class SessionInfo(TypedDict):
         A time-ordered UUIDv7, unique to the run.
     date : str
         When the run started, in ISO 8601.
-    host : str
-        The machine's host name.
     mew_version : str, optional
         The mew that wrote the row, and so its format.
     tag : str, optional
@@ -38,7 +36,6 @@ class SessionInfo(TypedDict):
 
     id: str
     date: str
-    host: str
     mew_version: NotRequired[str]
     tag: NotRequired[str]
 

@@ -19,7 +19,6 @@ mew.update_context(
   "session": {
     "id": "01975f2e-9c40-7b31-a1d4-8f0e2c5b7a90",
     "date": "2026-05-19T10:00:00+00:00",
-    "host": "laptop",
     "mew_version": "0.3.0"
   },
   "context": {
@@ -77,6 +76,22 @@ mew.set_context("ci.job", os.environ.get("CI_JOB_ID"))
 ```
 
 The path is relative to `pyproject.toml` and is imported before discovery.
+
+(recording-the-host)=
+### Recording the host
+
+mew doesn't record the machine's host name, since it often names a person, as
+on macOS, and result files get shared. The CPU and interpreter fields describe
+what timings depend on. To tell machines apart anyway, such as CI runners,
+record a name in the setup file:
+
+```python
+import socket
+
+mew.set_context("host", socket.gethostname())  # or os.environ["RUNNER_NAME"]
+```
+
+`mew compare` then warns when files differ in `host`, as it does for the CPU.
 
 ## Dotted keys
 

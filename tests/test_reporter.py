@@ -54,7 +54,7 @@ def _fake_row(name: str, label: str = "", benchmark: str | None = None) -> Bench
 
 def _feed(reporter, *rows: BenchmarkResult) -> None:
     """Drive a reporter through one run of ``rows``, without running anything."""
-    reporter.report_context({"session": {"host": "h"}, "context": {}})
+    reporter.report_context({"session": {}, "context": {}})
     reporter.report_runs(list(rows))
     reporter.finalize()
 
@@ -157,17 +157,20 @@ def _rich(width: int = 200, **flags) -> tuple[io.StringIO, RichReporter]:
     buf = io.StringIO()
     rep = RichReporter(terminal=Terminal(file=buf, width=width, color=False), **flags)
     rep.report_context(
-        {"session": {"host": "h"}, "context": {"num_cpus": 4, "cpu_scaling_enabled": False}}
+        {
+            "session": {},
+            "context": {"cpu_model": "Apple M2", "num_cpus": 4, "cpu_scaling_enabled": False},
+        }
     )
     return buf, rep
 
 
 def test_rich_reporter_prints_banner_and_header_before_the_first_row():
-    """`RichReporter` prints the host banner and the column header in `report_context()`, before
+    """`RichReporter` prints the machine banner and the column header in `report_context()`, before
     any row."""
     buf, _ = _rich()
     banner, header, _rule = buf.getvalue().splitlines()
-    assert banner == "mew · host=h cpus=4 scaling=disabled"
+    assert banner == "mew · cpu=Apple M2 cpus=4 scaling=disabled"
     assert [cell.strip() for cell in header.split(" │ ")] == ["Benchmark", "Iters", "Real", "CPU"]
 
 

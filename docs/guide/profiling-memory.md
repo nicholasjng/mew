@@ -30,7 +30,7 @@ benchmark runs; from Python, {func}`mew.memory.manager` raises `ImportError`.
 
 ```console
 $ mew run --profile-memory
-mew · host=laptop cpus=10 scaling=enabled
+mew · cpu=Apple M1 Pro cpus=10 scaling=enabled
 Benchmark            │        Iters │       Real │        CPU │   Peak Mem
 ──────────────────────────────────────────────────────────────────────────
 bench_alloc_list     │       50,000 │    8.01 us │    7.99 us │     3.2 MB

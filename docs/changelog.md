@@ -22,6 +22,12 @@ change between minor releases.
 
 ### Changed
 
+- mew no longer records the host name in a row's `session`, since it often
+  names a person and result files get shared. The run banner shows the CPU
+  model instead, `mew sessions` drops its `Host` column, and
+  `mew.compare.SessionSummary` drops `host`. To keep telling machines apart,
+  record one with `mew.set_context("host", ...)`; `mew compare` warns when it
+  differs. Files with `session.host` still read.
 - The CLI no longer accepts abbreviated long options, such as `--rep` for
   `--repetitions`: spell each option out in full. An abbreviation would break
   whenever a new option sharing its prefix is added. Shell completion

@@ -9,7 +9,7 @@ Every run prints one provenance line before the table:
 
 ```console
 $ mew run
-mew · host=laptop cpus=10 scaling=enabled
+mew · cpu=Apple M1 Pro cpus=10 scaling=enabled
 ```
 
 `scaling=enabled` means CPU frequency may change during measurement, making
@@ -88,10 +88,11 @@ For comparisons across processes, see {doc}`ab-comparison`.
 ## Don't compare across machines
 
 `compare` prints one provenance line per column and warns on stderr when files
-disagree on the session host, CPU model, CPU count, or CPU scaling:
+disagree on the CPU model, CPU count, or CPU scaling, or on a `host` that the
+suite records (see [](context.md#recording-the-host)):
 
 ```console
-warning: result files differ in host (baseline: ci-runner-3, head: laptop);
+warning: result files differ in cpu_model (baseline: AMD EPYC 7763, head: Apple M1 Pro);
 deltas may reflect the environment, not the code
 ```
 

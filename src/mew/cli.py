@@ -424,8 +424,7 @@ def sessions(files: list[Path]) -> None:
         table = Table(title=str(path) if len(files) > 1 else None)
         table.add_column("Id")
         table.add_column("Date")
-        table.add_column("Host", flex=True)
-        table.add_column("Tag")
+        table.add_column("Tag", flex=True)
         table.add_column("Benchmarks", justify="right")
         table.add_column("Rows", justify="right")
         with _usage_error("sessions", ValueError, OSError):
@@ -434,7 +433,6 @@ def sessions(files: list[Path]) -> None:
             table.add_row(
                 (s.id or "-")[:8],
                 (s.date or "-")[:19],
-                s.host or "-",
                 s.tag or "-",
                 str(s.benchmarks),
                 str(s.rows),

@@ -777,9 +777,8 @@ def test_run_without_reporter_prints_mews_console_table(capsys, monkeypatch, rep
 
     assert mew.run(reporter=reporter) == 1
     out = capsys.readouterr().out
-    assert out.startswith("mew · host=")
-    # The header reads the session and machine context mew.run() assembled.
-    assert "host=?" not in out
+    assert out.startswith("mew · cpu=")
+    # The header reads the machine context mew.run() assembled.
     assert "cpus=?" not in out
     assert "bench_plain" in out
     # Google Benchmark's own console reporter prints a "Run on (...)" header.

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import socket
 import tempfile
 import time
 import uuid
@@ -265,7 +264,6 @@ def run(
     session: dict[str, Any] = {
         "id": _new_session_id(),
         "date": datetime.now(UTC).isoformat(),
-        "host": socket.gethostname(),
         "mew_version": __version__,
     }
     if session_tag is not None:

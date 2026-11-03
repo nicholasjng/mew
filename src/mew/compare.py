@@ -46,7 +46,8 @@ _HIGHER_IS_BETTER = frozenset({"iterations"})
 _KEYS = frozenset({"name", "func"})
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
-_CTX_SKEW_FIELDS = ("cpu_model", "num_cpus", "cpu_scaling_enabled")
+# `host` only where a suite records it; mew doesn't, since it often names a person.
+_CTX_SKEW_FIELDS = ("host", "cpu_model", "num_cpus", "cpu_scaling_enabled")
 
 
 def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
@@ -73,8 +74,6 @@ def _ctx_summary(ctx: dict[str, Any], *, exclude: Collection[str]) -> list[str]:
         parts.append(f"session={sess['tag']}")
     elif sess.get("id"):
         parts.append(f"session={str(sess['id'])[:12]}")
-    if sess.get("host"):
-        parts.append(f"host={sess['host']}")
     if sess.get("date"):
         parts.append(f"date={str(sess['date'])[:19]}")
     for k, v in _flatten(provenance).items():
@@ -89,9 +88,8 @@ def _warn_context_skew(columns: list[_Column]) -> None:
 
     The deltas then compare environments, not just code.
     """
-    # `host` lives in the session block, the rest in provenance; all warn alike.
-    for block, fld in (("session", "host"), *(("context", f) for f in _CTX_SKEW_FIELDS)):
-        values = {c.label: (c.context.get(block) or {}).get(fld) for c in columns if c.context}
+    for fld in _CTX_SKEW_FIELDS:
+        values = {c.label: (c.context.get("context") or {}).get(fld) for c in columns if c.context}
         if len({v for v in values.values() if v is not None}) > 1:
             detail = ", ".join(f"{label}: {v}" for label, v in values.items())
             print(

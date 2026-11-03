@@ -44,14 +44,14 @@ class Capture:
 
 
 #: Flat kwargs the tests spell, mapped into the row's `session` block.
-_SESSION_KEYS = {"session_id": "id", "session_tag": "tag", "date": "date", "host_name": "host"}
+_SESSION_KEYS = {"session_id": "id", "session_tag": "tag", "date": "date"}
 
 
 def row(name: str, real_time: float, **extra: Any) -> dict:
     """A minimal per-repetition result row, as mew's sinks write it.
 
     Session identity and provenance are spelled flat here (``session_id=``,
-    ``host_name=``, ``custom=``) and folded into the stamped ``session`` /
+    ``custom=``) and folded into the stamped ``session`` /
     ``context`` blocks, so a test reads as one row rather than nested literals.
     """
     session = {dst: extra.pop(src) for src, dst in _SESSION_KEYS.items() if src in extra}

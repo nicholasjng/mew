@@ -316,18 +316,14 @@ def test_load_gzip_jsonl_with_uppercase_suffix(tmp_path: Path) -> None:
 
 
 def test_same_second_runs_stay_distinct_and_order_by_session_id(tmp_path: Path) -> None:
-    """Two runs in the same second stay separate sessions, ordered by session id, not by host."""
-    # Two runs in one wall-clock second: the time-ordered id keeps them apart
-    # and orders them, though their hosts sort the other way.
+    """Two runs in the same second stay separate sessions, ordered by their time-ordered id."""
     p = tmp_path / "agg.json"
     when = "2026-06-12T10:00:00"
     _write_json(
         p,
         [
-            _row(
-                "b", 10.0, date=when, host_name="h2", session_id="0197-aaaa", session_tag="before"
-            ),
-            _row("b", 20.0, date=when, host_name="h1", session_id="0197-bbbb", session_tag="after"),
+            _row("b", 10.0, date=when, session_id="0197-aaaa", session_tag="before"),
+            _row("b", 20.0, date=when, session_id="0197-bbbb", session_tag="after"),
         ],
     )
     assert load_column(p, "real_time", selector="before")[0]["b"].value == 10.0
@@ -378,7 +374,7 @@ def test_session_summaries_newest_first(tmp_path: Path) -> None:
     _write_json(
         p,
         [
-            _row("b", 1.0, date="2026-01-01T00:00:00", session_id="old", host_name="h"),
+            _row("b", 1.0, date="2026-01-01T00:00:00", session_id="old"),
             _row("b/case:0", 1.0, benchmark="b[n=1]", session_tag="t", **new),
             _row("b/case:0", 2.0, benchmark="b[n=1]", session_tag="t", **new),
             _row("b/case:0_mean", 1.5, benchmark="b[n=1]", aggregate_name="mean", **new),
@@ -387,13 +383,7 @@ def test_session_summaries_newest_first(tmp_path: Path) -> None:
     newest, oldest = session_summaries(p)
     # `benchmarks` counts measured benchmarks; `rows` counts every stored row.
     assert (newest.id, newest.tag, newest.benchmarks, newest.rows) == ("new", "t", 1, 3)
-    assert (oldest.id, oldest.host, oldest.tag, oldest.benchmarks, oldest.rows) == (
-        "old",
-        "h",
-        None,
-        1,
-        1,
-    )
+    assert (oldest.id, oldest.tag, oldest.benchmarks, oldest.rows) == ("old", None, 1, 1)
 
 
 def test_load_without_measurements_errors(tmp_path: Path) -> None:
@@ -407,18 +397,27 @@ def test_load_without_measurements_errors(tmp_path: Path) -> None:
 def test_compare_prints_context_and_warns_on_skew(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`compare` labels columns with host and differing context keys, and warns on machine skew."""
+    """`compare` labels columns with differing context keys, and warns on machine skew, including
+    a `host` that a suite records."""
     other, base = _write_pair(
         tmp_path,
         other=[_row("bench_x", 80.0)],
         base=[_row("bench_x", 100.0)],
         other_context={
-            "session": {"host": "h2"},
-            "context": {"cpu_model": "Apple M2", "num_cpus": 4, "engine": "duckdb 1.5.3"},
+            "context": {
+                "host": "h2",
+                "cpu_model": "Apple M2",
+                "num_cpus": 4,
+                "engine": "duckdb 1.5.3",
+            },
         },
         base_context={
-            "session": {"host": "h1"},
-            "context": {"cpu_model": "Apple M1", "num_cpus": 8, "engine": "ducky 0.1"},
+            "context": {
+                "host": "h1",
+                "cpu_model": "Apple M1",
+                "num_cpus": 8,
+                "engine": "ducky 0.1",
+            },
         },
     )
     console = Console(width=200)
@@ -430,7 +429,7 @@ def test_compare_prints_context_and_warns_on_skew(
     assert "engine=ducky 0.1" in out
     assert "engine=duckdb 1.5.3" in out
     err = capsys.readouterr().err
-    assert "host" in err
+    assert "differ in host (base: h1, other: h2)" in err
     assert "differ in cpu_model (base: Apple M1, other: Apple M2)" in err
     assert "num_cpus" in err
 
@@ -446,21 +445,15 @@ def test_compare_labels_columns_by_interpreter(
         tmp_path,
         other=[_row("bench_x", 80.0)],
         base=[_row("bench_x", 100.0)],
-        other_context={
-            "session": {"host": "h1"},
-            "context": {**machine, "python": {**python, "version": "3.15.0"}},
-        },
-        base_context={
-            "session": {"host": "h1"},
-            "context": {**machine, "python": {**python, "version": "3.14.3"}},
-        },
+        other_context={"context": {**machine, "python": {**python, "version": "3.15.0"}}},
+        base_context={"context": {**machine, "python": {**python, "version": "3.14.3"}}},
     )
     console = Console(width=200)
     assert compare([other, base], console=console) == 0
     out = console.export_text()
     assert "(python.version=3.14.3)" in out
     assert "(python.version=3.15.0)" in out
-    assert "host=h1" in out  # the matching machine context was read, and not warned on
+    assert "cpu_model=Apple M1" in out  # the matching machine context was read, and not warned on
     assert "differ in" not in capsys.readouterr().err
 
 
@@ -720,13 +713,13 @@ def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
     _write_json(
         p,
         [
-            _row("b", 10.0, session_id="s1", host_name="h", custom={"engine": "x"}),
-            _row("b", 0.0, aggregate_name="mean", session_id="s1", host_name="h"),
+            _row("b", 10.0, session_id="s1", custom={"engine": "x"}),
+            _row("b", 0.0, aggregate_name="mean", session_id="s1"),
         ],
     )
     rows = read_results(p)
     assert len(rows) == 2, "aggregate rows are not filtered here"
-    assert rows[0]["session"]["host"] == "h"
+    assert rows[0]["session"]["id"] == "s1"
     assert rows[0]["context"]["engine"] == "x"
 
 
