@@ -42,8 +42,8 @@ Issues = "https://github.com/nicholasjng/mew/issues"
 Changelog = "https://mew.readthedocs.io/en/latest/changelog.html"
 
 [project.optional-dependencies]
-cpu = [ "pyinstrument >=4.6" ]
-memory = [ "memray>=1.5; sys_platform != 'win32'" ]
+cpu = [ "pyinstrument>=4.6" ]
+memory = [ "memray>=1.15.0; sys_platform != 'win32'" ]
 
 [dependency-groups]
 build = [
@@ -52,18 +52,15 @@ build = [
     "ty>=0.0.90",
 ]
 docs = [
-    "sphinx >=8",
-    "furo >=2024.8",
-    "myst-parser >=4",
-    "sphinx-design >=0.6",
-    "sphinx-copybutton >=0.5",
-    "sphinx-autodoc-typehints >=2.4",
+    "sphinx>=8",
+    "furo>=2024.8",
+    "myst-parser>=4",
+    "sphinx-design>=0.6",
+    "sphinx-copybutton>=0.5",
+    "sphinx-autodoc-typehints>=2.4",
 ]
 duckdb = ["duckdb>=1.5"]
-test = [
-    "numpy>=2.4.6",
-    "pytest >=8",
-]
+test = ["pytest>=8"]
 
 [tool.uv]
 default-groups = ["build"]
