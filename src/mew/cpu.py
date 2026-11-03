@@ -19,7 +19,7 @@ import os
 import sys
 import threading
 import time
-from collections import Counter, defaultdict
+from collections import defaultdict
 from heapq import nlargest
 from importlib.util import find_spec
 from math import isfinite
@@ -195,7 +195,7 @@ class PyinstrumentManager(ProfilerManager, PausableProfiler):
     Attributes
     ----------
     sessions : list[Session]
-        Every pass's session, for :func:`write_html`.
+        Every pass's session, for :meth:`write_html`.
 
     Raises
     ------
@@ -275,6 +275,25 @@ class PyinstrumentManager(ProfilerManager, PausableProfiler):
             "unspecialized_share": None,
         }
 
+    def write_html(self, path: Path) -> None:
+        """Render every pass as one combined pyinstrument call tree.
+
+        When no pass collected samples, nothing is written and a warning goes to stderr.
+
+        Parameters
+        ----------
+        path : Path
+            Destination HTML file.
+        """
+        if not any(session.sample_count for session in self.sessions):
+            _warn_no_samples()
+            return
+        from pyinstrument.renderers import HTMLRenderer
+        from pyinstrument.session import Session
+
+        combined = functools.reduce(Session.combine, self.sessions)
+        path.write_text(HTMLRenderer().render(combined), encoding="utf-8")
+
 
 def _hottest_frame(root: Frame) -> TopFunction | None:
     """The user function with the most self time; ``None`` if there is none.
@@ -292,13 +311,14 @@ def _hottest_frame(root: Frame) -> TopFunction | None:
         path = Path(f.file_path) if f.file_path else None
         if f.is_synthetic or (path is not None and "pyinstrument" in path.parts):
             continue
-        # The def line keeps apart same-named functions in one file.
-        key = (f.function, path.name if path is not None else None, f.line_no)
-        totals[key] += f.total_self_time
+        # By full path, as Tachyon does; the def line keeps apart same-named
+        # functions in one file.
+        totals[f.function, f.file_path or None, f.line_no] += f.total_self_time
     if not totals:
         return None
-    (function, file_name, _), self_time = max(totals.items(), key=lambda kv: kv[1])
-    return {"function": function, "file": file_name, "line": None, "self_time": self_time}
+    (function, file, _), self_time = max(totals.items(), key=lambda kv: kv[1])
+    name = Path(file).name if file else None
+    return {"function": function, "file": name, "line": None, "self_time": self_time}
 
 
 def _require_tachyon() -> None:
@@ -459,12 +479,9 @@ class TachyonManager(ProfilerManager, PausableProfiler):
     Attributes
     ----------
     flamegraph : profiling.sampling.stack_collector.FlamegraphCollector
-        Every pass's samples, cut at the benchmark body, for :func:`write_html`.
+        Every pass's samples, cut at the benchmark body, for :meth:`write_html`.
         Its stacks carry ``<native>`` frames and, on free-threaded builds, each
         frame's bytecode instructions.
-    reads_instructions : bool
-        Whether summaries list the hottest bytecode instructions; see
-        :func:`reads_instructions`.
 
     Raises
     ------
@@ -492,12 +509,11 @@ class TachyonManager(ProfilerManager, PausableProfiler):
         self._running = False
         self._paused = False
         self._error: BaseException | None = None
-        # The current pass: the body's thread and code, its stacks' sample counts
+        # The current pass: the body's thread and code, per stack its sample count
         # and the seconds those samples stand for, its unpaused time.
         self._tid = 0
         self._body = ("", "")
-        self._stacks: Counter[tuple[int, tuple[Any, ...]]] = Counter()
-        self._seconds: defaultdict[tuple[int, tuple[Any, ...]], float] = defaultdict(float)
+        self._stacks: defaultdict[tuple[int, tuple[Any, ...]], list[float]] = _stack_totals()
         self._active = 0.0
         self._since = 0.0
         self._result: CpuProfile | None = None
@@ -506,7 +522,6 @@ class TachyonManager(ProfilerManager, PausableProfiler):
         self._samples = 0
         self._duration = 0.0
         self.flamegraph = FlamegraphCollector(round(interval * 1e6))
-        self.reads_instructions = reads_instructions()
 
     def after_setup_start(self) -> None:
         # GB calls this from the body's first loop step, so the direct Python
@@ -514,8 +529,7 @@ class TachyonManager(ProfilerManager, PausableProfiler):
         body = sys._getframe(1).f_code
         self._body = (body.co_filename, body.co_qualname)
         self._tid = threading.get_native_id()
-        self._stacks = Counter()
-        self._seconds = defaultdict(float)
+        self._stacks = _stack_totals()
         self._result = None
         self._active = 0.0
         if gil_enabled():
@@ -528,7 +542,7 @@ class TachyonManager(ProfilerManager, PausableProfiler):
 
     def _sample(self) -> None:
         unwinder, tid = self._unwinder, self._tid
-        stacks, seconds = self._stacks, self._seconds
+        stacks = self._stacks
         next_sample = last = time.perf_counter()
         try:
             while self._running:
@@ -542,11 +556,11 @@ class TachyonManager(ProfilerManager, PausableProfiler):
                         for interpreter in interpreters:
                             for thread in interpreter.threads:
                                 if thread.thread_id == tid and thread.frame_info:
-                                    key = thread.status, tuple(thread.frame_info)
-                                    stacks[key] += 1
+                                    totals = stacks[thread.status, tuple(thread.frame_info)]
+                                    totals[0] += 1
                                     # Since the last sample or resume. A failed read
                                     # leaves `last`, so its time goes to the next one.
-                                    seconds[key] += taken - max(last, self._since)
+                                    totals[1] += taken - max(last, self._since)
                                     last = taken
                 now = time.perf_counter()
                 next_sample = max(next_sample + self._interval, now)
@@ -605,13 +619,12 @@ class TachyonManager(ProfilerManager, PausableProfiler):
         lines: defaultdict[tuple[str, str, int], float] = defaultdict(float)
         # Keyed by (file, location, opcode); opcodes are read on free-threaded builds.
         instructions: defaultdict[tuple[str, Any, int], float] = defaultdict(float)
-        for (status, frames), n in self._stacks.items():
-            seconds = self._seconds[status, frames]
+        for (status, frames), (n, seconds) in self._stacks.items():
             frames = self._cut_at_body(frames)
             # The body thread inside this manager's hooks, e.g. starting the sampler.
             if any(frame.filename == __file__ for frame in frames):
                 continue
-            samples += n
+            samples += int(n)
             leaf = frames[0]
             lines[leaf.filename, leaf.funcname, leaf.location[0] if leaf.location else 0] += seconds
             if leaf.opcode is not None and leaf.location:
@@ -646,45 +659,31 @@ class TachyonManager(ProfilerManager, PausableProfiler):
                 return frames[: i + 1]
         return frames
 
+    def write_html(self, path: Path) -> None:
+        """Render every pass as one flame graph, with a root per benchmark.
 
-def write_html(manager: TachyonManager | PyinstrumentManager, path: Path) -> None:
-    """Render ``manager``'s profiling passes as one HTML report.
+        When no pass collected samples, nothing is written and a warning goes to stderr.
 
-    Tachyon writes a flame graph with one root per benchmark, pyinstrument one
-    combined call tree. When no pass collected samples, nothing is written and
-    a warning goes to stderr.
-
-    Parameters
-    ----------
-    manager : TachyonManager or PyinstrumentManager
-        Manager whose passes have completed.
-    path : Path
-        Destination HTML file.
-
-    Raises
-    ------
-    TypeError
-        If ``manager`` is neither of the two, such as a custom profiler manager.
-    """
-    if not isinstance(manager, TachyonManager | PyinstrumentManager):
-        raise TypeError(
-            "write_html needs a TachyonManager or PyinstrumentManager, "
-            f"got {type(manager).__name__}"
-        )
-    if isinstance(manager, TachyonManager):
+        Parameters
+        ----------
+        path : Path
+            Destination HTML file.
+        """
         # export() reports progress on stdout, which may carry a JSON result
         # stream, and returns whether it wrote the file.
         with contextlib.redirect_stdout(io.StringIO()):
-            written = manager.flamegraph.export(str(path))
-    elif written := any(session.sample_count for session in manager.sessions):
-        from pyinstrument.renderers import HTMLRenderer
-        from pyinstrument.session import Session
+            if not self.flamegraph.export(str(path)):
+                _warn_no_samples()
 
-        combined = functools.reduce(Session.combine, manager.sessions)
-        path.write_text(HTMLRenderer().render(combined), encoding="utf-8")
-    if not written:
-        print(
-            "warning: no CPU samples collected; skipping the HTML report "
-            "(are the profiled passes shorter than the sampling interval?)",
-            file=sys.stderr,
-        )
+
+def _stack_totals() -> defaultdict[tuple[int, tuple[Any, ...]], list[float]]:
+    """Per stack, ``[sample count, seconds]``."""
+    return defaultdict(lambda: [0, 0.0])
+
+
+def _warn_no_samples() -> None:
+    print(
+        "warning: no CPU samples collected; skipping the HTML report "
+        "(are the profiled passes shorter than the sampling interval?)",
+        file=sys.stderr,
+    )

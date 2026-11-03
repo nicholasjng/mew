@@ -21,8 +21,8 @@ Custom managers implement the {class}`mew.MemoryManager` or
   scope open at the end of its loop, mew calls `resume()` before
   `before_teardown_stop()`, so a manager never stops while paused.
 
-{func}`mew.cpu.write_html` renders the passes of mew's two samplers only, and
-raises `TypeError` for any other manager. A sampler's pass that caught no sample
+`write_html()` on either of mew's two samplers renders their passes as one HTML
+report. A sampler's pass that caught no sample
 still gets a {class}`mew.cpu.CpuProfile`, with `sample_count` 0 and no
 `top_function`.
 
@@ -53,8 +53,6 @@ still gets a {class}`mew.cpu.CpuProfile`, with `sample_count` 0 and no
 
 .. autofunction:: mew.memory.manager
 
-.. autofunction:: mew.memory.write_flamegraph
-
 .. autofunction:: mew.cpu.manager
 
 .. autodata:: mew.cpu.SAMPLERS
@@ -64,8 +62,6 @@ still gets a {class}`mew.cpu.CpuProfile`, with `sample_count` 0 and no
 
 .. autoclass:: mew.cpu.PyinstrumentManager
    :members:
-
-.. autofunction:: mew.cpu.write_html
 
 .. autofunction:: mew.cpu.reads_instructions
 
