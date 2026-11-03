@@ -72,6 +72,16 @@ def row(name: str, real_time: float, **extra: Any) -> dict:
     return {**out, **extra}
 
 
+def counter_row(name: str, counter: str, value: float, **record: Any) -> dict:
+    """A row with the counter ``counter`` (plus ``record`` fields such as ``format``).
+
+    Another counter sorts first, as mew's reporter writes them by name, so a
+    lookup has to pick ``counter`` by name.
+    """
+    counters = [{"name": "aaa", "value": 1.0}, {"name": counter, "value": float(value), **record}]
+    return row(name, 1.0, counters=counters)
+
+
 def _stamp(context: dict | None) -> dict:
     return {k: v for k, v in (context or {}).items() if k in ("session", "context")}
 

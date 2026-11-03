@@ -86,12 +86,34 @@ Set `use_real_time=True` if your benchmark's primary metric is wall-clock time.
 
 ## Counters
 
-`state.set_counter()` adds a `{"name", "value"}` record to the result's
-`counters`. Use {class}`mew.CounterFlags` for rates and other normalization.
+`state.set_counter()` adds a record to the result's `counters`. Use
+{class}`mew.CounterFlags` for rates and other normalization:
+
+```python
+state.set_counter("hits", hits)
+state.set_counter("tlb_misses", misses, mew.CounterFlags.kIsRate)
+```
+
+```json
+{"name": "hits", "value": 42.0}
+{"name": "tlb_misses", "value": 2321981.4, "format": {"rate": true}}
+```
+
+`value` is always a float, so tools such as DuckDB read the same column type
+from every result file. Ints and bools are accepted and stored as floats.
+To compare or gate on a counter, see [](regressions.md#basic-comparison).
+
 The console shows counters after the timing columns, formatted like Google
-Benchmark's console: `bytes_per_second=1.2Gi/s hits=42`. Values get SI
-prefixes, or binary ones with `one_k=mew.CounterOneK.kIs1024`; rates get `/s`,
-and `CounterFlags.kStringifyExponent` switches to exponent notation.
+Benchmark's console: `bytes_per_second=1.2Gi/s hits=42`. Values get SI prefixes, or binary ones with `one_k=mew.CounterOneK.kIs1024`; rates get
+`/s`, and `CounterFlags.kStringifyExponent` switches to exponent notation.
+
+To read a counter in DuckDB, pick it from the list by name:
+
+```sql
+SELECT benchmark,
+       list_filter(counters, lambda c: c.name = 'hits')[1].value::BIGINT AS hits
+FROM read_json_auto('results.jsonl');
+```
 
 ## Threaded benchmarks (free-threading)
 

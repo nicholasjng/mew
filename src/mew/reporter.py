@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol, TextIO, runtime_checkable
 
 from mew._console import COL_SEP, Table, Terminal, fill, sgr, truncate_left
-from mew._format import fmt_bytes, fmt_time
+from mew._format import fmt_bytes, fmt_counter, fmt_time
 from mew._results import ROW_STAMP_FIELDS, open_text
 from mew._typing import BenchmarkResult
 
@@ -73,46 +73,9 @@ def _fmt_profile(cpu: Mapping[str, Any] | None) -> list[str]:
     return parts
 
 
-_BIG_SI = ("k", "M", "G", "T", "P", "E", "Z", "Y")
-_BIG_IEC = ("Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi")
-_SMALL_SI = ("m", "u", "n", "p", "f", "a", "z", "y")
-
-
-def _human_readable(value: float, one_k: int, exponent: bool) -> str:
-    """Google Benchmark's ``HumanReadableNumber`` (string_util.cc), one digit of precision."""
-    sign, v, power = "-" if value < 0 else "", abs(value), 0
-    if v > one_k - 1:
-        scaled = v
-        for i in range(len(_BIG_SI)):
-            scaled /= one_k
-            if scaled <= one_k - 1:
-                v, power = scaled, i + 1
-                break
-    elif v < 0.01:  # values in [0.01, 1) print as they are
-        scaled = v
-        for i in range(len(_SMALL_SI)):
-            scaled *= one_k
-            if scaled >= 1:
-                v, power = scaled, -(i + 1)
-                break
-    mantissa = f"{sign}{v:g}"
-    if exponent:
-        return f"{mantissa}*2^{power * 10}" if one_k == 1024 else f"{mantissa}e{power * 3}"
-    if power > 0:
-        return mantissa + (_BIG_IEC if one_k == 1024 else _BIG_SI)[power - 1]
-    return mantissa + (_SMALL_SI[-power - 1] if power < 0 else "")
-
-
 def _fmt_counters(row: BenchmarkResult) -> list[str]:
     """Counters as Google Benchmark's console shows them: ``name=1.2Gi/s``."""
-    parts = []
-    for counter in row["counters"]:
-        fmt = counter.get("format", {})
-        text = _human_readable(counter["value"], fmt.get("one_k", 1000), fmt.get("exponent", False))
-        if fmt.get("rate"):
-            text += "s" if fmt.get("inverted") else "/s"
-        parts.append(f"{counter['name']}={text}")
-    return parts
+    return [f"{c['name']}={fmt_counter(c['value'], c.get('format'))}" for c in row["counters"]]
 
 
 _JSON_CLOSER = "\n  ]\n}\n"

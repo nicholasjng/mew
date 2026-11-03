@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from mew.config import Config, load
-from mew.regressions import RegressionConfig
+from mew.regressions import CounterConfig, CounterRule, RegressionConfig
 
 
 def _write(root: Path, body: str) -> None:
@@ -39,7 +39,13 @@ def test_load_reads_every_setting(tmp_path: Path):
         'statistic = "gmean"\n'
         'capture = "no"\n'
         "[tool.mew.regressions]\n"
-        "default-threshold = 7.5\n",
+        "default-threshold = 7.5\n"
+        "[[tool.mew.counters]]\n"
+        'pattern = "*_misses"\n'
+        "higher-is-better = false\n"
+        "[[tool.mew.counters]]\n"
+        'pattern = "*_per_second"\n'
+        "higher-is-better = true\n",
     )
     assert load(tmp_path) == Config(
         benchpaths=["perf"],
@@ -48,6 +54,9 @@ def test_load_reads_every_setting(tmp_path: Path):
         statistic="gmean",
         capture="no",
         regressions=RegressionConfig(default_threshold=7.5),
+        counters=CounterConfig(
+            rules=(CounterRule("*_misses", False), CounterRule("*_per_second", True))
+        ),
         project_root=tmp_path.resolve(),
     )
 
@@ -68,6 +77,24 @@ def test_load_reads_every_setting(tmp_path: Path):
         ),
         # Not TOML at all.
         ("benchpaths = ", "(at line 2"),
+        ("[tool.mew.counters]\n", "[tool.mew] counters must be an array of tables"),
+        ("[[tool.mew.counters]]\nhigher-is-better = true", "counter rule missing 'pattern'"),
+        # A rule's purpose is the direction.
+        (
+            '[[tool.mew.counters]]\npattern = "hits"',
+            "counter rule 'hits': 'higher-is-better' is required",
+        ),
+        (
+            '[[tool.mew.counters]]\npattern = "hits"\nhigher-is-better = "yes"',
+            "counter rule 'hits': higher-is-better must be a boolean",
+        ),
+        (
+            '[[tool.mew.counters]]\npattern = "hits"\nhigher_is_better = true',
+            (
+                "unknown key 'higher_is_better' in [[tool.mew.counters]]; "
+                "did you mean 'higher-is-better'?"
+            ),
+        ),
     ],
 )
 def test_load_rejects_malformed_setting(tmp_path: Path, setting: str, message: str):

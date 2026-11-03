@@ -18,7 +18,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from _helpers import row as _row, write_json as _write_json, write_pair as _write_pair
+from _helpers import (
+    counter_row,
+    row as _row,
+    write_json as _write_json,
+    write_pair as _write_pair,
+)
 
 import mew
 
@@ -685,6 +690,27 @@ def test_compare_regression_threshold_wins_over_the_configured_default(mew_cli, 
     assert mew_cli(*args, cwd=tmp_path).returncode == 0
     res = mew_cli(*args, "--regression-threshold", "5%", cwd=tmp_path)
     assert res.returncode == 3, res.stderr
+
+
+@pytest.mark.parametrize(
+    ("pyproject", "code"),
+    [
+        # No rule, no direction: a usage error.
+        ("", 2),
+        ('[[tool.mew.counters]]\npattern = "*_misses"\nhigher-is-better = false\n', 3),
+    ],
+)
+def test_compare_gates_on_a_counter_in_its_configured_direction(mew_cli, tmp_path, pyproject, code):
+    """A `[[tool.mew.counters]]` rule gives a counter its direction; without one, gating fails."""
+    other, base = _write_pair(
+        tmp_path,
+        other=[counter_row("b", "tlb_misses", 120.0)],
+        base=[counter_row("b", "tlb_misses", 100.0)],
+    )
+    (tmp_path / "pyproject.toml").write_text(pyproject)
+    args = ("-m", "counters.tlb_misses", "--exit-non-zero-on-regression")
+    res = mew_cli("compare", str(other), str(base), *args, cwd=tmp_path)
+    assert res.returncode == code, res.stderr
 
 
 def test_sessions_lists_newest_first(mew_cli, tmp_path):

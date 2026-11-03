@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from _helpers import (
     Console,
+    counter_row,
     row as _row,
     write_json as _write_json,
     write_jsonl as _write_jsonl,
@@ -28,7 +29,7 @@ from mew.compare import (
     read_results,
     session_summaries,
 )
-from mew.regressions import RegressionConfig
+from mew.regressions import CounterConfig, CounterRule, RegressionConfig
 
 
 def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
@@ -142,6 +143,7 @@ def test_compare_pattern_is_a_regex_unless_literal(
     [
         (1, {}, "at least two"),
         (2, {"metric": "bogus"}, "unknown metric"),
+        (2, {"metric": "counters."}, "unknown metric"),
         (2, {"key": "bogus"}, "unknown key"),
         (2, {"pattern": "foo("}, "invalid benchmark filter pattern"),
     ],
@@ -149,7 +151,7 @@ def test_compare_pattern_is_a_regex_unless_literal(
 def test_compare_rejects_bad_arguments(
     tmp_path: Path, n_files: int, kwargs: dict, match: str
 ) -> None:
-    """`compare` rejects fewer than two files, an unknown metric or key, and a malformed pattern."""
+    """`compare` rejects too few files, unknown metrics and keys, and bad patterns."""
     # Checked before any file is read, so the files need not exist.
     files = [tmp_path / f"{i}.json" for i in range(n_files)]
     with pytest.raises(ValueError, match=match):
@@ -505,6 +507,101 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
     assert "-50.00%" in console.export_text()
 
 
+@pytest.mark.parametrize(
+    ("counter", "rules", "base", "other", "code"),
+    [
+        # More is better, e.g. a GPU transfer rate: falling is the regression.
+        ("work", [CounterRule("w*", True)], 200, 100, 3),
+        ("work", [CounterRule("w*", True)], 100, 200, 0),
+        # Less is better, e.g. TLB misses: rising is the regression.
+        ("work", [CounterRule("w*", False)], 100, 200, 3),
+        ("work", [CounterRule("w*", False)], 200, 100, 0),
+        # Throughputs are higher-is-better without a rule, and a rule overrides that.
+        ("items_per_second", [], 200, 100, 3),
+        ("items_per_second", [CounterRule("items_per_second", False)], 200, 100, 0),
+    ],
+)
+def test_compare_counter_gates_in_its_configured_direction(
+    tmp_path: Path, counter: str, rules: list[CounterRule], base: float, other: float, code: int
+) -> None:
+    """`counters.<name>` gates in the direction `CounterConfig` gives it."""
+    other_path, base_path = _write_pair(
+        tmp_path, other=[counter_row("b", counter, other)], base=[counter_row("b", counter, base)]
+    )
+    result = compare(
+        [other_path, base_path],
+        metric=f"counters.{counter}",
+        regressions=RegressionConfig(5),
+        counters=CounterConfig(rules=tuple(rules)),
+        console=Console(),
+    )
+    assert result == code
+
+
+def test_compare_refuses_to_gate_on_counters_without_a_direction(tmp_path: Path) -> None:
+    """Gating on an undeclared counter fails instead of passing unchecked."""
+    other, base = _write_pair(
+        tmp_path, other=[counter_row("b", "work", 0)], base=[counter_row("b", "work", 1)]
+    )
+    with pytest.raises(ValueError, match="no direction is declared"):
+        compare([other, base], metric="counters.work", regressions=RegressionConfig(5))
+
+
+def test_compare_counter_without_a_direction_shows_a_plain_ratio(tmp_path: Path) -> None:
+    """Ungated, an undeclared counter compares as `other / base`, its delta neither good nor bad."""
+    other, base = _write_pair(
+        tmp_path, other=[counter_row("b", "work", 200)], base=[counter_row("b", "work", 100)]
+    )
+    console = Console(width=200)
+    assert compare([other, base], metric="counters.work", console=console) == 0
+    out = console.export_text()
+    assert "+100.00%" in out
+    assert "×2.000" in out
+    assert "ratio" in out
+    assert "speedup" not in out
+
+
+def test_compare_counter_formats_like_the_console(tmp_path: Path) -> None:
+    """Counter values show with the console's prefixes and rate suffixes."""
+    rate = {"rate": True, "one_k": 1024}
+    other, base = _write_pair(
+        tmp_path,
+        other=[counter_row("b", "work", v * 2**30, format=rate) for v in (2, 3, 4)],
+        base=[counter_row("b", "work", v * 2**30, format=rate) for v in (1, 1, 1)],
+    )
+    console = Console(width=200)
+    assert compare([other, base], metric="counters.work", show_stddev=True, console=console) == 0
+    out = console.export_text()
+    assert "1Gi/s" in out  # baseline value
+    assert "3Gi/s" in out  # contender median
+    assert "+200.00%" in out
+
+
+def test_compare_missing_counter_hints_set_counter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A counter no benchmark set exits 1 and names the counter."""
+    other, base = _write_pair(
+        tmp_path, other=[counter_row("b", "work", 1.0)], base=[counter_row("b", "work", 1.0)]
+    )
+    assert compare([other, base], metric="counters.missing", console=Console()) == 1
+    err = capsys.readouterr().err
+    assert "'missing'" in err
+    assert "set_counter" in err
+
+
+def test_compare_counter_in_a_0_2_0_mapping(tmp_path: Path) -> None:
+    """Archives from 0.2.0 stored counters as a name-to-value mapping; they still compare."""
+    other, base = _write_pair(
+        tmp_path,
+        other=[_row("b", 1.0, counters={"work": 150.0})],
+        base=[_row("b", 1.0, counters={"work": 100.0})],
+    )
+    console = Console(width=200)
+    assert compare([other, base], metric="counters.work", console=console) == 0
+    assert "+50.00%" in console.export_text()
+
+
 def test_compare_memory_metric_without_data_hints_profile_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -584,6 +681,8 @@ def test_fmt_delta_colors_by_improvement_direction() -> None:
     assert _fmt_delta(-0.2, higher_is_better=True)[1] == "red"
     assert _fmt_delta(0.0) == ("+0.00%", "")
     assert _fmt_delta(0.0, higher_is_better=True) == ("+0.00%", "")
+    # A counter without a direction: neither good nor bad.
+    assert _fmt_delta(0.2, higher_is_better=None) == ("+20.00%", "")
     # A zero baseline against a nonzero contender must not read as +0.00%.
     assert _fmt_delta(math.inf) == ("+∞%", "red")
 
@@ -686,7 +785,7 @@ def test_comparison_math_without_rendering(
     """`_compare_samples` converts time units, inverts the iterations ratio, and handles zeros."""
     base = Sample("b", base_value, None, base_unit)
     other = Sample("b", other_value, None, other_unit)
-    result = _compare_samples(base, other, metric)
+    result = _compare_samples(base, other, metric, metric == "iterations")
     assert result.delta == delta
     assert result.speedup == ratio
     assert result.p_value is None

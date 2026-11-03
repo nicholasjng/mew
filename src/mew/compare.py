@@ -14,7 +14,15 @@ from pathlib import Path
 from typing import Any
 
 from mew._console import Span, Table, Terminal, fill, sgr
-from mew._format import NS_PER_UNIT, fmt_bytes, fmt_time, overflow, scale_time, to_ns
+from mew._format import (
+    NS_PER_UNIT,
+    fmt_bytes,
+    fmt_counter,
+    fmt_time,
+    overflow,
+    scale_time,
+    to_ns,
+)
 from mew._registry import compile_name_filter
 from mew._results import (
     MEMORY_METRICS,
@@ -22,6 +30,7 @@ from mew._results import (
     TIME_METRICS,
     Sample,
     SessionSummary,
+    counter_name,
     load_column,
     read_results,
     read_rows,
@@ -29,7 +38,7 @@ from mew._results import (
     split_selector,
 )
 from mew._statistics import Statistic, mannwhitney_p
-from mew.regressions import BenchmarkVerdict, RegressionConfig, report
+from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, report
 
 __all__ = ["Sample", "SessionSummary", "compare", "read_results", "session_summaries"]
 
@@ -105,6 +114,8 @@ def _custom_diffs(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _fmt_value(sample: Sample, metric: str) -> str:
+    if counter_name(metric) is not None:
+        return fmt_counter(sample.value, sample.counter_format)
     if metric == "memory.allocations_per_iteration":  # fractional per-call count
         return f"{sample.value:,.1f}"
     if metric == "iterations":
@@ -120,6 +131,8 @@ def _fmt_stddev(sample: Sample, metric: str) -> str:
         return "-"
     if metric == "memory.peak_bytes":
         return fmt_bytes(int(sample.stddev))
+    if counter_name(metric) is not None:
+        return fmt_counter(sample.stddev, sample.counter_format)
     if metric not in TIME_METRICS:
         return f"{sample.stddev:.2f}"
     _, unit = scale_time(sample.value, sample.time_unit)
@@ -138,8 +151,14 @@ class _Comparison:
     p_value: float | None
 
 
-def _compare_samples(base: Sample, other: Sample, metric: str) -> _Comparison:
-    """Calculate a comparison independently of table layout and gating policy."""
+def _compare_samples(
+    base: Sample, other: Sample, metric: str, higher_is_better: bool | None
+) -> _Comparison:
+    """Calculate a comparison independently of table layout and gating policy.
+
+    The ratio is the improvement factor where the metric's direction is known
+    (``base / other`` for lower-is-better metrics), else ``other / base``.
+    """
     is_time = metric in TIME_METRICS
     base_value = to_ns(base.value, base.time_unit) if is_time else base.value
     other_value = to_ns(other.value, other.time_unit) if is_time else other.value
@@ -148,9 +167,8 @@ def _compare_samples(base: Sample, other: Sample, metric: str) -> _Comparison:
     else:
         # A zero baseline must not mask a nonzero contender as unchanged.
         delta = 0.0 if not other_value else float("inf")
-    num, den = (
-        (other_value, base_value) if metric in _HIGHER_IS_BETTER else (base_value, other_value)
-    )
+    lower = higher_is_better is False
+    num, den = (base_value, other_value) if lower else (other_value, base_value)
     # Mann-Whitney over raw repetitions; fewer than 2 per side leaves nothing to rank.
     p_value: float | None = None
     if len(base.values) >= 2 and len(other.values) >= 2:
@@ -165,9 +183,11 @@ def _compare_samples(base: Sample, other: Sample, metric: str) -> _Comparison:
     )
 
 
-def _fmt_delta(delta: float, *, higher_is_better: bool = False) -> tuple[str, str]:
+def _fmt_delta(delta: float, *, higher_is_better: bool | None = False) -> tuple[str, str]:
     pct = delta * 100.0
     text = f"{pct:+.2f}%" if math.isfinite(pct) else "+∞%"
+    if higher_is_better is None:  # a counter without a direction: neither good nor bad
+        return text, ""
     # Color by improvement direction: +20% iterations is green, +20% time red.
     worse = -delta if higher_is_better else delta
     style = "green" if worse < 0 else "red" if worse > 0 else ""
@@ -205,13 +225,16 @@ def _render(
     show_stddev: bool,
     regressions: RegressionConfig | None,
     console: Terminal | None,
+    higher_is_better: bool | None,
     key: str = "name",
 ) -> int:
     """Compare the first column against the rest and render the table.
 
     Column-shaped on purpose: anything producing labelled sample sets with contexts
-    (files, ``path@selector`` sessions) compares the same way.
+    (files, ``path@selector`` sessions) compares the same way. ``higher_is_better``
+    is the metric's direction; ``None`` leaves deltas uncolored and can't be gated.
     """
+    counter = counter_name(metric)
     all_names: set[str] = set().union(*(c.samples.keys() for c in columns))
     if pattern is not None:
         all_names = {n for n in all_names if pattern.search(n)}
@@ -226,6 +249,8 @@ def _render(
         )
         if metric in MEMORY_METRICS:
             msg += f" with {metric!r} data (produced with --profile-memory?)"
+        elif counter is not None:
+            msg += f" with the counter {counter!r} (set with state.set_counter?)"
         elif key == "name":
             msg += (
                 " (suites with matching function names in different files overlap with --key func)"
@@ -265,15 +290,15 @@ def _render(
     table.add_column(labels[0], justify="right")
     if show_stddev:
         table.add_column("± stddev", justify="right")
+    # Memory and counters: less isn't "faster".
+    ratio_label = "ratio" if metric in MEMORY_METRICS or counter is not None else "speedup"
     for lbl in labels[1:]:
         table.add_column(lbl, justify="right")
         table.add_column("Δ%", justify="right")
-        # Memory: less isn't "faster".
-        table.add_column("ratio" if metric in MEMORY_METRICS else "speedup", justify="right")
+        table.add_column(ratio_label, justify="right")
         if show_stddev:
             table.add_column("± stddev", justify="right")
 
-    higher_is_better = metric in _HIGHER_IS_BETTER
     is_time_metric = metric in TIME_METRICS
     baseline = columns[0].samples
     verdicts: list[BenchmarkVerdict] = []
@@ -291,11 +316,12 @@ def _render(
             s = c.samples[name]
             if is_time_metric and base.time_unit != s.time_unit:
                 unit_skew[name] = (base.time_unit, s.time_unit)
-            result = _compare_samples(base, s, metric)
+            result = _compare_samples(base, s, metric, higher_is_better)
             if idx == 0 and regressions is not None:
+                # compare() refuses a gate without a direction.
                 verdicts.append(
                     regressions.evaluate(
-                        name, result.delta * 100.0, higher_is_better=higher_is_better
+                        name, result.delta * 100.0, higher_is_better=bool(higher_is_better)
                     )
                 )
             delta_cell: list[Span] = [_fmt_delta(result.delta, higher_is_better=higher_is_better)]
@@ -335,6 +361,7 @@ def compare(
     show_stddev: bool = False,
     statistic: Statistic | None = None,
     regressions: RegressionConfig | None = None,
+    counters: CounterConfig | None = None,
     console: Terminal | None = None,
 ) -> int:
     """Print a table comparing result files against the last one, the baseline.
@@ -357,7 +384,10 @@ def compare(
         ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or, for results with
         memory figures, ``"memory.peak_bytes"`` or
         ``"memory.allocations_per_iteration"``; the latter compares
-        implementations of different speed.
+        implementations of different speed. ``"counters.<name>"`` compares the
+        counter ``<name>``, e.g. ``"counters.items_per_second"``, in the
+        direction ``counters`` gives it; without one, the delta is neither
+        good nor bad, and the counter can't be gated on.
     key : str, default "name"
         How rows match across files: ``"name"`` by the full name, ``"func"``
         without the ``file.py::`` prefix, so A/B suites in different files line up.
@@ -372,6 +402,10 @@ def compare(
         gated; the median by default. Stddev is unaffected.
     regressions : RegressionConfig, optional
         Gate the first file against the baseline, and print a regression panel.
+    counters : CounterConfig, optional
+        Which direction is an improvement per counter, as ``[[tool.mew.counters]]``
+        configures it. Without it, only ``items_per_second`` and
+        ``bytes_per_second`` have one: higher is better.
     console : mew.Terminal, optional
         Where to print; defaults to stdout.
 
@@ -387,12 +421,25 @@ def compare(
         If an argument, such as ``pattern``, is invalid, or a file can't be
         compared: it is not a mew result file, holds no measurements or no
         session with the given tag, or ``statistic`` fails on a benchmark's
-        values.
+        values; or ``regressions`` gates on a counter without a direction.
     OSError
         If a file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
-    if metric not in METRICS:
-        raise ValueError(f"unknown metric {metric!r}; choose from {sorted(METRICS)}")
+    counter = counter_name(metric)
+    if metric not in METRICS and counter is None:
+        raise ValueError(
+            f"unknown metric {metric!r}; choose from {sorted(METRICS)} or counters.<name>"
+        )
+    if counter is None:
+        higher_is_better = metric in _HIGHER_IS_BETTER
+    else:
+        higher_is_better = (counters or CounterConfig()).direction(counter)
+    if regressions is not None and higher_is_better is None:
+        # A gate that skipped the counter would pass without checking anything.
+        raise ValueError(
+            f"cannot gate on {metric!r}: no direction is declared; add a "
+            f"[[tool.mew.counters]] rule matching {counter!r} that sets higher-is-better"
+        )
     if key not in _KEYS:
         raise ValueError(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
     name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
@@ -428,5 +475,6 @@ def compare(
         show_stddev=show_stddev,
         regressions=regressions,
         console=console,
+        higher_is_better=higher_is_better,
         key=key,
     )
