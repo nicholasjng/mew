@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from mew._managers import Preset, parse_presets
 from mew._statistics import resolve_statistic
 from mew.regressions import AllowRule, CounterConfig, CounterRule, RegressionConfig
 
@@ -19,6 +20,7 @@ _KEYS = (
     "statistic",
     "regressions",
     "counters",
+    "profilers",
 )
 
 
@@ -44,6 +46,9 @@ class Config:
     counters : CounterConfig
         The ``[[tool.mew.counters]]`` rules: which direction is an improvement
         per counter.
+    profilers : dict[str, Preset]
+        The ``[tool.mew.profilers.<name>]`` presets ``mew run --cpu-profiler`` and
+        ``--memory-profiler`` name.
     project_root : Path or None
         Directory of the ``pyproject.toml`` these settings came from; ``None``
         when no file was found and defaults are in use.
@@ -55,6 +60,7 @@ class Config:
     statistic: str | None = None
     regressions: RegressionConfig = field(default_factory=RegressionConfig)
     counters: CounterConfig = field(default_factory=CounterConfig)
+    profilers: dict[str, Preset] = field(default_factory=dict)
     project_root: Path | None = None
 
 
@@ -138,6 +144,7 @@ def _parse_config(raw: Mapping[str, Any], *, project_root: Path) -> Config:
         setup=_parse_str(tool, "setup"),
         regressions=_parse_regressions(tool.get("regressions", {})),
         counters=_parse_counters(tool.get("counters", [])),
+        profilers=parse_presets(tool.get("profilers", {})),
         project_root=project_root,
     )
     if cfg.statistic is not None:

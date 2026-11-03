@@ -246,7 +246,7 @@ def _render(
             f"and the baseline {columns[0].source}"
         )
         if metric in MEMORY_METRICS:
-            msg += f" with {metric!r} data (produced with --profile-memory?)"
+            msg += f" with {metric!r} data (produced with --memory-profiler memray?)"
         elif counter is not None:
             msg += f" with the counter {counter!r} (set with state.set_counter?)"
         elif key == "name":

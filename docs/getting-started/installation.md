@@ -59,8 +59,8 @@ Extras enabling additional CLI features:
 
 | Extra      | Pulls in                  | Enables                                                  |
 | ---------- | ------------------------- | -------------------------------------------------------- |
-| `cpu`      | `pyinstrument`            | `mew run --sample` before Python 3.15, `--sampler pyinstrument` |
-| `memory`   | `memray` (non-Windows)    | `mew run --profile-memory`                               |
+| `cpu`      | `pyinstrument`            | `mew run --cpu-profiler sample` before Python 3.15, `mew.cpu:PyinstrumentManager` |
+| `memory`   | `memray` (non-Windows)    | `mew run --memory-profiler memray`                               |
 
 Local development uses dependency groups (`build`, `docs`, `test`) rather than extras;
 see [](../development/contributing.md).

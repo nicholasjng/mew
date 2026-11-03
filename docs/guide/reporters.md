@@ -16,8 +16,8 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
   a readable unit, and `show_memory=True` adds a `Peak Mem` column. Below a
   row, an indented line lists what has no column: a label the benchmark set,
   its counters and, with `show_cpu=True`, its sample count, hottest function
-  and, on free-threaded 3.15+, hottest bytecode instruction. The CLI sets these
-  with `--profile-memory` and `--sample`. When the run ends, a second table sums
+  and, on free-threaded 3.15+, hottest bytecode instruction. The CLI sets them
+  for `--memory-profiler` and `--cpu-profiler`. When the run ends, a second table sums
   up each repeated benchmark, as `mew compare` reduces it; with
   `show_repetitions=False` (`mew run --summary-only`), repeated benchmarks
   appear only there.

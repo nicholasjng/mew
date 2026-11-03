@@ -18,7 +18,7 @@ $ mew compare --stddev head.json baseline.json    # show stddev cols if present
 
 Supported metrics: `real_time` (default), `cpu_time`, `iterations`.
 For `iterations`, higher is better, so the regression direction is inverted.
-Files produced with `--profile-memory` additionally support `memory.peak_bytes` and `memory.allocations_per_iteration`:
+Files produced with `--memory-profiler memray` additionally support `memory.peak_bytes` and `memory.allocations_per_iteration`:
 
 ```console
 $ mew compare -m memory.peak_bytes head.json baseline.json

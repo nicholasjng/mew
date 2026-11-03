@@ -142,7 +142,7 @@ Use `--strict` (or `strict=True`) to raise instead.
 
 Counters are summed across threads. Set per-thread values, or guard one-time
 updates with `if state.thread_index == 0`. The benchmark body must be thread-safe.
-The `--sample` and `--profile-memory` passes run a single thread, as in Google
+The profiling and memory passes (`--cpu-profiler`, `--memory-profiler`) run a single thread, as in Google
 Benchmark: in them, `state.threads` is 1 and `state.thread_index` is 0, so size
 anything that depends on the thread count from `state.threads`.
 

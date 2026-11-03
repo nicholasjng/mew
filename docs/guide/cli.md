@@ -98,19 +98,24 @@ output: a line with a trailing `[tags]` column isn't a selector.)
 These attach **in-process** measurements to the timing table. For native (C/C++)
 frames, sample the process from outside: see {doc}`profiling-native`.
 
-| Flag                    | Effect                                                                      |
-| ----------------------- | --------------------------------------------------------------------------- |
-| `--sample`              | Sample each benchmark in-process with the `--sampler`.                      |
-| `--sampler NAME`        | `tachyon` (3.15+), `pyinstrument`, or `auto`: Tachyon on 3.15+, else pyinstrument (default). |
-| `--sample-interval F`   | Sampling interval seconds (default `1e-4`).                                 |
-| `--profile-memory`      | Run each benchmark under `memray`.                                          |
-| `--memory-iterations N` | Cap the memory pass at `N` iterations (default 16).                         |
-| `--profile-dir DIR`     | Write the profilers' reports to `DIR/profiler` and `DIR/memory`.           |
+| Flag                     | Effect                                                                      |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `--cpu-profiler NAME`    | Profile CPU time with a preset: `sample`, one of yours, or a class spec.    |
+| `--memory-profiler NAME` | Profile memory with a preset: `memray`, one of yours, or a class spec.      |
+| `--memory-iterations N`  | Cap the memory pass at `N` iterations (default 16).                         |
+| `--profile-dir DIR`      | Write the profilers' reports to `DIR/cpu` and `DIR/memory`.                 |
 
-`--profile-dir` needs `--sample` or `--profile-memory`. With `--sample`,
-`DIR/profiler/index.html` is a Tachyon flame graph or a pyinstrument call tree;
-with `--profile-memory`, `DIR/memory/` holds an allocation flame graph per
-benchmark.
+Each flag takes mew's built-in preset, `sample` for CPU sampling
+({doc}`profiling-cpu`) or `memray` for allocations ({doc}`profiling-memory`),
+a preset from `[tool.mew.profilers]` ({doc}`configuration`), or a class as
+`module:Class` or `path.py:Class`, run with its defaults. Google Benchmark runs
+one CPU profiler and one memory profiler per run, so each flag takes one value;
+pass both to profile CPU and memory in one run. A class given to the wrong flag
+stops the run with exit code 2, naming the flag it fits.
+
+`--profile-dir` needs either flag. With `sample`, `DIR/cpu/index.html` is
+a Tachyon flame graph or a pyinstrument call tree; with `memray`,
+`DIR/memory/` holds an allocation flame graph per benchmark.
 For a cross-engine memory/CPU comparison, run each suite separately with its own artifact paths and compare the result files; see {doc}`ab-comparison`.
 
 ## `mew list` (alias `ls`)

@@ -588,11 +588,11 @@ def test_compare_counter_in_a_0_2_0_mapping(tmp_path: Path) -> None:
 def test_compare_memory_metric_without_data_hints_profile_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A memory metric on results without memory data exits 1 and points to `--profile-memory`."""
+    """A memory metric on results without memory data exits 1 and points to `--memory-profiler memray`."""
     other, base = _write_pair(tmp_path, other=[_row("bench_x", 1.0)], base=[_row("bench_x", 1.0)])
     code = compare([other, base], metric="memory.peak_bytes", console=Console())
     assert code == 1
-    assert "--profile-memory" in capsys.readouterr().err
+    assert "--memory-profiler memray" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

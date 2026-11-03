@@ -10,7 +10,7 @@ import re
 import sys
 import traceback
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import mew.config as _config
@@ -25,6 +25,7 @@ from mew import (
     __version__ as _mew_version,
     _completions,
     _discovery,
+    _managers,
     run as _run,
 )
 from mew._console import Table, Terminal, color_enabled, sgr
@@ -38,6 +39,7 @@ from mew._options import (
 from mew._registry import compile_name_filter, longest_row_name, selected_cases
 from mew._results import load_session, result_format, session_summaries, split_selector
 from mew._statistics import resolve_statistic
+from mew.context import set_context
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -272,11 +274,9 @@ def run(
     append: bool,
     strict: bool,
     capture: str,
-    profile_memory: bool,
+    cpu_profiler: str | None,
+    memory_profiler: str | None,
     memory_iterations: int | None,
-    sample: bool,
-    sample_interval: float,
-    sampler: str,
     profile_dir: Path | None,
 ) -> None:
     """Discover and run benchmarks."""
@@ -285,11 +285,11 @@ def run(
     if session_tag is not None:
         with _usage_error("run", TypeError, ValueError):
             check_session_tag(session_tag)
-    if profile_dir is not None and not (sample or profile_memory):
-        print("mew run: --profile-dir needs --sample or --profile-memory", file=sys.stderr)
+    if profile_dir is not None and cpu_profiler is None and memory_profiler is None:
+        print("mew run: --profile-dir needs --cpu-profiler or --memory-profiler", file=sys.stderr)
         raise SystemExit(2)
     cfg = _load_config_or_exit()
-    with _discovery.discovered():
+    with _discovery.discovered(), ExitStack() as stack:
         entries = _collect(
             paths,
             cfg=cfg,
@@ -303,31 +303,31 @@ def run(
             # Here rather than in mew.run, so it exits 2 like a profiler that can't run.
             with _usage_error("run", RuntimeError):
                 check_strict(entries)
-        profiler_manager = None
-        if sample:
-            from mew import cpu as _cpu
-
-            # A sampler that can't run here, or a bad setting for it.
-            with _usage_error("run", ImportError, RuntimeError, ValueError):
-                profiler_manager = _cpu.manager(interval=sample_interval, sampler=sampler)
+        # A bad preset, or a manager that can't run here, such as a sampler
+        # without its package or a bad setting for it.
+        with _usage_error("run", ImportError, RuntimeError, ValueError):
+            managers = _managers.load_all(
+                {"cpu": cpu_profiler, "memory": memory_profiler},
+                cfg.profilers,
+                root=cfg.project_root or Path.cwd(),
+                stack=stack,
+            )
+        profiler_manager = managers["cpu"].manager if "cpu" in managers else None
+        memory_manager = managers["memory"].manager if "memory" in managers else None
+        if managers:
+            # Provenance, as the machine's: `mew compare` shows where files differ.
+            set_context("profilers", {slot: m.record for slot, m in managers.items()})
 
         with _usage_error("run", ValueError):
             reporters = _build_reporters(
                 output,
                 stdout_format=format,
-                show_memory=profile_memory,
-                show_cpu=sample,
+                show_memory=memory_manager is not None,
+                show_cpu=profiler_manager is not None,
                 name_width=longest_row_name(entries),
                 show_repetitions=not summary_only,
                 append=append,
             )
-
-        memory_manager = None
-        if profile_memory:
-            from mew import memory as _memory
-
-            with _usage_error("run", ImportError, RuntimeError):
-                memory_manager = _memory.manager()
 
         _run(
             entries,
@@ -347,10 +347,10 @@ def run(
         # The outputs render from what the run already recorded, so none
         # re-executes the suite.
         if profile_dir is not None:
-            if profiler_manager is not None:
-                profiler_manager.write_outputs(profile_dir / "profiler")
-            if memory_manager is not None:
-                memory_manager.write_outputs(profile_dir / "memory")
+            for slot, m in managers.items():
+                # Optional, as the run's own hooks are: a manager needn't subclass the protocol.
+                if (write := getattr(m.manager, "write_outputs", None)) is not None:
+                    write(profile_dir / slot)
 
 
 def compare(
@@ -680,9 +680,16 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         help="Print benchmark stdout/stderr after the run (fd, default), or live (no).",
     )
     p.add_argument(
-        "--profile-memory",
-        action="store_true",
-        help="Profile memory allocations with memray.",
+        "--cpu-profiler",
+        metavar="<preset>",
+        help="Profile CPU time in an extra, untimed pass with <preset> from "
+        "[tool.mew.profilers], the built-in 'sample', or a module:Class spec.",
+    )
+    p.add_argument(
+        "--memory-profiler",
+        metavar="<preset>",
+        help="Profile memory in an extra, untimed pass with <preset> from "
+        "[tool.mew.profilers], the built-in 'memray', or a module:Class spec.",
     )
     p.add_argument(
         "--memory-iterations",
@@ -691,30 +698,10 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         help="Run at most <n> iterations under the memory profiler (default 16).",
     )
     p.add_argument(
-        "--sample",
-        action="store_true",
-        help="Sample Python CPU usage (see --sampler).",
-    )
-    p.add_argument(
-        "--sampler",
-        choices=("auto", "tachyon", "pyinstrument"),
-        default="auto",
-        help="Set the CPU sampler: tachyon (Python 3.15+), pyinstrument, or auto "
-        "(default: tachyon on 3.15+, else pyinstrument).",
-    )
-    p.add_argument(
-        "--sample-interval",
-        # mew.cpu checks the range, as for the Python API.
-        type=float,
-        default=1e-4,
-        metavar="<seconds>",
-        help="Set the sampling interval (default 1e-4).",
-    )
-    p.add_argument(
         "--profile-dir",
         type=Path,
         metavar="<dir>",
-        help="Write the profilers' reports to <dir>/profiler and <dir>/memory.",
+        help="Write the profilers' reports to <dir>/cpu and <dir>/memory.",
     )
     p.set_defaults(_func=run)
 

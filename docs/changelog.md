@@ -8,6 +8,15 @@ change between minor releases.
 
 ### Added
 
+- Profiler presets: a `[tool.mew.profilers.<name>]` table names a manager
+  class, `module:Class` or `path.py:Class`, and the keyword arguments to
+  construct it with. `mew run --cpu-profiler <name>` runs it as the profiler
+  manager, `--memory-profiler <name>` as the memory manager: Google Benchmark
+  runs one of each, so each flag takes one value. Both also take a class spec
+  directly, and reject a class without their slot's methods, naming the flag
+  it fits. A context manager is entered for the run. Rows record the preset, the class that ran and its options in
+  `context.profilers`, so `mew compare` shows where files differ.
+
 - `mew show FILE[@tag]` prints a result file's newest session, or a tagged
   one, as `mew run` printed it, with `-k/-F` filters and `--summary-only`.
 
@@ -40,12 +49,19 @@ change between minor releases.
   `@parametrize` case, whose index mew now binds directly. A case's raw `name`
   drops its `/case:N` part; its `benchmark` is unchanged.
 - `mew run --profile-dir DIR` replaces `--sample-html FILE` and
-  `--flamegraph DIR`: the CPU report goes to `DIR/profiler/index.html`, the
-  memory flame graphs to `DIR/memory/`. It needs `--sample` or
-  `--profile-memory`, which it no longer implies. It calls the new
+  `--flamegraph DIR`: the CPU report goes to `DIR/cpu/index.html`, the
+  memory flame graphs to `DIR/memory/`. It needs `--cpu-profiler` or
+  `--memory-profiler`, and unlike the
+  two flags doesn't turn profiling on by itself. It calls the new
   `write_outputs(directory)` method of `mew.MemoryManager` and
   `mew.ProfilerManager`, so a custom manager can write files of its own; a
   subclass of either protocol inherits a no-op.
+- `mew run --cpu-profiler <preset>` replaces `--sample`, `--sampler` and
+  `--sample-interval`: `--cpu-profiler sample` samples CPU usage as `--sample`
+  did. `--memory-profiler <preset>` replaces `--profile-memory`:
+  `--memory-profiler memray` profiles memory. Choose a sampler by its class,
+  `--cpu-profiler mew.cpu:PyinstrumentManager`, and set its interval in a
+  preset.
 - `mew.ProfilerResultProvider` and `mew.PausableProfiler` are gone:
   `get_result()`, `pause()` and `resume()` are methods of `mew.ProfilerManager`,
   and a subclass inherits defaults that do nothing (`get_result()` returns
@@ -63,8 +79,6 @@ change between minor releases.
 - `mew run -o stdout` is gone; `-o -` is standard output. `--append` without a
   `.jsonl` sink, or with a `.json` one, fails with one message, and two `-o`
   sinks for one file are an error.
-- `--sample-interval` and `--sample-top-k` are range-checked by `mew.cpu`, as
-  from Python, so an invalid value fails once the benchmarks are discovered.
 - `[tool.mew] capture` is gone: `--capture` defaults to `fd`, and a project
   that wants `no` sets it where it invokes mew, as pytest's `-s` is.
 - `mew compare` no longer notes that files declare different time units; it
@@ -80,7 +94,7 @@ change between minor releases.
   directory.
 - `mew run --sample-top-k` is gone: rows list the five hottest instructions.
   The count is a setting of the Tachyon sampler, so it stays as `top_k=` on
-  `mew.cpu.manager()` and `TachyonManager()`.
+  `mew.cpu.manager()` and `TachyonManager()`, and as `top-k` in a preset.
 - On a GIL build, threaded benchmarks are left out of the run with a warning,
   as before, but no longer get a skipped row in the results. `--strict` still
   raises instead.

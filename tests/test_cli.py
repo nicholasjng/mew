@@ -455,9 +455,9 @@ _ALLOCATING = """
 _SAMPLED_ITERATIONS = "200x"
 
 
-def test_run_profile_memory_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
-    """`--profile-dir` with `--profile-memory` writes a memray report per benchmark to
-    `<dir>/memory`, and the rows and console table show peak memory."""
+def test_run_profile_memray_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
+    """`--memory-profiler memray --profile-dir` writes a memray report per benchmark to `<dir>/memory`,
+    and the rows and console table show peak memory."""
     pytest.importorskip("memray")
     from mew._format import fmt_bytes
 
@@ -468,7 +468,8 @@ def test_run_profile_memory_renders_the_run_and_annotates_rows(mew_cli, tmp_path
         "bench_profiled.py",
         "--min-time",
         "20x",
-        "--profile-memory",
+        "--memory-profiler",
+        "memray",
         "--profile-dir",
         str(reports),
         "-o",
@@ -480,7 +481,7 @@ def test_run_profile_memory_renders_the_run_and_annotates_rows(mew_cli, tmp_path
     assert res.returncode == 0, res.stderr
     # Numbered in run order, named after the function; the header names the benchmark.
     assert "bench_profiled.py::bench_hot" in (reports / "memory" / "0-bench_hot.html").read_text()
-    assert not (reports / "profiler").exists()
+    assert not (reports / "cpu").exists()
     # The row carries the profile, and the console table shows it.
     (row,) = json.loads(out.read_text())["benchmarks"]
     assert row["memory"]["peak_bytes"] >= 1 << 20  # the loop's 1 MiB buffer
@@ -492,21 +493,25 @@ def test_run_profile_memory_renders_the_run_and_annotates_rows(mew_cli, tmp_path
     reason="pyinstrument's native sampler enables the GIL",
 )
 def test_run_sample_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
-    """`--profile-dir` with `--sample` writes a CPU profile report to `<dir>/profiler`, and the
-    rows and console table show the hottest function."""
+    """A preset from `[tool.mew.profilers]` samples the run: `--profile-dir` gets its report in
+    `<dir>/cpu`, the rows and console table the hottest function, and the context the
+    preset that ran."""
     pytest.importorskip("profiling.sampling" if sys.version_info >= (3, 15) else "pyinstrument")
     from mew.cpu import reads_instructions
 
     (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_SAMPLED))
+    sampler = "TachyonManager" if sys.version_info >= (3, 15) else "PyinstrumentManager"
+    (tmp_path / "pyproject.toml").write_text(
+        f'[tool.mew.profilers.fine]\nclass = "mew.cpu:{sampler}"\ninterval = 1e-5\n'
+    )
     reports, out = tmp_path / "profiles", tmp_path / "rows.json"
     res = mew_cli(
         "run",
         "bench_profiled.py",
         "--min-time",
         _SAMPLED_ITERATIONS,
-        "--sample-interval",
-        "1e-5",
-        "--sample",
+        "--cpu-profiler",
+        "fine",
         "--profile-dir",
         str(reports),
         "-o",
@@ -516,7 +521,7 @@ def test_run_sample_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
         cwd=tmp_path,
     )
     assert res.returncode == 0, res.stderr
-    assert "bench_hot" in (reports / "profiler" / "index.html").read_text()
+    assert "bench_hot" in (reports / "cpu" / "index.html").read_text()
     # The row carries the profile, and the console table shows it.
     (row,) = json.loads(out.read_text())["benchmarks"]
     top = row["cpu_profile"]["top_function"]
@@ -525,35 +530,109 @@ def test_run_sample_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     instructions = row["cpu_profile"]["top_instructions"]
     assert bool(instructions) is reads_instructions()
     assert len(instructions) <= 5
+    assert row["context"]["profilers"] == {
+        "cpu": {"preset": "fine", "class": f"mew.cpu:{sampler}", "options": {"interval": 1e-5}}
+    }
 
 
 def test_run_profile_dir_needs_a_profiler(mew_cli, benchdir, tmp_path):
     """`--profile-dir` alone exits 2 before running anything: no manager would write to it."""
     res = mew_cli("run", str(benchdir), "--profile-dir", str(tmp_path / "out"), cwd=tmp_path)
     assert res.returncode == 2
-    assert "--profile-dir needs --sample or --profile-memory" in res.stderr
+    assert "--profile-dir needs --cpu-profiler or --memory-profiler" in res.stderr
     assert not (tmp_path / "out").exists()
+
+
+_USER_MEMORY_MANAGER = """
+import mew
+
+class Fixed(mew.MemoryManager):
+    def __init__(self, peak, *, tag):
+        self.peak, self.tag, self.passes = peak, tag, 0
+
+    def start(self):
+        pass
+
+    def stop(self):
+        self.passes += 1
+        return {"peak_bytes": self.peak, "total_allocations": 1}
+
+    def write_outputs(self, directory):
+        directory.mkdir(parents=True)
+        (directory / "passes.txt").write_text(f"{self.tag}:{self.passes}")
+"""
+
+
+def test_run_profiles_with_a_user_preset(mew_cli, benchdir, tmp_path):
+    """A project's preset fills the rows' memory block, the context records it, and
+    `--profile-dir` gets the files of the manager that ran."""
+    (tmp_path / "profilers.py").write_text(_USER_MEMORY_MANAGER)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.mew.profilers.fixed]\nclass = "profilers.py:Fixed"\npeak = 42\ntag = "hi"\n'
+    )
+    out, profiles = tmp_path / "rows.json", tmp_path / "profiles"
+    res = mew_cli(
+        "run", str(benchdir), "-k", "bench_one", "--min-time", "2x", "--memory-profiler", "fixed",
+        "--profile-dir", str(profiles), "-o", str(out), cwd=tmp_path,
+    )  # fmt: skip
+    assert res.returncode == 0, res.stderr
+    (row,) = json.loads(out.read_text())["benchmarks"]
+    assert row["memory"]["peak_bytes"] == 42
+    record = {
+        "preset": "fixed",
+        "class": "profilers.py:Fixed",
+        "options": {"peak": 42, "tag": "hi"},
+    }
+    assert row["context"]["profilers"] == {"memory": record}
+    assert (profiles / "memory" / "passes.txt").read_text() == "hi:1"
+
+
+def test_run_profile_dir_skips_a_manager_without_write_outputs(mew_cli, benchdir, tmp_path):
+    """A manager needn't subclass the protocol: without write_outputs, `--profile-dir` writes
+    nothing for it and the run still succeeds."""
+    (tmp_path / "prof.py").write_text(
+        "class Prof:\n"
+        "    def after_setup_start(self): ...\n"
+        "    def before_teardown_stop(self): ...\n"
+    )
+    profiles = tmp_path / "profiles"
+    res = mew_cli(
+        "run", str(benchdir), "-k", "bench_one", "--min-time", "2x", "--cpu-profiler",
+        "prof.py:Prof",
+        "--profile-dir", str(profiles), cwd=tmp_path,
+    )  # fmt: skip
+    assert res.returncode == 0, res.stderr
+    assert not (profiles / "cpu").exists()
+
+
+def test_run_exits_2_on_a_missing_option(mew_cli, benchdir, tmp_path):
+    """A constructor's TypeError, here a required option the preset leaves out, is a usage error."""
+    (tmp_path / "profilers.py").write_text(_USER_MEMORY_MANAGER)
+    res = mew_cli("run", str(benchdir), "--memory-profiler", "profilers.py:Fixed", cwd=tmp_path)
+    assert res.returncode == 2
+    assert "mew run: profilers.py:Fixed: " in res.stderr
+    assert "Traceback" not in res.stderr
 
 
 @pytest.mark.skipif(sys.version_info >= (3, 15), reason="Tachyon runs here")
 def test_run_rejects_tachyon_before_python_3_15(mew_cli, benchdir, tmp_path):
-    """`--sampler tachyon` exits 2 on Python versions before 3.15."""
-    res = mew_cli("run", str(benchdir), "--sample", "--sampler", "tachyon", cwd=tmp_path)
+    """Tachyon exits 2 on Python versions before 3.15."""
+    res = mew_cli("run", str(benchdir), "--cpu-profiler", "mew.cpu:TachyonManager", cwd=tmp_path)
     assert res.returncode == 2
     assert "mew run: Tachyon CPU sampling requires Python 3.15" in res.stderr
 
 
 @pytest.mark.parametrize(
-    ("flag", "factory", "error"),
+    ("flag", "preset", "factory", "error"),
     [
-        ("--sample", "mew.cpu.manager", RuntimeError),  # a sampler that can't run here
-        ("--sample", "mew.cpu.manager", ImportError),  # its package is missing
-        ("--sample", "mew.cpu.manager", ValueError),  # a bad setting for it
-        ("--profile-memory", "mew.memory.manager", ImportError),
+        ("--cpu-profiler", "sample", "mew.cpu.manager", RuntimeError),  # can't run here
+        ("--cpu-profiler", "sample", "mew.cpu.manager", ImportError),  # its package is missing
+        ("--cpu-profiler", "sample", "mew.cpu.manager", ValueError),  # a bad setting for it
+        ("--memory-profiler", "memray", "mew.memory.manager", ImportError),
     ],
 )
 def test_run_unusable_profiler_exits_2(
-    mew_cli, benchdir, tmp_path, monkeypatch, flag, factory, error
+    mew_cli, benchdir, tmp_path, monkeypatch, flag, preset, factory, error
 ):
     """A sampler or memory profiler that fails to set up exits 2 with its error before any run."""
 
@@ -562,7 +641,7 @@ def test_run_unusable_profiler_exits_2(
         raise error("unusable here")
 
     monkeypatch.setattr(factory, unusable)
-    res = mew_cli("run", str(benchdir), flag, cwd=tmp_path)
+    res = mew_cli("run", str(benchdir), flag, preset, cwd=tmp_path)
     assert (res.returncode, res.stdout, res.stderr) == (2, "", "mew run: unusable here\n")
 
 
@@ -581,9 +660,8 @@ def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
         "bench_profiled.py",
         "--min-time",
         "1x",  # a row gets a profile, sampled or not
-        "--sample",
-        "--sampler",
-        "pyinstrument",
+        "--cpu-profiler",
+        "mew.cpu:PyinstrumentManager",
         "-o",
         str(out),
         cwd=tmp_path,

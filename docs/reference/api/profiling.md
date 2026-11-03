@@ -6,6 +6,16 @@ benchmark body per repetition, and the resulting figures are stamped onto that
 repetition's `Run`. Reporters see them as the `memory` and `cpu_profile` blocks of
 a {class}`mew.BenchmarkResult`.
 
+`mew run --cpu-profiler` and `--memory-profiler` load a manager by preset or
+class spec (see {doc}`../../guide/configuration`), construct it with the
+preset's options as keyword arguments, and enter it for the run if it is a
+context manager. Each flag fills one of Google Benchmark's slots, and checks
+that the class has its methods: `after_setup_start()` and
+`before_teardown_stop()` for `--cpu-profiler` (a profiler manager), `start()`
+and `stop()` for `--memory-profiler` (a memory manager). They must be defined
+on the class, not through `__getattr__`. From Python, pass managers to
+{func}`mew.run` as `profiler_manager=` and `memory_manager=`.
+
 Custom managers implement the {class}`mew.MemoryManager` or
 {class}`mew.ProfilerManager` protocol. Only starting and stopping are
 required: a subclass of a protocol inherits the other hooks, which do nothing,
@@ -25,9 +35,8 @@ type checkers expect every method of the protocol.
   `before_teardown_stop()`, so a manager never stops while paused.
 
 - `write_outputs(directory)` writes a manager's files, such as HTML reports,
-  after the run; `mew run --profile-dir DIR` passes `DIR/profiler` and
-  `DIR/memory`. mew's
-  samplers write their passes as one HTML report, `index.html`, and
+  after the run; `mew run --profile-dir DIR` passes `DIR/cpu` and
+  `DIR/memory`. mew's samplers write their passes as one HTML report, `index.html`, and
   `MemrayManager` a flame graph per benchmark.
 
 A sampler's pass that caught no sample still gets a {class}`mew.cpu.CpuProfile`,

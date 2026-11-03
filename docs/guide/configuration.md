@@ -29,8 +29,42 @@ mew: invalid config: /path/to/project/pyproject.toml: unknown key 'benchpath' in
 ```
 
 An invalid `statistic` also stops `mew run`, not only `mew compare`, and so
-does an error in `[tool.mew.regressions]` or its allowlist rules, or in
-`[[tool.mew.counters]]` (see {doc}`regressions`).
+does an error in `[tool.mew.regressions]` or its allowlist rules, in
+`[[tool.mew.counters]]` (see {doc}`regressions`), or in a profiler preset.
+
+## Profiler presets
+
+A `[tool.mew.profilers.<name>]` table is a preset that `mew run --cpu-profiler <name>`
+or `--memory-profiler <name>` runs. Its `class` names the manager as `module:Class`, or as `path.py:Class`
+relative to this `pyproject.toml`; every other key is a keyword argument for
+the class, dashes turned into underscores.
+
+```toml
+[tool.mew.profilers.fine]
+class = "mew.cpu:TachyonManager"
+interval = 1e-5
+top-k = 10
+
+[tool.mew.profilers.counters]
+class = "benchmarks/profilers.py:PerfCounters"
+events = ["instructions", "cycles"]
+```
+
+```console
+$ mew run --cpu-profiler fine --memory-profiler memray
+```
+
+- A preset can't be named after a built-in, `sample` or `memray`, and its name
+  takes letters, digits, `-` and `_`.
+- An option the class doesn't take stops the run with exit code 2 and the
+  closest option name, before any benchmark runs.
+- `func` is reserved for a later release, which may let a function choose the
+  class; use a class that picks an implementation in `__init__` until then.
+- The class's methods make it a memory manager or a profiler manager; a run
+  takes one of each. See {doc}`../reference/api/profiling` for the contract.
+- Every row records what ran in its context, as
+  `profilers.<profiler|memory> = {preset, class, options}`, so `mew compare`
+  shows where two files differ.
 
 ## Where measurement settings live
 
