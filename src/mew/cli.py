@@ -407,6 +407,7 @@ def compare(
             show_stddev=stddev,
             statistic=reduce,
             regressions=gate,
+            counters=cfg.counters,
         )
     # The regression panel is informational unless the caller opted into gating;
     # a `no overlap` (1) exit still propagates as-is.
@@ -743,7 +744,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         "-m",
         "--metric",
         default="real_time",
-        help="Compare using <metric> (default real_time).",
+        help="Compare using <metric> (default real_time), or the counter counters.<name>.",
     )
     p.add_argument(
         "--key",

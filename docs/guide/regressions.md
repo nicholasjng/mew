@@ -28,6 +28,36 @@ $ mew compare -m memory.allocations_per_iteration ducky.jsonl duckdb.jsonl
 Use `memory.allocations_per_iteration` across runs because total allocations
 depend on the memory-pass iteration count. `peak_bytes` is comparable as-is.
 
+`counters.<name>` compares a counter that benchmarks set with
+`state.set_counter()`, `set_items_processed()` or `set_bytes_processed()`:
+
+```console
+$ mew compare -m counters.items_per_second head.json baseline.json
+$ mew compare -m counters.tlb_misses --regression-threshold 5% head.json baseline.json
+```
+
+Which direction is an improvement comes from `[[tool.mew.counters]]` rules in
+`pyproject.toml`. Each rule has a `pattern`, which matches counter names as
+allowlist patterns match benchmark names, with `*` and `?` as wildcards, and a
+`higher-is-better`. The first matching rule applies:
+
+```toml
+[[tool.mew.counters]]
+pattern = "l1_misses"
+higher-is-better = true  # ahead of the family rule below
+
+[[tool.mew.counters]]
+pattern = "*_misses"
+higher-is-better = false
+```
+
+`items_per_second` and `bytes_per_second`, from `set_items_processed()` and
+`set_bytes_processed()`, are higher-is-better unless a rule says otherwise. A
+counter no rule matches, such as an input size, has no direction: it compares
+as a plain ratio, its delta neither good nor bad, and gating on it fails: a gate that skipped it would pass without checking
+anything. As in every mew table, an unknown key in a rule is an error.
+Benchmarks without the counter are left out.
+
 ## Matching benchmarks across suites
 
 The default key is the full registered name (`file.py::func`).

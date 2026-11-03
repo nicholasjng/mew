@@ -15,7 +15,7 @@ void mew_set_pending_abort(std::exception_ptr p) {
 
 bool mew_abort_pending() {
     std::lock_guard<std::mutex> lock(g_mutex);
-    return static_cast<bool>(g_pending);
+    return (bool)(g_pending);
 }
 
 std::exception_ptr mew_take_pending_abort() {

@@ -53,6 +53,15 @@ MEMORY_METRICS = frozenset(
 METRICS = frozenset({"real_time", "cpu_time", "iterations"}) | MEMORY_METRICS
 
 
+def counter_name(metric: str) -> str | None:
+    """The counter a ``counters.<name>`` metric names; ``None`` for any other metric.
+
+    ``<name>`` may itself contain dots.
+    """
+    head, _, tail = metric.partition(".")
+    return tail if head == "counters" and tail else None
+
+
 @dataclass(frozen=True, slots=True)
 class Sample:
     """One benchmark's measurement in one file, reduced over its repetitions.
@@ -70,6 +79,10 @@ class Sample:
         ``None`` for the other metrics, which are counts or bytes.
     values : tuple[float, ...]
         The per-repetition values, in ``value``'s unit, for the significance test.
+    counter_format : dict or None
+        For a ``counters.<name>`` metric, the counter's ``format`` record from
+        the benchmark's first row that has the counter, if any; ``None`` for a
+        plain counter and for other metrics.
     """
 
     name: str
@@ -77,6 +90,7 @@ class Sample:
     stddev: float | None
     time_unit: str | None
     values: tuple[float, ...] = ()
+    counter_format: dict[str, Any] | None = None
 
     @property
     def cv(self) -> float | None:
@@ -159,13 +173,29 @@ def _session_block(row: dict[str, Any]) -> dict[str, Any]:
     return block if isinstance(block, dict) else {}
 
 
+def _counter(row: dict[str, Any], name: str) -> dict[str, Any] | None:
+    """The row's counter record named ``name``, if it has one."""
+    counters = row.get("counters")
+    if isinstance(counters, list):
+        return next((c for c in counters if isinstance(c, dict) and c.get("name") == name), None)
+    return None
+
+
 def _metric_value(row: dict[str, Any], metric: str) -> Any:
-    """Look up ``metric`` in a row; dotted metrics traverse one nested level."""
+    """Look up ``metric`` in a row; dotted metrics traverse one nested level.
+
+    Counters are a list of ``{"name", "value"}`` records, so a counter is found
+    by name; a 0.2.0 archive's name-to-value mapping takes the dict path.
+    """
     head, sep, tail = metric.partition(".")
     value = row.get(head)
     if not sep:
         return value
-    return value.get(tail) if isinstance(value, dict) else None
+    if isinstance(value, dict):
+        return value.get(tail)
+    if head == "counters" and (counter := _counter(row, tail)) is not None:
+        return counter.get("value")
+    return None
 
 
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
@@ -238,10 +268,15 @@ def _samples_from_groups(
 ) -> dict[str, Sample]:
     """Aggregate per-name row groups into center/stddev :class:`Sample`s."""
     samples: dict[str, Sample] = {}
+    counter = counter_name(metric)
     for name, group in groups.items():
         values = _metric_values(group, metric)
         if not values:
             continue
+        fmt = None
+        if counter is not None:
+            # From the first row that has the counter: flags don't change between repetitions.
+            fmt = next((r.get("format") for g in group if (r := _counter(g, counter))), None)
         try:
             center, stddev = _aggregate_values(values, statistic)
         except statistics.StatisticsError as e:
@@ -253,6 +288,7 @@ def _samples_from_groups(
             stddev=stddev,
             time_unit=group[0].get("time_unit") if metric in TIME_METRICS else None,
             values=tuple(values),
+            counter_format=fmt,
         )
     return samples
 

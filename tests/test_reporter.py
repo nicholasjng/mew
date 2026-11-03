@@ -12,8 +12,9 @@ from _helpers import Capture
 import mew
 from mew import BenchmarkResult
 from mew._console import Terminal
+from mew._format import human_readable
 from mew.compare import read_results
-from mew.reporter import Fanout, JSONLReporter, JSONReporter, RichReporter, _human_readable
+from mew.reporter import Fanout, JSONLReporter, JSONReporter, RichReporter
 
 
 def _run_one(reporter):
@@ -441,7 +442,7 @@ def test_rich_reporter_prints_no_summary_without_repetitions():
 )
 def test_human_readable_matches_google_benchmark(value, one_k, exponent, expected):
     """Expected strings are Google Benchmark's own `HumanReadableNumber` output."""
-    assert _human_readable(value, one_k, exponent) == expected
+    assert human_readable(value, one_k, exponent) == expected
 
 
 def test_counters_carry_a_format_only_when_they_need_one():

@@ -33,8 +33,8 @@ mew: invalid config: /path/to/project/pyproject.toml: unknown key 'benchpath' in
 ```
 
 An invalid `statistic` also stops `mew run`, not only `mew compare`, and so
-does an error in `[tool.mew.regressions]` or its allowlist rules (see
-{doc}`regressions`).
+does an error in `[tool.mew.regressions]` or its allowlist rules, or in
+`[[tool.mew.counters]]` (see {doc}`regressions`).
 
 ## Where measurement settings live
 

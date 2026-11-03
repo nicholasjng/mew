@@ -9,13 +9,21 @@ from pathlib import Path
 from typing import Any, cast
 
 from mew._statistics import resolve_statistic
-from mew.regressions import AllowRule, RegressionConfig
+from mew.regressions import AllowRule, CounterConfig, CounterRule, RegressionConfig
 
 #: The ``mew run --capture`` values, also accepted as ``[tool.mew] capture``.
 CAPTURE_MODES = ("fd", "no")
 
 # `[tool.mew]` keys.
-_KEYS = ("benchpaths", "python-files", "setup", "statistic", "capture", "regressions")
+_KEYS = (
+    "benchpaths",
+    "python-files",
+    "setup",
+    "statistic",
+    "capture",
+    "regressions",
+    "counters",
+)
 
 
 @dataclass(slots=True)
@@ -40,6 +48,9 @@ class Config:
         prints it after the run, ``"no"`` shows it live; ``None`` keeps ``"fd"``.
     regressions : RegressionConfig
         The ``[tool.mew.regressions]`` gate: default threshold and allowlist rules.
+    counters : CounterConfig
+        The ``[[tool.mew.counters]]`` rules: which direction is an improvement
+        per counter.
     project_root : Path or None
         Directory of the ``pyproject.toml`` these settings came from; ``None``
         when no file was found and defaults are in use.
@@ -51,6 +62,7 @@ class Config:
     statistic: str | None = None
     capture: str | None = None
     regressions: RegressionConfig = field(default_factory=RegressionConfig)
+    counters: CounterConfig = field(default_factory=CounterConfig)
     project_root: Path | None = None
 
 
@@ -134,6 +146,7 @@ def _parse_config(raw: Mapping[str, Any], *, project_root: Path) -> Config:
         setup=_parse_str(tool, "setup"),
         capture=_parse_str(tool, "capture"),
         regressions=_parse_regressions(tool.get("regressions", {})),
+        counters=_parse_counters(tool.get("counters", [])),
         project_root=project_root,
     )
     if cfg.capture not in (None, *CAPTURE_MODES):
@@ -164,6 +177,28 @@ def _parse_regressions(raw: Any) -> RegressionConfig:
     if (threshold := table.get("default_threshold")) is None:
         return RegressionConfig(rules=rules)
     return RegressionConfig(default_threshold=threshold, rules=rules)
+
+
+def _parse_counters(raw: Any) -> CounterConfig:
+    """Validate the ``[[tool.mew.counters]]`` array into a :class:`CounterConfig`."""
+    if not isinstance(raw, list) or not all(isinstance(r, dict) for r in raw):
+        raise ValueError("[tool.mew] counters must be an array of tables")
+    return CounterConfig(rules=tuple(_parse_counter_rule(r) for r in raw))
+
+
+def _parse_counter_rule(raw: Mapping[str, Any]) -> CounterRule:
+    """Validate one ``[[tool.mew.counters]]`` table into a :class:`CounterRule`."""
+    rule = _read_table(raw, ("pattern", "higher-is-better"), "[[tool.mew.counters]]")
+    pattern = rule.get("pattern")
+    if not isinstance(pattern, str) or not pattern:
+        raise ValueError("counter rule missing 'pattern'")
+    if "higher_is_better" not in rule:
+        # A rule's purpose is the direction; a counter without one needs no rule.
+        raise ValueError(f"counter rule {pattern!r}: 'higher-is-better' is required")
+    try:
+        return CounterRule(pattern, cast(bool, rule["higher_is_better"]))
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"counter rule {pattern!r}: {e}") from e
 
 
 def _parse_allow_rule(raw: Mapping[str, Any]) -> AllowRule:

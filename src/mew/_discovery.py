@@ -13,6 +13,7 @@ from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 from mew._registry import Entry, compile_name_filter, narrow_entry
 
@@ -113,14 +114,17 @@ def collect_files(
     return list(out)
 
 
-def import_file(path: Path) -> None:
-    """Import a benchmark file, allowing imports from its parent directory."""
+def import_file(path: Path) -> ModuleType:
+    """Import a benchmark file, allowing imports from its parent directory.
+
+    Returns the module, also when an earlier call already imported it.
+    """
     # Name by path hash so same-named files in different directories don't collide.
     resolved = path.resolve()
     digest = hashlib.sha1(str(resolved).encode()).hexdigest()[:16]
     mod_name = f"mew._bench_{digest}"
     if mod_name in sys.modules:
-        return
+        return sys.modules[mod_name]
     parent = str(resolved.parent)
     if parent not in sys.path:
         sys.path.insert(0, parent)
@@ -136,6 +140,7 @@ def import_file(path: Path) -> None:
         sys.modules.pop(mod_name, None)
         raise
     _loaded_modules.append(mod_name)
+    return module
 
 
 @contextmanager

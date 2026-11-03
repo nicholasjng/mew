@@ -6,6 +6,20 @@ change between minor releases.
 
 ## Unreleased
 
+### Added
+
+- `mew compare -m counters.<name>` (`compare(metric="counters.<name>")`)
+  compares a counter, such as `counters.items_per_second`, and gates on it.
+  Values show as the console shows counters (`1.2Gi/s`), under a `ratio`
+  column. `mew.compare.Sample` gains `counter_format`, the counter's `format`.
+- `[[tool.mew.counters]]` rules give counters a direction for `mew compare` and
+  its gate: a `pattern` (a name, or one with `*` and `?` wildcards) and
+  `higher-is-better`, where the first matching rule applies
+  (`compare(counters=mew.regressions.CounterConfig(rules=(CounterRule(...),)))`).
+  `items_per_second` and `bytes_per_second` are higher-is-better unless a rule
+  says otherwise. A counter without a direction compares as a plain ratio, its
+  delta neither good nor bad, and gating on it fails.
+
 ### Changed
 
 - The CLI no longer accepts abbreviated long options, such as `--rep` for

@@ -13,6 +13,8 @@ from mew.config import load
 from mew.regressions import (
     AllowRule,
     BenchmarkVerdict,
+    CounterConfig,
+    CounterRule,
     RegressionConfig,
     Verdict,
     render_panel,
@@ -201,3 +203,27 @@ def test_compare_iterations_metric_regression(
     err = capsys.readouterr().err
     # Display the raw signed delta; only evaluate() flips it for higher-is-better.
     assert "-20.00%" in err
+
+
+_COUNTER_RULES = CounterConfig(
+    rules=(
+        CounterRule("l1_misses", True),
+        CounterRule("*_misses", False),
+        CounterRule("*_hits", True),
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("l1_misses", True),  # a specific rule ahead of its family's
+        ("tlb_misses", False),
+        ("cache_hits", True),
+        ("items_per_second", True),  # a throughput, without a rule
+        ("input_size", None),  # no rule: no direction
+    ],
+)
+def test_counter_rules_apply_in_order(name: str, expected: bool | None) -> None:
+    """The first matching rule gives a counter its direction."""
+    assert _COUNTER_RULES.direction(name) is expected

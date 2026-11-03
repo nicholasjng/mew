@@ -4,6 +4,7 @@ A *regression* is a benchmark whose delta against the baseline exceeds a thresho
 in the slower direction (larger for ``real_time`` / ``cpu_time``, smaller for
 ``iterations``). Per-benchmark allowlist rules can ignore a benchmark or raise its
 threshold, matched against the full name with ``*`` and ``?`` wildcards.
+Counter rules say which direction is an improvement for a counter.
 """
 
 from __future__ import annotations
@@ -30,6 +31,11 @@ class Verdict(Enum):
 
     IGNORED = "ignored"
     """Out-of-scope per a matching ``ignore=true`` rule. Listed to keep the allowlist visible."""
+
+
+def _matches(name: str, pattern: str) -> bool:
+    """Case-sensitive ``fnmatch``, with brackets matched literally, as in a case's ``[label]``."""
+    return fnmatch.fnmatchcase(name, pattern.replace("[", "[[]"))
 
 
 def _check_threshold(value: object, field: str) -> None:
@@ -90,8 +96,82 @@ class AllowRule:
         bool
             Whether the pattern matches ``name``.
         """
-        # Escape `[` so a case's `[label]` matches literally.
-        return fnmatch.fnmatchcase(name, self.pattern.replace("[", "[[]"))
+        return _matches(name, self.pattern)
+
+
+# Throughputs Google Benchmark sets from set_items_processed() and set_bytes_processed().
+_THROUGHPUTS = frozenset({"items_per_second", "bytes_per_second"})
+
+
+@dataclass(frozen=True, slots=True)
+class CounterRule:
+    """A ``[[tool.mew.counters]]`` rule: which direction is an improvement for matching counters.
+
+    Attributes
+    ----------
+    pattern : str
+        Pattern matched case-sensitively against a counter's name: ``*`` and
+        ``?`` are wildcards, and brackets match literally, as in :class:`AllowRule`.
+    higher_is_better : bool
+        Whether a larger value is an improvement, such as for a transfer rate,
+        or a smaller one, such as for a miss count. A counter no rule matches,
+        such as an input size, has no direction and can't be gated on.
+    """
+
+    pattern: str
+    higher_is_better: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.higher_is_better, bool):
+            raise TypeError("higher-is-better must be a boolean")
+
+    def matches(self, name: str) -> bool:
+        """Whether the counter ``name`` falls under this rule's pattern.
+
+        Parameters
+        ----------
+        name : str
+            A counter's name.
+
+        Returns
+        -------
+        bool
+            Whether the pattern matches ``name``.
+        """
+        return _matches(name, self.pattern)
+
+
+@dataclass(frozen=True, slots=True)
+class CounterConfig:
+    """Which direction is an improvement for which counter, for ``mew compare``.
+
+    ``[[tool.mew.counters]]`` configures it, as :attr:`mew.config.Config.counters`.
+
+    Attributes
+    ----------
+    rules : tuple[CounterRule, ...]
+        Rules in file order; the first match wins.
+    """
+
+    rules: tuple[CounterRule, ...] = ()
+
+    def direction(self, name: str) -> bool | None:
+        """Whether a larger value of the counter ``name`` is an improvement.
+
+        Parameters
+        ----------
+        name : str
+            A counter's name, e.g. ``"items_per_second"``.
+
+        Returns
+        -------
+        bool or None
+            The first matching rule's ``higher_is_better``. Without a match,
+            ``True`` for ``items_per_second`` and ``bytes_per_second``, else
+            ``None``.
+        """
+        default = True if name in _THROUGHPUTS else None
+        return next((r.higher_is_better for r in self.rules if r.matches(name)), default)
 
 
 @dataclass(frozen=True, slots=True)
