@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+import html
 import sys
 import tempfile
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from mew._typing import MemoryManager, MemoryMetrics
 from mew.machine import is_free_threaded_build
@@ -18,17 +19,51 @@ if TYPE_CHECKING:
 # A memray stack frame: ``(function, filename, lineno)``.
 Frame = tuple[str, str, int]
 
+# memray's flame graph page with a benchmark picker in its navbar. memray's
+# template environment doesn't autoescape, hence the explicit `|e`.
+_FLAMEGRAPH_TEMPLATE = """{% extends "flamegraph.html" %}
+{% block topbar_buttons %}
+<select class="custom-select custom-select-sm mr-3 w-auto" aria-label="Benchmark"
+        onchange="window.location.href = this.value">
+  {%- for file, name in benchmarks %}
+  <option value="{{ file|e }}"{% if file == current %} selected{% endif %}>{{ name|e }}</option>
+  {%- endfor %}
+</select>
+{{ super() }}
+{% endblock topbar_buttons %}
+"""
+
 # Free-threaded CPython serves object allocations from mimalloc, which never
 # reaches the system allocator memray hooks by default, so track them separately.
 _TRACE_PYTHON_ALLOCATORS = is_free_threaded_build()
 
 
+class Capture(NamedTuple):
+    """One memray capture: a benchmark's loop in one repetition of the memory pass.
+
+    Attributes
+    ----------
+    path : Path
+        The capture file.
+    root : tuple[str, str, int]
+        The benchmark body's frame, ``(function, file, line)``.
+    benchmark : str
+        The benchmark's registered name, ``file.py::func[label]``.
+    """
+
+    path: Path
+    root: Frame
+    benchmark: str
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _RootedRecord:
-    """A memray allocation record with the benchmark frame appended as its root.
+    """A memray allocation record with the benchmark body's frame appended as its root.
 
-    Tracking starts inside the benchmark body, so memray never sees the body's
-    own frame; the root lets a combined flame graph tell captures apart.
+    Tracking starts in the body's first loop step, so memray never records the
+    body's own frame: without the root, what the body allocates itself would sit
+    on the report's ``<tracker>`` root. memray's own records resolve their stack
+    through their file reader, so they can't take an extra frame.
     """
 
     size: int
@@ -61,9 +96,9 @@ class MemrayManager(MemoryManager):
         self._i = 0
         self._dest: Path | None = None
         self._tracker: Tracker | None = None
-        #: Accepted captures as ``(path, root_frame)``, one per (benchmark,
-        #: repetition), in run order. :meth:`write_flamegraph` renders them.
-        self.captures: list[tuple[Path, Frame]] = []
+        #: Accepted captures, one per (benchmark, repetition), in run order.
+        #: :meth:`write_outputs` renders them.
+        self.captures: list[Capture] = []
 
     def start(self) -> None:
         import memray
@@ -73,7 +108,11 @@ class MemrayManager(MemoryManager):
         # GB calls this from the body's first loop step, so the direct Python
         # caller is the benchmark body. Read before entering the tracker.
         body = sys._getframe(1)
-        self._root: Frame = (body.f_code.co_name, body.f_code.co_filename, body.f_lineno)
+        code = body.f_code
+        self._root: Frame = (code.co_name, code.co_filename, body.f_lineno)
+        # mew passes the State first, whatever the parameter's name.
+        state = body.f_locals.get(code.co_varnames[0]) if code.co_argcount else None
+        self._benchmark: str = getattr(state, "name", None) or code.co_name
         self._tracker = memray.Tracker(self._dest, trace_python_allocators=_TRACE_PYTHON_ALLOCATORS)
         self._tracker.__enter__()
 
@@ -90,25 +129,31 @@ class MemrayManager(MemoryManager):
         # so the optional `total_bytes` metric stays unset.
         with memray.FileReader(dest) as reader:
             meta = reader.metadata
-        self.captures.append((dest, self._root))
+        self.captures.append(Capture(dest, self._root, self._benchmark))
         return {
             "peak_bytes": meta.peak_memory,
             "total_allocations": meta.total_allocations,
         }
 
-    def write_flamegraph(self, path: Path) -> None:
-        """Render the captures as one HTML allocation flame graph.
+    def write_outputs(self, directory: Path) -> None:
+        """Write each benchmark's capture as an HTML allocation flame graph.
 
-        When nothing was captured, nothing is written and a warning goes to stderr.
+        The files are numbered in run order and named after the benchmark
+        function, e.g. ``0-bench_sort.html``, since a case label may hold
+        characters a file name can't. Each is memray's report with a picker
+        for the other benchmarks, by name, in its navbar; ``index.html`` opens
+        the first. A benchmark's further repetitions, which repeat its first,
+        are left out. When nothing was captured, nothing is written and a
+        warning goes to stderr.
 
         Parameters
         ----------
-        path : Path
-            Destination HTML file.
+        directory : Path
+            Where to write the reports; created if missing.
         """
         if not self.captures:
             print(
-                "warning: no memory captures recorded; skipping flame graph "
+                "warning: no memory captures recorded; skipping flame graphs "
                 "(did any benchmark body enter its timing loop?)",
                 file=sys.stderr,
             )
@@ -116,45 +161,57 @@ class MemrayManager(MemoryManager):
 
         import memray
         from memray.reporters.flamegraph import FlameGraphReporter
+        from memray.reporters.templates import get_render_environment
 
-        metas = []
-        records: list[_RootedRecord] = []
-        for capture, root in self.captures:
-            with memray.FileReader(capture) as reader:
-                metas.append(reader.metadata)
-                for rec in reader.get_high_watermark_allocation_records(merge_threads=True):
-                    records.append(
-                        _RootedRecord(
-                            size=rec.size,
-                            n_allocations=rec.n_allocations,
-                            tid=rec.tid,
-                            thread_name=rec.thread_name,
-                            stack=(*rec.stack_trace(), root),
-                        )
+        directory.mkdir(parents=True, exist_ok=True)
+        firsts: dict[str, Capture] = {}
+        for capture in self.captures:
+            firsts.setdefault(capture.benchmark, capture)
+        captures = list(firsts.values())
+        benchmarks = [(f"{i}-{c.root[0]}.html", c.benchmark) for i, c in enumerate(captures)]
+        template = get_render_environment().from_string(_FLAMEGRAPH_TEMPLATE)
+        for (name, benchmark), (path, root, _) in zip(benchmarks, captures, strict=True):
+            with memray.FileReader(path) as reader:
+                records = [
+                    _RootedRecord(
+                        size=rec.size,
+                        n_allocations=rec.n_allocations,
+                        tid=rec.tid,
+                        thread_name=rec.thread_name,
+                        stack=(*rec.stack_trace(), root),
                     )
-
-        # Process fields are shared; the figures must cover every capture.
-        metadata = dataclasses.replace(
-            metas[0],
-            start_time=min(m.start_time for m in metas),
-            end_time=max(m.end_time for m in metas),
-            total_allocations=sum(m.total_allocations for m in metas),
-            peak_memory=max(m.peak_memory for m in metas),
-        )
-        reporter = FlameGraphReporter.from_snapshot(
-            # Duck-typed stand-ins for AllocationRecord; see _RootedRecord.
-            cast("Any", records),
-            memory_records=(),
-            native_traces=False,
-        )
-        with path.open("w") as f:
-            reporter.render(
-                f,
+                    for rec in reader.get_high_watermark_allocation_records(merge_threads=True)
+                ]
+                reporter = FlameGraphReporter.from_snapshot(
+                    # Duck-typed stand-ins for AllocationRecord; see _RootedRecord.
+                    cast("Any", records),
+                    memory_records=tuple(reader.get_memory_snapshots()),
+                    native_traces=False,
+                )
+                # The header's command line names the benchmark instead.
+                metadata = dataclasses.replace(reader.metadata, command_line=benchmark)
+            # What FlameGraphReporter.render passes the template, plus the picker's.
+            page = template.render(
+                kind="flamegraph",
+                title="flamegraph report",
+                data=reporter.data,
                 metadata=metadata,
+                memory_records=reporter.memory_records,
                 show_memory_leaks=False,
                 merge_threads=True,
                 inverted=False,
+                no_web=False,
+                benchmarks=benchmarks,
+                current=name,
             )
+            (directory / name).write_text(page, encoding="utf-8")
+        first = html.escape(benchmarks[0][0])
+        (directory / "index.html").write_text(
+            f'<!doctype html>\n<meta charset="utf-8">\n'
+            f'<meta http-equiv="refresh" content="0; url={first}">\n'
+            f'<title>Memory flame graphs</title>\n<a href="{first}">Memory flame graphs</a>\n',
+            encoding="utf-8",
+        )
 
 
 def manager() -> MemrayManager:
