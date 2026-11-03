@@ -48,8 +48,8 @@ memory = [ "memray>=1.5; sys_platform != 'win32'" ]
 [dependency-groups]
 build = [
     "nanobind>=3.0",  # for creating clangd compilation databases.
-    "ruff>=0.15.12",  # for CMake's post-build stub formatting step.
-    "ty>=0.0.42",
+    "ruff>=0.17.0",  # for CMake's post-build stub formatting step.
+    "ty>=0.0.90",
 ]
 docs = [
     "sphinx >=8",
