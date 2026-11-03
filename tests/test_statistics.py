@@ -35,21 +35,16 @@ def test_statistic_replaces_the_median_but_not_the_stddev(tmp_path: Path) -> Non
         ("median", 2.0),
         ("mean", 4.0),
         ("gmean", 18.0 ** (1 / 3)),
-        # mew's percentile: min and max at the edges, numpy's linear
-        # interpolation between them (rank 0.9 * 2 = 1.8, so 2 + 0.8 * 7).
-        ("p0", 1.0),
-        ("p90", 7.6),
-        ("p100", 9.0),
     ],
 )
 def test_resolve_statistic_builtin_names(spec: str, expected: float) -> None:
-    """`resolve_statistic` resolves `min`, `max`, `median`, `mean`, `gmean` and `pN` percentiles."""
+    """`resolve_statistic` resolves `min`, `max`, `median`, `mean` and `gmean`."""
     assert resolve_statistic(spec)([1.0, 2.0, 9.0]) == pytest.approx(expected)
 
 
 def test_resolve_statistic_rejects_unknown_names() -> None:
     """`resolve_statistic` rejects every name that is not a built-in."""
     # Only the built-ins resolve: no stdlib fallback, no importable references.
-    for spec in ("stdev", "statistics:stdev", "numpy:median"):
+    for spec in ("stdev", "p95", "statistics:stdev", "numpy:median"):
         with pytest.raises(ValueError, match="unknown name"):
             resolve_statistic(spec)
