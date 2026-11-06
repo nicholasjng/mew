@@ -62,7 +62,11 @@ repetitions before interpreting its delta.
 ## Tell a real delta from noise
 
 With at least two repetitions on each side, `compare` runs a Mann-Whitney U test
-and marks deltas with p < 0.05 as `(signif.)`:
+and marks deltas with p < 0.05 as `(signif.)`. With up to 20 repetitions on each
+side and no tied values, the p-value is exact; otherwise it uses the normal
+approximation with tie and continuity corrections. Few repetitions cap the
+evidence: with 3 on each side the smallest possible p-value is 0.1, so no delta
+is marked; 4 on each side is the fewest that can be.
 
 ```text
 Benchmark    │ baseline │    head │                Δ% │ speedup
