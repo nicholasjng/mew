@@ -6,6 +6,7 @@ import contextlib
 import fnmatch
 import hashlib
 import importlib.util
+import os
 import re
 import sys
 from collections.abc import Generator, Iterable, Sequence
@@ -19,6 +20,11 @@ from mew._registry import Entry, compile_name_filter, narrow_entry
 # Tracked so discovered() drops exactly what import_file added, and nothing else.
 _loaded_modules: list[str] = []
 _inserted_paths: list[str] = []
+
+#: Directories discovery doesn't descend into, besides hidden ones and virtualenvs:
+#: build output that may hold copies of benchmark files, and other tools' trees.
+#: A directory named on the command line is still searched.
+_SKIP_DIRS = frozenset({"__pycache__", "build", "dist", "node_modules"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +91,9 @@ def collect_files(
     """Return the files the selectors name, and the matching files beneath their directories.
 
     A file matches when its name matches one of ``file_patterns``, as pytest's
-    ``python_files`` do. A path that doesn't exist raises :class:`FileNotFoundError`.
+    ``python_files`` do. The search skips hidden directories, virtualenvs and
+    those in ``_SKIP_DIRS`` below a selector's directory, not the directory itself.
+    A path that doesn't exist raises :class:`FileNotFoundError`.
     """
     patterns = list(file_patterns)
     out: dict[Path, None] = {}  # an ordered set: the first selector to reach a file wins
@@ -98,11 +106,28 @@ def collect_files(
             continue
         found = (
             p
-            for p in path.rglob("*")
-            if p.is_file() and any(fnmatch.fnmatch(p.name, pat) for pat in patterns)
+            for p in _walk(path)
+            if any(fnmatch.fnmatch(p.name, pat) for pat in patterns) and p.is_file()
         )
         out.update(dict.fromkeys(sorted(found)))
     return list(out)
+
+
+def _walk(root: Path) -> Generator[Path]:
+    """The files beneath ``root``, pruning the directories discovery skips."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Pruned in place, so os.walk never lists what's inside them.
+        dirnames[:] = [d for d in dirnames if not _skipped(Path(dirpath, d))]
+        yield from (Path(dirpath, f) for f in filenames)
+
+
+def _skipped(directory: Path) -> bool:
+    """Whether discovery skips ``directory``: hidden, a virtualenv, or in ``_SKIP_DIRS``."""
+    name = directory.name
+    if name.startswith(".") or name in _SKIP_DIRS:
+        return True
+    # A venv or conda environment under any name, such as `env` or `venv-3.14`.
+    return (directory / "pyvenv.cfg").is_file() or (directory / "conda-meta").is_dir()
 
 
 def import_file(path: Path) -> ModuleType:

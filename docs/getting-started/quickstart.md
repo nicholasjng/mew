@@ -18,6 +18,8 @@ def bench_sorted(state: mew.State) -> None:
 
 The contract matches Google Benchmark: setup goes outside the `for _ in state:` loop, measured work inside it.
 By default `mew` discovers files matching `bench_*.py` or `*_bench.py` under `benchmarks/`.
+It skips hidden directories, virtualenvs, `__pycache__`, `build`, `dist` and `node_modules`
+below the paths it searches.
 
 ## 2. Run it
 

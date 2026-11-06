@@ -53,6 +53,30 @@ def test_collect_files_globs_directory(tmp_path):
     assert {f.name for f in files} == {"bench_a.py", "bench_b.py"}
 
 
+@pytest.mark.parametrize(
+    "skipped",
+    [".venv/lib/bench_x.py", "build/lib/bench_x.py", "node_modules/bench_x.py", "env/bench_x.py"],
+)
+def test_collect_files_skips_hidden_virtualenv_and_build_directories(tmp_path, skipped):
+    """Discovery doesn't descend into hidden directories, virtualenvs under any name, or build
+    output, where a copy of a benchmark file would run twice."""
+    _write(tmp_path / "bench_a.py", "")
+    _write(tmp_path / skipped, "")
+    _write(tmp_path / "env" / "pyvenv.cfg", "")  # makes `env` a virtualenv
+    files = discovery.collect_files([discovery.parse(str(tmp_path))], file_patterns=["bench_*.py"])
+    assert [f.name for f in files] == ["bench_a.py"]
+
+
+def test_collect_files_searches_a_skipped_directory_named_directly(tmp_path):
+    """Skipping applies beneath a selector, not to the directory it names."""
+    _write(tmp_path / "build" / "bench_a.py", "")
+    _write(tmp_path / "build" / ".cache" / "bench_b.py", "")
+    files = discovery.collect_files(
+        [discovery.parse(str(tmp_path / "build"))], file_patterns=["bench_*.py"]
+    )
+    assert [f.name for f in files] == ["bench_a.py"]
+
+
 def test_collect_files_accepts_single_file(tmp_path):
     """A file named directly is collected even if it does not match `file_patterns`."""
     f = tmp_path / "some_bench.py"
