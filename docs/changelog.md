@@ -34,6 +34,11 @@ change between minor releases.
 
 ### Changed
 
+- Benchmark discovery no longer descends into hidden directories, virtualenvs
+  (any directory with a `pyvenv.cfg` or `conda-meta`), `__pycache__`, `build`,
+  `dist` or `node_modules`, so `mew run .` doesn't walk `.venv` or import a
+  copy of a benchmark file from `build/`. A directory named on the command line
+  is still searched.
 - mew no longer records the host name in a row's `session`, since it often
   names a person and result files get shared. The run banner shows the CPU
   model instead, `mew sessions` drops its `Host` column, and
