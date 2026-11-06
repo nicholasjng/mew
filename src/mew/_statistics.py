@@ -56,11 +56,46 @@ def _average_ranks(values: list[float]) -> tuple[list[float], float]:
     return ranks, tie_term
 
 
+#: Both samples at most this size and no ties: the exact null distribution, at
+#: most 20 polynomial steps of 401 terms. Past it the normal approximation is
+#: close, and exact tables would grow with every comparison row.
+_EXACT_MAX = 20
+
+
+def _u_counts(n1: int, n2: int) -> list[int]:
+    """How many of the ``C(n1 + n2, n1)`` rank orders give each U, from 0 to ``n1 * n2``.
+
+    The counts are the coefficients of the Gaussian binomial
+    ``[n1 + n2 choose n1]_q``, built as the product over ``i`` of
+    ``(1 - q**(n2 + i)) / (1 - q**i)``; every partial product is a polynomial.
+    """
+    poly = [1]
+    for i in range(1, n1 + 1):
+        shift = n2 + i
+        poly += [0] * shift
+        for j in range(len(poly) - 1, shift - 1, -1):  # times (1 - q**shift)
+            poly[j] -= poly[j - shift]
+        for j in range(i, len(poly)):  # divided by (1 - q**i)
+            poly[j] += poly[j - i]
+        del poly[i * n2 + 1 :]  # the quotient's degree; the rest is zero
+    return poly
+
+
 def mannwhitney_p(a: list[float], b: list[float]) -> float:
-    """Return a two-sided p-value; compare passes two or more values per sample."""
+    """Return a two-sided p-value; compare passes two or more values per sample.
+
+    Without ties and with at most ``_EXACT_MAX`` values per sample, the p-value
+    is exact: the share of rank orders at least as extreme as the observed one.
+    Otherwise it is the normal approximation with tie and continuity corrections.
+    """
     n1, n2 = len(a), len(b)
     ranks, tie_term = _average_ranks([*a, *b])
     u1 = sum(ranks[:n1]) - n1 * (n1 + 1) / 2
+    if not tie_term and max(n1, n2) <= _EXACT_MAX:
+        counts = _u_counts(n1, n2)
+        # Without ties U is a whole number, and its distribution is symmetric.
+        tail = sum(counts[: round(min(u1, n1 * n2 - u1)) + 1])
+        return min(1.0, 2 * tail / sum(counts))
     n = n1 + n2
     mu = n1 * n2 / 2
     sigma2 = (n1 * n2 / 12) * ((n + 1) - tie_term / (n * (n - 1)))

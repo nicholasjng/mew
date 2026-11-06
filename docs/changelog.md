@@ -122,6 +122,10 @@ change between minor releases.
 
 ### Fixed
 
+- `mew compare`'s Mann-Whitney U test computes exact p-values for samples of up
+  to 20 repetitions without ties, as SciPy's exact method does. The normal
+  approximation it used before was off by up to 4x at these sizes, e.g. 0.0009
+  instead of 0.0002 for two fully separated samples of 8.
 - pyinstrument's `top_function` sums self time per function by its file's full
   path, as Tachyon does, so same-named functions in same-named files from two
   directories no longer merge.
