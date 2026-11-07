@@ -64,12 +64,15 @@ class Config:
     project_root: Path | None = None
 
 
-def _read_table(raw: Mapping[str, Any], known: Sequence[str], table: str) -> dict[str, Any]:
+def _read_table(raw: Any, known: Sequence[str], table: str) -> dict[str, Any]:
     """Return a config table with its dashed keys (the TOML idiom) in snake_case.
 
     A key not in ``known`` raises, because a typo would otherwise load the
     default silently; a snake_case spelling of a dashed key is one too.
     """
+    # E.g. `mew = []`, which would otherwise loop over nothing and load defaults.
+    if not isinstance(raw, dict):
+        raise ValueError(f"{table} must be a table")  # ruff: ignore[TRY004]
     for key in raw:
         if key not in known:
             close = difflib.get_close_matches(key, known, n=1)
@@ -126,10 +129,13 @@ def load(start: Path | None = None) -> Config:
     cwd = (start or Path.cwd()).resolve()
     for parent in [cwd, *cwd.parents]:
         candidate = parent / "pyproject.toml"
-        if candidate.exists():
+        if candidate.is_file():
             try:  # A TOML syntax error is a ValueError too.
                 with candidate.open("rb") as fh:
-                    raw = tomllib.load(fh).get("tool", {}).get("mew", {})
+                    tool = tomllib.load(fh).get("tool", {})
+                if not isinstance(tool, dict):
+                    raise ValueError("[tool] must be a table")  # ruff: ignore[TRY004]
+                raw = tool.get("mew", {})
                 return _parse_config(raw, project_root=parent)
             except ValueError as e:
                 raise ValueError(f"{candidate}: {e}") from e
@@ -162,8 +168,6 @@ def _parse_config(raw: Mapping[str, Any], *, project_root: Path) -> Config:
 
 def _parse_regressions(raw: Any) -> RegressionConfig:
     """Validate the ``[tool.mew.regressions]`` table into a :class:`RegressionConfig`."""
-    if not isinstance(raw, dict):
-        raise ValueError("[tool.mew.regressions] must be a table")  # ruff: ignore[TRY004]
     table = _read_table(raw, ("default-threshold", "allow"), "[tool.mew.regressions]")
     allow = table.get("allow", [])
     if not isinstance(allow, list) or not all(isinstance(r, dict) for r in allow):

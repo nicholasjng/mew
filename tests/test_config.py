@@ -101,3 +101,27 @@ def test_load_rejects_malformed_setting(tmp_path: Path, setting: str, message: s
         load(tmp_path)
     # The message names the file.
     assert str(exc.value).startswith(f"{(tmp_path / 'pyproject.toml').resolve()}: ")
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("tool = 1\n", "[tool] must be a table"),
+        ("[tool]\nmew = 1\n", "[tool.mew] must be a table"),
+        # Would otherwise load as all defaults.
+        ("[tool]\nmew = []\n", "[tool.mew] must be a table"),
+        ("[tool.mew]\nregressions = 1\n", "[tool.mew.regressions] must be a table"),
+    ],
+)
+def test_load_rejects_a_table_that_is_not_one(tmp_path: Path, body: str, message: str):
+    """A `tool` or `tool.mew` that isn't a table raises `ValueError`, not a crash."""
+    _write(tmp_path, body)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        load(tmp_path)
+
+
+def test_load_skips_a_directory_named_pyproject_toml(tmp_path: Path):
+    """Only a file is a pyproject.toml; the search goes on past a directory of that name."""
+    _write(tmp_path, '[tool.mew]\nstatistic = "min"\n')
+    (tmp_path / "sub" / "pyproject.toml").mkdir(parents=True)
+    assert load(tmp_path / "sub").statistic == "min"

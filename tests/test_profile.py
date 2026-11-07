@@ -847,3 +847,12 @@ def test_samplers_summarize_the_hot_frame_in_one_shape(sampler):
         assert start < top["line"] < start + len(lines)
         # GIL builds lower the switch interval for the pass only.
         assert sys.getswitchinterval() == switch_interval
+
+
+@pytest.mark.parametrize("interval", [True, "fast", 0, float("inf")])
+def test_cpu_manager_rejects_a_bad_interval(interval):
+    """`interval = true` in TOML is not one second; every bad value is a `ValueError`."""
+    from mew import cpu
+
+    with pytest.raises(ValueError, match="interval must be a positive finite number"):
+        cpu.manager(interval=interval)

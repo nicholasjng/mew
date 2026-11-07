@@ -197,3 +197,19 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path, suffix: str):
     assert len(sessions) == 2
     assert {s.tag for s in sessions} == {"before", "after"}
     assert len({s.id for s in sessions}) == 2
+
+
+@pytest.mark.parametrize(("status", "dirty"), [(None, None), ("", False), (" M a.py", True)])
+def test_git_dirty_state_is_unknown_when_status_fails(monkeypatch, status, dirty):
+    """A failed `git status`, e.g. a timeout, leaves `dirty` out rather than recording clean."""
+    from mew import vcs
+
+    def fake_run(cwd, program, *args):
+        if program == "jj":
+            return None
+        return "abc123\nmain" if args[0] == "rev-parse" else status
+
+    monkeypatch.setattr(vcs, "_run", fake_run)
+    info = vcs.vcs_context()["vcs"]
+    assert info.get("dirty") == dirty
+    assert ("dirty" in info) == (dirty is not None)

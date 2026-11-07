@@ -278,6 +278,14 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         (("run", "--min-time", "1x", "--session-tag", "latest"), "mew run: session_tag 'latest'"),
         # Prefixes of long options are not expanded, so a new option can't break them.
         (("run", "--rep", "3"), "unrecognized arguments: --rep"),
+        # Arabic-Indic digits: Google Benchmark would read them as 0 iterations.
+        (("run", "--min-time", "١٠x"), "--min-time '١٠x'; use positive seconds"),
+        # Checked before the run, not after it.
+        (
+            ("run", "--cpu-profiler", "sample", "--profile-dir", "benchmarks/bench_fixture.py"),
+            # The OS's separators, as the user's shell shows paths.
+            f"mew run: --profile-dir {Path('benchmarks/bench_fixture.py')} is not a directory",
+        ),
     ],
 )
 def test_usage_errors_exit_2(mew_cli, benchdir, args, message):
@@ -852,7 +860,7 @@ def test_show_summarizes_repetitions_and_reads_0_2_0_counters(mew_cli, tmp_path)
 @pytest.mark.parametrize(
     ("shell", "marker"),
     [
-        ("bash", "complete -F _mew mew"),
+        ("bash", "complete -o filenames -F _mew mew"),
         ("zsh", "compdef _mew mew"),
         ("fish", "complete -c mew"),
     ],
@@ -988,3 +996,84 @@ def test_e2e_benchmark_output_cannot_corrupt_json_on_stdout(tmp_path):
     assert res.returncode == 0, res.stderr
     assert len(json.loads(res.stdout)["benchmarks"]) == 1
     assert "from print" in res.stderr and "from fd 1" in res.stderr
+
+
+def test_session_tags_with_double_slashes_can_be_selected(mew_cli, benchdir, tmp_path):
+    """`file@tag` stays a string: a path would normalize the tag `a//b` to `a/b`."""
+    out = tmp_path / "r.jsonl"
+    for tag in ("a//b", "c"):
+        res = mew_cli(
+            "run", str(benchdir), "-k", "bench_one", "--min-time", "1x", "--session-tag", tag,
+            "-o", str(out), "--append", cwd=tmp_path,
+        )  # fmt: skip
+        assert res.returncode == 0, res.stderr
+    assert mew_cli("show", f"{out}@a//b", cwd=tmp_path).returncode == 0
+    res = mew_cli("compare", f"{out}@c", f"{out}@a//b", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+
+
+def test_run_leaves_the_registry_and_context_as_it_found_them(mew_cli, benchdir, tmp_path):
+    """A suite's context values don't leak into the next run in the process, and a run
+    doesn't drop benchmarks registered before it, as in a notebook."""
+    from mew._registry import REGISTRY
+    from mew.context import get_context
+
+    (benchdir / "bench_ctx.py").write_text('import mew\n\nmew.set_context("dataset", "A")\n')
+
+    @mew.benchmark
+    def bench_mine(state):
+        for _ in state:
+            pass
+
+    before = REGISTRY.all()
+    res = mew_cli("run", str(benchdir), "-k", "bench_one", "--min-time", "1x", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert get_context() == {}
+    assert REGISTRY.all() == before
+
+
+def test_usage_errors_are_colored_by_stderr_not_stdout(monkeypatch, capsys):
+    """argparse prints usage errors to stderr, so a terminal on stdout doesn't color them."""
+    from mew.cli import main
+
+    for var in ("FORCE_COLOR", "NO_COLOR", "PYTHON_COLORS"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    assert "\x1b[" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exc:
+        main(["run", "--bogus"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unrecognized arguments: --bogus" in err
+    assert "\x1b[" not in err
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_bash_completion_keeps_file_names_with_spaces_whole(mew_cli, tmp_path):
+    """File completion splits on newlines only, while choice lists still split on spaces."""
+    script = tmp_path / "mew.bash"
+    script.write_text(mew_cli("completions", "bash", cwd=tmp_path).stdout)
+    (tmp_path / "my benches").mkdir()
+    probe = (
+        f"source {script}\n"
+        't() { COMP_WORDS=("$@"); COMP_CWORD=$(( ${#COMP_WORDS[@]} - 1 )); COMPREPLY=(); _mew; '
+        'printf "[%s]" "${COMPREPLY[@]}"; echo; }\n'
+        't mew run my\nt mew run --format ""\n'
+    )
+    out = subprocess.run(
+        ["bash", "-c", probe], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout
+    assert out.splitlines() == ["[my benches]", "[rich][json][jsonl]"]
+
+
+def test_zsh_and_fish_complete_top_level_options_and_choices(mew_cli, tmp_path):
+    """All three shells offer `-h/--version` before a command, and `mew completions`' shells."""
+    zsh = mew_cli("completions", "zsh", cwd=tmp_path).stdout
+    assert "'--version[Show version information.]'" in zsh
+    fish = mew_cli("completions", "fish", cwd=tmp_path).stdout
+    assert "complete -c mew -n __fish_use_subcommand -l version" in fish
+    assert (
+        "complete -c mew -n '__fish_seen_subcommand_from completions' -xa 'bash zsh fish'" in fish
+    )

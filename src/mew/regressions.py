@@ -296,7 +296,11 @@ def render_panel(
 
     lines = [f"Regressions (threshold +{default_threshold:.1f}%):"]
     for v in regressed:
-        lines.append(f"  ❌ {v.name}   {v.delta_pct:+.2f}%")
+        line = f"  ❌ {v.name}   {v.delta_pct:+.2f}%"
+        if v.rule is not None and v.rule.threshold is not None:
+            # A stricter rule failed it, not the threshold in the heading.
+            line += f"   (rule: {v.rule.threshold:.1f}% threshold; {v.rule.reason})"
+        lines.append(line)
     for v in allowed_over:
         assert v.rule is not None
         lines.append(

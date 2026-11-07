@@ -19,7 +19,7 @@ __all__ = ["vcs_context"]
 
 
 def _run(cwd: Path | None, program: str, *args: str) -> str | None:
-    """Stripped stdout of ``program args``, or None on failure/empty."""
+    """Stripped stdout of ``program args``, ``""`` when it prints nothing, or None on failure."""
     import subprocess
 
     # A missing program raises FileNotFoundError, an OSError.
@@ -29,8 +29,7 @@ def _run(cwd: Path | None, program: str, *args: str) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    out = proc.stdout.strip()
-    return out if proc.returncode == 0 and out else None
+    return proc.stdout.strip() if proc.returncode == 0 else None
 
 
 def _jj(cwd: Path | None) -> dict[str, Any] | None:
@@ -46,7 +45,7 @@ def _jj(cwd: Path | None) -> dict[str, Any] | None:
         "-T",
         'change_id.short(12) ++ "\\n" ++ commit_id ++ "\\n" ++ if(empty, "clean", "dirty")',
     )
-    if out is None:
+    if not out:
         return None
     parts = out.splitlines()
     if len(parts) != 3:
@@ -57,13 +56,16 @@ def _jj(cwd: Path | None) -> dict[str, Any] | None:
 
 def _git(cwd: Path | None) -> dict[str, Any] | None:
     out = _run(cwd, "git", "rev-parse", "HEAD", "--abbrev-ref", "HEAD")
-    if out is None:
+    if not out:
         return None
     commit, _, branch = out.partition("\n")
     info: dict[str, Any] = {"backend": "git", "commit": commit}
     # Tracked changes only: untracked results or build artifacts don't change what
-    # was benchmarked. Empty output (clean) comes back as None.
-    info["dirty"] = _run(cwd, "git", "status", "--porcelain", "--untracked-files=no") is not None
+    # was benchmarked. A failed status, e.g. a timeout, leaves the state unknown
+    # rather than clean.
+    status = _run(cwd, "git", "status", "--porcelain", "--untracked-files=no")
+    if status is not None:
+        info["dirty"] = bool(status)
     # Detached HEAD reports the literal "HEAD", which names nothing.
     if branch and branch != "HEAD":
         info["branch"] = branch
@@ -85,6 +87,7 @@ def vcs_context(cwd: Path | None = None) -> dict[str, Any]:
     -------
     dict[str, Any]
         ``{"vcs": {...}}`` with backend, commit, and dirty state, or ``{}``.
+        ``dirty`` is left out when ``git status`` fails, e.g. times out.
     """
     info = _jj(cwd) or _git(cwd)
     return {"vcs": info} if info else {}
