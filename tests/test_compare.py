@@ -758,3 +758,76 @@ def test_comparison_math_without_rendering(
     assert result.delta == delta
     assert result.speedup == ratio
     assert result.p_value is None
+
+
+@pytest.mark.parametrize(
+    ("base", "other", "delta", "text", "style"),
+    [
+        (-10.0, -5.0, 0.5, "+50.00%", "green"),  # a rise, so better
+        (-10.0, -20.0, -1.0, "-100.00%", "red"),
+        (0.0, -5.0, -math.inf, "-∞%", "red"),
+        (0.0, 5.0, math.inf, "+∞%", "green"),
+    ],
+)
+def test_counter_delta_keeps_its_sign_at_or_below_zero(base, other, delta, text, style) -> None:
+    """A delta's sign follows the change, not the baseline's sign, so the gate sees a fall."""
+    r = _compare_samples(Sample("x", base, None), Sample("x", other, None), "counters.c", True)
+    assert r.delta == delta
+    assert _fmt_delta(r.delta, higher_is_better=True) == (text, style)
+    regressed = RegressionConfig().evaluate("x", r.delta * 100, higher_is_better=True).verdict
+    assert (regressed.name == "REGRESSED") == (style == "red")
+    # A ratio of a negative counter means nothing; zero alone keeps one.
+    assert (r.speedup is None) == (base < 0 or other < 0)
+
+
+def test_compare_shows_no_ratio_for_a_negative_counter(tmp_path: Path) -> None:
+    """The ratio cell of a counter that is negative on either side is a dash."""
+    other, base = _write_pair(
+        tmp_path,
+        other=[counter_row("b", "balance", -5.0)],
+        base=[counter_row("b", "balance", -10.0)],
+    )
+    console = Console(width=120)
+    rule = CounterRule(pattern="balance", higher_is_better=True)
+    counters = CounterConfig(rules=(rule,))
+    compare([other, base], metric="counters.balance", counters=counters, console=console)
+    row = next(line for line in console.export_text().splitlines() if line.startswith("b "))
+    assert "+50.00%" in row
+    assert row.rstrip().endswith("—")
+
+
+def test_compare_filter_matching_nothing_says_so(tmp_path: Path, capsys) -> None:
+    """A `-k` pattern that matches nothing says that, not that the files don't overlap."""
+    other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("b", 1.0)])
+    assert compare([other, base], pattern="nomatch", console=Console()) == 1
+    assert capsys.readouterr().err.strip() == "no benchmarks match 'nomatch'"
+
+
+def test_compare_selects_the_session_show_selects(tmp_path: Path) -> None:
+    """A selector names a session before skipped rows are dropped, as in `mew show`: a newest
+    session that skipped everything is an error, not a silent fall-back to an older one."""
+    p = tmp_path / "r.jsonl"
+    _write_jsonl(
+        p,
+        [
+            _row("b", 1.0, date="2026-01-01T00:00:00", session_id="old"),
+            _row("b", 0.0, date="2026-02-01T00:00:00", session_id="new", session_tag="SKIP",
+                 skipped=True),
+        ],
+    )  # fmt: skip
+    with pytest.raises(ValueError, match="the latest session has no measurements"):
+        load_column(p, "real_time")
+    with pytest.raises(ValueError, match="session 'SKIP' has no measurements"):
+        load_column(p, "real_time", selector="SKIP")
+
+
+def test_unreadable_values_name_the_file(tmp_path: Path) -> None:
+    """A file that isn't UTF-8, or a value that isn't a number, gives an error naming the file."""
+    binary = tmp_path / "bin.json"
+    binary.write_bytes(b"\xff\xfe{}")
+    with pytest.raises(ValueError, match=f"cannot read result file {re.escape(str(binary))}"):
+        load_column(binary, "real_time")
+    bad = tmp_path / "bad.json"
+    _write_json(bad, [_row("b", 1.0) | {"real_time": "fast"}])
+    with pytest.raises(ValueError, match=r"bad\.json: 'b': real_time is 'fast', not a number"):
+        load_column(bad, "real_time")

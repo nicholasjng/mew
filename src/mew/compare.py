@@ -8,7 +8,7 @@ import math
 import re
 import sys
 from collections import Counter
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -145,7 +145,8 @@ _SIGNIFICANCE_ALPHA = 0.05
 @dataclass(frozen=True, slots=True)
 class _Comparison:
     delta: float
-    speedup: float
+    #: None where a ratio means nothing: a counter that is negative on either side.
+    speedup: float | None
     p_value: float | None
 
 
@@ -155,16 +156,19 @@ def _compare_samples(
     """Calculate a comparison independently of table layout and gating policy.
 
     The ratio is the improvement factor where the metric's direction is known
-    (``base / other`` for lower-is-better metrics), else ``other / base``.
+    (``base / other`` for lower-is-better metrics), else ``other / base``. It is
+    ``None`` when either value is negative: such a counter has no true zero, and
+    a ratio would jump sign where the values cross zero. The delta stays.
     """
     is_time = metric in TIME_METRICS
     base_value = to_ns(base.value, base.time_unit) if is_time else base.value
     other_value = to_ns(other.value, other.time_unit) if is_time else other.value
     if base_value:
-        delta = (other_value - base_value) / base_value
+        # abs(): a counter can be negative, and -10 -> -5 is a rise, not a fall.
+        delta = (other_value - base_value) / abs(base_value)
     else:
         # A zero baseline must not mask a nonzero contender as unchanged.
-        delta = 0.0 if not other_value else float("inf")
+        delta = math.copysign(math.inf, other_value) if other_value else 0.0
     lower = higher_is_better is False
     num, den = (base_value, other_value) if lower else (other_value, base_value)
     # Mann-Whitney over raw repetitions; fewer than 2 per side leaves nothing to rank.
@@ -173,17 +177,19 @@ def _compare_samples(
         a = [to_ns(v, base.time_unit) if is_time else v for v in base.values]
         b = [to_ns(v, other.time_unit) if is_time else v for v in other.values]
         p_value = mannwhitney_p(a, b)
-    return _Comparison(
-        delta=delta,
+    if base_value < 0 or other_value < 0:
+        speedup = None
+    elif den:
+        speedup = num / den
+    else:
         # 0 vs 0 (e.g. allocation-free bodies) is unchanged, not infinitely faster.
-        speedup=num / den if den else (1.0 if not num else math.inf),
-        p_value=p_value,
-    )
+        speedup = 1.0 if not num else math.inf
+    return _Comparison(delta=delta, speedup=speedup, p_value=p_value)
 
 
 def _fmt_delta(delta: float, *, higher_is_better: bool | None = False) -> tuple[str, str]:
     pct = delta * 100.0
-    text = f"{pct:+.2f}%" if math.isfinite(pct) else "+∞%"
+    text = f"{pct:+.2f}%" if math.isfinite(pct) else "+∞%" if pct > 0 else "-∞%"
     if higher_is_better is None:  # a counter without a direction: neither good nor bad
         return text, ""
     # Color by improvement direction: +20% iterations is green, +20% time red.
@@ -236,6 +242,9 @@ def _render(
     all_names: set[str] = set().union(*(c.samples.keys() for c in columns))
     if pattern is not None:
         all_names = {n for n in all_names if pattern.search(n)}
+        if not all_names:
+            print(f"no benchmarks match {pattern.pattern!r}", file=sys.stderr)
+            return 1
 
     # The rows are what baseline and candidate share, gated or not: a benchmark
     # missing from an extra column, such as an older run, shows dashes there.
@@ -323,7 +332,7 @@ def _render(
                 delta_cell.append((" (signif.)", "bold"))
             row.append(_value_cell(s, metric))
             row.append(delta_cell)
-            row.append(f"×{result.speedup:.3f}")
+            row.append("—" if result.speedup is None else f"×{result.speedup:.3f}")
             if show_stddev:
                 row.append(_fmt_stddev(s, metric))
         table.add_row(*row)
@@ -336,7 +345,7 @@ def _render(
 
 
 def compare(
-    files: list[Path],
+    files: Sequence[str | Path],
     *,
     metric: str = "real_time",
     key: str = "name",
@@ -356,7 +365,7 @@ def compare(
 
     Parameters
     ----------
-    files : list[Path]
+    files : Sequence[str or Path]
         JSON, JSONL or gzipped JSONL result files, the baseline last:
         ``mew compare head.json base.json`` compares head against base. A file
         with several sessions contributes its newest; ``path@<tag>`` selects

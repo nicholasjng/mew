@@ -91,6 +91,12 @@ def clear_context() -> None:
     _CONTEXT.clear()
 
 
+def _restore(snapshot: dict[str, Any]) -> None:
+    """Replace the context with ``snapshot``, a :func:`get_context` copy."""
+    _CONTEXT.clear()
+    _CONTEXT.update(snapshot)
+
+
 __all__ = [
     "clear_context",
     "get_context",

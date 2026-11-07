@@ -127,6 +127,45 @@ change between minor releases.
 
 ### Fixed
 
+- `mew compare` computes a counter's delta against the baseline's magnitude, so
+  a higher-is-better counter going from -10 to -5 is +50% and no longer a
+  regression, and one going from 0 to -5 is -∞%, not +∞%. The ratio column
+  shows `—` when either value is negative, instead of a ratio such as ×0.500
+  that read as a regression.
+- `mew compare file@latest` and `file@<tag>` select the session `mew show` and
+  `mew sessions` select, also when every benchmark in it was skipped; that is
+  now an error saying so instead of a fall-back to an older session or "no
+  session tagged".
+- `mew compare` and `mew show` take `file@tag` as written, so a tag such as
+  `a//b` can be selected.
+- `mew compare -k <pattern>` that matches nothing says so, instead of reporting
+  that the files don't overlap.
+- The regression panel names the rule and threshold that failed a benchmark
+  when a stricter allowlist rule did.
+- `--min-time` rejects iteration counts in non-ASCII digits, such as `١٠x`,
+  which ran 0 iterations.
+- These exit 2 with one line instead of a traceback:
+  - an existing `--profile-dir` that isn't a directory, checked before the run;
+    a report that can't be written, after it;
+  - a `[tool]` or `[tool.mew]` that isn't a table (`mew = []` was silently
+    accepted as defaults);
+  - `@mew.benchmark("name")`, and `ids=` that aren't strings (a single string
+    split into one-character labels).
+- A directory named `pyproject.toml` no longer stops the config search.
+- Result files are read and written as UTF-8 whatever the locale, and a file
+  that isn't UTF-8, or a time or metric that isn't a number, gives an error
+  naming the file.
+- `main()` called twice in a process, as in a notebook or a test, no longer
+  carries one suite's `set_context` values into the next run, nor drops
+  benchmarks registered before it.
+- A `git status` that fails, e.g. times out, leaves `vcs.dirty` out of the
+  context instead of recording the tree as clean.
+- `mew.cpu.manager(interval=True)`, or `interval = true` in a preset, raises
+  `ValueError` instead of sampling once a second.
+- Shell completion: bash keeps file names with spaces whole and marks
+  directories with `/`; zsh and fish offer `-h` and `--version` before a
+  command; fish offers the shells after `mew completions`.
+- Usage errors on stderr are no longer colored because stdout is a terminal.
 - `mew compare`'s Mann-Whitney U test computes exact p-values for samples of up
   to 20 repetitions without ties, as SciPy's exact method does. The normal
   approximation it used before was off by up to 4x at these sizes, e.g. 0.0009

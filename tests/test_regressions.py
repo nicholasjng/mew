@@ -222,3 +222,12 @@ _COUNTER_RULES = CounterConfig(
 def test_counter_rules_apply_in_order(name: str, expected: bool | None) -> None:
     """The first matching rule gives a counter its direction."""
     assert _COUNTER_RULES.direction(name) is expected
+
+
+def test_render_panel_names_the_stricter_rule_a_regression_failed() -> None:
+    """A row over a stricter rule's threshold, though under the heading's, shows that rule."""
+    verdict = RegressionConfig(rules=(_TIGHT,)).evaluate("bench", 3.0)
+    assert verdict.verdict is Verdict.REGRESSED
+    text, code = render_panel([verdict], default_threshold=5.0)
+    assert "❌ bench   +3.00%   (rule: 2.0% threshold; hot path)" in text
+    assert code == 3

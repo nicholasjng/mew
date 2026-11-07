@@ -156,6 +156,8 @@ def benchmark(
         return _register(target, target, name=name, options=norm_options, tags=norm_tags)
 
     if fn is not None:
+        if not callable(fn):  # e.g. @mew.benchmark("name")
+            raise TypeError(f"@benchmark takes its options as keywords, got {fn!r}")
         return deco(fn)
     return deco
 
@@ -172,6 +174,9 @@ def _register_family(
     # `cases` holds fresh dicts from parametrize/product, only ever unpacked
     # by the trampoline.
     if ids is not None:
+        # A string would split into one-character labels.
+        if isinstance(ids, str) or not all(isinstance(i, str) for i in ids):
+            raise TypeError(f"ids must be a sequence of strings, got {ids!r}")
         labels = list(ids)
     else:
         labels = ["-".join(f"{k}={_format_id_value(v)}" for k, v in kw.items()) for kw in cases]

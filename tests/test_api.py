@@ -342,3 +342,20 @@ def test_tags_normalize_to_a_frozenset_on_every_decorator():
         frozenset({"sort"}),
         frozenset({"sort"}),
     ]
+
+
+def test_benchmark_given_a_positional_name_says_options_are_keywords():
+    """`@mew.benchmark("name")` raises `TypeError` with a hint, not an `AttributeError`."""
+    with pytest.raises(TypeError, match="takes its options as keywords"):
+        mew.benchmark("my_name")  # type: ignore[call-overload]
+
+
+@pytest.mark.parametrize("ids", [[1, 2], "ab"])
+def test_parametrize_ids_must_be_strings(ids):
+    """Non-string ids raise `TypeError`; a string would split into one-character labels."""
+    with pytest.raises(TypeError, match="ids must be a sequence of strings"):
+
+        @mew.parametrize([{"n": 1}, {"n": 2}], ids=ids)
+        def _bench(state, n):
+            for _ in state:
+                pass

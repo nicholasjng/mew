@@ -43,7 +43,10 @@ def parse_min_time(value: str | float) -> str:
     if isinstance(value, bool) or not isinstance(value, str | int | float):
         raise TypeError(f"min_time must be seconds or a string like '100x', got {value!r}")
     text = str(value).strip()
-    if text.endswith("x") and text[:-1].isdigit() and int(text[:-1]) > 0:
+    # isascii: isdigit alone takes other scripts' digits, which Google Benchmark
+    # would read as 0 iterations.
+    count = text[:-1]
+    if text.endswith("x") and count.isascii() and count.isdigit() and int(count) > 0:
         return text
     try:
         seconds = parse_seconds(text)

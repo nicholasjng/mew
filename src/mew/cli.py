@@ -12,6 +12,10 @@ import traceback
 from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING, TextIO, cast
+
+if TYPE_CHECKING:
+    from _typeshed import SupportsWrite
 
 import mew.config as _config
 from mew import (
@@ -288,6 +292,10 @@ def run(
     if profile_dir is not None and cpu_profiler is None and memory_profiler is None:
         print("mew run: --profile-dir needs --cpu-profiler or --memory-profiler", file=sys.stderr)
         raise SystemExit(2)
+    if profile_dir is not None and profile_dir.exists() and not profile_dir.is_dir():
+        # Checked now, not after the suite has run.
+        print(f"mew run: --profile-dir {profile_dir} is not a directory", file=sys.stderr)
+        raise SystemExit(2)
     cfg = _load_config_or_exit()
     with _discovery.discovered(), ExitStack() as stack:
         entries = _collect(
@@ -347,14 +355,16 @@ def run(
         # The outputs render from what the run already recorded, so none
         # re-executes the suite.
         if profile_dir is not None:
-            for slot, m in managers.items():
-                # Optional, as the run's own hooks are: a manager needn't subclass the protocol.
-                if (write := getattr(m.manager, "write_outputs", None)) is not None:
-                    write(profile_dir / slot)
+            # A directory that can't be written, e.g. read-only, still ends in one line.
+            with _usage_error("run", OSError):
+                for slot, m in managers.items():
+                    # Optional, as the run's own hooks are: a manager needn't subclass the protocol.
+                    if (write := getattr(m.manager, "write_outputs", None)) is not None:
+                        write(profile_dir / slot)
 
 
 def compare(
-    files: list[Path],
+    files: list[str],
     *,
     metric: str,
     key: str,
@@ -402,13 +412,13 @@ def compare(
         raise SystemExit(code)
 
 
-def show(files: list[Path], *, pattern: str | None, literal: bool, summary_only: bool) -> None:
+def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: bool) -> None:
     """Print the results stored in files as ``mew run`` printed them."""
     with _usage_error("show", ValueError):
         name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
     shown = 0
     for file in files:
-        path, selector = split_selector(str(file))
+        path, selector = split_selector(file)
         with _usage_error("show", ValueError, OSError):
             rows, context = load_session(path, selector)
         if name_filter is not None:
@@ -476,21 +486,36 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
     def _get_default_metavar_for_positional(self, action: argparse.Action) -> str:
         return self._metavar(action)
 
-    def format_help(self) -> str:
-        text = super().format_help()
-        # Captured help and redirected output remain plain text.
-        if not color_enabled(sys.stdout):
-            return text
 
-        # Style headings, flags, and metavariables after layout.
-        for pattern, style in (
-            (r"(?m)^[A-Za-z][A-Za-z ]*:", "bold"),
-            (r"(?<![\w-])--[A-Za-z][\w-]*", "cyan"),
-            (r"(?<![\w-])-[A-Za-z](?![\w-])", "green"),
-            (r"<[^>]+>", "yellow"),
-        ):
-            text = re.sub(pattern, lambda m, s=style: sgr(m.group(), s), text)
-        return text
+def _style_help(text: str) -> str:
+    """Style headings, flags, and metavariables in laid-out help."""
+    for pattern, style in (
+        (r"(?m)^[A-Za-z][A-Za-z ]*:", "bold"),
+        (r"(?<![\w-])--[A-Za-z][\w-]*", "cyan"),
+        (r"(?<![\w-])-[A-Za-z](?![\w-])", "green"),
+        (r"<[^>]+>", "yellow"),
+    ):
+        text = re.sub(pattern, lambda m, s=style: sgr(m.group(), s), text)
+    return text
+
+
+class _Parser(argparse.ArgumentParser):
+    """Colors help and usage by the stream they go to: usage errors go to stderr.
+
+    Subcommand parsers are this class too, as argparse makes them the parent's type.
+    """
+
+    def print_help(self, file: SupportsWrite[str] | None = None) -> None:
+        self._print_styled(self.format_help(), file)
+
+    def print_usage(self, file: SupportsWrite[str] | None = None) -> None:
+        self._print_styled(self.format_usage(), file)
+
+    def _print_styled(self, text: str, file: SupportsWrite[str] | None) -> None:
+        file = sys.stdout if file is None else file
+        # Captured help and redirected output remain plain text. color_enabled
+        # copes with a stream that has no isatty().
+        self._print_message(_style_help(text) if color_enabled(cast(TextIO, file)) else text, file)
 
 
 def completions(shell: str) -> None:
@@ -711,7 +736,6 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "files",
         nargs="+",
-        type=Path,
         help="Compare result files against the last file (<file>@<tag> picks a session).",
     )
     p.add_argument(
@@ -752,7 +776,6 @@ def _add_show_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "files",
         nargs="+",
-        type=Path,
         help="Print result files' newest session (<file>@<tag> picks a session).",
     )
     _add_filter_args(p, verb="Show")
@@ -779,7 +802,7 @@ def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argparse command tree. Each subparser sets ``_func`` to its handler."""
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="mew",
         description="Microbenchmarking for Python via Google Benchmark.",
         formatter_class=_CommandHelpFormatter,

@@ -58,6 +58,11 @@ as a plain ratio, its delta neither good nor bad, and gating on it fails: a gate
 anything. As in every mew table, an unknown key in a rule is an error.
 Benchmarks without the counter are left out.
 
+A counter can be negative. Its delta is then measured against the baseline's
+size, so -10 to -5 is +50%, and its ratio shows `—`: a ratio jumps sign where
+the values cross zero, and a quantity that goes negative has no zero to be a
+multiple of.
+
 ## Matching benchmarks across suites
 
 The default key is the full registered name (`file.py::func`).

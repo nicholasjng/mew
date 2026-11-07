@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
-from mew._registry import Entry, compile_name_filter, narrow_entry
+from mew import context as _context
+from mew._registry import REGISTRY, Entry, compile_name_filter, narrow_entry
 
 # Tracked so discovered() drops exactly what import_file added, and nothing else.
 _loaded_modules: list[str] = []
@@ -161,12 +162,24 @@ def import_file(path: Path) -> ModuleType:
 
 @contextmanager
 def discovered() -> Generator[None]:
-    """Remove benchmark modules and paths added within the context on exit."""
+    """Undo what discovering and running a suite changed in the process, on exit.
+
+    That is the benchmark modules and paths added within the context, and the
+    registry and the context values, so one ``main()`` call in a process, such
+    as a notebook or a test, doesn't leak into the next or clear what was
+    registered before it.
+    """
+    entries = REGISTRY.all()
+    saved_context = _context.get_context()
     mod_mark = len(_loaded_modules)
     path_mark = len(_inserted_paths)
     try:
         yield
     finally:
+        REGISTRY.clear()
+        for entry in entries:
+            REGISTRY.add(entry)
+        _context._restore(saved_context)
         while len(_loaded_modules) > mod_mark:
             sys.modules.pop(_loaded_modules.pop(), None)
         while len(_inserted_paths) > path_mark:

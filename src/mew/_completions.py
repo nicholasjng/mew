@@ -34,10 +34,27 @@ def _value_kind(action: argparse.Action) -> str | list[str] | None:
     """Completion kind for an action's value: choices, ``"file"``, or None."""
     if action.choices:
         return [str(c) for c in action.choices]
-    # list/run's `file::name` selectors complete their path half; `-o` also takes `-`.
-    if action.type is Path or action.dest in ("paths", "output"):
+    # list/run's `file::name` and compare/show's `file@tag` selectors complete
+    # their path half; `-o` also takes `-`.
+    if action.type is Path or action.dest in ("paths", "files", "output"):
         return "file"
     return None
+
+
+def _opt(action: argparse.Action) -> _Opt:
+    return _Opt(
+        list(action.option_strings),
+        # Raw help keeps argparse's %-escapes.
+        (action.help or "").replace("%%", "%"),
+        action.nargs != 0,
+        _value_kind(action),
+        repeat=isinstance(action, argparse._AppendAction),
+    )
+
+
+def _top_opts(parser: argparse.ArgumentParser) -> list[_Opt]:
+    """The options before a command: ``-h/--help`` and ``--version``."""
+    return [_opt(a) for a in parser._actions if a.option_strings]
 
 
 def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
@@ -54,16 +71,7 @@ def _commands(parser: argparse.ArgumentParser) -> list[_Cmd]:
             grouped[subp] = cmd
             for a in subp._actions:
                 if a.option_strings:
-                    cmd.opts.append(
-                        _Opt(
-                            list(a.option_strings),
-                            # Raw help keeps argparse's %-escapes.
-                            (a.help or "").replace("%%", "%"),
-                            a.nargs != 0,
-                            _value_kind(a),
-                            repeat=isinstance(a, argparse._AppendAction),
-                        )
-                    )
+                    cmd.opts.append(_opt(a))
                 else:
                     cmd.positional = _value_kind(a)
         grouped[subp].names.append(name)
@@ -80,10 +88,15 @@ def _first_clause(text: str, width: int) -> str:
 
 def _bash(parser: argparse.ArgumentParser) -> str:
     cmds = _commands(parser)
-    top = [n for c in cmds for n in c.names] + [
-        f for a in parser._actions if a.option_strings for f in a.option_strings
-    ]
+    top = [n for c in cmds for n in c.names] + [f for o in _top_opts(parser) for f in o.flags]
     out = [
+        # IFS only here: set for all of _mew, it would also split `compgen -W` lists.
+        # `-o filenames` (below) quotes spaces and marks directories with `/`.
+        "_mew_files() {",
+        "    local IFS=$'\\n'",
+        '    COMPREPLY=( $(compgen -f -- "$cur") )',
+        "}",
+        "",
         "_mew() {",
         "    local cur prev cmd i w",
         '    cur="${COMP_WORDS[COMP_CWORD]}"',
@@ -104,9 +117,7 @@ def _bash(parser: argparse.ArgumentParser) -> str:
         out.append('        case "$prev" in')
         file_flags = [f for o in c.opts if o.value == "file" for f in o.flags]
         if file_flags:
-            out.append(
-                f'        {"|".join(file_flags)}) COMPREPLY=( $(compgen -f -- "$cur") ); return;;'
-            )
+            out.append(f"        {'|'.join(file_flags)}) _mew_files; return;;")
         for o in c.opts:
             if isinstance(o.value, list):
                 out.append(
@@ -120,11 +131,11 @@ def _bash(parser: argparse.ArgumentParser) -> str:
         out.append("            return")
         out.append("        fi")
         if c.positional == "file":
-            out.append('        COMPREPLY=( $(compgen -f -- "$cur") )')
+            out.append("        _mew_files")
         elif isinstance(c.positional, list):
             out.append(f'        COMPREPLY=( $(compgen -W "{" ".join(c.positional)}" -- "$cur") )')
         out.append("        ;;")
-    out += ["    esac", "}", "complete -F _mew mew", ""]
+    out += ["    esac", "}", "complete -o filenames -F _mew mew", ""]
     return "\n".join(out)
 
 
@@ -164,6 +175,7 @@ def _zsh(parser: argparse.ArgumentParser) -> str:
         '  local curcontext="$curcontext" state line',
         "  _arguments -C \\",
     ]
+    out += [f"    {_zsh_spec(o)} \\" for o in _top_opts(parser)]
     out.append("    '1: :->command' \\")
     out.append("    '*:: :->args'")
     out.append("  case $state in")
@@ -202,22 +214,28 @@ def _fish(parser: argparse.ArgumentParser) -> str:
     for c in cmds:
         for name in c.names:
             out.append(f"complete -c mew -n __fish_use_subcommand -a {name} -d {_fquote(c.help)}")
+    out += [_fish_opt("__fish_use_subcommand", o) for o in _top_opts(parser)]
     for c in cmds:
-        cond = "__fish_seen_subcommand_from " + " ".join(c.names)
-        for o in c.opts:
-            parts = [f"complete -c mew -n '{cond}'"]
-            for f in o.flags:
-                parts.append(f"-l {f[2:]}" if f.startswith("--") else f"-s {f[1:]}")
-            if o.takes_value:
-                if isinstance(o.value, list):
-                    parts.append(f"-xa {_fquote(' '.join(o.value))}")
-                elif o.value == "file":
-                    parts.append("-rF")
-                else:
-                    parts.append("-x")
-            parts.append(f"-d {_fquote(o.help)}")
-            out.append(" ".join(parts))
+        cond = "'__fish_seen_subcommand_from " + " ".join(c.names) + "'"
+        out += [_fish_opt(cond, o) for o in c.opts]
+        if isinstance(c.positional, list):
+            out.append(f"complete -c mew -n {cond} -xa {_fquote(' '.join(c.positional))}")
     return "\n".join(out) + "\n"
+
+
+def _fish_opt(cond: str, o: _Opt) -> str:
+    parts = [f"complete -c mew -n {cond}"]
+    for f in o.flags:
+        parts.append(f"-l {f[2:]}" if f.startswith("--") else f"-s {f[1:]}")
+    if o.takes_value:
+        if isinstance(o.value, list):
+            parts.append(f"-xa {_fquote(' '.join(o.value))}")
+        elif o.value == "file":
+            parts.append("-rF")
+        else:
+            parts.append("-x")
+    parts.append(f"-d {_fquote(o.help)}")
+    return " ".join(parts)
 
 
 _GENERATORS = {"bash": _bash, "zsh": _zsh, "fish": _fish}

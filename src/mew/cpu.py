@@ -172,7 +172,13 @@ def manager(
 
 
 def _check_interval(interval: float) -> None:
-    if not isfinite(interval) or interval <= 0:
+    # Not a bool: `interval = true` in TOML would otherwise mean one second.
+    if (
+        isinstance(interval, bool)
+        or not isinstance(interval, int | float)
+        or not isfinite(interval)
+        or interval <= 0
+    ):
         raise ValueError(f"interval must be a positive finite number, got {interval!r}")
 
 

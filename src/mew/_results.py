@@ -35,8 +35,9 @@ def open_text(path: Path, mode: str = "r") -> TextIO:
     if path.name.lower().endswith(".gz"):
         import gzip
 
-        return cast(TextIO, gzip.open(path, mode + "t"))
-    return cast(TextIO, path.open(mode))
+        return cast(TextIO, gzip.open(path, mode + "t", encoding="utf-8"))
+    # JSON is UTF-8 whatever the locale, as on Windows.
+    return cast(TextIO, path.open(mode, encoding="utf-8"))
 
 
 TIME_METRICS = frozenset({"real_time", "cpu_time"})
@@ -131,7 +132,7 @@ def _check_row(obj: Any, where: str) -> None:
 
 def _rows_from_json(path: Path) -> list[dict[str, Any]]:
     try:
-        doc = json.loads(path.read_text())
+        doc = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise ValueError(f"{path}: invalid JSON: {e}") from e
     rows = doc.get("benchmarks") if isinstance(doc, dict) else None
@@ -205,10 +206,20 @@ def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
     # Appended sessions may declare different units.
     unit_scale = to_ns(1.0, rows[0].get("time_unit"))
     return [
-        to_ns(float(v), r.get("time_unit")) / unit_scale if metric in TIME_METRICS else float(v)
+        to_ns(_number(v, r, metric), r.get("time_unit")) / unit_scale
+        if metric in TIME_METRICS
+        else _number(v, r, metric)
         for r in rows
         if (v := _metric_value(r, metric)) is not None
     ]
+
+
+def _number(value: Any, row: dict[str, Any], metric: str) -> float:
+    """``value`` as a float, or a :class:`ValueError` naming the row and metric."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{row.get('name')!r}: {metric} is {value!r}, not a number") from None
 
 
 def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dict[str, Sample]:
@@ -249,7 +260,8 @@ def read_rows(path: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"result file not found: {path}") from e
     except OSError as e:
         raise type(e)(f"cannot read result file {path}: {e.strerror or e}") from e
-    except (EOFError, zlib.error) as e:  # a truncated or corrupt archive
+    # A truncated or corrupt archive, or a file that isn't UTF-8 text.
+    except (EOFError, zlib.error, UnicodeDecodeError) as e:
         raise ValueError(f"cannot read result file {path}: {e}") from e
 
 
@@ -285,17 +297,16 @@ def _samples_from_groups(
     return samples
 
 
-def _group_by_session(
-    rows: list[dict[str, Any]], *, measured_only: bool = True
-) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """Group rows by session, oldest key first; only successful measurements by default.
+def _group_by_session(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Group rows by session, oldest key first.
 
-    ISO-8601 dates lead the key, so it sorts chronologically.
+    ISO-8601 dates lead the key, so it sorts chronologically. Every row counts,
+    skipped ones included, so a selector names the same session in ``mew show``,
+    ``mew sessions`` and ``mew compare``.
     """
     buckets: defaultdict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
-        if not measured_only or _is_measurement_row(r):
-            buckets[_session_key(r)].append(r)
+        buckets[_session_key(r)].append(r)
     return dict(sorted(buckets.items()))
 
 
@@ -354,14 +365,22 @@ def load_column(
 
     ``reader`` lets a caller comparing several selectors of one file parse it once.
     """
-    by_session = _group_by_session(reader(path))
-    selected = _select_rows(path, by_session, selector)
+    # Selected before filtering, so `@latest` is the session `mew show` prints
+    # even when all of it was skipped.
+    selected = _select_rows(path, _group_by_session(reader(path)), selector)
+    measured = [r for r in selected if _is_measurement_row(r)]
+    if not measured:
+        which = "the latest session" if selector in (None, "latest") else f"session {selector!r}"
+        raise ValueError(f"{path}: {which} has no measurements, only skipped rows")
     # Repetitions of one benchmark share its `name[label]`.
     groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
-    for r in selected:
+    for r in measured:
         groups[r["benchmark"]].append(r)
-    samples = _samples_from_groups(groups, metric, statistic)
-    return _normalize_samples(samples, key, str(path)), _provenance(selected)
+    try:
+        samples = _samples_from_groups(groups, metric, statistic)
+    except ValueError as e:
+        raise ValueError(f"{path}: {e}") from e
+    return _normalize_samples(samples, key, str(path)), _provenance(measured)
 
 
 def load_session(
@@ -380,7 +399,7 @@ def load_session(
         ``context``) of the newest one.
     """
     rows = [r for r in read_rows(path) if not r.get("aggregate_name")]
-    selected = _select_rows(path, _group_by_session(rows, measured_only=False), selector)
+    selected = _select_rows(path, _group_by_session(rows), selector)
     for i, r in enumerate(selected):
         if isinstance(counters := r.get("counters"), dict):
             records = [{"name": k, "value": v} for k, v in sorted(counters.items())]
@@ -443,7 +462,7 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
     OSError
         If the file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
-    by_session = _group_by_session(read_rows(Path(path)), measured_only=False)
+    by_session = _group_by_session(read_rows(Path(path)))
     out: list[SessionSummary] = []
     for (date, sid), session_rows in reversed(by_session.items()):
         measured = {r["benchmark"] for r in session_rows if _is_measurement_row(r)}
