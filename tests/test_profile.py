@@ -850,6 +850,33 @@ def test_body_frame_finds_the_benchmark_when_the_loop_is_in_a_helper():
         ]
 
 
+def test_memray_captures_go_with_the_manager_quietly():
+    """The capture directory is removed when the manager is collected, without the
+    ResourceWarning an implicitly cleaned TemporaryDirectory raises."""
+    pytest.importorskip("memray")
+    import gc
+    import warnings
+
+    from mew import memory as _memory
+
+    @mew.benchmark(min_time="1x")
+    def bench_alloc(state):
+        for _ in state:
+            bytearray(1_000)
+
+    manager = _memory.MemrayManager()
+    mew.run(reporter=Capture(), memory_manager=manager, memory_iterations=1)
+    captures = manager._dir
+    assert any(captures.iterdir())
+    # Recorded, not raised: a warning from a finalizer would only be printed.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        del manager
+        gc.collect()
+    assert not captures.exists()
+    assert [w.message for w in caught if issubclass(w.category, ResourceWarning)] == []
+
+
 def test_memray_counts_python_objects(tmp_path):
     """Python's allocator is traced on every build: without it, a body building thousands of
     small objects showed only the arenas pymalloc newly requested, a ~35x lower peak."""
