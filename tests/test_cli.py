@@ -237,7 +237,7 @@ def test_bench_file_that_fails_to_import_exits_2(mew_cli, tmp_path):
 
 def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_path, monkeypatch):
     """`mew run --strict` exits 2 for threaded benchmarks when the GIL is enabled."""
-    monkeypatch.setattr("mew._options.gil_enabled", lambda: True)
+    monkeypatch.setattr("mew._options._gil_enabled", lambda: True)
     (tmp_path / "bench_t.py").write_text(
         "import mew\n\n@mew.benchmark(threads=2)\ndef bench_t(state):\n    for _ in state:\n"
         "        pass\n"
@@ -497,7 +497,7 @@ def test_run_profile_memray_renders_the_run_and_annotates_rows(mew_cli, tmp_path
 
 
 @pytest.mark.skipif(
-    sys.version_info < (3, 15) and not mew.gil_enabled(),
+    sys.version_info < (3, 15) and not mew.machine._gil_enabled(),
     reason="pyinstrument's native sampler enables the GIL",
 )
 def test_run_sample_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
@@ -631,7 +631,7 @@ def test_run_rejects_tachyon_before_python_3_15(mew_cli, benchdir, tmp_path):
         ("--cpu-profiler", "sample", "mew.cpu.manager", RuntimeError),  # can't run here
         ("--cpu-profiler", "sample", "mew.cpu.manager", ImportError),  # its package is missing
         ("--cpu-profiler", "sample", "mew.cpu.manager", ValueError),  # a bad setting for it
-        ("--memory-profiler", "memray", "mew.memory.manager", ImportError),
+        ("--memory-profiler", "memray", "mew.memory.MemrayManager", ImportError),
     ],
 )
 def test_run_unusable_profiler_exits_2(
@@ -650,7 +650,7 @@ def test_run_unusable_profiler_exits_2(
 
 @pytest.mark.skipif(sys.version_info < (3, 15), reason="pyinstrument is the default here")
 @pytest.mark.skipif(
-    not mew.gil_enabled(),
+    not mew.machine._gil_enabled(),
     reason="pyinstrument's native sampler enables the GIL",
 )
 def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):

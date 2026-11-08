@@ -9,11 +9,11 @@ import pytest
 
 from mew._registry import REGISTRY
 from mew.context import clear_context
-from mew.machine import gil_enabled, is_free_threaded_build
+from mew.machine import _gil_enabled, _is_free_threaded_build
 
 
 def _require_gil_disabled(when: str) -> None:
-    if is_free_threaded_build() and gil_enabled():
+    if _is_free_threaded_build() and _gil_enabled():
         pytest.exit(
             f"Free-threaded Python has the GIL enabled ({when})",
             returncode=pytest.ExitCode.TESTS_FAILED,

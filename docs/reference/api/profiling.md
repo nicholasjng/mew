@@ -65,10 +65,6 @@ with `sample_count` 0 and no `top_function`.
 .. autoclass:: mew.memory.MemrayManager
    :members:
 
-.. autoclass:: mew.memory.Capture
-
-.. autofunction:: mew.memory.manager
-
 .. autofunction:: mew.cpu.manager
 
 .. autodata:: mew.cpu.SAMPLERS

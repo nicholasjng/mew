@@ -53,7 +53,6 @@ importable from `mew` directly:
    set_context
    update_context
    get_context
-   gil_enabled
    clear_context
    vcs_context
    machine_context

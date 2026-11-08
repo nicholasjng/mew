@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 from mew._core import TimeUnit
 from mew._format import overflow
 from mew._typing import BenchmarkOptions
-from mew.machine import gil_enabled
+from mew.machine import _gil_enabled
 
 if TYPE_CHECKING:
     from mew._registry import Entry
@@ -110,7 +110,7 @@ THREADED_ON_GIL = (
 
 def threaded_on_gil(entries: Iterable[Entry]) -> tuple[list[Entry], str]:
     """The threaded benchmarks this build can't run, and the first few names."""
-    threaded = [e for e in entries if is_threaded(e.options)] if gil_enabled() else []
+    threaded = [e for e in entries if is_threaded(e.options)] if _gil_enabled() else []
     return threaded, ", ".join(e.name for e in threaded[:3]) + overflow(len(threaded), 3)
 
 

@@ -24,7 +24,7 @@ $ uv add 'mew-bench[memory]'    # or: pip install 'mew-bench[memory]'
 
 Note: `memray` is not available on Windows. Without memray, `mew run
 --memory-profiler memray` stops with exit code 2 and the install hint, before any
-benchmark runs; from Python, {func}`mew.memory.manager` raises `ImportError`.
+benchmark runs; from Python, {class}`mew.memory.MemrayManager` raises `ImportError`.
 
 ## Basics
 

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from mew._typing import ProfilerManager
-from mew.machine import gil_enabled
+from mew.machine import _gil_enabled
 
 if TYPE_CHECKING:
     from pyinstrument import Profiler
@@ -165,7 +165,7 @@ class PyinstrumentManager(ProfilerManager):
 
     def __init__(self, interval: float = 1e-4) -> None:
         _check_interval(interval)
-        if not gil_enabled():
+        if not _gil_enabled():
             raise RuntimeError(
                 "pyinstrument does not support free-threaded Python: importing its "
                 "native sampler would enable the GIL. On Python 3.15+, mew samples "
@@ -302,7 +302,7 @@ def _unwinder(pid: int) -> Any:
         # Bytecode instructions for the flame graph, on free-threaded builds only:
         # a GIL build is sampled where the body hands over the GIL, so every
         # sample would name a call or a loop jump.
-        opcodes=sys.version_info >= (3, 15) and not gil_enabled(),
+        opcodes=sys.version_info >= (3, 15) and not _gil_enabled(),
         cache_frames=True,
     )
 
@@ -409,7 +409,7 @@ class TachyonManager(ProfilerManager):
         self._stacks = _stack_totals()
         self._result = None
         self._active = 0.0
-        if gil_enabled():
+        if _gil_enabled():
             self._switch_interval = sys.getswitchinterval()
             sys.setswitchinterval(min(self._interval, self._switch_interval))
         self._since = time.perf_counter()

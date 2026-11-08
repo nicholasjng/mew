@@ -339,7 +339,7 @@ def test_memory_pass_counts_batch_overshoot():
 
 
 @pytest.mark.skipif(
-    mew.gil_enabled(),
+    mew.machine._gil_enabled(),
     reason="threaded mode requires a free-threaded interpreter",
 )
 def test_manager_passes_run_a_single_thread():
@@ -428,7 +428,7 @@ _SAMPLERS = [
     pytest.param(
         "pyinstrument",
         marks=pytest.mark.skipif(
-            not mew.gil_enabled(),
+            not mew.machine._gil_enabled(),
             reason="pyinstrument's native sampler enables the GIL",
         ),
     ),
@@ -477,10 +477,10 @@ def test_memray_captures_the_loop_and_roots_its_flame_graph_at_the_body(tmp_path
         del fixture
 
     rep = Capture()
-    manager = _memory.manager()
+    manager = _memory.MemrayManager()
     mew.run(min_time="20x", reporter=rep, memory_manager=manager)
     # Tagged with the user's benchmark frame, not a mew internal.
-    (capture,) = manager.captures
+    (capture,) = manager._captures
     assert capture.root[0] == "bench_rooted"
     assert capture.benchmark == rep.runs[0]["benchmark"]
     manager.write_outputs(tmp_path)
@@ -507,9 +507,9 @@ def test_flamegraphs_are_one_file_per_benchmark(tmp_path):
             buf = bytearray(n)
             del buf
 
-    manager = _memory.manager()
+    manager = _memory.MemrayManager()
     mew.run(min_time="2x", repetitions=2, reporter=Capture(), memory_manager=manager)
-    assert len(manager.captures) == 4
+    assert len(manager._captures) == 4
     manager.write_outputs(tmp_path)
     files = ["0-bench_buf.html", "1-bench_buf.html", "index.html"]
     assert sorted(p.name for p in tmp_path.iterdir()) == files
@@ -528,7 +528,7 @@ def test_memray_write_outputs_warns_when_nothing_was_captured(tmp_path, capsys):
     from mew import memory as _memory
 
     out = tmp_path / "flames"
-    _memory.manager().write_outputs(out)
+    _memory.MemrayManager().write_outputs(out)
     assert not out.exists()
     assert "no memory captures recorded" in capsys.readouterr().err
 
@@ -592,7 +592,9 @@ def test_pass_that_skips_before_its_loop_has_no_profile(sampler):
     assert ["cpu_profile" in row for row in rep.runs] == [True, False]
 
 
-@pytest.mark.skipif(mew.gil_enabled(), reason="needs a free-threaded build with the GIL disabled")
+@pytest.mark.skipif(
+    mew.machine._gil_enabled(), reason="needs a free-threaded build with the GIL disabled"
+)
 def test_pyinstrument_is_rejected_before_import_on_free_threaded():
     """Importing pyinstrument would enable the GIL, which `_gil_stays_disabled`
     in conftest.py turns into a failure."""
@@ -609,10 +611,10 @@ def test_pyinstrument_is_rejected_before_import_on_free_threaded():
             "cpu",
             lambda mod: mod.PyinstrumentManager(),
             marks=pytest.mark.skipif(
-                not mew.gil_enabled(), reason="pyinstrument is rejected before the lookup"
+                not mew.machine._gil_enabled(), reason="pyinstrument is rejected before the lookup"
             ),
         ),
-        ("memory", lambda mod: mod.manager()),
+        ("memory", lambda mod: mod.MemrayManager()),
     ],
 )
 def test_missing_profiler_package_raises_import_error(monkeypatch, module, create):
@@ -853,7 +855,7 @@ def test_memray_counts_python_objects(tmp_path):
             del rows
 
     rep = Capture()
-    mew.run(reporter=rep, memory_manager=_memory.manager(), memory_iterations=4)
+    mew.run(reporter=rep, memory_manager=_memory.MemrayManager(), memory_iterations=4)
     memory = rep.runs[0]["memory"]
     # 5,000 dicts and strings are well over 500 KiB; untraced, the peak was ~40 KiB.
     assert memory["peak_bytes"] > 500 * 1024

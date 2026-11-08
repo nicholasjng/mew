@@ -37,7 +37,7 @@ from mew._results import (
     split_selector,
 )
 from mew._statistics import Statistic, mannwhitney_p
-from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, report
+from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, render_panel
 
 __all__ = ["SessionSummary", "compare", "read_results", "session_summaries"]
 
@@ -332,7 +332,10 @@ def _render(
     term.print(table)
 
     if regressions is not None:
-        return report(verdicts, default_threshold=regressions.default_threshold)
+        text, code = render_panel(verdicts, default_threshold=regressions.default_threshold)
+        if text:
+            print(text, file=sys.stderr)
+        return code
     return 0
 
 

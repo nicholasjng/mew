@@ -81,7 +81,7 @@ class Preset:
 #: class. User presets can't take these names, so a name here marks a built-in.
 BUILTINS: dict[str, Preset] = {
     "sample": Preset("mew.cpu:manager", name="sample"),
-    "memray": Preset("mew.memory:manager", name="memray"),
+    "memray": Preset("mew.memory:MemrayManager", name="memray"),
 }
 
 

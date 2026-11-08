@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import fnmatch
 import math
-import sys
 from dataclasses import dataclass
 from enum import Enum
 
@@ -301,32 +300,3 @@ def render_panel(
     lines.append(summary)
     # 3 keeps a failed gate apart from 1 (nothing to compare) and 2 (usage errors).
     return "\n".join(lines), (3 if regressed else 0)
-
-
-def report(
-    verdicts: list[BenchmarkVerdict],
-    *,
-    default_threshold: float,
-) -> int:
-    """Print the regression panel to stderr and return the exit code.
-
-    The panel is the text of :func:`render_panel`; nothing is printed when it is
-    empty.
-
-    Parameters
-    ----------
-    verdicts : list of BenchmarkVerdict
-        One entry per gated benchmark in display order.
-    default_threshold : float
-        Threshold quoted in the panel header.
-
-    Returns
-    -------
-    int
-        ``3`` if any benchmark regressed, else ``0``. Nothing is printed when
-        there is nothing to report.
-    """
-    text, code = render_panel(verdicts, default_threshold=default_threshold)
-    if text:
-        print(text, file=sys.stderr)
-    return code

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 Frame = tuple[str, str, int]
 
 
-class Capture(NamedTuple):
+class _Capture(NamedTuple):
     """One memray capture: a benchmark's loop in one repetition of the memory pass.
 
     Attributes
@@ -69,17 +69,27 @@ class MemrayManager(MemoryManager):
     batched loop can push past that cap.
 
     The capture files live in a temporary directory that goes with the manager.
+
+    Raises
+    ------
+    ImportError
+        If memray is not installed.
     """
 
     def __init__(self) -> None:
+        if find_spec("memray") is None:
+            raise ImportError(
+                "memray is required for memory profiling. "
+                "Install it with: uv add 'mew-bench[memory]'"
+            )
         self._tmp = tempfile.TemporaryDirectory(prefix="mew-memray-")
         self._dir = Path(self._tmp.name)
         self._i = 0
         self._dest: Path | None = None
         self._tracker: Tracker | None = None
-        #: Accepted captures, one per (benchmark, repetition), in run order.
-        #: :meth:`write_outputs` renders them.
-        self.captures: list[Capture] = []
+        # Accepted captures, one per (benchmark, repetition), in run order;
+        # write_outputs() renders them.
+        self._captures: list[_Capture] = []
 
     def start(self) -> None:
         import memray
@@ -115,7 +125,7 @@ class MemrayManager(MemoryManager):
         # so the optional `total_bytes` metric stays unset.
         with memray.FileReader(dest) as reader:
             meta = reader.metadata
-        self.captures.append(Capture(dest, self._root, self._benchmark))
+        self._captures.append(_Capture(dest, self._root, self._benchmark))
         return {
             "peak_bytes": meta.peak_memory,
             "total_allocations": meta.total_allocations,
@@ -137,7 +147,7 @@ class MemrayManager(MemoryManager):
         directory : Path
             Where to write the reports; created if missing.
         """
-        if not self.captures:
+        if not self._captures:
             print(
                 "warning: no memory captures recorded; skipping flame graphs "
                 "(did any benchmark body enter its timing loop?)",
@@ -149,8 +159,8 @@ class MemrayManager(MemoryManager):
         from memray.reporters.flamegraph import FlameGraphReporter
 
         directory.mkdir(parents=True, exist_ok=True)
-        firsts: dict[str, Capture] = {}
-        for capture in self.captures:
+        firsts: dict[str, _Capture] = {}
+        for capture in self._captures:
             firsts.setdefault(capture.benchmark, capture)
         captures = list(firsts.values())
         benchmarks = [(f"{i}-{c.root[0]}.html", c.benchmark) for i, c in enumerate(captures)]
@@ -187,23 +197,3 @@ class MemrayManager(MemoryManager):
             f"<h1>Memory flame graphs</h1>\n<ul>\n{links}</ul>\n",
             encoding="utf-8",
         )
-
-
-def manager() -> MemrayManager:
-    """Create a memray manager, checking that memray is installed.
-
-    Returns
-    -------
-    MemrayManager
-        A manager to pass to :func:`mew.run`.
-
-    Raises
-    ------
-    ImportError
-        If memray is not installed.
-    """
-    if find_spec("memray") is None:
-        raise ImportError(
-            "memray is required for memory profiling. Install it with: uv add 'mew-bench[memory]'"
-        )
-    return MemrayManager()
