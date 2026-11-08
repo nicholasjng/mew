@@ -1,13 +1,10 @@
-"""@benchmark, @parametrize, @product decorator behavior."""
+"""@benchmark and @parametrize decorator behavior, and grid()."""
 
 from __future__ import annotations
-
-from typing import Any
 
 import pytest
 
 import mew
-from mew._options import _OPTION_KEYS
 from mew._registry import REGISTRY
 
 
@@ -61,7 +58,7 @@ def test_min_time_takes_run_syntax_and_nx_fixes_the_iteration_count():
         pass
 
     # Google Benchmark has no per-benchmark "Nx"; its equivalent is iterations.
-    @mew.product(n=[1], min_time=" 7x ")
+    @mew.parametrize(mew.grid(n=[1]), min_time=" 7x ")
     def bench_c(state, n):
         pass
 
@@ -165,50 +162,56 @@ def test_parametrize_accepts_generator():
     assert entries[0].case_labels == ["n=0", "n=1", "n=2"]
 
 
-def test_product_cartesian():
-    """`@mew.product` registers the Cartesian product of its axes, the last axis varying fastest."""
+def test_grid_is_the_cartesian_product():
+    """`grid` gives every combination, the last axis varying fastest; any name is an axis,
+    including those of benchmark options, which `parametrize` takes separately."""
+    assert mew.grid(n=[1, 2], threads=["a", "b"]) == [
+        {"n": 1, "threads": "a"},
+        {"n": 1, "threads": "b"},
+        {"n": 2, "threads": "a"},
+        {"n": 2, "threads": "b"},
+    ]
 
-    @mew.product(n=[1, 2], algo=["a", "b"])
-    def bench_x(state, n, algo):
+    @mew.parametrize(mew.grid(n=[1, 2], unit=(u for u in ["kb", "mb"])), min_time="1x")
+    def bench_x(state, n, unit):
         for _ in state:
             pass
 
     (entry,) = REGISTRY.all()
-    # Cases follow itertools.product: the last axis varies fastest.
-    assert entry.case_labels == ["n=1-algo=a", "n=1-algo=b", "n=2-algo=a", "n=2-algo=b"]
+    assert entry.case_labels == ["n=1-unit=kb", "n=1-unit=mb", "n=2-unit=kb", "n=2-unit=mb"]
+    assert entry.options == {"iterations": 1}  # options stay options
 
 
-# Each variant drops the options that contradict the other's, so between them
-# every option is forwarded.
+def test_grids_join_and_filter_into_partial_grids():
+    """Grids are lists: `+` joins them, a comprehension filters one, and an overlap shows up
+    as duplicate case labels."""
+    joined = mew.grid(os=["linux"], py=["3.11", "3.12"]) + mew.grid(os=["macos"], py=["3.11"])
+    filtered = [
+        c
+        for c in mew.grid(os=["linux", "macos"], py=["3.11", "3.12"])
+        if c != {"os": "macos", "py": "3.12"}
+    ]
+    assert joined == filtered
+    with pytest.raises(ValueError, match="duplicate case label"):
+
+        @mew.parametrize(mew.grid(n=[1, 2]) + mew.grid(n=[2]))
+        def _bench(state, n):
+            for _ in state:
+                pass
+
+
 @pytest.mark.parametrize(
-    "dropped", [{"iterations", "use_manual_time"}, {"min_time", "min_warmup_time", "use_real_time"}]
+    ("axes", "message"),
+    [
+        ({}, "at least one axis"),
+        ({"algo": "merge"}, "grid axis 'algo' must be an iterable"),  # would split into letters
+        ({"n": 10}, "grid axis 'n' must be an iterable"),
+    ],
 )
-def test_product_passes_every_option_through(dropped):
-    """`@mew.product` forwards every benchmark option to the entry."""
-    # product()'s **kwargs are the iterables, so it forwards each option by
-    # hand; a forgotten one would be silently dropped.
-    every: dict[str, Any] = {
-        "min_time": 0.05,
-        "min_warmup_time": 0.01,
-        "iterations": 10,
-        "repetitions": 3,
-        "unit": "us",
-        "use_real_time": True,
-        "use_manual_time": True,
-        "measure_process_cpu_time": True,
-        "threads": 2,
-    }
-    assert set(every) == _OPTION_KEYS  # a new option needs a value here
-    options = {k: v for k, v in every.items() if k not in dropped}
-
-    @mew.product(n=[1, 2], **options)
-    def bench_x(state, n):
-        for _ in state:
-            pass
-
-    (entry,) = REGISTRY.all()
-    assert entry.case_labels == ["n=1", "n=2"]  # options, not axes
-    assert entry.options == {**options, "threads": (2,)}
+def test_grid_rejects_a_missing_or_non_iterable_axis(axes, message):
+    """`grid` needs an axis, and each axis is a collection of values, not one value."""
+    with pytest.raises(TypeError, match=message):
+        mew.grid(**axes)
 
 
 def test_threads_accepts_a_sequence_of_counts():
@@ -222,16 +225,6 @@ def test_threads_accepts_a_sequence_of_counts():
     (entry,) = REGISTRY.all()
     # Snapshotted (the generator is consumed once) and de-duplicated in order.
     assert entry.options["threads"] == (1, 2, 4)
-
-
-def test_product_needs_at_least_one_iterable():
-    """`@mew.product` with options but no iterables raises `TypeError`."""
-    with pytest.raises(TypeError, match="at least one iterable"):
-
-        @mew.product(min_time=0.1)
-        def _bench(state):
-            for _ in state:
-                pass
 
 
 @pytest.mark.parametrize(
@@ -331,7 +324,7 @@ def test_tags_normalize_to_a_frozenset_on_every_decorator():
     def bench_d(state, n):
         pass
 
-    @mew.product(n=[1, 2], tags="sort")
+    @mew.parametrize(mew.grid(n=[1, 2]), tags="sort")
     def bench_e(state, n):
         pass
 

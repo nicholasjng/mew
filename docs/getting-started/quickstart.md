@@ -53,14 +53,14 @@ def bench_sorted(state: mew.State, n: int) -> None:
         sorted(data)
 ```
 
-Or use a cartesian product over parameter axes:
+Or every combination of some values, with `mew.grid`:
 
 ```python
-@mew.product(n=[10, 100, 1000], algo=["timsort", "quick"])
+@mew.parametrize(mew.grid(n=[10, 100, 1000], algo=["timsort", "quick"]))
 def bench_sort(state: mew.State, n: int, algo: str) -> None: ...
 ```
 
-See [](../guide/parametrize-product.md) for full semantics.
+See [](../guide/parametrize.md) for full semantics.
 
 ## Next steps
 

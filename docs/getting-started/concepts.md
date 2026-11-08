@@ -3,7 +3,7 @@
 ## Benchmarks and families
 
 A **benchmark** is a single function decorated with `@mew.benchmark`.
-A **benchmark family** is produced by `@mew.parametrize` or `@mew.product`.
+A **benchmark family** is produced by `@mew.parametrize`, often over a `mew.grid`.
 It registers the same body once per parameter combination.
 The variant label is appended to the registration name in brackets: `bench_sort[n=10-algo=merge]`.
 

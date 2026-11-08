@@ -53,7 +53,7 @@ Override:
 def whatever(state): ...
 ```
 
-Variants from `@parametrize` / `@product` always get a `[label]` suffix.
+Variants from `@parametrize` always get a `[label]` suffix.
 
 ## When a benchmark raises
 

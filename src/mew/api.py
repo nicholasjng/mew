@@ -1,4 +1,4 @@
-"""Decorators that register benchmarks: ``@benchmark``, ``@parametrize`` and ``@product``."""
+"""Register benchmarks: ``@benchmark``, ``@parametrize``, and :func:`grid` for its cases."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Unpack, overload
 
-from mew._core import State, TimeUnit
+from mew._core import State
 from mew._options import normalize_options
 from mew._registry import REGISTRY, Entry
-from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
+from mew._typing import BenchmarkFn, BenchmarkOptions
 
 
 def _format_id_value(value: Any) -> str:
@@ -149,7 +149,7 @@ def benchmark(
 ) -> BenchmarkFn | Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a function as a benchmark.
 
-    Use :func:`parametrize` or :func:`product` for a family of cases.
+    Use :func:`parametrize` for a family of cases, with :func:`grid` for combinations.
 
     Parameters
     ----------
@@ -209,7 +209,7 @@ def _register_family(
     options: BenchmarkOptions,
     tags: frozenset[str],
 ) -> BenchmarkFn:
-    # `cases` holds fresh dicts from parametrize/product, only ever unpacked
+    # `cases` holds fresh dicts from parametrize, only ever unpacked
     # by the trampoline.
     if ids is not None:
         # A string would split into one-character labels.
@@ -221,7 +221,7 @@ def _register_family(
     if len(labels) != len(cases):
         raise ValueError(f"ids has {len(labels)} entries but parameters has {len(cases)}")
     if not cases:
-        raise ValueError("parametrize/product needs at least one case")
+        raise ValueError("parametrize needs at least one case")
     if name is not None:
         _check_addressable(name, "benchmark name")
 
@@ -263,6 +263,7 @@ def parametrize(
     ----------
     parameters : Iterable[dict[str, Any]]
         One dict of keyword arguments per case; read once, so a generator works.
+        :func:`grid` makes the dicts for every combination of some values.
     name : str, optional
         Replaces the family's default name.
     ids : Sequence[str], optional
@@ -307,100 +308,46 @@ def parametrize(
     )
 
 
-def product(
-    *,
-    name: str | None = None,
-    ids: Sequence[str] | None = None,
-    tags: Iterable[str] | str | None = None,
-    min_time: float | str | None = None,
-    min_warmup_time: float | None = None,
-    iterations: int | None = None,
-    repetitions: int | None = None,
-    unit: TimeUnitStr | TimeUnit | None = None,
-    use_real_time: bool = False,
-    use_manual_time: bool = False,
-    measure_process_cpu_time: bool = False,
-    threads: int | Iterable[int] | None = None,
-    **iterables: Iterable[Any],
-) -> Callable[[BenchmarkFn], BenchmarkFn]:
-    """Register a family of benchmark cases, one per combination of values.
+def grid(**axes: Iterable[Any]) -> list[dict[str, Any]]:
+    """Every combination of the axes' values, as cases for :func:`parametrize`.
 
-    The cases are the cartesian product of ``**iterables``. The Google
-    Benchmark options are as for :func:`benchmark`, named here because
-    ``**iterables`` takes every other keyword argument.
+    Cases follow :func:`itertools.product`: the last axis varies fastest. A grid
+    is a plain list, so ``+`` joins grids and a comprehension filters one, for
+    when only some combinations make sense.
 
     Parameters
     ----------
-    name : str, optional
-        Replaces the family's default name.
-    ids : Sequence[str], optional
-        One label per combination, instead of labels made from the values.
-    tags : Iterable[str] or str, optional
-        Tags for every case.
-    min_time : float or str, optional
-        Seconds to measure each case (``0.5``, ``"500ms"``, ``"1m"``), or a
-        fixed iteration count like ``"100x"``, the same as ``iterations=100``.
-    min_warmup_time : float, optional
-        Seconds to warm up each case before measuring it.
-    iterations, repetitions : int, optional
-        A fixed iteration count, which excludes the two times above, and how
-        many runs per case.
-    unit : str or TimeUnit, optional
-        The time unit results are reported in: ``"ns"``, ``"us"``, ``"ms"`` or
-        ``"s"``.
-    use_real_time, use_manual_time, measure_process_cpu_time : bool
-        Which clock each case's time comes from; ``use_real_time`` and
-        ``use_manual_time`` exclude each other.
-    threads : int or Iterable[int], optional
-        Threads per case, or one run per count. Needs a free-threaded build;
-        on a GIL build :func:`mew.run` skips threaded benchmarks.
-    **iterables
-        Each parameter's values, by name.
+    **axes : Iterable
+        Each parameter's values, by name. Generators are read once, here.
 
     Returns
     -------
-    Callable[[BenchmarkFn], BenchmarkFn]
-        A decorator that registers the family and returns the function unchanged.
+    list[dict[str, Any]]
+        One parameter dict per combination.
 
     Raises
     ------
     TypeError
-        If no iterables are given, or an option has the wrong type.
-    ValueError
-        If an option is out of range or contradicts another, two labels are
-        equal, a name or label contains ``::``, brackets or a newline, or a
-        benchmark of that name is already registered.
+        If no axis is given, or an axis is a string or not iterable; a string
+        would split into its characters.
 
     Examples
     --------
-    >>> @mew.product(n=[10, 100], algo=["merge", "quick"], tags=("sort",))
+    >>> @mew.parametrize(mew.grid(n=[10, 100], algo=["merge", "quick"]), tags="sort")
     ... def bench_sort(state, n, algo):
     ...     ...
+
+    Linux on every version, the other platforms on the oldest and newest only:
+
+    >>> cases = mew.grid(os=["linux"], py=["3.11", "3.13", "3.15"]) + mew.grid(
+    ...     os=["macos", "windows"], py=["3.11", "3.15"]
+    ... )
     """
-    if not iterables:
-        raise TypeError("@product needs at least one iterable kwarg")
-
-    local_options = {
-        "min_time": min_time,
-        "min_warmup_time": min_warmup_time,
-        "iterations": iterations,
-        "repetitions": repetitions,
-        "unit": unit,
-        "use_real_time": use_real_time,
-        "use_manual_time": use_manual_time,
-        "measure_process_cpu_time": measure_process_cpu_time,
-        "threads": threads,
-    }
-    options = normalize_options(
-        {k: v for k, v in local_options.items() if v is not None and v is not False}
-    )
-
-    norm_tags = _normalize_tags(tags)
-    keys = tuple(iterables)
-    # itertools.product snapshots each axis, including generators.
-    cases = [
-        dict(zip(keys, combo, strict=True)) for combo in itertools.product(*iterables.values())
-    ]
-    return lambda target: _register_family(
-        target, cases, name=name, ids=ids, options=options, tags=norm_tags
-    )
+    if not axes:
+        raise TypeError("grid() needs at least one axis, such as grid(n=[1, 2])")
+    for name, values in axes.items():
+        if isinstance(values, str) or not isinstance(values, Iterable):
+            raise TypeError(
+                f"grid axis {name!r} must be an iterable such as a list, got {values!r}"
+            )
+    return [dict(zip(axes, combo, strict=True)) for combo in itertools.product(*axes.values())]
