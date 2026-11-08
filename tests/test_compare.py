@@ -19,10 +19,9 @@ from _helpers import (
     write_pair as _write_pair,
 )
 
-from mew._results import load_column, split_selector
+from mew._results import Sample, load_column, split_selector
 from mew._statistics import Statistic
 from mew.compare import (
-    Sample,
     _compare_samples,
     _fmt_delta,
     compare,
@@ -573,18 +572,6 @@ def test_compare_missing_counter_hints_set_counter(
     assert "set_counter" in err
 
 
-def test_compare_counter_in_a_0_2_0_mapping(tmp_path: Path) -> None:
-    """Archives from 0.2.0 stored counters as a name-to-value mapping; they still compare."""
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("b", 1.0, counters={"work": 150.0})],
-        base=[_row("b", 1.0, counters={"work": 100.0})],
-    )
-    console = Console(width=200)
-    assert compare([other, base], metric="counters.work", console=console) == 0
-    assert "+50.00%" in console.export_text()
-
-
 def test_compare_memory_metric_without_data_hints_profile_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -593,18 +580,6 @@ def test_compare_memory_metric_without_data_hints_profile_flag(
     code = compare([other, base], metric="memory.peak_bytes", console=Console())
     assert code == 1
     assert "--memory-profiler memray" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    ("metric", "unit"), [("cpu_time", "us"), ("iterations", None), ("memory.peak_bytes", None)]
-)
-def test_sample_time_unit_is_set_for_times_only(
-    tmp_path: Path, metric: str, unit: str | None
-) -> None:
-    """`Sample.time_unit` is set for time metrics and `None` for counts and bytes."""
-    p = tmp_path / "a.json"
-    _write_json(p, [{**_mem_row("b", 1.0, peak=1, allocs=1), "time_unit": "us"}])
-    assert load_column(p, metric)[0]["b"].time_unit == unit
 
 
 @pytest.mark.parametrize(
@@ -701,7 +676,7 @@ def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_grouped_sessions_normalize_units_before_reduction(tmp_path: Path, reverse: bool) -> None:
-    """Pooled sessions with mixed time units convert to the oldest run's unit before reduction."""
+    """Pooled sessions with mixed time units convert to nanoseconds before reduction."""
     path = tmp_path / "units.jsonl"
     rows = [
         _row("b", 1000, time_unit="ns", session_tag="same", date="2026-01-01"),
@@ -711,10 +686,7 @@ def test_grouped_sessions_normalize_units_before_reduction(tmp_path: Path, rever
         rows.reverse()
     _write_jsonl(path, rows)
     sample = load_column(path, "real_time", selector="same")[0]["b"]
-    # Pooled rows are ordered by session date, so the oldest run's unit wins
-    # regardless of file order.
     assert sample.values == (1000, 1000)
-    assert sample.time_unit == "ns"
 
 
 @pytest.mark.parametrize("show_stddev", [False, True])
@@ -736,25 +708,19 @@ def test_rows_are_the_benchmarks_candidate_and_baseline_share(
 
 
 @pytest.mark.parametrize(
-    ("metric", "base_value", "other_value", "base_unit", "other_unit", "delta", "ratio"),
+    ("base_value", "other_value", "higher_is_better", "delta", "ratio"),
     [
-        ("real_time", 1000, 1, "ns", "us", 0, 1),
-        ("cpu_time", 1, 2000, "us", "ns", 1, 0.5),
-        ("iterations", 100, 200, "ns", "us", 1, 2),
-        ("memory.peak_bytes", 100, 200, "ns", "us", 1, 0.5),
-        ("real_time", 0, 1, "ns", "ns", float("inf"), 0),
-        ("real_time", 1, 0, "ns", "ns", -1, float("inf")),
+        (100, 200, True, 1, 2),  # e.g. iterations
+        (100, 200, False, 1, 0.5),  # e.g. memory.peak_bytes
+        (0, 1, False, float("inf"), 0),
+        (1, 0, False, -1, float("inf")),
         # Both zero (e.g. allocation-free bodies) is a tie, not ×inf.
-        ("memory.peak_bytes", 0, 0, None, None, 0, 1),
+        (0, 0, False, 0, 1),
     ],
 )
-def test_comparison_math_without_rendering(
-    metric, base_value, other_value, base_unit, other_unit, delta, ratio
-):
-    """`_compare_samples` converts time units, inverts the iterations ratio, and handles zeros."""
-    base = Sample("b", base_value, base_unit)
-    other = Sample("b", other_value, other_unit)
-    result = _compare_samples(base, other, metric, metric == "iterations")
+def test_comparison_math_without_rendering(base_value, other_value, higher_is_better, delta, ratio):
+    """`_compare_samples` inverts the ratio by direction and handles zeros."""
+    result = _compare_samples(Sample(base_value), Sample(other_value), higher_is_better)
     assert result.delta == delta
     assert result.speedup == ratio
     assert result.p_value is None
@@ -771,7 +737,7 @@ def test_comparison_math_without_rendering(
 )
 def test_counter_delta_keeps_its_sign_at_or_below_zero(base, other, delta, text, style) -> None:
     """A delta's sign follows the change, not the baseline's sign, so the gate sees a fall."""
-    r = _compare_samples(Sample("x", base, None), Sample("x", other, None), "counters.c", True)
+    r = _compare_samples(Sample(base), Sample(other), True)
     assert r.delta == delta
     assert _fmt_delta(r.delta, higher_is_better=True) == (text, style)
     regressed = RegressionConfig().evaluate("x", r.delta * 100, higher_is_better=True).verdict

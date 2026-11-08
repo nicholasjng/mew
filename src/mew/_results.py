@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import statistics
 import zlib
@@ -69,13 +68,9 @@ class Sample:
 
     Attributes
     ----------
-    name : str
-        ``file.py::func[label]``, without ``file.py::`` when matching by function.
     value : float
-        The statistic over the repetitions, the median by default.
-    time_unit : str or None
-        The unit of ``value`` for ``real_time`` and ``cpu_time``, e.g. ``"ns"``;
-        ``None`` for the other metrics, which are counts or bytes.
+        The statistic over the repetitions, the median by default. Times are
+        in nanoseconds, whatever unit the file stored them in.
     values : tuple[float, ...]
         The per-repetition values, in ``value``'s unit, for the significance test.
     counter_format : dict or None
@@ -84,9 +79,7 @@ class Sample:
         plain counter and for other metrics.
     """
 
-    name: str
     value: float
-    time_unit: str | None
     values: tuple[float, ...] = ()
     counter_format: dict[str, Any] | None = None
 
@@ -188,25 +181,23 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
     """Look up ``metric`` in a row; dotted metrics traverse one nested level.
 
     Counters are a list of ``{"name", "value"}`` records, so a counter is found
-    by name; a 0.2.0 archive's name-to-value mapping takes the dict path.
+    by name; ``memory`` is a mapping.
     """
     head, sep, tail = metric.partition(".")
     value = row.get(head)
     if not sep:
         return value
-    if isinstance(value, dict):
-        return value.get(tail)
-    if head == "counters" and (counter := _counter(row, tail)) is not None:
-        return counter.get("value")
-    return None
+    if head == "counters":
+        counter = _counter(row, tail)
+        return counter.get("value") if counter is not None else None
+    return value.get(tail) if isinstance(value, dict) else None
 
 
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
-    """Per-repetition values in the first row's unit, dropping absent metrics."""
-    # Appended sessions may declare different units.
-    unit_scale = to_ns(1.0, rows[0].get("time_unit"))
+    """Per-repetition values, times in nanoseconds, dropping absent metrics."""
+    # Each row's own unit: appended sessions may declare different ones.
     return [
-        to_ns(_number(v, r, metric), r.get("time_unit")) / unit_scale
+        to_ns(_number(v, r, metric), r.get("time_unit"))
         if metric in TIME_METRICS
         else _number(v, r, metric)
         for r in rows
@@ -229,18 +220,15 @@ def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dic
     """
     if key == "name":
         return samples
-    renamed: dict[str, Sample] = {}
-    origin: dict[str, str] = {}
-    for full, sample in samples.items():
+    origin: dict[str, str] = {}  # short name -> the full name it came from
+    for full in samples:
         short = full.rsplit("::", 1)[-1]
-        if short in renamed:
+        if (first := origin.setdefault(short, full)) != full:
             raise ValueError(
-                f"{source}: --key {key} maps both {origin[short]!r} and {full!r} "
+                f"{source}: --key {key} maps both {first!r} and {full!r} "
                 f"to {short!r}; disambiguate or use the default --key name"
             )
-        renamed[short] = dataclasses.replace(sample, name=short)
-        origin[short] = full
-    return renamed
+    return {short: samples[full] for short, full in origin.items()}
 
 
 def read_rows(path: Path) -> list[dict[str, Any]]:
@@ -287,13 +275,7 @@ def _samples_from_groups(
         except statistics.StatisticsError as e:
             # E.g. gmean over a zero before Python 3.13; fail rather than drop the benchmark.
             raise ValueError(f"statistic failed on {name!r}: {e}") from e
-        samples[name] = Sample(
-            name=name,
-            value=center,
-            time_unit=group[0].get("time_unit") if metric in TIME_METRICS else None,
-            values=tuple(values),
-            counter_format=fmt,
-        )
+        samples[name] = Sample(value=center, values=tuple(values), counter_format=fmt)
     return samples
 
 
@@ -389,8 +371,7 @@ def load_session(
     """Load the rows a ``path@selector`` names, as ``mew run`` reported them.
 
     Skipped rows stay, since the run reported them too; Google Benchmark's
-    aggregate rows don't. A 0.2.0 archive's counter mapping becomes the list of
-    ``{"name", "value"}`` records that later versions write.
+    aggregate rows don't.
 
     Returns
     -------
@@ -400,10 +381,6 @@ def load_session(
     """
     rows = [r for r in read_rows(path) if not r.get("aggregate_name")]
     selected = _select_rows(path, _group_by_session(rows), selector)
-    for i, r in enumerate(selected):
-        if isinstance(counters := r.get("counters"), dict):
-            records = [{"name": k, "value": v} for k, v in sorted(counters.items())]
-            selected[i] = {**r, "counters": records}
     return cast("list[BenchmarkResult]", selected), _provenance(selected)
 
 

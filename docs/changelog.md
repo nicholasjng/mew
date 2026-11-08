@@ -23,7 +23,7 @@ change between minor releases.
 - `mew compare -m counters.<name>` (`compare(metric="counters.<name>")`)
   compares a counter, such as `counters.items_per_second`, and gates on it.
   Values show as the console shows counters (`1.2Gi/s`), under a `ratio`
-  column. `mew.compare.Sample` gains `counter_format`, the counter's `format`.
+  column.
 - `[[tool.mew.counters]]` rules give counters a direction for `mew compare` and
   its gate: a `pattern` (a name, or one with `*` and `?` wildcards) and
   `higher-is-better`, where the first matching rule applies
@@ -79,8 +79,14 @@ change between minor releases.
   `PyinstrumentManager` and `MemrayManager`. `mew.memory.manager()` takes no
   `ExitStack`: a `MemrayManager()` keeps its captures in a temporary directory
   of its own.
-- `mew.compare.Sample.stddev` is derived from `values`, so `Sample()` no longer
-  takes it.
+- `mew.compare.Sample` is no longer public: no public function took or
+  returned one.
+- `mew compare` no longer reads result files from 0.2.0, which stored counters
+  as a name-to-value mapping.
+- `mew.config.Config.project_root` is always a `Path`: the directory the
+  search for `pyproject.toml` started in when there is none.
+- `mew compare --key` takes only `name` or `func`, checked before any file is
+  read.
 - `mew run -o stdout` is gone; `-o -` is standard output. `--append` without a
   `.jsonl` sink, or with a `.json` one, fails with one message, and two `-o`
   sinks for one file are an error.

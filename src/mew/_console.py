@@ -191,13 +191,16 @@ class Table:
         self.title = title
         self._headers: list[str] = []
         self._justify: list[str] = []
-        self._flex: list[bool] = []
+        self._flex: int | None = None  # the flexible column's index
         self._rows: list[list[Cell]] = []
 
     def add_column(self, header: str, *, justify: str = "left", flex: bool = False) -> None:
+        if flex:
+            if self._flex is not None:
+                raise ValueError("a table has at most one flexible column")
+            self._flex = len(self._headers)
         self._headers.append(header)
         self._justify.append(justify)
-        self._flex.append(flex)
 
     def add_row(self, *cells: Cell) -> None:
         self._rows.append(list(cells))
@@ -208,8 +211,7 @@ class Table:
             for i, cell in enumerate(row):
                 widths[i] = max(widths[i], _visible_len(cell))
 
-        flex = next((i for i, f in enumerate(self._flex) if f), None)
-        if flex is not None:
+        if (flex := self._flex) is not None:
             overhead = (len(self._headers) - 1) * len(COL_SEP)
             fixed = sum(w for i, w in enumerate(widths) if i != flex)
             avail = width - fixed - overhead
