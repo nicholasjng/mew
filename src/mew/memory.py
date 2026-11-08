@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 import html
+import shutil
 import sys
 import tempfile
+import weakref
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -82,8 +84,10 @@ class MemrayManager(MemoryManager):
                 "memray is required for memory profiling. "
                 "Install it with: uv add 'mew-bench[memory]'"
             )
-        self._tmp = tempfile.TemporaryDirectory(prefix="mew-memray-")
-        self._dir = Path(self._tmp.name)
+        # Removed with the manager. A TemporaryDirectory would do the same, but warns
+        # (ResourceWarning) when the garbage collector, not cleanup(), removes it.
+        self._dir = Path(tempfile.mkdtemp(prefix="mew-memray-"))
+        weakref.finalize(self, shutil.rmtree, self._dir, ignore_errors=True)
         self._i = 0
         self._dest: Path | None = None
         self._tracker: Tracker | None = None

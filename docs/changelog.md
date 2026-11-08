@@ -79,6 +79,7 @@ releases may break the API.
 
 ### Fixed
 
+- `MemrayManager` raised a `ResourceWarning` when it was garbage-collected.
 - A benchmark defined by code without a module, as from `exec()`, was named
   `None::bench_x`; it is now `<unknown>::bench_x`.
 - Memory profiling on GIL builds saw only the memory arenas Python's allocator
