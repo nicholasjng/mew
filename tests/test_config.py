@@ -72,8 +72,8 @@ def test_load_reads_every_setting(tmp_path: Path):
             'python_files = "*.py"',
             "unknown key 'python_files' in [tool.mew]; did you mean 'python-files'?",
         ),
-        # Not TOML at all.
-        ("benchpaths = ", "(at line 2"),
+        # Not TOML at all: tomllib words the error; mew's part is the file prefix.
+        ("benchpaths = ", "pyproject.toml: "),
         ("[tool.mew.counters]\n", "[tool.mew] counters must be an array of tables"),
         ("[[tool.mew.counters]]\nhigher-is-better = true", "counter rule missing 'pattern'"),
         # A rule's purpose is the direction.

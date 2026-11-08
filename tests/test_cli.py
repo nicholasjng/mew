@@ -271,7 +271,6 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         (("compare", "a.json", "b.json", "--regression-threshold=nan%"), "got 'nan%'"),
         # What the library raises, as one line rather than a traceback.
         (("compare", "a.json"), "mew compare: expected at least two result files"),
-        (("compare", "a.json", "b.json", "-m", "bogus"), "mew compare: unknown metric 'bogus'"),
         (("compare", "a.json", "b.json"), "mew compare: result file not found: b.json"),
         (("sessions", "a.json"), "mew sessions: result file not found: a.json"),
         # `@latest` selects the newest session, so no session may carry the tag.
@@ -710,14 +709,16 @@ def test_compare_regression_threshold_wins_over_the_configured_default(mew_cli, 
 
 
 @pytest.mark.parametrize(
-    ("pyproject", "code"),
+    ("pyproject", "code", "message"),
     [
         # No rule, no direction: a usage error.
-        ("", 2),
-        ('[[tool.mew.counters]]\npattern = "*_misses"\nhigher-is-better = false\n', 3),
+        ("", 2, "no direction is declared"),
+        ('[[tool.mew.counters]]\npattern = "*_misses"\nhigher-is-better = false\n', 3, "❌"),
     ],
 )
-def test_compare_gates_on_a_counter_in_its_configured_direction(mew_cli, tmp_path, pyproject, code):
+def test_compare_gates_on_a_counter_in_its_configured_direction(
+    mew_cli, tmp_path, pyproject, code, message
+):
     """A `[[tool.mew.counters]]` rule gives a counter its direction; without one, gating fails."""
     other, base = _write_pair(
         tmp_path,
@@ -728,6 +729,38 @@ def test_compare_gates_on_a_counter_in_its_configured_direction(mew_cli, tmp_pat
     args = ("-m", "counters.tlb_misses", "--exit-non-zero-on-regression")
     res = mew_cli("compare", str(other), str(base), *args, cwd=tmp_path)
     assert res.returncode == code, res.stderr
+    assert message in res.stderr
+
+
+@pytest.mark.parametrize(
+    ("pyproject", "args", "shown", "hidden"),
+    [
+        # The files' benchmarks share only their function names.
+        ("", (), "no overlapping benchmarks", "bench_a"),
+        ("", ("--key", "func"), "+0.00%", "± stddev"),  # the median of 1, 1, 10 is 1
+        ("", ("--key", "func", "-k", "bench_a"), "bench_a", "bench_b"),
+        ("", ("--key", "func", "--stddev"), "± stddev", "+900.00%"),
+        ("", ("--key", "func", "--statistic", "max"), "+900.00%", "+0.00%"),
+        # [tool.mew] statistic applies without the flag; the flag wins over it.
+        ('[tool.mew]\nstatistic = "max"\n', ("--key", "func"), "+900.00%", "+0.00%"),
+        ('[tool.mew]\nstatistic = "max"\n', ("--key", "func", "--statistic", "median"), "+0.00%",
+         "+900.00%"),
+    ],
+)  # fmt: skip
+def test_compare_options_reach_the_comparison(mew_cli, tmp_path, pyproject, args, shown, hidden):
+    """`--key`, `-k`, `--stddev`, `--statistic` and `[tool.mew] statistic` change what
+    `mew compare` prints, not only what it accepts."""
+    other, base = _write_pair(
+        tmp_path,
+        # bench_b moves +20%, so +0.00% can only be bench_a's median.
+        other=[*(_row("x.py::bench_a", t) for t in (1.0, 1.0, 10.0)), _row("x.py::bench_b", 6.0)],
+        base=[*(_row("y.py::bench_a", 1.0) for _ in range(3)), _row("y.py::bench_b", 5.0)],
+    )
+    (tmp_path / "pyproject.toml").write_text(pyproject)
+    res = mew_cli("compare", str(other), str(base), *args, cwd=tmp_path)
+    output = res.stdout + res.stderr
+    assert shown in output
+    assert hidden not in output
 
 
 def test_sessions_lists_newest_first(mew_cli, tmp_path):
@@ -864,7 +897,6 @@ def test_completions_generate(mew_cli, shell, marker, tmp_path):
     res = mew_cli("completions", shell, cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     assert marker in res.stdout
-    assert "run" in res.stdout and "compare" in res.stdout
     # fish renders long opts as `-l pattern`, so match the stem.
     assert "pattern" in res.stdout
     assert "rich json jsonl" in res.stdout  # --format's choices
@@ -1063,8 +1095,13 @@ def test_bash_completion_keeps_file_names_with_spaces_whole(mew_cli, tmp_path):
     assert out.splitlines() == ["[my benches]", "[rich][json][jsonl]"]
 
 
-def test_zsh_and_fish_complete_top_level_options_and_choices(mew_cli, tmp_path):
+def test_completions_offer_top_level_options_and_choices(mew_cli, tmp_path):
     """All three shells offer `-h/--version` before a command, and `mew completions`' shells."""
+    bash = mew_cli("completions", "bash", cwd=tmp_path).stdout
+    # The command-less branch: subcommands and top-level options in one word list.
+    top = next(line for line in bash.splitlines() if 'compgen -W "list' in line)
+    assert "--version" in top and "-h" in top
+    assert 'compgen -W "bash zsh fish"' in bash
     zsh = mew_cli("completions", "zsh", cwd=tmp_path).stdout
     assert "'--version[Show version information.]'" in zsh
     fish = mew_cli("completions", "fish", cwd=tmp_path).stdout

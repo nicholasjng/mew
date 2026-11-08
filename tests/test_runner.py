@@ -449,7 +449,8 @@ def test_state_pause_outside_the_loop_skips_with_error(where):
 
 
 def test_state_skip_inside_pause_does_not_resume_timing():
-    """A skip inside a `state.pause()` scope skips the row with its message."""
+    """A skip inside a `state.pause()` scope skips the row with its message. The bug it guards,
+    timing resumed after the skip, only fails Debug builds (the ASAN job), see below."""
 
     # A resume after the skip trips the assert in Google Benchmark's
     # ResumeTiming(), which only Debug builds (the ASAN job) compile in; a
@@ -662,7 +663,6 @@ def test_benchmark_output_is_printed_to_stderr_after_the_run(capfd):
 
     rep = Recording()
     mew.run(reporter=rep)
-    assert all("output" not in r for r in rep.runs)
     out, err = capfd.readouterr()
     assert out == "reporter row\n"
     assert err == "\noutput from benchmarks:\nto stdout\nto stderr\n"

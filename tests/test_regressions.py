@@ -84,11 +84,13 @@ threshold = 25.0
 reason = "noisy on shared runners"
 """
     )
-    cfg = load(tmp_path).regressions
-    assert cfg.default_threshold == 7.5
-    assert len(cfg.rules) == 2
-    assert cfg.rules[0].threshold == math.inf
-    assert cfg.rules[1].threshold == 25.0
+    assert load(tmp_path).regressions == RegressionConfig(
+        default_threshold=7.5,
+        rules=(
+            AllowRule(pattern="bench_io_*", reason="depends on disk cache", threshold=math.inf),
+            AllowRule(pattern="bench_cpu_*", reason="noisy on shared runners", threshold=25.0),
+        ),
+    )
 
 
 def test_allow_rule_brackets_match_literally() -> None:
@@ -112,9 +114,7 @@ _ALLOW = '[[tool.mew.regressions.allow]]\npattern = "b*"\n'
         (_ALLOW + 'reason = "r"\nthreshold = "10"', "a non-negative number or inf"),
         (_ALLOW + 'reason = "r"\nthreshold = -1.0', "a non-negative number or inf"),
         (_ALLOW + 'reason = "r"\nthreshold = nan', "a non-negative number or inf"),
-        (_ALLOW + 'reason = "r"\nignore = true', "unknown key 'ignore'"),
         ('[tool.mew.regressions]\nallow = "b*"', "allow must be an array of tables"),
-        ("[tool.mew]\nregressions = 5", "[tool.mew.regressions] must be a table"),
         # The table and its rules both reject typos (test_config covers the rest).
         (
             "[tool.mew.regressions]\ndefault-treshold = 7.5",

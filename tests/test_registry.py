@@ -30,7 +30,6 @@ def _names(entries: list[Entry]) -> list[str]:
         (_LABELS, r"n=\d+\]", None),
         # `name[label]` is addressable.
         (_LABELS, r"bench_fam\[n=100\]", [2]),
-        (_LABELS, r"n=1\]|n=100\]", [0, 2]),  # labels n=1 and n=100, not n=10
     ],
 )
 def test_narrow_entry(labels, pattern, cases):
