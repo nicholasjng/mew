@@ -531,9 +531,11 @@ class TachyonManager(ProfilerManager):
         self.flamegraph = FlamegraphCollector(round(interval * 1e6))
 
     def after_setup_start(self) -> None:
-        # GB calls this from the body's first loop step, so the direct Python
-        # caller is the benchmark body.
-        body = sys._getframe(1).f_code
+        from mew.api import body_frame
+
+        # GB calls this from the first loop step, in the body or a helper it
+        # calls; samples are cut at the body.
+        body = body_frame(sys._getframe(1))[0].f_code
         self._body = (body.co_filename, body.co_qualname)
         self._tid = threading.get_native_id()
         self._stacks = _stack_totals()
