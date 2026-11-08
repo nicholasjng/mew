@@ -11,9 +11,6 @@
 .. autofunction:: read_results
 .. autofunction:: session_summaries
 
-.. autoclass:: Sample
-   :members:
-
 .. autoclass:: SessionSummary
    :members:
 ```
@@ -23,5 +20,5 @@
 ```{eval-rst}
 .. automodule:: mew.compare
    :members:
-   :exclude-members: Sample, SessionSummary, read_results, session_summaries
+   :exclude-members: SessionSummary, read_results, session_summaries
 ```

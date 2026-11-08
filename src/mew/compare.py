@@ -21,7 +21,6 @@ from mew._format import (
     fmt_time,
     overflow,
     scale_time,
-    to_ns,
 )
 from mew._registry import compile_name_filter
 from mew._results import (
@@ -40,7 +39,7 @@ from mew._results import (
 from mew._statistics import Statistic, mannwhitney_p
 from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, report
 
-__all__ = ["Sample", "SessionSummary", "compare", "read_results", "session_summaries"]
+__all__ = ["SessionSummary", "compare", "read_results", "session_summaries"]
 
 _HIGHER_IS_BETTER = frozenset({"iterations"})
 _KEYS = frozenset({"name", "func"})
@@ -120,7 +119,7 @@ def _fmt_value(sample: Sample, metric: str) -> str:
         return f"{int(sample.value):,}"
     if metric in MEMORY_METRICS:  # remaining memory metrics are byte-valued
         return fmt_bytes(int(sample.value))
-    return fmt_time(sample.value, sample.time_unit)
+    return fmt_time(sample.value, "ns")
 
 
 def _fmt_stddev(sample: Sample, metric: str) -> str:
@@ -133,9 +132,8 @@ def _fmt_stddev(sample: Sample, metric: str) -> str:
         return fmt_counter(sample.stddev, sample.counter_format)
     if metric not in TIME_METRICS:
         return f"{sample.stddev:.2f}"
-    _, unit = scale_time(sample.value, sample.time_unit)
-    scaled = to_ns(sample.stddev, sample.time_unit) / NS_PER_UNIT[unit]
-    return f"{scaled:.2f} {unit}"
+    _, unit = scale_time(sample.value, "ns")  # the value cell's unit
+    return f"{sample.stddev / NS_PER_UNIT[unit]:.2f} {unit}"
 
 
 # p-value threshold for the Mann-Whitney-U test.
@@ -150,9 +148,7 @@ class _Comparison:
     p_value: float | None
 
 
-def _compare_samples(
-    base: Sample, other: Sample, metric: str, higher_is_better: bool | None
-) -> _Comparison:
+def _compare_samples(base: Sample, other: Sample, higher_is_better: bool | None) -> _Comparison:
     """Calculate a comparison independently of table layout and gating policy.
 
     The ratio is the improvement factor where the metric's direction is known
@@ -160,9 +156,7 @@ def _compare_samples(
     ``None`` when either value is negative: such a counter has no true zero, and
     a ratio would jump sign where the values cross zero. The delta stays.
     """
-    is_time = metric in TIME_METRICS
-    base_value = to_ns(base.value, base.time_unit) if is_time else base.value
-    other_value = to_ns(other.value, other.time_unit) if is_time else other.value
+    base_value, other_value = base.value, other.value
     if base_value:
         # abs(): a counter can be negative, and -10 -> -5 is a rise, not a fall.
         delta = (other_value - base_value) / abs(base_value)
@@ -174,9 +168,7 @@ def _compare_samples(
     # Mann-Whitney over raw repetitions; fewer than 2 per side leaves nothing to rank.
     p_value: float | None = None
     if len(base.values) >= 2 and len(other.values) >= 2:
-        a = [to_ns(v, base.time_unit) if is_time else v for v in base.values]
-        b = [to_ns(v, other.time_unit) if is_time else v for v in other.values]
-        p_value = mannwhitney_p(a, b)
+        p_value = mannwhitney_p(list(base.values), list(other.values))
     if base_value < 0 or other_value < 0:
         speedup = None
     elif den:
@@ -319,7 +311,7 @@ def _render(
                 row.extend(["-"] * (4 if show_stddev else 3))
                 continue
             s = c.samples[name]
-            result = _compare_samples(base, s, metric, higher_is_better)
+            result = _compare_samples(base, s, higher_is_better)
             if idx == 0 and regressions is not None:
                 # compare() refuses a gate without a direction.
                 verdicts.append(

@@ -49,9 +49,10 @@ class Config:
     profilers : dict[str, Preset]
         The ``[tool.mew.profilers.<name>]`` presets ``mew run --cpu-profiler`` and
         ``--memory-profiler`` name.
-    project_root : Path or None
-        Directory of the ``pyproject.toml`` these settings came from; ``None``
-        when no file was found and defaults are in use.
+    project_root : Path
+        Directory of the ``pyproject.toml`` these settings came from, or the
+        directory the search started in when there is none and defaults are
+        in use. Paths in the settings resolve against it.
     """
 
     benchpaths: list[str] = field(default_factory=lambda: ["benchmarks"])
@@ -61,7 +62,7 @@ class Config:
     regressions: RegressionConfig = field(default_factory=RegressionConfig)
     counters: CounterConfig = field(default_factory=CounterConfig)
     profilers: dict[str, Preset] = field(default_factory=dict)
-    project_root: Path | None = None
+    project_root: Path = field(default_factory=Path.cwd)
 
 
 def _read_table(raw: Any, known: Sequence[str], table: str) -> dict[str, Any]:
@@ -139,7 +140,7 @@ def load(start: Path | None = None) -> Config:
                 return _parse_config(raw, project_root=parent)
             except ValueError as e:
                 raise ValueError(f"{candidate}: {e}") from e
-    return Config()
+    return Config(project_root=cwd)
 
 
 def _parse_config(raw: Mapping[str, Any], *, project_root: Path) -> Config:

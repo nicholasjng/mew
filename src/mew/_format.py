@@ -11,8 +11,8 @@ NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
 def to_ns(value: float, unit: str | None) -> float:
     """Normalize a ``(value, unit)`` pair to nanoseconds.
 
-    Compared files can declare different units (e.g. ``--benchmark_time_unit=us``),
-    so delta/speedup math must go through this, not raw ``sample.value``.
+    Rows can declare different units (e.g. ``--benchmark_time_unit=us``), so
+    ``mew compare`` converts every time with this as it loads a file.
     """
     return value * NS_PER_UNIT.get(unit or "ns", 1.0)
 

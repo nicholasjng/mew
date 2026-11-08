@@ -94,7 +94,7 @@ def _import_setup(cfg: _config.Config, command: str) -> None:
     """
     if not cfg.setup:
         return
-    path = (cfg.project_root or Path.cwd()) / cfg.setup  # an absolute setup replaces root
+    path = cfg.project_root / cfg.setup  # an absolute setup replaces root
     if not path.is_file():
         print(f"mew: invalid config: [tool.mew] setup file not found: {path}", file=sys.stderr)
         raise SystemExit(2)
@@ -134,7 +134,7 @@ def _collect(
         # Benchpaths resolve against pyproject.toml, not the cwd, so a subdirectory
         # works. A missing one means "nothing to discover" in a fresh project, not
         # a hard error like a mistyped positional path.
-        root = cfg.project_root or Path.cwd()
+        root = cfg.project_root
         selectors = [
             sel for p in cfg.benchpaths if (sel := _discovery.parse(p, root=root)).path.exists()
         ]
@@ -317,7 +317,7 @@ def run(
             managers = _managers.load_all(
                 {"cpu": cpu_profiler, "memory": memory_profiler},
                 cfg.profilers,
-                root=cfg.project_root or Path.cwd(),
+                root=cfg.project_root,
                 stack=stack,
             )
         profiler_manager = managers["cpu"].manager if "cpu" in managers else None
@@ -747,6 +747,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--key",
         default="name",
+        choices=("name", "func"),
         metavar="<key>",
         help="Match benchmarks by name or func (default name).",
     )

@@ -842,10 +842,11 @@ def test_show_heads_each_of_several_files_with_its_name(mew_cli, tmp_path):
     assert "a.json" not in res.stdout
 
 
-def test_show_summarizes_repetitions_and_reads_0_2_0_counters(mew_cli, tmp_path):
-    """`--summary-only` leaves repetitions to the summary, and a 0.2.0 counter mapping shows."""
+def test_show_summarizes_repetitions(mew_cli, tmp_path):
+    """`--summary-only` leaves repetitions, and their counters, to the summary."""
+    hits = [{"name": "hits", "value": 7.0}]
     reps = [
-        _reported_row("rep", t, repetitions=3, repetition_index=i, counters={"hits": 7.0})
+        _reported_row("rep", t, repetitions=3, repetition_index=i, counters=hits)
         for i, t in enumerate((1.0, 2.0, 3.0))
     ]
     _write_json(tmp_path / "r.json", reps)
