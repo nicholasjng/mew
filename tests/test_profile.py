@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import importlib
 import inspect
-import re
 import subprocess
 import sys
 import textwrap
@@ -497,8 +496,8 @@ def test_memray_captures_the_loop_and_roots_its_flame_graph_at_the_body(tmp_path
 
 
 def test_flamegraphs_are_one_file_per_benchmark(tmp_path):
-    """Each case gets one report, numbered in run order, from its first repetition; its header
-    names the case, which the file name can't hold on every platform."""
+    """Each case gets one report, numbered in run order, from its first repetition; its Stats
+    dialog and the index name the case, which the file name can't hold on every platform."""
     pytest.importorskip("memray")
     from mew import memory as _memory
 
@@ -516,12 +515,11 @@ def test_flamegraphs_are_one_file_per_benchmark(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == files
     assert "bench_buf[n=1000]" in (tmp_path / "0-bench_buf.html").read_text()
     assert "bench_buf[n=100000]" in (tmp_path / "1-bench_buf.html").read_text()
-    # Each report's navbar picks another by the case's full name, its own selected; this
-    # also pins the memray template block mew extends.
-    picker = re.compile(r'<option value="1-bench_buf.html"( selected)?>[^<]*bench_buf\[n=100000\]<')
-    assert picker.findall((tmp_path / "0-bench_buf.html").read_text()) == [""]
-    assert picker.findall((tmp_path / "1-bench_buf.html").read_text()) == [" selected"]
-    assert 'url=0-bench_buf.html"' in (tmp_path / "index.html").read_text()
+    # The index links every report by the case's full name, in run order.
+    index = (tmp_path / "index.html").read_text()
+    assert index.index('href="0-bench_buf.html"') < index.index('href="1-bench_buf.html"')
+    # Names are escaped: a nested function's qualname holds `<locals>`.
+    assert "&lt;locals&gt;.bench_buf[n=100000]</a>" in index
 
 
 def test_memray_write_outputs_warns_when_nothing_was_captured(tmp_path, capsys):
