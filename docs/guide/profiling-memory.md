@@ -43,9 +43,9 @@ $ mew run --memory-profiler memray --profile-dir profiles/
 ```
 
 Each benchmark gets a self-contained HTML report in `profiles/memory/`, numbered in run order and named after its function, such
-as `0-bench_alloc_list.html`; the report's header names the benchmark, case
-label included, and its navbar switches to any other benchmark by name;
-`profiles/memory/index.html` opens the first. A benchmark's first repetition stands for the others. The
+as `0-bench_alloc_list.html`. `profiles/memory/index.html` links them all by
+the benchmark's full name, case label included; in a report, memray's Stats
+dialog shows it as the command line. A benchmark's first repetition stands for the others. The
 graph's root under memray's `<tracker>` is the benchmark body, so what the body
 allocates itself shows there.
 A benchmark whose timed run fails or is skipped gets no memory pass, so it

@@ -18,7 +18,8 @@ releases may break the API.
 - `mew run --profile-dir DIR` replaces `--sample-html` and `--flamegraph`, and
   writes to `DIR/cpu` and `DIR/memory`.
 - Memory profiling writes one flame graph per benchmark,
-  `DIR/memory/<n>-<function>.html`, instead of one report.
+  `DIR/memory/<n>-<function>.html`, and an `index.html` that links them,
+  instead of one report.
 - `mew.ProfilerResultProvider` and `mew.PausableProfiler` are merged into
   `mew.ProfilerManager`.
 - `mew.cpu.write_html()` and `mew.memory.write_flamegraph()` are replaced by

@@ -19,20 +19,6 @@ if TYPE_CHECKING:
 # A memray stack frame: ``(function, filename, lineno)``.
 Frame = tuple[str, str, int]
 
-# memray's flame graph page with a benchmark picker in its navbar. memray's
-# template environment doesn't autoescape, hence the explicit `|e`.
-_FLAMEGRAPH_TEMPLATE = """{% extends "flamegraph.html" %}
-{% block topbar_buttons %}
-<select class="custom-select custom-select-sm mr-3 w-auto" aria-label="Benchmark"
-        onchange="window.location.href = this.value">
-  {%- for file, name in benchmarks %}
-  <option value="{{ file|e }}"{% if file == current %} selected{% endif %}>{{ name|e }}</option>
-  {%- endfor %}
-</select>
-{{ super() }}
-{% endblock topbar_buttons %}
-"""
-
 # Free-threaded CPython serves object allocations from mimalloc, which never
 # reaches the system allocator memray hooks by default, so track them separately.
 _TRACE_PYTHON_ALLOCATORS = is_free_threaded_build()
@@ -140,10 +126,10 @@ class MemrayManager(MemoryManager):
 
         The files are numbered in run order and named after the benchmark
         function, e.g. ``0-bench_sort.html``, since a case label may hold
-        characters a file name can't. Each is memray's report with a picker
-        for the other benchmarks, by name, in its navbar; ``index.html`` opens
-        the first. A benchmark's further repetitions, which repeat its first,
-        are left out. When nothing was captured, nothing is written and a
+        characters a file name can't. Each is memray's own report, rooted at the
+        benchmark body, with the benchmark's full name as the command line in its
+        Stats dialog; ``index.html`` links them all by that name. A benchmark's further repetitions, which repeat its
+        first, are left out. When nothing was captured, nothing is written and a
         warning goes to stderr.
 
         Parameters
@@ -161,7 +147,6 @@ class MemrayManager(MemoryManager):
 
         import memray
         from memray.reporters.flamegraph import FlameGraphReporter
-        from memray.reporters.templates import get_render_environment
 
         directory.mkdir(parents=True, exist_ok=True)
         firsts: dict[str, Capture] = {}
@@ -169,7 +154,6 @@ class MemrayManager(MemoryManager):
             firsts.setdefault(capture.benchmark, capture)
         captures = list(firsts.values())
         benchmarks = [(f"{i}-{c.root[0]}.html", c.benchmark) for i, c in enumerate(captures)]
-        template = get_render_environment().from_string(_FLAMEGRAPH_TEMPLATE)
         for (name, benchmark), (path, root, _) in zip(benchmarks, captures, strict=True):
             with memray.FileReader(path) as reader:
                 records = [
@@ -190,26 +174,17 @@ class MemrayManager(MemoryManager):
                 )
                 # The header's command line names the benchmark instead.
                 metadata = dataclasses.replace(reader.metadata, command_line=benchmark)
-            # What FlameGraphReporter.render passes the template, plus the picker's.
-            page = template.render(
-                kind="flamegraph",
-                title="flamegraph report",
-                data=reporter.data,
-                metadata=metadata,
-                memory_records=reporter.memory_records,
-                show_memory_leaks=False,
-                merge_threads=True,
-                inverted=False,
-                no_web=False,
-                benchmarks=benchmarks,
-                current=name,
-            )
-            (directory / name).write_text(page, encoding="utf-8")
-        first = html.escape(benchmarks[0][0])
+            with (directory / name).open("w", encoding="utf-8") as fh:
+                reporter.render(
+                    fh, metadata, show_memory_leaks=False, merge_threads=True, inverted=False
+                )
+        links = "".join(
+            f'<li><a href="{html.escape(name)}">{html.escape(benchmark)}</a></li>\n'
+            for name, benchmark in benchmarks
+        )
         (directory / "index.html").write_text(
-            f'<!doctype html>\n<meta charset="utf-8">\n'
-            f'<meta http-equiv="refresh" content="0; url={first}">\n'
-            f'<title>Memory flame graphs</title>\n<a href="{first}">Memory flame graphs</a>\n',
+            '<!doctype html>\n<meta charset="utf-8">\n<title>Memory flame graphs</title>\n'
+            f"<h1>Memory flame graphs</h1>\n<ul>\n{links}</ul>\n",
             encoding="utf-8",
         )
 
