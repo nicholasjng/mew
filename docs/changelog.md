@@ -34,6 +34,8 @@ change between minor releases.
 
 ### Changed
 
+- Benchmark names are relative to the project root (the nearest `pyproject.toml`
+  above the file), not the working directory, so they match across runs.
 - Benchmark discovery no longer descends into hidden directories, virtualenvs
   (any directory with a `pyvenv.cfg` or `conda-meta`), `__pycache__`, `build`,
   `dist` or `node_modules`, so `mew run .` doesn't walk `.venv` or import a

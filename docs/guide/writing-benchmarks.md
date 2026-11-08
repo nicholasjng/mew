@@ -41,7 +41,11 @@ See [](configuration.md).
 
 ## Naming
 
-Auto-derived names mirror pytest node ids: `path/to/file.py::qualname`.
+Auto-derived names mirror pytest node ids: `path/to/file.py::qualname`. The
+path is relative to the project root, the directory of the nearest
+`pyproject.toml` above the file, so a benchmark has the same name wherever you
+run mew from, and `mew compare` matches it across runs. Without a
+`pyproject.toml`, the path is relative to the working directory.
 Override:
 
 ```python

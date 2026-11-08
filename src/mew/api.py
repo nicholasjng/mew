@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import itertools
+import os
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
@@ -27,17 +28,33 @@ def _format_id_value(value: Any) -> str:
 def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
     """Pytest-style nodeid: ``path/to/bench_foo.py::bench_name``.
 
-    Falls back to module + qualname when the source file can't be resolved.
+    The path is relative to the file's project root, the nearest directory
+    above it with a ``pyproject.toml``, so a benchmark keeps its name, which
+    ``mew compare`` matches by, wherever mew runs from. Without a project, it
+    is relative to the working directory. Falls back to module + qualname when
+    the source file can't be resolved.
     """
     qualname = fn.__qualname__
-    if file:
-        try:
-            rel = Path(file).resolve().relative_to(Path.cwd())
-            return f"{rel}::{qualname}"
-        except ValueError:
-            return f"{Path(file).name}::{qualname}"
-    module = getattr(fn, "__module__", "<unknown>")
-    return f"{module}::{qualname}"
+    if not file:
+        module = getattr(fn, "__module__", "<unknown>")
+        return f"{module}::{qualname}"
+    path = Path(file).resolve()
+    root = _project_root(path.parent) or Path.cwd()
+    try:
+        # relpath, not relative_to: outside the root it gives `../x.py`, which
+        # can't collide as a bare file name would. With `/` on every OS, so
+        # results from any OS match in `mew compare`.
+        rel = Path(os.path.relpath(path, root)).as_posix()
+    except ValueError:  # on another drive than the root, on Windows
+        rel = path.name
+    return f"{rel}::{qualname}"
+
+
+def _project_root(directory: Path) -> Path | None:
+    """The nearest of ``directory`` and its parents that has a ``pyproject.toml``."""
+    return next(
+        (d for d in (directory, *directory.parents) if (d / "pyproject.toml").is_file()), None
+    )
 
 
 def _check_addressable(text: str, what: str) -> None:

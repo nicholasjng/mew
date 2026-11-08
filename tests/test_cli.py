@@ -962,7 +962,8 @@ def test_directory_selectors_keep_filters_scoped_with_global_pattern(mew_cli, tm
         (nested / "bench_fixture.py").write_text(textwrap.dedent(FIXTURE))
     res = mew_cli("list", "a::bench_one", "b::bench_two", "-k", "bench_two", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
-    assert res.stdout.splitlines() == [str(Path("b/nested/bench_fixture.py::bench_two"))]
+    # Names use `/` on every OS.
+    assert res.stdout.splitlines() == ["b/nested/bench_fixture.py::bench_two"]
 
 
 # --- end-to-end: the real entry point in a subprocess -------------------------
@@ -1078,3 +1079,21 @@ def test_zsh_and_fish_complete_top_level_options_and_choices(mew_cli, tmp_path):
     assert (
         "complete -c mew -n '__fish_seen_subcommand_from completions' -xa 'bash zsh fish'" in fish
     )
+
+
+def test_benchmark_names_are_relative_to_the_project_root(mew_cli, tmp_path):
+    """A benchmark's name, which `mew compare` matches by, doesn't depend on the working
+    directory; two same-named files can't collide from outside the project."""
+    proj = tmp_path / "proj"
+    for sub in ("x", "y"):
+        (proj / sub).mkdir(parents=True)
+        (proj / sub / "bench_sort.py").write_text(
+            "import mew\n\n@mew.benchmark\ndef bench_sort(state):\n    for _ in state:\n        pass\n"
+        )
+    (proj / "pyproject.toml").write_text("")
+    (tmp_path / "other").mkdir()
+    expected = ["x/bench_sort.py::bench_sort", "y/bench_sort.py::bench_sort"]
+    for cwd, target in ((proj, "."), (proj / "x", ".."), (tmp_path / "other", "../proj")):
+        res = mew_cli("list", target, cwd=cwd)
+        assert res.returncode == 0, res.stderr
+        assert res.stdout.split() == expected  # with `/` on every OS
