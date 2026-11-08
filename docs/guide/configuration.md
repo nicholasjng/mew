@@ -43,7 +43,6 @@ the class, dashes turned into underscores.
 [tool.mew.profilers.fine]
 class = "mew.cpu:TachyonManager"
 interval = 1e-5
-top-k = 10
 
 [tool.mew.profilers.counters]
 class = "benchmarks/profilers.py:PerfCounters"

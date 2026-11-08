@@ -79,11 +79,8 @@ with `sample_count` 0 and no `top_function`.
 .. autoclass:: mew.cpu.PyinstrumentManager
    :members:
 
-.. autofunction:: mew.cpu.reads_instructions
-
 .. autoclass:: mew.cpu.CpuProfile
 
 .. autoclass:: mew.cpu.TopFunction
 
-.. autoclass:: mew.cpu.TopInstruction
 ```

@@ -14,13 +14,11 @@ from __future__ import annotations
 import contextlib
 import functools
 import io
-import linecache
 import os
 import sys
 import threading
 import time
 from collections import defaultdict
-from heapq import nlargest
 from importlib.util import find_spec
 from math import isfinite
 from pathlib import Path
@@ -57,39 +55,11 @@ class TopFunction(TypedDict):
     self_time: float
 
 
-class TopInstruction(TypedDict):
-    """A bytecode instruction among the hottest of a body.
-
-    Attributes
-    ----------
-    instruction : str
-        Its name, specialized forms included, e.g. ``"BINARY_OP_ADD_INT"``.
-    source : str
-        The code it covers, cut to its first line and 40 characters.
-    file : str
-        Its file's name.
-    line : int
-        Its first line.
-    share : float
-        Its share of the body's time, from 0 to 1.
-    unspecialized : bool
-        Whether it is generic though the interpreter can specialize it.
-    """
-
-    instruction: str
-    source: str
-    file: str
-    line: int
-    share: float
-    unspecialized: bool
-
-
 class CpuProfile(TypedDict):
     """A CPU sampler's summary of one profiling pass.
 
     Every sampler writes the same keys and types: a figure the sampler can't
-    measure is ``None``, a list it can't measure empty, so archives mixing
-    interpreters keep one column type.
+    measure is ``None``, so archives mixing interpreters keep one column type.
 
     Attributes
     ----------
@@ -104,20 +74,12 @@ class CpuProfile(TypedDict):
     top_function : TopFunction or None
         The function with the most self time; ``None`` when no sample caught
         the body running, as in a pass shorter than the sampling interval.
-    top_instructions : list of TopInstruction
-        The ``top_k`` hottest bytecode instructions, hottest first; empty
-        unless :func:`reads_instructions`.
-    unspecialized_share : float or None
-        Share of the body's time in instructions the interpreter can
-        specialize but didn't; ``None`` unless :func:`reads_instructions`.
     """
 
     profiler: str
     wall_time: float
     sample_count: int
     top_function: TopFunction | None
-    top_instructions: list[TopInstruction]
-    unspecialized_share: float | None
 
 
 #: The samplers :func:`manager` accepts.
@@ -125,7 +87,7 @@ SAMPLERS = ("auto", "tachyon", "pyinstrument")
 
 
 def manager(
-    interval: float = 1e-4, *, sampler: str = "auto", top_k: int = 5
+    interval: float = 1e-4, *, sampler: str = "auto"
 ) -> TachyonManager | PyinstrumentManager:
     """Create the profiler manager for a CPU sampler.
 
@@ -137,11 +99,6 @@ def manager(
         ``"auto"`` picks Tachyon on Python 3.15+ and pyinstrument before. Pick
         pyinstrument on 3.15+ to profile a suite with one sampler across
         interpreter versions; free-threaded builds need Tachyon.
-    top_k : int, default 5
-        How many of the hottest bytecode instructions Tachyon reports where
-        :func:`reads_instructions`. pyinstrument reads no instructions, but
-        ``top_k`` is checked for it too, so a bad value fails on every
-        interpreter.
 
     Returns
     -------
@@ -151,9 +108,8 @@ def manager(
     Raises
     ------
     ValueError
-        If ``sampler`` is none of the three above, ``interval`` is not positive
-        and finite, or ``top_k`` is not an integer of at least 1. All three are
-        checked before the sampler is chosen.
+        If ``sampler`` is none of the three above, or ``interval`` is not
+        positive and finite. Both are checked before the sampler is chosen.
     ImportError
         If the sampler is pyinstrument and it is not installed.
     RuntimeError
@@ -163,11 +119,10 @@ def manager(
     if sampler not in SAMPLERS:
         raise ValueError(f"sampler must be one of {', '.join(SAMPLERS)}, got {sampler!r}")
     _check_interval(interval)
-    _check_top_k(top_k)
     if sampler == "auto":
         sampler = "tachyon" if sys.version_info >= (3, 15) else "pyinstrument"
     if sampler == "tachyon":
-        return TachyonManager(interval, top_k=top_k)
+        return TachyonManager(interval)
     return PyinstrumentManager(interval)
 
 
@@ -180,11 +135,6 @@ def _check_interval(interval: float) -> None:
         or interval <= 0
     ):
         raise ValueError(f"interval must be a positive finite number, got {interval!r}")
-
-
-def _check_top_k(top_k: int) -> None:
-    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1:
-        raise ValueError(f"top_k must be an integer >= 1, got {top_k!r}")
 
 
 class PyinstrumentManager(ProfilerManager):
@@ -277,8 +227,6 @@ class PyinstrumentManager(ProfilerManager):
             "wall_time": session.duration,
             "sample_count": session.sample_count,
             "top_function": None if root is None else _hottest_frame(root),
-            "top_instructions": [],
-            "unspecialized_share": None,
         }
 
     def write_outputs(self, directory: Path) -> None:
@@ -335,21 +283,6 @@ def _require_tachyon() -> None:
         raise RuntimeError("Tachyon CPU sampling requires Python 3.15 or newer")
 
 
-def reads_instructions() -> bool:
-    """Return whether Tachyon reads bytecode instructions in this interpreter.
-
-    It does on free-threaded builds of Python 3.15+. A GIL build is sampled
-    only where the body hands over the GIL, so every sample would name a call
-    or a loop jump.
-
-    Returns
-    -------
-    bool
-        ``True`` on Python 3.15 or newer with the GIL disabled.
-    """
-    return sys.version_info >= (3, 15) and not gil_enabled()
-
-
 @functools.cache
 def _unwinder(pid: int) -> Any:
     """Return the unwinder that reads process ``pid``, created once per process.
@@ -366,43 +299,12 @@ def _unwinder(pid: int) -> Any:
         all_threads=True,
         gc=True,
         native=True,
-        opcodes=reads_instructions(),
+        # Bytecode instructions for the flame graph, on free-threaded builds only:
+        # a GIL build is sampled where the body hands over the GIL, so every
+        # sample would name a call or a loop jump.
+        opcodes=sys.version_info >= (3, 15) and not gil_enabled(),
         cache_frames=True,
     )
-
-
-@functools.cache
-def _opcode_tables() -> tuple[dict[int, str], frozenset[int]] | None:
-    """Return every opcode's name and the set of opcodes the interpreter can specialize.
-
-    Names include the specialized forms. ``None`` if these undocumented tables moved.
-    """
-    import opcode
-
-    try:
-        names = dict(enumerate(opcode.opname))
-        specialized = opcode._specialized_opmap  # ty: ignore[unresolved-attribute]
-        names.update({op: name for name, op in specialized.items()})
-        families = opcode._specializations  # ty: ignore[unresolved-attribute]
-        generic = frozenset(opcode.opmap[name] for name in families)
-    except (AttributeError, KeyError):
-        return None
-    return names, generic
-
-
-def _instruction_source(file: str, location: tuple[int, int, int, int]) -> str:
-    """The source an instruction covers, cut to its first line and 40 characters."""
-    line, end_line, col, end_col = location
-    text = linecache.getline(file, line)
-    if col < 0:  # No column positions, e.g. under -X no_debug_ranges.
-        source = text.strip()
-    else:
-        # Columns count UTF-8 bytes, not characters.
-        end = end_col if end_line == line else None
-        source = text.encode()[col:end].decode(errors="replace").strip()
-        if end is None:
-            source += " …"
-    return source if len(source) <= 40 else source[:39] + "…"
 
 
 def _hottest_function(
@@ -432,34 +334,6 @@ def _hottest_function(
     }
 
 
-def _summarize_instructions(
-    instructions: dict[tuple[str, Any, int], float], total: float, top_k: int
-) -> tuple[list[TopInstruction], float | None]:
-    """The ``top_k`` hottest instructions and the share of time in unspecialized ones.
-
-    ``instructions`` maps ``(file, location, opcode)`` to self time; ``total`` is
-    the body's self time, so shares compare with the hottest function's. Without
-    instructions or time, or if the opcode tables moved, ``([], None)``.
-    """
-    if not instructions or not total or (tables := _opcode_tables()) is None:
-        return [], None
-    names, generic = tables
-    hottest = nlargest(top_k, instructions.items(), key=lambda kv: kv[1])
-    unspecialized = sum(t for (_, _, op), t in instructions.items() if op in generic)
-    top: list[TopInstruction] = [
-        {
-            "instruction": names.get(op, f"<{op}>"),
-            "source": _instruction_source(file, location),
-            "file": Path(file).name,
-            "line": location[0],
-            "share": seconds / total,
-            "unspecialized": op in generic,
-        }
-        for (file, location, op), seconds in hottest
-    ]
-    return top, unspecialized / total
-
-
 class TachyonManager(ProfilerManager):
     """Profiler manager that samples with Tachyon (:mod:`profiling.sampling`).
 
@@ -479,9 +353,6 @@ class TachyonManager(ProfilerManager):
     ----------
     interval : float, default 1e-4
         Sampling period in seconds.
-    top_k : int, default 5
-        How many of the hottest bytecode instructions to report where
-        :func:`reads_instructions`.
 
     Attributes
     ----------
@@ -493,15 +364,13 @@ class TachyonManager(ProfilerManager):
     Raises
     ------
     ValueError
-        If ``interval`` is not positive and finite, or ``top_k`` is not an
-        integer of at least 1.
+        If ``interval`` is not positive and finite.
     RuntimeError
         Before Python 3.15, or if the process cannot read its own memory.
     """
 
-    def __init__(self, interval: float = 1e-4, *, top_k: int = 5) -> None:
+    def __init__(self, interval: float = 1e-4) -> None:
         _check_interval(interval)
-        _check_top_k(top_k)
         _require_tachyon()
 
         from profiling.sampling.stack_collector import FlamegraphCollector
@@ -511,7 +380,6 @@ class TachyonManager(ProfilerManager):
         except (OSError, RuntimeError) as e:
             raise RuntimeError(f"Tachyon cannot sample this process: {e}") from e
         self._interval = interval
-        self._top_k = top_k
         self._thread: threading.Thread | None = None
         self._running = False
         self._paused = False
@@ -626,8 +494,6 @@ class TachyonManager(ProfilerManager):
 
         samples = 0
         lines: defaultdict[tuple[str, str, int], float] = defaultdict(float)
-        # Keyed by (file, location, opcode); opcodes are read on free-threaded builds.
-        instructions: defaultdict[tuple[str, Any, int], float] = defaultdict(float)
         for (status, frames), (n, seconds) in self._stacks.items():
             frames = self._cut_at_body(frames)
             # The body thread inside this manager's hooks, e.g. starting the sampler.
@@ -636,8 +502,6 @@ class TachyonManager(ProfilerManager):
             samples += int(n)
             leaf = frames[0]
             lines[leaf.filename, leaf.funcname, leaf.location[0] if leaf.location else 0] += seconds
-            if leaf.opcode is not None and leaf.location:
-                instructions[leaf.filename, leaf.location, leaf.opcode] += seconds
             # The flame graph draws a count times the interval as time, so it gets
             # the seconds in intervals rather than the sample count.
             if intervals := round(seconds / self._interval):
@@ -651,14 +515,11 @@ class TachyonManager(ProfilerManager):
             rate = self._samples / self._duration
             interval_us = round(self._interval * 1e6)
             self.flamegraph.set_stats(interval_us, self._duration, rate, mode=PROFILING_MODE_WALL)
-        top, unspecialized = _summarize_instructions(instructions, sum(lines.values()), self._top_k)
         self._result = {
             "profiler": "tachyon",
             "wall_time": self._active,
             "sample_count": samples,
             "top_function": _hottest_function(lines, self._active),
-            "top_instructions": top,
-            "unspecialized_share": unspecialized,
         }
 
     def _cut_at_body(self, frames: tuple[Any, ...]) -> tuple[Any, ...]:

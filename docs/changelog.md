@@ -7,6 +7,9 @@ releases may break the API.
 
 ### Breaking changes
 
+- `cpu_profile.top_instructions`, `unspecialized_share`, `mew.cpu.TopInstruction`,
+  `mew.cpu.reads_instructions()` and the `top_k` option of Tachyon are gone. On
+  free-threaded builds, Tachyon's flame graph still lists each frame's instructions.
 - `@mew.product` is gone; use `@mew.parametrize(mew.grid(...))`. Axes named
   like options, such as `threads`, are no longer taken as options.
 - `mew run --cpu-profiler <preset>` replaces `--sample`, `--sampler`,
