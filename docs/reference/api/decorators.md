@@ -5,7 +5,7 @@
 
 .. autofunction:: benchmark
 .. autofunction:: parametrize
-.. autofunction:: product
+.. autofunction:: grid
 ```
 
 ## Options

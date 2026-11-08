@@ -444,7 +444,7 @@ class State(Protocol):
 class BenchmarkFn(Protocol):
     """A benchmark function, called with a :class:`State` and its case's parameters.
 
-    A case of a family from :func:`mew.parametrize` or :func:`mew.product` passes
+    A case of a family from :func:`mew.parametrize` passes
     its parameters as keyword arguments; a plain benchmark gets none.
     """
 

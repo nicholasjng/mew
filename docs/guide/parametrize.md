@@ -1,6 +1,6 @@
 # Parametrizations
 
-Two decorators register benchmark _families_: one body, many variants.
+`@mew.parametrize` registers a benchmark _family_: one body, many variants.
 
 ## `@mew.parametrize`
 
@@ -40,25 +40,36 @@ def bench(state, n): ...
 
 The length of `ids` **must** equal the number of parametrizations.
 
-## `@mew.product`
+## Combinations with `mew.grid`
 
-For when the variants are a cartesian product of independent axes:
+`mew.grid` makes one case per combination of independent axes, for
+`@parametrize` to register:
 
 ```python
-@mew.product(n=[10, 100, 1000], algo=["merge", "quick"], tags="sort")
+@mew.parametrize(mew.grid(n=[10, 100, 1000], algo=["merge", "quick"]), tags="sort")
 def bench_sort(state, n, algo): ...
 ```
 
-This registers six benchmarks.
-Use `ids=` to supply a flat list of labels; its length must again equal the product size.
+This registers six benchmarks, the last axis varying fastest:
+`bench_sort[n=10-algo=merge]`, `bench_sort[n=10-algo=quick]`, and so on. Any
+name can be an axis, including those of options such as `threads`, since
+options go to `@parametrize` and axes to `grid`.
 
-See {func}`mew.parametrize` and {func}`mew.product` for full parameter docs.
+A grid is a plain list of dicts, so when only some combinations make sense,
+join grids with `+` or filter one:
 
-## Picking between them
+```python
+# Every size with merge sort, but quick sort only on the small inputs
+cases = mew.grid(n=[10, 100, 1000], algo=["merge"]) + mew.grid(n=[10, 100], algo=["quick"])
 
-- Reach for `@product` when the axes are independent and you genuinely want every combination.
-- Reach for `@parametrize` when only certain pairings are meaningful, e.g. when some algorithms only support certain sizes.
-- Need both styles in one file? Define multiple functions; the registry is a flat list and order doesn't matter.
+# The same, as the full grid minus what doesn't make sense
+cases = [
+    c for c in mew.grid(n=[10, 100, 1000], algo=["merge", "quick"])
+    if not (c["algo"] == "quick" and c["n"] == 1000)
+]
+```
+
+Grids that overlap give two cases the same label, which `@parametrize` rejects.
 
 ## Filtering at run time
 

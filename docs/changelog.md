@@ -7,6 +7,8 @@ releases may break the API.
 
 ### Breaking changes
 
+- `@mew.product` is gone; use `@mew.parametrize(mew.grid(...))`. Axes named
+  like options, such as `threads`, are no longer taken as options.
 - `mew run --cpu-profiler <preset>` replaces `--sample`, `--sampler`,
   `--sample-interval` and `--sample-top-k`; `--memory-profiler <preset>`
   replaces `--profile-memory`. The built-in presets are `sample` and `memray`.
@@ -33,7 +35,7 @@ releases may break the API.
   `/case:N`.
 - Abbreviated long options, such as `--rep`, are rejected.
 - `python-files` patterns match file names only.
-- Stacking `@benchmark`, `@parametrize` and `@product` raises `ValueError`.
+- Stacking `@benchmark` and `@parametrize` raises `ValueError`.
 - `mew compare --key` takes only `name` or `func`.
 - `mew.compare.Sample` is private. `mew.config.Config.project_root` is always a
   `Path`.
@@ -43,6 +45,8 @@ releases may break the API.
 
 ### Added
 
+- `mew.grid(**axes)` gives every combination of some values as cases for
+  `@parametrize`. Join grids with `+` or filter one for partial grids.
 - Profiler presets: `[tool.mew.profilers.<name>]` names a manager class and its
   options. `--cpu-profiler module:Class` and `--memory-profiler module:Class`
   run a class directly.

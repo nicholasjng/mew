@@ -33,8 +33,8 @@ benchmarks/bench_sort.py::bench_sorted │    1,000,000 │   32.10 ns │   32.
 :::{grid-item-card} Decorate
 :link: guide/writing-benchmarks
 :link-type: doc
-Register one benchmark or a family with `@mew.benchmark`,
-`@mew.parametrize`, or `@mew.product`.
+Register one benchmark with `@mew.benchmark`, or a family with
+`@mew.parametrize`.
 :::
 
 :::{grid-item-card} Run
@@ -76,7 +76,7 @@ getting-started/concepts
 :maxdepth: 1
 
 guide/writing-benchmarks
-guide/parametrize-product
+guide/parametrize
 guide/state-and-timing
 guide/context
 guide/configuration

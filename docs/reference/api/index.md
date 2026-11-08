@@ -27,7 +27,7 @@ importable from `mew` directly:
 
    benchmark
    parametrize
-   product
+   grid
    State
    BenchmarkFn
    MemoryManager
