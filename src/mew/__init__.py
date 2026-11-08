@@ -26,7 +26,7 @@ from mew._typing import (
 )
 from mew.api import benchmark, grid, parametrize
 from mew.context import clear_context, get_context, set_context, update_context
-from mew.machine import gil_enabled, is_free_threaded_build, machine_context
+from mew.machine import machine_context
 from mew.reporter import (
     Fanout,
     JSONLReporter,
@@ -72,9 +72,7 @@ __all__ = [
     "benchmark",
     "clear_context",
     "get_context",
-    "gil_enabled",
     "grid",
-    "is_free_threaded_build",
     "machine_context",
     "parametrize",
     "run",

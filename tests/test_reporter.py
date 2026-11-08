@@ -125,7 +125,7 @@ def test_file_reporters_write_each_row_as_it_arrives(tmp_path, reporter):
 
 @pytest.mark.parametrize("suffix", [".jsonl", ".jsonl.gz"])
 @pytest.mark.skipif(
-    mew.is_free_threaded_build(),
+    mew.machine._is_free_threaded_build(),
     reason="DuckDB integration is only supported on GIL builds",
 )
 def test_jsonl_archive_is_queryable_by_duckdb(tmp_path, suffix):

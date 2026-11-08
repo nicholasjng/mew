@@ -12,14 +12,14 @@ from typing import Any
 
 from mew import _core
 
-__all__ = ["gil_enabled", "is_free_threaded_build", "machine_context"]
+__all__ = ["machine_context"]
 
 
-def is_free_threaded_build() -> bool:
+def _is_free_threaded_build() -> bool:
     """Return whether this interpreter was built with free-threading support.
 
     This stays true when a free-threaded build runs with the GIL enabled.
-    Use :func:`gil_enabled` to check the current runtime state.
+    Use :func:`_gil_enabled` to check the current runtime state.
 
     Returns
     -------
@@ -29,13 +29,13 @@ def is_free_threaded_build() -> bool:
     return bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
 
 
-def gil_enabled() -> bool:
+def _gil_enabled() -> bool:
     """Return whether the GIL is enabled.
 
     ``True`` on a stock interpreter. ``False`` on a free-threaded build, unless
     something enabled the GIL at run time, such as importing an extension module
     that doesn't declare free-threading support.
-    Use :func:`is_free_threaded_build` to check the interpreter's build configuration.
+    Use :func:`_is_free_threaded_build` to check the interpreter's build configuration.
 
     Returns
     -------
@@ -126,7 +126,7 @@ def machine_context() -> dict[str, Any]:
         "python": {
             "version": platform.python_version(),
             "implementation": sys.implementation.name,
-            "free_threaded_build": is_free_threaded_build(),
-            "gil_enabled": gil_enabled(),
+            "free_threaded_build": _is_free_threaded_build(),
+            "gil_enabled": _gil_enabled(),
         },
     }

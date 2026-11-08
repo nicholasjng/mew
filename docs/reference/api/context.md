@@ -9,5 +9,4 @@
 .. autofunction:: clear_context
 .. autofunction:: vcs_context
 .. autofunction:: machine_context
-.. autofunction:: gil_enabled
 ```

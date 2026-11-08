@@ -62,8 +62,8 @@ def test_run_reports_rows_and_the_session_context():
     assert cap.context["context"]["python"] == {
         "version": platform.python_version(),
         "implementation": sys.implementation.name,
-        "free_threaded_build": mew.is_free_threaded_build(),
-        "gil_enabled": mew.gil_enabled(),
+        "free_threaded_build": mew.machine._is_free_threaded_build(),
+        "gil_enabled": mew.machine._gil_enabled(),
     }
 
 
@@ -180,7 +180,7 @@ def test_run_registers_only_selected_cases_of_a_family():
 @pytest.fixture
 def threaded_bench_on_gil_build(monkeypatch):
     """A GIL build (simulated) with one threaded benchmark registered."""
-    monkeypatch.setattr("mew._options.gil_enabled", lambda: True)
+    monkeypatch.setattr("mew._options._gil_enabled", lambda: True)
 
     # Any count above 1 makes the benchmark threaded.
     @mew.benchmark(threads=[1, 4], iterations=1)
@@ -222,7 +222,7 @@ def test_mixed_suite_skips_threaded_runs_rest_on_gil_build():
 
 
 @pytest.mark.skipif(
-    mew.gil_enabled(),
+    mew.machine._gil_enabled(),
     reason="threaded mode requires a free-threaded interpreter",
 )
 def test_thread_counts_run_each_requested_count(monkeypatch):
@@ -380,7 +380,7 @@ def test_nested_state_pause_keeps_the_outer_scope_paused(reuse_scope):
     assert row["cpu_time"] < 0.1e9
 
 
-@pytest.mark.skipif(mew.gil_enabled(), reason="requires free-threaded Python")
+@pytest.mark.skipif(mew.machine._gil_enabled(), reason="requires free-threaded Python")
 def test_nested_state_pauses_are_independent_between_workers():
     """Threaded workers each hold their own nested pauses, and no worker's burn is timed."""
     from threading import Barrier

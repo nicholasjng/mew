@@ -26,7 +26,8 @@ releases may break the API.
 - `mew.ProfilerResultProvider` and `mew.PausableProfiler` are merged into
   `mew.ProfilerManager`.
 - `mew.cpu.write_html()` and `mew.memory.write_flamegraph()` are replaced by
-  `manager.write_outputs(directory)`. `mew.memory.manager()` takes no `ExitStack`.
+  `manager.write_outputs(directory)`. `mew.memory.manager()` is gone: create a
+  `mew.memory.MemrayManager()`, which raises `ImportError` without memray.
 - Benchmark names are relative to the project root (the nearest
   `pyproject.toml` above the file), not the working directory.
 - Rows no longer record `session.host`; `SessionSummary.host` and the `Host`
@@ -44,6 +45,10 @@ releases may break the API.
 - `python-files` patterns match file names only.
 - Stacking `@benchmark` and `@parametrize` raises `ValueError`.
 - `mew compare --key` takes only `name` or `func`.
+- `mew.gil_enabled()` and `mew.is_free_threaded_build()` are gone; every row
+  records both in `context.python`.
+- `mew.memory.Capture`, `MemrayManager.captures` and `mew.regressions.report()`
+  are gone; `render_panel()` returns the panel's text and exit code.
 - `mew.compare.Sample` is private. `mew.config.Config.project_root` is always a
   `Path`.
 - Result files written by 0.2.0 are no longer read.
