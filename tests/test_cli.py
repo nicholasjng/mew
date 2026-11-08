@@ -1077,22 +1077,39 @@ def test_usage_errors_are_colored_by_stderr_not_stdout(monkeypatch, capsys):
     assert "\x1b[" not in err
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def _bash() -> str | None:
+    """bash; on Windows, Git's. There a bare `bash` finds System32's WSL launcher before
+    PATH, which fails without a Linux distribution installed."""
+    if sys.platform != "win32":
+        return shutil.which("bash")
+    git = shutil.which("git")
+    if git is None:
+        return None
+    candidates = (p / "bin" / "bash.exe" for p in Path(git).resolve().parents)
+    return next((str(c) for c in candidates if c.is_file()), None)
+
+
+_BASH = _bash()
+
+
+@pytest.mark.skipif(_BASH is None, reason="needs bash (Git Bash on Windows)")
 def test_bash_completion_keeps_file_names_with_spaces_whole(mew_cli, tmp_path):
     """File completion splits on newlines only, while choice lists still split on spaces."""
     script = tmp_path / "mew.bash"
-    script.write_text(mew_cli("completions", "bash", cwd=tmp_path).stdout)
+    # "\n" line ends on every platform: bash reads a "\r" as part of the line.
+    script.write_text(mew_cli("completions", "bash", cwd=tmp_path).stdout, newline="\n")
     (tmp_path / "my benches").mkdir()
     probe = (
-        f"source {script}\n"
+        # Relative, as bash runs in tmp_path: a Windows path's backslashes are escapes.
+        "source ./mew.bash\n"
         't() { COMP_WORDS=("$@"); COMP_CWORD=$(( ${#COMP_WORDS[@]} - 1 )); COMPREPLY=(); _mew; '
         'printf "[%s]" "${COMPREPLY[@]}"; echo; }\n'
         't mew run my\nt mew run --format ""\n'
     )
-    out = subprocess.run(
-        ["bash", "-c", probe], cwd=tmp_path, capture_output=True, text=True, check=True
-    ).stdout
-    assert out.splitlines() == ["[my benches]", "[rich][json][jsonl]"]
+    assert _BASH is not None  # for the type checker; skipped otherwise
+    res = subprocess.run([_BASH, "-c", probe], cwd=tmp_path, capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.splitlines() == ["[my benches]", "[rich][json][jsonl]"]
 
 
 def test_completions_offer_top_level_options_and_choices(mew_cli, tmp_path):
