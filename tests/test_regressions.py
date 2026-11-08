@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from mew.regressions import (
 
 _NOISY = AllowRule(pattern="b*", reason="noisy", threshold=20.0)
 _TIGHT = AllowRule(pattern="b*", reason="hot path", threshold=2.0)
-_IGNORE = AllowRule(pattern="b*", reason="flaky", ignore=True)
+_EXEMPT = AllowRule(pattern="b*", reason="flaky", threshold=math.inf)
 
 
 @pytest.mark.parametrize(
@@ -38,8 +39,9 @@ _IGNORE = AllowRule(pattern="b*", reason="flaky", ignore=True)
         (_NOISY, 20.001, False, Verdict.REGRESSED),
         # A rule may tighten below the default.
         (_TIGHT, 3.0, False, Verdict.REGRESSED),
-        # An ignore rule takes the benchmark out of scope however far it moved.
-        (_IGNORE, 50.0, False, Verdict.IGNORED),
+        # An infinite threshold exempts the benchmark however far it moved, and still lists it.
+        (_EXEMPT, 50.0, False, Verdict.ALLOWED_OVER),
+        (_EXEMPT, 1.0, False, Verdict.OK),
         # Higher-is-better metrics invert the direction.
         (None, -10.0, True, Verdict.REGRESSED),
         (None, 10.0, True, Verdict.OK),
@@ -55,11 +57,11 @@ def test_evaluate_verdicts(rule, delta_pct, higher_is_better, verdict) -> None:
 
 def test_first_matching_rule_wins() -> None:
     """When several allow rules match a benchmark, the first one decides the verdict."""
-    a = AllowRule(pattern="bench_*", reason="catch-all", ignore=True)
+    a = AllowRule(pattern="bench_*", reason="catch-all", threshold=1.0)
     b = AllowRule(pattern="bench_x", reason="more specific", threshold=99.0)
     cfg = RegressionConfig(default_threshold=5.0, rules=(a, b))
     v = cfg.evaluate("bench_x", 50.0)
-    assert v.verdict is Verdict.IGNORED
+    assert v.verdict is Verdict.REGRESSED
     assert v.rule is a
 
 
@@ -73,7 +75,7 @@ default-threshold = 7.5
 
 [[tool.mew.regressions.allow]]
 pattern = "bench_io_*"
-ignore = true
+threshold = inf
 reason = "depends on disk cache"
 
 [[tool.mew.regressions.allow]]
@@ -85,13 +87,13 @@ reason = "noisy on shared runners"
     cfg = load(tmp_path).regressions
     assert cfg.default_threshold == 7.5
     assert len(cfg.rules) == 2
-    assert cfg.rules[0].ignore is True
+    assert cfg.rules[0].threshold == math.inf
     assert cfg.rules[1].threshold == 25.0
 
 
 def test_allow_rule_brackets_match_literally() -> None:
     """Square brackets in an allow rule's pattern match literally, not as a character class."""
-    rule = AllowRule(pattern="*[algo=bubble]", reason="slow on purpose", ignore=True)
+    rule = AllowRule(pattern="*[algo=bubble]", reason="slow on purpose", threshold=math.inf)
     assert rule.matches("bench.py::sort[algo=bubble]")
     assert not rule.matches("bench.py::sort[algo=merge]")
     # As a character class, `[algo=bubble]` would have matched a single letter.
@@ -104,12 +106,13 @@ _ALLOW = '[[tool.mew.regressions.allow]]\npattern = "b*"\n'
 @pytest.mark.parametrize(
     ("body", "match"),
     [
-        (_ALLOW + "ignore = true", "'reason' is required"),
-        # A rule sets exactly one mode, of the right type and range.
-        (_ALLOW + 'reason = "r"', "exactly one of ignore=true or threshold"),
-        (_ALLOW + 'reason = "r"\nignore = true\nthreshold = 10.0', "exactly one of"),
-        (_ALLOW + 'reason = "r"\nignore = "false"', "ignore must be a boolean"),
-        (_ALLOW + 'reason = "r"\nthreshold = -1.0', "finite, non-negative"),
+        (_ALLOW + "threshold = inf", "'reason' is required"),
+        # A rule's threshold is required, a number, and not negative or NaN.
+        (_ALLOW + 'reason = "r"', "'threshold' is required, a percent or inf to exempt"),
+        (_ALLOW + 'reason = "r"\nthreshold = "10"', "a non-negative number or inf"),
+        (_ALLOW + 'reason = "r"\nthreshold = -1.0', "a non-negative number or inf"),
+        (_ALLOW + 'reason = "r"\nthreshold = nan', "a non-negative number or inf"),
+        (_ALLOW + 'reason = "r"\nignore = true', "unknown key 'ignore'"),
         ('[tool.mew.regressions]\nallow = "b*"', "allow must be an array of tables"),
         ("[tool.mew]\nregressions = 5", "[tool.mew.regressions] must be a table"),
         # The table and its rules both reject typos (test_config covers the rest).
@@ -133,15 +136,16 @@ def test_load_rejects_invalid_regressions_config(tmp_path: Path, body: str, matc
     assert str(exc.value).startswith(f"{source.resolve()}: ")
 
 
-@pytest.mark.parametrize("threshold", [-1, float("nan"), True])
+@pytest.mark.parametrize("threshold", [-1, float("nan"), True, math.inf])
 def test_regression_config_rejects_invalid_default_threshold(threshold) -> None:
-    """`RegressionConfig` rejects a negative, NaN or boolean `default_threshold`."""
+    """`RegressionConfig` rejects a negative, NaN, boolean or infinite `default_threshold`:
+    exempting everything is no gate."""
     with pytest.raises(ValueError, match="default_threshold"):
         RegressionConfig(default_threshold=threshold)
 
 
 def test_render_panel_exit_codes() -> None:
-    """`render_panel` is empty when all pass, exits 3 on a regression, and lists ignored rows."""
+    """`render_panel` is empty when all pass, exits 3 on a regression, and lists allowed rows."""
     rule = AllowRule(pattern="x", reason="r", threshold=99.0)
     text, code = render_panel([BenchmarkVerdict("x", 1.0, Verdict.OK, None)], default_threshold=5.0)
     assert text == ""
@@ -156,13 +160,13 @@ def test_render_panel_exit_codes() -> None:
     )
     assert "⚠️" in text
     assert code == 0
-    # Ignored benchmarks still show in the panel, so the allowlist stays visible.
-    ignore_rule = AllowRule(pattern="x", reason="flaky", ignore=True)
+    assert "(allowlisted: 99.0% threshold; r)" in text
+    # An exempt benchmark still shows, so the allowlist stays visible.
     text, code = render_panel(
-        [BenchmarkVerdict("x", 50.0, Verdict.IGNORED, ignore_rule)], default_threshold=5.0
+        [BenchmarkVerdict("x", 50.0, Verdict.ALLOWED_OVER, _EXEMPT)], default_threshold=5.0
     )
-    assert "✅" in text
-    assert "allowlisted: ignored" in text
+    assert "(allowlisted: no threshold; flaky)" in text
+    assert text.endswith("0 regression(s), 1 over-but-allowed.")
     assert code == 0
 
 

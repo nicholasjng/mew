@@ -2,8 +2,9 @@
 
 A *regression* is a benchmark whose delta against the baseline exceeds a threshold
 in the slower direction (larger for ``real_time`` / ``cpu_time``, smaller for
-``iterations``). Per-benchmark allowlist rules can ignore a benchmark or raise its
-threshold, matched against the full name with ``*`` and ``?`` wildcards.
+``iterations``). Per-benchmark allowlist rules replace a benchmark's threshold,
+with ``inf`` to exempt it, matched against the full name with ``*`` and ``?``
+wildcards.
 Counter rules say which direction is an improvement for a counter.
 """
 
@@ -27,10 +28,8 @@ class Verdict(Enum):
     the default otherwise). Fails the gate (exit code 3)."""
 
     ALLOWED_OVER = "allowed_over"
-    """Over the default threshold but inside a rule-supplied one; soft warning."""
-
-    IGNORED = "ignored"
-    """Out-of-scope per a matching ``ignore=true`` rule. Listed to keep the allowlist visible."""
+    """Over the default threshold but inside a rule-supplied one, ``inf`` included;
+    listed with the rule's reason, so the allowlist stays visible."""
 
 
 def _matches(name: str, pattern: str) -> bool:
@@ -38,20 +37,22 @@ def _matches(name: str, pattern: str) -> bool:
     return fnmatch.fnmatchcase(name, pattern.replace("[", "[[]"))
 
 
-def _check_threshold(value: object, field: str) -> None:
-    """Raise unless ``value`` is a finite, non-negative, non-``bool`` number."""
+def _check_threshold(value: object, field: str, *, infinite: bool = False) -> None:
+    """Raise unless ``value`` is a non-negative, non-``bool`` number; finite unless ``infinite``."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int | float)
-        or not math.isfinite(value)
+        or math.isnan(value)
+        or (math.isinf(value) and not infinite)
         or value < 0
     ):
-        raise ValueError(f"{field} must be a finite, non-negative number")
+        kind = "a non-negative number or inf" if infinite else "a finite, non-negative number"
+        raise ValueError(f"{field} must be {kind}")
 
 
 @dataclass(frozen=True, slots=True)
 class AllowRule:
-    """An allowlist rule that exempts benchmarks from the gate or raises their threshold.
+    """An allowlist rule that replaces matching benchmarks' threshold.
 
     Rules are read from ``[[tool.mew.regressions.allow]]`` entries.
 
@@ -63,25 +64,17 @@ class AllowRule:
         ``"*[algo=bubble]"`` selects that case of every family.
     reason : str
         Why this benchmark is allowlisted. Required, so the file explains itself.
-    ignore : bool, default False
-        Exempt matching benchmarks from gating entirely.
-    threshold : float or None
-        Percent threshold replacing the default for matching benchmarks.
-        Exactly one of ``ignore`` / ``threshold`` must be set.
+    threshold : float
+        Percent threshold replacing the default for matching benchmarks:
+        stricter or looser, or ``math.inf`` (``inf`` in TOML) to exempt them.
     """
 
     pattern: str
     reason: str
-    ignore: bool = False
-    threshold: float | None = None
+    threshold: float
 
     def __post_init__(self) -> None:
-        if not isinstance(self.ignore, bool):
-            raise TypeError("ignore must be a boolean")
-        if self.threshold is not None:
-            _check_threshold(self.threshold, "threshold")
-        if self.ignore == (self.threshold is not None):
-            raise ValueError("set exactly one of ignore=true or threshold=<float>")
+        _check_threshold(self.threshold, "threshold", infinite=True)
 
     def matches(self, name: str) -> bool:
         """Whether ``name`` falls under this rule's pattern.
@@ -252,14 +245,10 @@ class RegressionConfig:
             The verdict, with the matched rule attached (if any).
         """
         rule = self.find_rule(name)
-        if rule is not None and rule.ignore:
-            return BenchmarkVerdict(name, delta_pct, Verdict.IGNORED, rule)
-
         # Magnitude in the "worse" direction: slower for time metrics, fewer
         # iters (negative delta) for iterations.
         magnitude = -delta_pct if higher_is_better else delta_pct
-        rule_threshold = rule.threshold if rule is not None else None
-        threshold = self.default_threshold if rule_threshold is None else rule_threshold
+        threshold = self.default_threshold if rule is None else rule.threshold
         if magnitude > threshold:
             return BenchmarkVerdict(name, delta_pct, Verdict.REGRESSED, rule)
         # Past the default but within the threshold: only a looser rule allows that.
@@ -289,35 +278,25 @@ def render_panel(
     """
     regressed = [v for v in verdicts if v.verdict is Verdict.REGRESSED]
     allowed_over = [v for v in verdicts if v.verdict is Verdict.ALLOWED_OVER]
-    ignored = [v for v in verdicts if v.verdict is Verdict.IGNORED]
-
-    if not (regressed or allowed_over or ignored):
+    if not (regressed or allowed_over):
         return "", 0
 
     lines = [f"Regressions (threshold +{default_threshold:.1f}%):"]
     for v in regressed:
         line = f"  ❌ {v.name}   {v.delta_pct:+.2f}%"
-        if v.rule is not None and v.rule.threshold is not None:
+        if v.rule is not None:
             # A stricter rule failed it, not the threshold in the heading.
             line += f"   (rule: {v.rule.threshold:.1f}% threshold; {v.rule.reason})"
         lines.append(line)
     for v in allowed_over:
         assert v.rule is not None
+        t = v.rule.threshold
+        limit = "no threshold" if math.isinf(t) else f"{t:.1f}% threshold"
         lines.append(
-            f"  ⚠️  {v.name}   {v.delta_pct:+.2f}%   "
-            f"(allowlisted: {v.rule.threshold:.1f}% threshold; {v.rule.reason})"
-        )
-    for v in ignored:
-        assert v.rule is not None
-        lines.append(
-            f"  ✅ {v.name}   {v.delta_pct:+.2f}%   (allowlisted: ignored; {v.rule.reason})"
+            f"  ⚠️  {v.name}   {v.delta_pct:+.2f}%   (allowlisted: {limit}; {v.rule.reason})"
         )
 
-    summary = (
-        f"{len(regressed)} regression(s), "
-        f"{len(allowed_over)} over-but-allowed, "
-        f"{len(ignored)} ignored."
-    )
+    summary = f"{len(regressed)} regression(s), {len(allowed_over)} over-but-allowed."
     lines.append("")
     lines.append(summary)
     # 3 keeps a failed gate apart from 1 (nothing to compare) and 2 (usage errors).

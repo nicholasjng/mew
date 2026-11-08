@@ -10,6 +10,9 @@ releases may break the API.
 - `cpu_profile.top_instructions`, `unspecialized_share`, `mew.cpu.TopInstruction`,
   `mew.cpu.reads_instructions()` and the `top_k` option of Tachyon are gone. On
   free-threaded builds, Tachyon's flame graph still lists each frame's instructions.
+- Allow rules take `threshold = inf` instead of `ignore = true`, and every rule
+  needs a `threshold`. `Verdict.IGNORED` and `AllowRule.ignore` are gone; an
+  exempt benchmark past the default threshold shows as over-but-allowed.
 - `@mew.product` is gone; use `@mew.parametrize(mew.grid(...))`. Axes named
   like options, such as `threads`, are no longer taken as options.
 - `mew run --cpu-profiler <preset>` replaces `--sample`, `--sampler`,
