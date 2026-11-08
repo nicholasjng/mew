@@ -8,9 +8,6 @@
 
 .. autoclass:: BenchmarkFn
 
-.. autoclass:: TimeUnit
-   :members:
-
 .. autoclass:: CounterFlags
    :members:
    :undoc-members:

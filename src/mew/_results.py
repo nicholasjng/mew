@@ -11,12 +11,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
-from mew._format import overflow, to_ns
+from mew._format import overflow
 from mew._statistics import Statistic
 from mew._typing import BenchmarkResult
 
 # Stamped onto every row so each one stands alone, in JSON and JSONL alike.
 ROW_STAMP_FIELDS = ("session", "context")
+
+#: The result format this mew writes and reads, on every row of a result file.
+#: Bumped only for changes that break readers; added fields don't bump it.
+SCHEMA_VERSION = 1
 
 
 def result_format(name: str) -> Literal["json", "jsonl"] | None:
@@ -103,23 +107,19 @@ class Sample:
 
 
 def _is_measurement_row(row: dict[str, Any]) -> bool:
-    """Return whether a row is a successful measurement.
-
-    Google Benchmark's aggregate rows (``_mean``, ``_median``, ...), which some
-    result files hold, are not: mew reduces repetitions itself.
-    """
-    return (
-        isinstance(row.get("name"), str)
-        and not row.get("aggregate_name")
-        and not row.get("skipped")
-    )
+    """Return whether a row is a measurement, not a skipped benchmark."""
+    return isinstance(row.get("name"), str) and not row.get("skip")
 
 
 def _check_row(obj: Any, where: str) -> None:
-    """Reject anything but a result row: an object with ``name`` and ``benchmark``."""
-    if not isinstance(obj, dict) or "name" not in obj or "benchmark" not in obj:
+    """Reject anything but a result row of this mew's format."""
+    if not isinstance(obj, dict) or not isinstance(obj.get("name"), str):
+        raise ValueError(f"{where}: expected a mew result row (a JSON object with a 'name')")  # ruff: ignore[TRY004]
+    if (version := obj.get("schema_version")) != SCHEMA_VERSION:
+        written = "no schema_version" if version is None else f"schema_version {version!r}"
         raise ValueError(
-            f"{where}: expected a mew result row (a JSON object with 'name' and 'benchmark')"
+            f"{where}: written in another result format ({written}); this mew reads "
+            f"schema_version {SCHEMA_VERSION}. Re-run the benchmarks to compare them"
         )
 
 
@@ -194,15 +194,8 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
 
 
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
-    """Per-repetition values, times in nanoseconds, dropping absent metrics."""
-    # Each row's own unit: appended sessions may declare different ones.
-    return [
-        to_ns(_number(v, r, metric), r.get("time_unit"))
-        if metric in TIME_METRICS
-        else _number(v, r, metric)
-        for r in rows
-        if (v := _metric_value(r, metric)) is not None
-    ]
+    """Per-repetition values, dropping absent metrics; rows hold times in nanoseconds."""
+    return [_number(v, r, metric) for r in rows if (v := _metric_value(r, metric)) is not None]
 
 
 def _number(value: Any, row: dict[str, Any], metric: str) -> float:
@@ -357,7 +350,7 @@ def load_column(
     # Repetitions of one benchmark share its `name[label]`.
     groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in measured:
-        groups[r["benchmark"]].append(r)
+        groups[r["name"]].append(r)
     try:
         samples = _samples_from_groups(groups, metric, statistic)
     except ValueError as e:
@@ -370,8 +363,7 @@ def load_session(
 ) -> tuple[list[BenchmarkResult], dict[str, Any]]:
     """Load the rows a ``path@selector`` names, as ``mew run`` reported them.
 
-    Skipped rows stay, since the run reported them too; Google Benchmark's
-    aggregate rows don't.
+    Skipped rows stay, since the run reported them too.
 
     Returns
     -------
@@ -379,8 +371,7 @@ def load_session(
         The rows in file order, and the provenance (``session`` and
         ``context``) of the newest one.
     """
-    rows = [r for r in read_rows(path) if not r.get("aggregate_name")]
-    selected = _select_rows(path, _group_by_session(rows), selector)
+    selected = _select_rows(path, _group_by_session(read_rows(path)), selector)
     return cast("list[BenchmarkResult]", selected), _provenance(selected)
 
 
@@ -403,7 +394,7 @@ class SessionSummary:
     tag : str or None
         Its ``--session-tag``.
     benchmarks : int
-        Distinct benchmarks it measured, without aggregate and skipped rows.
+        Distinct benchmarks it measured, without skipped rows.
     rows : int
         Rows it stored, of every kind.
     """
@@ -419,7 +410,7 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
     """Summarize every session in a result file, newest first.
 
     ``rows`` counts every stored row of the session; ``benchmarks`` counts
-    distinct measured benchmarks (aggregate and skipped rows excluded).
+    distinct measured benchmarks (skipped rows excluded).
 
     Parameters
     ----------
@@ -442,7 +433,7 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
     by_session = _group_by_session(read_rows(Path(path)))
     out: list[SessionSummary] = []
     for (date, sid), session_rows in reversed(by_session.items()):
-        measured = {r["benchmark"] for r in session_rows if _is_measurement_row(r)}
+        measured = {r["name"] for r in session_rows if _is_measurement_row(r)}
         out.append(
             SessionSummary(
                 id=sid or None,
@@ -469,7 +460,7 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
     Returns
     -------
     list[BenchmarkResult]
-        Stored rows, including aggregate and skipped rows.
+        Stored rows, including skipped rows.
 
     Raises
     ------

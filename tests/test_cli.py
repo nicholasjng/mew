@@ -16,7 +16,6 @@ import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pytest
 from _helpers import (
@@ -352,7 +351,7 @@ def test_run_stdin_show_cases_selects_one_case_literally(mew_cli, benchdir):
     )
     assert res.returncode == 0, res.stderr
     (row,) = json.loads(res.stdout)["benchmarks"]
-    assert row["benchmark"] == "bench_fixture.py::bench_two[n=2]"
+    assert row["name"] == "bench_fixture.py::bench_two[n=2]"
 
 
 def test_run_stdin_empty_runs_nothing(mew_cli, benchdir):
@@ -785,20 +784,6 @@ def test_sessions_lists_newest_first(mew_cli, tmp_path):
     assert lines[3].startswith("aaaaaaaa") and "before" in lines[3]
 
 
-def _reported_row(name: str, real_time: float, **extra: Any) -> dict:
-    """A row with every field the console reporter reads, as `mew run` writes them."""
-    fields = {
-        "repetitions": 1,
-        "family_index": 0,
-        "per_family_instance_index": 0,
-        "label": "",
-        "skipped": False,
-        "skip_message": "",
-        "counters": [],
-    }
-    return _row(name, real_time, **{**fields, **extra})
-
-
 def _two_sessions(path: Path) -> None:
     """`before` with `old`, then `after` with `new` (counted) and `broken` (skipped)."""
     before = {"date": "2026-01-01T00:00:00", "session_id": "a-1", "session_tag": "before"}
@@ -807,9 +792,9 @@ def _two_sessions(path: Path) -> None:
     _write_json(
         path,
         [
-            _reported_row("old", 1.0, **before),
-            _reported_row("new", 2.0, counters=hits, **after),
-            _reported_row("broken", 0.0, skipped=True, skip_message="no GPU", **after),
+            _row("old", 1.0, **before),
+            _row("new", 2.0, counters=hits, **after),
+            _row("broken", 0.0, skip={"reason": "skipped", "message": "no GPU"}, **after),
         ],
     )
 
@@ -855,8 +840,8 @@ def test_show_errors(mew_cli, tmp_path, args, code, message):
 
 def test_show_heads_each_of_several_files_with_its_name(mew_cli, tmp_path):
     """Several files print in order, each after its name; one the filter empties is left out."""
-    _write_json(tmp_path / "a.json", [_reported_row("alpha", 1.0)])
-    _write_json(tmp_path / "b.json", [_reported_row("beta", 2.0)])
+    _write_json(tmp_path / "a.json", [_row("alpha", 1.0)])
+    _write_json(tmp_path / "b.json", [_row("beta", 2.0)])
     res = mew_cli("show", "a.json", "b.json", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     lines = res.stdout.splitlines()
@@ -872,7 +857,7 @@ def test_show_summarizes_repetitions(mew_cli, tmp_path):
     """`--summary-only` leaves repetitions, and their counters, to the summary."""
     hits = [{"name": "hits", "value": 7.0}]
     reps = [
-        _reported_row("rep", t, repetitions=3, repetition_index=i, counters=hits)
+        _row("rep", t, repetitions=3, repetition=i, counters=hits)
         for i, t in enumerate((1.0, 2.0, 3.0))
     ]
     _write_json(tmp_path / "r.json", reps)
@@ -973,7 +958,7 @@ def test_stdin_path_selectors_do_not_cross_select_family_cases(mew_cli, tmp_path
     )
     assert res.returncode == 0, res.stderr
     rows = json.loads(res.stdout)["benchmarks"]
-    assert [(r["benchmark"], r["label"]) for r in rows] == [
+    assert [(r["name"], r["label"]) for r in rows] == [
         ("bench_a.py::bench_two[n=1]", "n=1"),
         ("bench_b.py::bench_two[n=2]", "n=2"),
     ]

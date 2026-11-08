@@ -41,8 +41,8 @@ importable from `mew` directly:
    Terminal
    BenchmarkResult
    SessionInfo
+   SkipInfo
    MemoryMetrics
-   TimeUnit
    CounterFlags
    CounterOneK
    Registry

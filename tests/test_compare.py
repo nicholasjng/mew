@@ -49,17 +49,15 @@ def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
     assert "-48.48%" in out
 
 
-def test_load_skips_aggregate_and_skipped_rows(tmp_path: Path) -> None:
-    """Older files' Google Benchmark aggregate rows and skipped rows are not
-    repetitions: they must not skew the median, and a benchmark with only
-    skipped rows has no sample."""
+def test_load_skips_skipped_rows(tmp_path: Path) -> None:
+    """Skipped rows are not repetitions: they must not skew the median, and a benchmark with
+    only skipped rows has no sample."""
     p = tmp_path / "a.json"
     _write_json(
         p,
         [
             _row("b", 5.0),
             _row("b", 7.0),
-            _row("b", 999.0, aggregate_name="mean"),
             _row("b", 0.0, skipped=True),
             _row("only_skipped", 0.0, skipped=True),
         ],
@@ -209,8 +207,18 @@ _ROW_LINE = json.dumps(_row("b", 1.0))
         ("a.json", "[1, 2]", "missing 'benchmarks' array"),  # valid JSON, wrong shape
         ("a.json", '{"benchmarks": [1]}', r"benchmarks\[0\]: expected a mew result row"),
         ("a.jsonl", _ROW_LINE + "\nnot json\n", "a.jsonl:2: invalid JSON"),
-        # Pure NDJSON: every line is a row with `name` and `benchmark`.
-        ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', "a.jsonl:2: expected a mew result row"),
+        # Every row carries the result format it was written in.
+        ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', r"a.jsonl:2: .*\(no schema_version\)"),
+        (
+            "a.jsonl",
+            _ROW_LINE + '\n{"name": "x", "schema_version": 2}\n',
+            r"\(schema_version 2\); this mew reads schema_version 1",
+        ),
+        (
+            "a.jsonl",
+            _ROW_LINE + '\n{"schema_version": 1}\n',
+            "a.jsonl:2: expected a mew result row",
+        ),
         # Cut off, as by a full disk or an interrupted copy.
         # A fixed gzip timestamp keeps the test ID stable.
         ("a.jsonl.gz", gzip.compress(_ROW_LINE.encode(), mtime=0)[:-8], "cannot read result file"),
@@ -364,9 +372,9 @@ def test_session_summaries_newest_first(tmp_path: Path) -> None:
         p,
         [
             _row("b", 1.0, date="2026-01-01T00:00:00", session_id="old"),
-            _row("b/case:0", 1.0, benchmark="b[n=1]", session_tag="t", **new),
-            _row("b/case:0", 2.0, benchmark="b[n=1]", session_tag="t", **new),
-            _row("b/case:0_mean", 1.5, benchmark="b[n=1]", aggregate_name="mean", **new),
+            _row("b[n=1]", 1.0, session_tag="t", **new),
+            _row("b[n=1]", 2.0, session_tag="t", **new),
+            _row("c", 0.0, skipped=True, session_tag="t", **new),
         ],
     )
     newest, oldest = session_summaries(p)
@@ -445,25 +453,6 @@ def test_compare_labels_columns_by_interpreter(
     assert "(python.version=3.15.0)" in out
     assert "cpu_model=Apple M1" in out  # the matching machine context was read, and not warned on
     assert "differ in" not in capsys.readouterr().err
-
-
-def test_rows_group_by_benchmark_not_raw_name(tmp_path: Path) -> None:
-    """A row's `benchmark` names its sample: run options in the raw `name`, such
-    as min_time, don't split it, and thread counts stay apart."""
-    p = tmp_path / "a.json"
-    _write_json(
-        p,
-        [
-            _row("b/case:0/min_time:0.500/threads:1", 100.0, benchmark="b[n=1]/threads:1"),
-            _row("b/case:0/min_time:0.200/threads:1", 110.0, benchmark="b[n=1]/threads:1"),
-            _row("b/case:0/min_time:0.500/threads:2", 200.0, benchmark="b[n=1]/threads:2"),
-        ],
-    )
-    samples, _ = load_column(p, "real_time")
-    assert {name: s.values for name, s in samples.items()} == {
-        "b[n=1]/threads:1": (100.0, 110.0),
-        "b[n=1]/threads:2": (200.0,),
-    }
 
 
 def test_compare_memory_metric(tmp_path: Path) -> None:
@@ -660,34 +649,19 @@ def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
 
 
 def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
-    """The raw view: nothing filtered, rows self-describing whatever the source."""
+    """The raw view: nothing filtered, rows self-describing."""
     p = tmp_path / "r.json"
     _write_json(
         p,
         [
             _row("b", 10.0, session_id="s1", custom={"engine": "x"}),
-            _row("b", 0.0, aggregate_name="mean", session_id="s1"),
+            _row("b", 0.0, skipped=True, session_id="s1"),
         ],
     )
     rows = read_results(p)
-    assert len(rows) == 2, "aggregate rows are not filtered here"
+    assert len(rows) == 2, "skipped rows are not filtered here"
     assert rows[0]["session"]["id"] == "s1"
     assert rows[0]["context"]["engine"] == "x"
-
-
-@pytest.mark.parametrize("reverse", [False, True])
-def test_grouped_sessions_normalize_units_before_reduction(tmp_path: Path, reverse: bool) -> None:
-    """Pooled sessions with mixed time units convert to nanoseconds before reduction."""
-    path = tmp_path / "units.jsonl"
-    rows = [
-        _row("b", 1000, time_unit="ns", session_tag="same", date="2026-01-01"),
-        _row("b", 1, time_unit="us", session_tag="same", date="2026-01-02"),
-    ]
-    if reverse:
-        rows.reverse()
-    _write_jsonl(path, rows)
-    sample = load_column(path, "real_time", selector="same")[0]["b"]
-    assert sample.values == (1000, 1000)
 
 
 @pytest.mark.parametrize("show_stddev", [False, True])

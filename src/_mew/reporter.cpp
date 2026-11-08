@@ -22,19 +22,11 @@ using Context = BenchmarkReporter::Context;
 
 namespace {
 
-// Plain strings, not the bound enums: a serialized row would carry "TimeUnit.ns".
-const char* time_unit_name(benchmark::TimeUnit u) {
-    switch (u) {
-        case benchmark::kNanosecond:
-            return "ns";
-        case benchmark::kMicrosecond:
-            return "us";
-        case benchmark::kMillisecond:
-            return "ms";
-        case benchmark::kSecond:
-            return "s";
-    }
-    return "ns";
+// Per-iteration time in nanoseconds, from GB's accumulated seconds: rows hold
+// one unit, whatever unit GB would have reported in.
+double per_iteration_ns(double accumulated_seconds, benchmark::IterationCount iterations) {
+    double ns = accumulated_seconds * 1e9;
+    return iterations != 0 ? ns / static_cast<double>(iterations) : ns;
 }
 
 nb::dict memory_block(const Run& r) {
@@ -60,29 +52,29 @@ std::string addressable_name(const Run& r) {
     return name;
 }
 
-nb::dict run_to_dict(const Run& r) {
+// `params` maps a registered name (`name[label]` for a family case) to its
+// case's parameters, already encoded for JSON by the runner.
+nb::dict run_to_dict(const Run& r, const nb::dict& params) {
     nb::dict d;
-    d["name"] = r.benchmark_name();
-    d["run_name"] = r.run_name.str();
-    d["benchmark"] = addressable_name(r);
-    d["family_index"] = r.family_index;
-    d["per_family_instance_index"] = r.per_family_instance_index;
-    // No aggregate gets here (see ReportRuns). The fields stay, so that rows
-    // load alongside older result files, which hold aggregate rows.
-    d["run_type"] = "iteration";
-    d["aggregate_name"] = "";
+    d["name"] = addressable_name(r);
+    nb::str registered(r.run_name.function_name.c_str());
+    // A copy per row: a reporter that edits one row's params must not edit the next.
+    d["params"] = params.contains(registered) ? params[registered].attr("copy")() : nb::dict();
+    d["repetition"] = r.repetition_index;
     d["repetitions"] = r.repetitions;
-    d["repetition_index"] = r.repetition_index;
     d["threads"] = r.threads;
     d["iterations"] = r.iterations;
-    d["real_time"] = r.GetAdjustedRealTime();
-    d["cpu_time"] = r.GetAdjustedCPUTime();
-    d["real_accumulated_time"] = r.real_accumulated_time;
-    d["cpu_accumulated_time"] = r.cpu_accumulated_time;
-    d["time_unit"] = time_unit_name(r.time_unit);
+    d["real_time"] = per_iteration_ns(r.real_accumulated_time, r.iterations);
+    d["cpu_time"] = per_iteration_ns(r.cpu_accumulated_time, r.iterations);
     d["label"] = r.report_label;
-    d["skipped"] = r.skipped != benchmark::internal::NotSkipped;
-    d["skip_message"] = r.skip_message;
+    if (r.skipped == benchmark::internal::NotSkipped) {
+        d["skip"] = nb::none();
+    } else {
+        nb::dict skip;
+        skip["reason"] = r.skipped == benchmark::internal::SkippedWithError ? "error" : "skipped";
+        skip["message"] = r.skip_message;
+        d["skip"] = skip;
+    }
     // A list of records, not a name -> value map: readers like DuckDB infer one
     // type for it whichever counters a file contains.
     nb::list counters;
@@ -117,13 +109,18 @@ class PyReporter : public BenchmarkReporter {
     nb::object py;
     // mew's session and provenance block, reported instead of GB's Context.
     nb::dict session_context;
+    // Registered name -> the case's parameters; see run_to_dict.
+    nb::dict params;
     // mew._capture.OutputCapture, or None. Suspended around every callback so
     // reporters write to the real streams.
     nb::object capture;
 
     // Constructed and destroyed by `run_benchmarks` while it holds the GIL.
-    PyReporter(nb::object obj, nb::dict context, nb::object cap)
-        : py(std::move(obj)), session_context(std::move(context)), capture(std::move(cap)) {}
+    PyReporter(nb::object obj, nb::dict context, nb::dict case_params, nb::object cap)
+        : py(std::move(obj)),
+          session_context(std::move(context)),
+          params(std::move(case_params)),
+          capture(std::move(cap)) {}
 
     // Both flush C stdio first, so output buffered while redirected stays on its side.
     void suspend_capture() {
@@ -161,7 +158,7 @@ class PyReporter : public BenchmarkReporter {
             for (const auto& r : runs) {
                 // mew reduces repetitions itself, so drop GB-side aggregates.
                 if (r.run_type == Run::RT_Aggregate) continue;
-                rows.append(run_to_dict(r));
+                rows.append(run_to_dict(r, params));
             }
             // Google Benchmark reports a benchmark's aggregates as a batch of their own.
             if (rows.size() > 0) py.attr("report_runs")(rows);
@@ -206,17 +203,10 @@ void register_reporter(nb::module_& m) {
         },
         "CPU count, and whether frequency scaling was detected (sysfs on Linux, sysctl on macOS).");
 
-    nb::enum_<benchmark::TimeUnit>(m, "TimeUnit", nb::is_str(),
-                                   "A time unit for per-iteration durations.")
-        .str_value("ns", benchmark::kNanosecond, "ns")
-        .str_value("us", benchmark::kMicrosecond, "us")
-        .str_value("ms", benchmark::kMillisecond, "ms")
-        .str_value("s", benchmark::kSecond, "s");
-
     m.def(
         "run_benchmarks",
         [](std::vector<std::string> argv, nb::object reporter, nb::dict session_context,
-           nb::object capture) {
+           nb::dict params, nb::object capture) {
             // GB only shuffles the char** array, never writes into the strings.
             std::vector<char*> argp;
             argp.reserve(argv.size());
@@ -227,7 +217,8 @@ void register_reporter(nb::module_& m) {
             // `--help` in argv still triggers exit(0); documented GB behavior.
             benchmark::Initialize(&argc, argp.data());
 
-            PyReporter pr(std::move(reporter), std::move(session_context), std::move(capture));
+            PyReporter pr(std::move(reporter), std::move(session_context), std::move(params),
+                          std::move(capture));
             size_t count;
             {
                 nb::gil_scoped_release release;
@@ -242,9 +233,11 @@ void register_reporter(nb::module_& m) {
             }
             return count;
         },
-        "argv"_a, "reporter"_a, "session_context"_a = nb::dict(), "capture"_a = nb::none(),
+        "argv"_a, "reporter"_a, "session_context"_a = nb::dict(), "params"_a = nb::dict(),
+        "capture"_a = nb::none(),
         "Initialize Google Benchmark with `argv` and run all registered benchmarks,\n"
         "reporting through `reporter`.\n"
+        "`params` maps a registered name to its case's parameters, stamped on its rows.\n"
 
         "`capture` (an active mew._capture.OutputCapture) is suspended around every\n"
         "reporter callback, so reporters write to the real stdout/stderr.\n"

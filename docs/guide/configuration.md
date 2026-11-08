@@ -71,7 +71,7 @@ The config file holds project settings such as discovery paths and regression
 rules. Configure measurements in decorators or CLI flags:
 
 - **Per benchmark** — decorator options (`min_time=`, `repetitions=`,
-  `iterations=`, `unit=`, …). These take precedence over global flags, except
+  `iterations=`, …). These take precedence over global flags, except
   that a fixed iteration count such as `--min-time 100x` also replaces a
   decorator's `min_time` in seconds.
 - **Per invocation** — `mew run` flags (`--min-time`, `--min-warmup-time`,

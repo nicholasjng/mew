@@ -110,7 +110,7 @@ Benchmark's console: `bytes_per_second=1.2Gi/s hits=42`. Values get SI prefixes,
 To read a counter in DuckDB, pick it from the list by name:
 
 ```sql
-SELECT benchmark,
+SELECT name,
        list_filter(counters, lambda c: c.name = 'hits')[1].value::BIGINT AS hits
 FROM read_json_auto('results.jsonl');
 ```

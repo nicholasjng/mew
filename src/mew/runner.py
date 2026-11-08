@@ -62,8 +62,6 @@ def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> Non
         handle.iterations(int(v))
     if (v := opts.get("repetitions")) is not None:
         handle.repetitions(int(v))
-    if v := opts.get("unit"):
-        handle.unit(_core.TimeUnit(v))
     if opts.get("use_real_time"):
         handle.use_real_time()
     if opts.get("use_manual_time"):
@@ -245,6 +243,8 @@ def run(
     # Clear before registering so a second mew.run() in the same process
     # doesn't double-register entries.
     _core.clear_registered_benchmarks()
+    # A family case's parameters by its registered name, for its rows' `params`.
+    params: dict[str, dict[str, Any]] = {}
     for entry in selected:
         if entry.case_labels is None:
             _apply_options(_core.register_benchmark(entry.name, entry.fn), entry.options)
@@ -254,6 +254,8 @@ def run(
         for i, case_name in selected_cases(entry):
             handle = _core.register_benchmark(case_name, functools.partial(entry.fn, case=i))
             _apply_options(handle, entry.options)
+            if entry.case_params is not None:
+                params[case_name] = entry.case_params[i]
 
     # On free-threaded builds the first second-thread creation runs a
     # stop-the-world pass that deadlocks GB's attaching workers; trigger it here.
@@ -273,4 +275,4 @@ def run(
         if capture_output:
             capture = OutputCapture(stack.enter_context(tempfile.TemporaryFile()))
             stack.callback(capture.close)
-        return _core.run_benchmarks(cli, rep, session_context, capture)
+        return _core.run_benchmarks(cli, rep, session_context, params, capture)

@@ -13,6 +13,7 @@ from types import FrameType
 from typing import Any, Unpack, overload
 
 from mew._core import State
+from mew._encode import encode_param
 from mew._options import normalize_options
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn, BenchmarkOptions
@@ -118,6 +119,7 @@ def _register(
     options: BenchmarkOptions,
     tags: frozenset[str],
     case_labels: list[str] | None = None,
+    case_params: list[dict[str, Any]] | None = None,
 ) -> BenchmarkFn:
     """Add ``target`` to the registry as ``fn``."""
     try:
@@ -132,6 +134,7 @@ def _register(
             options=options,
             tags=tags,
             case_labels=case_labels,
+            case_params=case_params,
         )
     )
     return target
@@ -252,7 +255,16 @@ def _register_family(
         state.set_label(_labels[case])
         return _fn(state, **_cases[case])
 
-    return _register(target, trampoline, name=name, options=options, tags=tags, case_labels=labels)
+    params = [{k: encode_param(v) for k, v in case.items()} for case in cases]
+    return _register(
+        target,
+        trampoline,
+        name=name,
+        options=options,
+        tags=tags,
+        case_labels=labels,
+        case_params=params,
+    )
 
 
 def parametrize(

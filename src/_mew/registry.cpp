@@ -45,8 +45,6 @@ void register_registry(nb::module_& m) {
              "Run exactly `n` iterations instead of timing out on `min_time`.")
         .def("repetitions", &benchmark::Benchmark::Repetitions, "n"_a, nb::rv_policy::reference,
              "Repeat the whole benchmark `n` times; variance metrics need at least 2.")
-        .def("unit", &benchmark::Benchmark::Unit, "unit"_a, nb::rv_policy::reference,
-             "Time unit for the reported per-iteration durations.")
         .def("use_real_time", &benchmark::Benchmark::UseRealTime, nb::rv_policy::reference,
              "Report wall-clock rather than CPU time as the primary measure.")
         .def("use_manual_time", &benchmark::Benchmark::UseManualTime, nb::rv_policy::reference,

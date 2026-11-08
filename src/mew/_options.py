@@ -9,7 +9,6 @@ from collections.abc import Iterable, Mapping
 from math import isfinite
 from typing import TYPE_CHECKING, Any, cast
 
-from mew._core import TimeUnit
 from mew._format import overflow
 from mew._typing import BenchmarkOptions
 from mew.machine import _gil_enabled
@@ -18,7 +17,6 @@ if TYPE_CHECKING:
     from mew._registry import Entry
 
 _OPTION_KEYS = BenchmarkOptions.__required_keys__ | BenchmarkOptions.__optional_keys__
-_TIME_UNITS = tuple(unit.value for unit in TimeUnit)
 
 
 def parse_seconds(text: str) -> float:
@@ -157,12 +155,6 @@ def normalize_options(options: Mapping[str, Any]) -> BenchmarkOptions:
             check_count(opts[key], key)
     if "min_warmup_time" in opts:
         check_min_warmup_time(opts["min_warmup_time"])
-    if "unit" in opts:
-        if not isinstance(opts["unit"], str):
-            raise TypeError(f"unit must be a string, got {opts['unit']!r}")
-        if opts["unit"] not in _TIME_UNITS:
-            units = ", ".join(map(repr, _TIME_UNITS))
-            raise ValueError(f"unit must be one of {units}, got {opts['unit']!r}")
     for key in ("use_real_time", "use_manual_time", "measure_process_cpu_time"):
         if key in opts and not isinstance(opts[key], bool):
             raise TypeError(f"{key} must be a bool, got {opts[key]!r}")

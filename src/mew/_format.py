@@ -8,30 +8,21 @@ from typing import Any
 NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
 
 
-def to_ns(value: float, unit: str | None) -> float:
-    """Normalize a ``(value, unit)`` pair to nanoseconds.
+def scale_time(ns: float) -> tuple[float, str]:
+    """Rescale nanoseconds to the largest of s/ms/us/ns that keeps the value >= 1.
 
-    Rows can declare different units (e.g. ``--benchmark_time_unit=us``), so
-    ``mew compare`` converts every time with this as it loads a file.
+    For example, ``6995135790.99`` becomes ``(7.00, "s")``.
     """
-    return value * NS_PER_UNIT.get(unit or "ns", 1.0)
-
-
-def scale_time(value: float, unit: str | None) -> tuple[float, str]:
-    """Rescale a ``(value, unit)`` pair to the largest of s/ms/us/ns that keeps it >= 1.
-
-    For example, ``(6995135790.99, "ns")`` becomes ``(7.00, "s")``.
-    """
-    ns = to_ns(value, unit)
-    for threshold, out_unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):
+    for threshold, unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):
         if abs(ns) >= threshold:
-            return ns / threshold, out_unit
+            return ns / threshold, unit
     return ns, "ns"
 
 
-def fmt_time(value: float, unit: str | None) -> str:
-    scaled, out_unit = scale_time(value, unit)
-    return f"{scaled:.2f} {out_unit}"
+def fmt_time(ns: float) -> str:
+    """Nanoseconds as ``7.00 s``, in the unit :func:`scale_time` picks."""
+    scaled, unit = scale_time(ns)
+    return f"{scaled:.2f} {unit}"
 
 
 def fmt_bytes(n: int) -> str:

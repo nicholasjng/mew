@@ -7,6 +7,18 @@ releases may break the API.
 
 ### Breaking changes
 
+- Result format 1: every row of a result file starts with `schema_version: 1`,
+  and mew rejects rows without it, such as files from earlier versions.
+- A row's `name` is mew's addressable name (it was `benchmark`); Google
+  Benchmark's `name` and `run_name`, `run_type`, `aggregate_name`,
+  `family_index`, `per_family_instance_index`, `real_accumulated_time` and
+  `cpu_accumulated_time` are gone. `repetition_index` is `repetition`.
+- Times are always nanoseconds: `time_unit`, the `unit=` option and
+  `mew.TimeUnit` are gone.
+- `skipped` and `skip_message` are one `skip` record, `{reason, message}` with
+  `reason` `"error"` or `"skipped"`, or `null` for a measured row.
+- The console's repetition summary lists benchmarks in the order they first
+  reported, not registration order.
 - `cpu_profile.top_instructions`, `unspecialized_share`, `mew.cpu.TopInstruction`,
   `mew.cpu.reads_instructions()` and the `top_k` option of Tachyon are gone. On
   free-threaded builds, Tachyon's flame graph still lists each frame's instructions.
@@ -57,6 +69,8 @@ releases may break the API.
 
 ### Added
 
+- Rows carry `params`, a family case's parameters; values JSON can't represent
+  are stored as their type's qualified name, such as `"torch.Tensor"`.
 - `mew.grid(**axes)` gives every combination of some values as cases for
   `@parametrize`. Join grids with `+` or filter one for partial grids.
 - Profiler presets: `[tool.mew.profilers.<name>]` names a manager class and its
