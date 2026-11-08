@@ -141,10 +141,19 @@ def test_each_flag_fills_its_slot(root):
     assert _load_all({"cpu": None, "memory": None}, root) == {}
 
 
-def test_builtin_records_the_class_its_function_chose(root):
+def test_builtin_records_the_class_its_function_chose(root, monkeypatch):
+    """A built-in preset may name a function that picks the class; the run records the class.
+    The function is stubbed: on free-threaded 3.14, `sample` has no sampler that can run."""
+    import mew.cpu
+
+    class Chosen:
+        def after_setup_start(self): ...
+        def before_teardown_stop(self): ...
+
+    monkeypatch.setattr(mew.cpu, "manager", lambda: Chosen())
     loaded = _load("sample", root, slot="cpu")
     assert loaded.slot == "cpu"
-    assert loaded.record["class"] in ("mew.cpu:TachyonManager", "mew.cpu:PyinstrumentManager")
+    assert loaded.record["class"] == f"{Chosen.__module__}:{Chosen.__qualname__}"
 
 
 @pytest.mark.parametrize(
