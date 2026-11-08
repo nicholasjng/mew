@@ -305,7 +305,7 @@ def test_usage_errors_exit_2(mew_cli, benchdir, args, message):
         ('[tool.mew]\nsetup = "nope.py"\n', ("run",), "setup file not found"),
         # Read before the result files, which don't exist here.
         (
-            '[[tool.mew.regressions.allow]]\npattern = "b"\nignore = true\n',
+            '[[tool.mew.regressions.allow]]\npattern = "b"\nthreshold = inf\n',
             ("compare", "a.json", "b.json", "--regression-threshold", "5%"),
             "'reason' is required",
         ),

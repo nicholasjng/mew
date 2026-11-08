@@ -204,9 +204,7 @@ def _parse_counter_rule(raw: Mapping[str, Any]) -> CounterRule:
 
 def _parse_allow_rule(raw: Mapping[str, Any]) -> AllowRule:
     """Validate one ``[[tool.mew.regressions.allow]]`` table into an :class:`AllowRule`."""
-    rule = _read_table(
-        raw, ("pattern", "reason", "ignore", "threshold"), "[[tool.mew.regressions.allow]]"
-    )
+    rule = _read_table(raw, ("pattern", "reason", "threshold"), "[[tool.mew.regressions.allow]]")
     pattern = rule.get("pattern")
     if not isinstance(pattern, str) or not pattern:
         raise ValueError("allow rule missing 'pattern'")
@@ -217,12 +215,13 @@ def _parse_allow_rule(raw: Mapping[str, Any]) -> AllowRule:
             f"allow rule {pattern!r}: 'reason' is required (document why this is allowlisted)"
         )
 
+    if "threshold" not in rule:
+        raise ValueError(
+            f"allow rule {pattern!r}: 'threshold' is required, a percent or inf to exempt"
+        )
     try:
         return AllowRule(
-            pattern=pattern,
-            reason=reason.strip(),
-            ignore=cast(bool, rule.get("ignore", False)),
-            threshold=cast(float | None, rule.get("threshold")),
+            pattern=pattern, reason=reason.strip(), threshold=cast(float, rule["threshold"])
         )
     except (TypeError, ValueError) as e:
         # The model owns validation; the loader adds configuration context.

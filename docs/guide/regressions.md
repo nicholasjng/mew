@@ -154,7 +154,7 @@ reason = "I/O is noisy on the CI runner; raise the bar."
 
 [[tool.mew.regressions.allow]]
 pattern = "*[algo=bubble]"
-ignore = true
+threshold = inf
 reason = "Bubble sort is intentionally slow; skip the gate."
 ```
 
@@ -162,8 +162,10 @@ Rules are read from the `pyproject.toml` that `[tool.mew]` configuration comes
 from. Patterns use `*` and `?` wildcards (brackets match literally) against the
 benchmark name as `mew compare` keys it: `file.py::func[label]` by default,
 `func[label]` under `--key func`.
-Each rule must include a `reason` so the allowlist stays explainable. A
-rule must either set `ignore=true` or `threshold=<float>`.
+Each rule must include a `reason` so the allowlist stays explainable, and a
+`threshold` in percent that replaces the default for matching benchmarks:
+looser, stricter, or `inf` to exempt them. An exempt benchmark is still listed
+in the panel when it moves past the default threshold.
 As in `[tool.mew]` (see {doc}`configuration`), keys are dashed, and an unknown
 key, such as a misspelled `treshold` or `default_threshold`, is an error in the
 table and in its rules.
@@ -174,8 +176,7 @@ table and in its rules.
 | --------------- | -------------------------------------------------------------------------------- |
 | `OK`            | Within the active threshold.                                                     |
 | `REGRESSED`     | Over the active threshold (the default, or a matching rule's); fails the gate.  |
-| `ALLOWED_OVER`  | Over the default, but a rule raised the bar. Shown as a warning, not a failure. |
-| `IGNORED`       | A matching rule says skip gating entirely. Listed for visibility.                |
+| `ALLOWED_OVER`  | Over the default, but a rule raised the bar, `inf` included. Shown as a warning, not a failure. |
 
 The panel goes to stderr. `REGRESSED` controls the optional exit code 3.
 
