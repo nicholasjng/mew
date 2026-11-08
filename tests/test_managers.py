@@ -16,10 +16,10 @@ _MANAGERS = '''
 import mew
 
 class Mem(mew.MemoryManager):
-    """Counts its passes; a context manager, so mew enters it for the run."""
+    """A context manager, so mew enters it for the run."""
 
-    def __init__(self, peak=1, *, tag="x"):
-        self.peak, self.tag, self.entered, self.passes = peak, tag, False, 0
+    def __init__(self, peak=1):
+        self.peak, self.entered = peak, False
 
     def __enter__(self):
         self.entered = True
@@ -28,16 +28,8 @@ class Mem(mew.MemoryManager):
     def __exit__(self, *exc):
         self.entered = False
 
-    def start(self):
-        pass
-
-    def stop(self):
-        self.passes += 1
-        return {"peak_bytes": self.peak, "total_allocations": 1}
-
-    def write_outputs(self, directory):
-        directory.mkdir(parents=True)
-        (directory / "passes.txt").write_text(f"{self.tag}:{self.passes}")
+    def start(self): ...
+    def stop(self): ...
 
 class Prof:
     def after_setup_start(self): ...
@@ -78,11 +70,13 @@ def root(tmp_path: Path) -> Path:
 
 
 def _load(value: str, root: Path, presets: dict[str, Preset] | None = None, *, slot="memory"):
-    with ExitStack() as stack:
-        (loaded,) = _managers.load_all(
-            {slot: value}, presets or {}, root=root, stack=stack
-        ).values()
+    (loaded,) = _load_all({slot: value}, root, presets).values()
     return loaded
+
+
+def _load_all(values: dict, root: Path, presets: dict[str, Preset] | None = None):
+    with ExitStack() as stack:
+        return _managers.load_all(values, presets or {}, root=root, stack=stack)
 
 
 def test_parse_presets_turns_kebab_keys_into_keyword_arguments():
@@ -121,11 +115,17 @@ def test_resolve_rejects(value, message):
 
 
 def test_preset_constructs_the_class_with_its_options_and_enters_it(root):
-    loaded = _load("mine", root, {"mine": Preset("managers.py:Mem", {"peak": 7}, name="mine")})
+    """A preset's class is built with its options, entered for the run as a context manager,
+    and exited with the run's stack."""
+    presets = {"mine": Preset("managers.py:Mem", {"peak": 7}, name="mine")}
+    with ExitStack() as stack:
+        loaded = _managers.load(
+            _managers.resolve("mine", presets, flag="-"), "memory", root=root, stack=stack
+        )
+        assert loaded.manager.entered is True
+    assert loaded.manager.entered is False
     assert loaded.slot == "memory"
     assert loaded.manager.peak == 7
-    # Entered for the run, exited with the stack.
-    assert loaded.manager.entered is False
     # A path spec as written: its module is a hashed internal name.
     assert loaded.record == {"preset": "mine", "class": "managers.py:Mem", "options": {"peak": 7}}
 
@@ -133,14 +133,12 @@ def test_preset_constructs_the_class_with_its_options_and_enters_it(root):
 def test_each_flag_fills_its_slot(root):
     """A run takes one manager per slot, each named by its flag; a slot without one stays empty.
     A class with both slots' methods fits either."""
-    values = {"cpu": "managers.py:Both", "memory": "managers.py:Mem"}
-    with ExitStack() as stack:
-        loaded = _managers.load_all(values, {}, root=root, stack=stack)
-        assert _managers.load_all({"cpu": None, "memory": None}, {}, root=root, stack=stack) == {}
+    loaded = _load_all({"cpu": "managers.py:Both", "memory": "managers.py:Mem"}, root)
     assert {slot: type(m.manager).__name__ for slot, m in loaded.items()} == {
         "cpu": "Both",
         "memory": "Mem",
     }
+    assert _load_all({"cpu": None, "memory": None}, root) == {}
 
 
 def test_builtin_records_the_class_its_function_chose(root):

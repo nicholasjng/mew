@@ -67,7 +67,9 @@ def test_terminal_prints_a_table_line_by_line() -> None:
     table.add_row("x")
     Terminal(file=buf, width=40, color=False).print(table)
     assert buf.getvalue() == "My Table\nA\n─\nx\n"
-    assert table.render(40, color=True)[1] == "\x1b[1mA\x1b[0m"  # a bold header, in color
+    colored = io.StringIO()
+    Terminal(file=colored, width=40, color=True).print(table)
+    assert colored.getvalue().splitlines()[1] == "\x1b[1mA\x1b[0m"  # a bold header
 
 
 @pytest.mark.parametrize(

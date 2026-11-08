@@ -375,11 +375,12 @@ def test_session_summaries_newest_first(tmp_path: Path) -> None:
     assert (oldest.id, oldest.tag, oldest.benchmarks, oldest.rows) == ("old", None, 1, 1)
 
 
-def test_load_without_measurements_errors(tmp_path: Path) -> None:
-    """`load_column` raises when a file has no measured rows."""
-    p = tmp_path / "r.json"
-    _write_json(p, [_row("b", 0.0, skipped=True)])
-    with pytest.raises(ValueError, match="no measurements"):
+def test_load_of_an_empty_file_errors_naming_it(tmp_path: Path) -> None:
+    """An empty archive, as an interrupted first run leaves, raises a `ValueError` that names
+    the file rather than failing on an empty sequence."""
+    p = tmp_path / "r.jsonl"
+    p.write_text("")
+    with pytest.raises(ValueError, match=f"^{re.escape(str(p))}: no measurements in file"):
         load_column(p, "real_time")
 
 

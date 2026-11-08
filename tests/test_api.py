@@ -18,7 +18,10 @@ def test_bare_decorator_registers_one_entry():
 
     entries = REGISTRY.all()
     assert len(entries) == 1
-    assert "bench_x" in entries[0].name
+    # Relative to the project root, as `mew compare` keys it.
+    assert entries[0].name == (
+        "tests/test_api.py::test_bare_decorator_registers_one_entry.<locals>.bench_x"
+    )
     assert entries[0].fn is bench_x
     assert entries[0].options == {}
 
@@ -182,19 +185,12 @@ def test_grid_is_the_cartesian_product():
     assert entry.options == {"iterations": 1}  # options stay options
 
 
-def test_grids_join_and_filter_into_partial_grids():
-    """Grids are lists: `+` joins them, a comprehension filters one, and an overlap shows up
-    as duplicate case labels."""
-    joined = mew.grid(os=["linux"], py=["3.11", "3.12"]) + mew.grid(os=["macos"], py=["3.11"])
-    filtered = [
-        c
-        for c in mew.grid(os=["linux", "macos"], py=["3.11", "3.12"])
-        if c != {"os": "macos", "py": "3.12"}
-    ]
-    assert joined == filtered
-    with pytest.raises(ValueError, match="duplicate case label"):
+def test_parametrize_needs_a_case():
+    """An empty family, such as a filtered grid that kept nothing, is an error, not a family
+    that silently runs nothing."""
+    with pytest.raises(ValueError, match="parametrize needs at least one case"):
 
-        @mew.parametrize(mew.grid(n=[1, 2]) + mew.grid(n=[2]))
+        @mew.parametrize([c for c in mew.grid(n=[1, 2]) if c["n"] > 2])
         def _bench(state, n):
             for _ in state:
                 pass
@@ -340,7 +336,7 @@ def test_tags_normalize_to_a_frozenset_on_every_decorator():
 def test_benchmark_given_a_positional_name_says_options_are_keywords():
     """`@mew.benchmark("name")` raises `TypeError` with a hint, not an `AttributeError`."""
     with pytest.raises(TypeError, match="takes its options as keywords"):
-        mew.benchmark("my_name")  # type: ignore[call-overload]
+        mew.benchmark("my_name")  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize("ids", [[1, 2], "ab"])

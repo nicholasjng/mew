@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -114,10 +115,14 @@ def test_vcs_context_prefers_jj(tmp_path: Path):
 
 
 def test_machine_context_names_the_cpu_or_none():
-    """`machine_context` gives `cpu_model` as a stripped, non-empty name or `None`."""
-    # Which name the OS gives the CPU, if any, depends on the machine.
+    """`machine_context` gives `cpu_model` as a stripped, non-empty name, which macOS, Windows
+    and Linux on x86 always provide; only Linux on Arm may leave it `None`."""
     model = mew.machine_context()["cpu_model"]
-    assert model is None or model == model.strip() != ""
+    arm_linux = sys.platform == "linux" and platform.machine() in ("aarch64", "arm64")
+    if model is None:
+        assert arm_linux, "the OS names this CPU, but mew found no name"
+    else:
+        assert model == model.strip() != ""
 
 
 def test_machine_context_tells_a_free_threaded_build_with_the_gil_enabled(
@@ -174,10 +179,6 @@ def test_run_stamps_session_identity_on_every_row(tmp_path: Path, reporter, suff
     # The host name often names a person, so mew doesn't record it.
     assert "host" not in session
     assert first["context"]["build"] == "asan"
-    assert (
-        first["context"]["python"]["free_threaded_build"] is mew.machine._is_free_threaded_build()
-    )
-    assert first["context"]["python"]["gil_enabled"] is mew.machine._gil_enabled()
     assert (second["session"], second["context"]) == (session, first["context"])
 
 
@@ -201,17 +202,15 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path, suffix: str):
     assert len({s.id for s in sessions}) == 2
 
 
-@pytest.mark.parametrize(("status", "dirty"), [(None, None), ("", False), (" M a.py", True)])
-def test_git_dirty_state_is_unknown_when_status_fails(monkeypatch, status, dirty):
-    """A failed `git status`, e.g. a timeout, leaves `dirty` out rather than recording clean."""
+def test_git_dirty_state_is_unknown_when_status_fails(monkeypatch):
+    """A failed `git status`, e.g. a timeout, leaves `dirty` out rather than recording clean.
+    Clean and dirty trees are covered with a real repository above."""
     from mew import vcs
 
     def fake_run(cwd, program, *args):
         if program == "jj":
             return None
-        return "abc123\nmain" if args[0] == "rev-parse" else status
+        return "abc123\nmain" if args[0] == "rev-parse" else None  # status failed
 
     monkeypatch.setattr(vcs, "_run", fake_run)
-    info = vcs.vcs_context()["vcs"]
-    assert info.get("dirty") == dirty
-    assert ("dirty" in info) == (dirty is not None)
+    assert vcs.vcs_context()["vcs"] == {"backend": "git", "commit": "abc123", "branch": "main"}

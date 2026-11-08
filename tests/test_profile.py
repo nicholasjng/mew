@@ -137,7 +137,8 @@ def test_registered_managers_are_released_before_interpreter_teardown():
 
 
 def test_registering_a_manager_replaces_the_previous_one():
-    """Matches upstream GB, where registration is a plain replace."""
+    """Registering replaces the previous manager. Upstream GB does so for the memory manager,
+    but refuses a second profiler manager; mew's binding clears the first one."""
     from mew import _core
 
     _register_noop(iterations=2)
@@ -181,16 +182,16 @@ def test_memory_manager_is_driven_and_stamped_onto_rows(metrics, block):
     assert rep.runs[0].get("memory") == block
 
 
-@pytest.mark.parametrize("summary", [_PROFILE, {}], ids=["summary", "empty"])
-def test_profiler_manager_is_driven_and_stamped_onto_rows(summary):
-    """An empty summary is a summary too; only None leaves the block out."""
+def test_profiler_manager_is_driven_and_an_empty_summary_is_stamped():
+    """An empty summary is a summary too; only None leaves the block out. (A full summary's
+    trip through Google Benchmark is the JSON-types test below.)"""
     _register_noop(iterations=1)
-    mgr = FakeProfilerManager(summary)
+    mgr = FakeProfilerManager({})
     rep = Capture()
     mew.run(reporter=rep, profiler_manager=mgr)
 
     assert mgr.calls == ["start", "stop"]
-    assert rep.runs[0]["cpu_profile"] == summary
+    assert rep.runs[0]["cpu_profile"] == {}
 
 
 def test_profiler_manager_result_keeps_its_json_types():
@@ -479,25 +480,26 @@ def test_memray_captures_the_loop_and_roots_its_flame_graph_at_the_body(tmp_path
     rep = Capture()
     manager = _memory.MemrayManager()
     mew.run(min_time="20x", reporter=rep, memory_manager=manager)
-    # Tagged with the user's benchmark frame, not a mew internal.
-    (capture,) = manager._captures
-    assert capture.root[0] == "bench_rooted"
-    assert capture.benchmark == rep.runs[0]["benchmark"]
     manager.write_outputs(tmp_path)
 
     mem = rep.runs[0]["memory"]
     assert mem["peak_bytes"] < setup_bytes / 10
     assert "total_bytes" not in mem  # read from the capture's metadata alone
+    # Named and rooted after the user's benchmark, not a mew internal.
     html = (tmp_path / "0-bench_rooted.html").read_text()
-    assert "bench_rooted" in html
+    # The full name, escaped: a nested function's qualname holds `<locals>`.
+    from html import escape
+
+    assert escape(rep.runs[0]["benchmark"]) in html
     # A multi-frame stack renders through memray's real reporter, which pins the
     # attributes `_RootedRecord` must duck-type from `AllocationRecord`.
     assert "nested_alloc_helper" in html
 
 
 def test_flamegraphs_are_one_file_per_benchmark(tmp_path):
-    """Each case gets one report, numbered in run order, from its first repetition; its Stats
-    dialog and the index name the case, which the file name can't hold on every platform."""
+    """Each case gets one report, numbered in run order, however many repetitions it ran; its
+    Stats dialog and the index name the case, which the file name can't hold on every
+    platform."""
     pytest.importorskip("memray")
     from mew import memory as _memory
 
@@ -509,7 +511,6 @@ def test_flamegraphs_are_one_file_per_benchmark(tmp_path):
 
     manager = _memory.MemrayManager()
     mew.run(min_time="2x", repetitions=2, reporter=Capture(), memory_manager=manager)
-    assert len(manager._captures) == 4
     manager.write_outputs(tmp_path)
     files = ["0-bench_buf.html", "1-bench_buf.html", "index.html"]
     assert sorted(p.name for p in tmp_path.iterdir()) == files
@@ -596,8 +597,8 @@ def test_pass_that_skips_before_its_loop_has_no_profile(sampler):
     mew.machine._gil_enabled(), reason="needs a free-threaded build with the GIL disabled"
 )
 def test_pyinstrument_is_rejected_before_import_on_free_threaded():
-    """Importing pyinstrument would enable the GIL, which `_gil_stays_disabled`
-    in conftest.py turns into a failure."""
+    """Importing pyinstrument would enable the GIL, which the `_require_gil_disabled`
+    hooks in conftest.py turn into a failure."""
     from mew.cpu import PyinstrumentManager
 
     with pytest.raises(RuntimeError, match="does not support free-threaded Python"):
@@ -626,20 +627,24 @@ def test_missing_profiler_package_raises_import_error(monkeypatch, module, creat
         create(mod)
 
 
+class _PyinstrumentFrame:
+    """The attributes `_hottest_frame` reads from a pyinstrument frame."""
+
+    is_synthetic = False
+    line_no = 1
+
+    def __init__(self, function, file_path, self_time, children=()):
+        self.function = function
+        self.file_path = file_path
+        self.total_self_time = self_time
+        self.children = list(children)
+
+
 def test_hottest_frame_excludes_pyinstrument_internals(tmp_path):
     """`_hottest_frame` skips pyinstrument's own frames, and is `None` when only those remain."""
     from mew.cpu import _hottest_frame
 
-    class Frame:
-        is_synthetic = False
-        line_no = 1
-
-        def __init__(self, function, file_path, self_time, children=()):
-            self.function = function
-            self.file_path = file_path
-            self.total_self_time = self_time
-            self.children = list(children)
-
+    Frame = _PyinstrumentFrame
     user = Frame("work", str(tmp_path / "project" / "bench.py"), 0.1)
     sampler = Frame(
         "_start_sampling",
@@ -658,25 +663,36 @@ def test_hottest_frame_excludes_pyinstrument_internals(tmp_path):
     assert _hottest_frame(cast("Any", Frame("_start_sampling", sampler.file_path, 1.0))) is None
 
 
-@pytest.mark.parametrize(
-    ("factory", "kwargs"),
-    [
-        ("PyinstrumentManager", {"interval": 0}),
-        ("PyinstrumentManager", {"interval": float("nan")}),
-        ("TachyonManager", {"interval": 0}),
-        ("TachyonManager", {"interval": float("nan")}),
-        ("manager", {"sampler": "perf"}),
-        # Checked before the sampler is chosen, so on every interpreter.
-        ("manager", {"interval": 0, "sampler": "pyinstrument"}),
-    ],
-)
-def test_cpu_profiling_rejects_invalid_arguments(factory, kwargs):
-    """Checked before the sampler is needed, so on every interpreter."""
+def test_hottest_frame_sums_self_time_per_function(tmp_path):
+    """pyinstrument records a frame per call, so a helper called from two places wins with
+    its summed self time over a body whose single frame holds more."""
+    from mew.cpu import _hottest_frame
+
+    file = str(tmp_path / "bench.py")
+    calls = [_PyinstrumentFrame("helper", file, 0.2), _PyinstrumentFrame("helper", file, 0.2)]
+    body = _PyinstrumentFrame("bench_x", file, 0.3, calls)
+    top = _hottest_frame(cast("Any", body))
+    assert top is not None
+    assert (top["function"], top["self_time"]) == ("helper", pytest.approx(0.4))
+
+
+@pytest.mark.parametrize("interval", [0, float("nan"), float("inf"), True, "fast"])
+@pytest.mark.parametrize("factory", ["PyinstrumentManager", "TachyonManager", "manager"])
+def test_cpu_profiling_rejects_a_bad_interval(factory, interval):
+    """Checked before the sampler is needed, so on every interpreter. `interval = true` in
+    TOML is not one second."""
     from mew import cpu as _cpu
 
-    name = next(iter(kwargs))  # the invalid one
-    with pytest.raises(ValueError, match=name):
-        getattr(_cpu, factory)(**kwargs)
+    with pytest.raises(ValueError, match="interval must be a positive finite number"):
+        getattr(_cpu, factory)(interval=interval)
+
+
+def test_cpu_manager_rejects_an_unknown_sampler():
+    """Checked before the sampler is chosen, so on every interpreter."""
+    from mew import cpu as _cpu
+
+    with pytest.raises(ValueError, match="sampler must be one of"):
+        _cpu.manager(sampler="perf")
 
 
 # --- Tachyon (Python 3.15+) --------------------------------------------------
@@ -783,15 +799,6 @@ def test_samplers_summarize_the_hot_frame_in_one_shape(sampler):
         assert sys.getswitchinterval() == switch_interval
 
 
-@pytest.mark.parametrize("interval", [True, "fast", 0, float("inf")])
-def test_cpu_manager_rejects_a_bad_interval(interval):
-    """`interval = true` in TOML is not one second; every bad value is a `ValueError`."""
-    from mew import cpu
-
-    with pytest.raises(ValueError, match="interval must be a positive finite number"):
-        cpu.manager(interval=interval)
-
-
 def test_body_frame_finds_the_benchmark_when_the_loop_is_in_a_helper():
     """Profilers name and cut at the benchmark body, also when a helper runs the loop and
     when mew's family wrapper calls the body."""
@@ -805,6 +812,7 @@ def test_body_frame_finds_the_benchmark_when_the_loop_is_in_a_helper():
 
         def start(self):
             body, state = _body_frame(sys._getframe(1))
+            assert state is not None
             self.seen.append((body.f_code.co_name, state.name.rsplit(".", 1)[-1]))
 
         def stop(self):
