@@ -74,6 +74,12 @@ releases may break the API.
 
 ### Fixed
 
+- Memory profiling on GIL builds saw only the memory arenas Python's allocator
+  requested, not the objects in them: `peak_bytes` and allocation counts for
+  object-heavy code were about 35x too low. Python's allocator is now traced on
+  every build; the memory pass gets slower in proportion to the allocations.
+- A profiler manager subclass that wraps `start()` named every capture after
+  its own method.
 - `mew compare` gave counter deltas with a negative or zero baseline the wrong
   sign.
 - `mew compare file@latest` and `file@<tag>` could select a different session

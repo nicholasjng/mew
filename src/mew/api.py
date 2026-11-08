@@ -58,24 +58,32 @@ def _project_root(directory: Path) -> Path | None:
     )
 
 
-def body_frame(frame: FrameType) -> tuple[FrameType, State | None]:
-    """The benchmark body's frame and its ``State``, from the frame that iterates the State.
+def _body_frame(frame: FrameType) -> tuple[FrameType, State | None]:
+    """The benchmark body's frame and its ``State``, from a frame below the loop.
 
-    Profilers start from the body's first loop step, so ``frame`` is where the
-    loop runs, which may be a helper the body calls. The body is the outermost
+    Profilers start from the body's first loop step, so ``frame`` is a profiler
+    hook's caller: the loop's frame, or a frame between, such as a subclass's
+    ``start()`` that wraps its parent's. The loop is the nearest frame holding a
+    ``State``, and may be in a helper the body calls; the body is the outermost
     frame holding the same ``State``, not counting mew's own family wrapper.
-    Without a ``State`` in ``frame``'s locals, ``frame`` stands for the body.
+    Without a ``State`` on the stack, ``frame`` stands for the body.
     """
-    state = next((v for v in frame.f_locals.values() if isinstance(v, State)), None)
-    if state is None:
+    loop: FrameType | None = frame
+    while loop is not None and (state := _state_in(loop)) is None:
+        loop = loop.f_back
+    if loop is None:
         return frame, None
-    body, caller = frame, frame.f_back
+    body, caller = loop, loop.f_back
     while caller is not None and any(v is state for v in caller.f_locals.values()):
         code = caller.f_code
         if not (code.co_name == "trampoline" and code.co_filename == __file__):
             body = caller
         caller = caller.f_back
     return body, state
+
+
+def _state_in(frame: FrameType) -> State | None:
+    return next((v for v in frame.f_locals.values() if isinstance(v, State)), None)
 
 
 def _check_addressable(text: str, what: str) -> None:

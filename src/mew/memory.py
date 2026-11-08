@@ -11,17 +11,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from mew._typing import MemoryManager, MemoryMetrics
-from mew.machine import is_free_threaded_build
 
 if TYPE_CHECKING:
     from memray import Tracker
 
 # A memray stack frame: ``(function, filename, lineno)``.
 Frame = tuple[str, str, int]
-
-# Free-threaded CPython serves object allocations from mimalloc, which never
-# reaches the system allocator memray hooks by default, so track them separately.
-_TRACE_PYTHON_ALLOCATORS = is_free_threaded_build()
 
 
 class Capture(NamedTuple):
@@ -91,15 +86,20 @@ class MemrayManager(MemoryManager):
 
         self._dest = self._dir / f"capture-{self._i}.bin"
         self._i += 1
-        from mew.api import body_frame
+        from mew.api import _body_frame
 
         # GB calls this from the first loop step, in the body or a helper it
         # calls. Read before entering the tracker.
-        body, state = body_frame(sys._getframe(1))
+        body, state = _body_frame(sys._getframe(1))
         code = body.f_code
         self._root: Frame = (code.co_name, code.co_filename, body.f_lineno)
         self._benchmark: str = getattr(state, "name", None) or code.co_name
-        self._tracker = memray.Tracker(self._dest, trace_python_allocators=_TRACE_PYTHON_ALLOCATORS)
+        # Python's own allocator (pymalloc, or mimalloc on free-threaded builds)
+        # hands out objects from arenas it reuses, so the system allocator memray
+        # hooks by default sees only new arenas: a body building 5,000 dicts per
+        # iteration showed a 42 KiB peak instead of 1.4 MiB. Tracing it costs
+        # about 14 ns per allocation, in a pass outside the measured repetitions.
+        self._tracker = memray.Tracker(self._dest, trace_python_allocators=True)
         self._tracker.__enter__()
 
     def stop(self) -> MemoryMetrics | None:

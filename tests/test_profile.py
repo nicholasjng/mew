@@ -795,14 +795,14 @@ def test_body_frame_finds_the_benchmark_when_the_loop_is_in_a_helper():
     when mew's family wrapper calls the body."""
     import sys
 
-    from mew.api import body_frame
+    from mew.api import _body_frame
 
     class Probe(mew.MemoryManager):
         def __init__(self):
             self.seen = []
 
         def start(self):
-            body, state = body_frame(sys._getframe(1))
+            body, state = _body_frame(sys._getframe(1))
             self.seen.append((body.f_code.co_name, state.name.rsplit(".", 1)[-1]))
 
         def stop(self):
@@ -825,10 +825,36 @@ def test_body_frame_finds_the_benchmark_when_the_loop_is_in_a_helper():
     def bench_family(state, n):
         _loop(state)
 
-    probe = Probe()
-    mew.run(reporter=Capture(), memory_manager=probe, memory_iterations=1)
-    assert probe.seen == [
-        ("bench_direct", "bench_direct"),
-        ("bench_helper", "bench_helper"),
-        ("bench_family", "bench_family[n=1]"),
-    ]
+    class Wrapped(Probe):
+        """A subclass whose start() wraps its parent's: one more frame below the loop."""
+
+        def start(self):
+            super().start()
+
+    for probe in (Probe(), Wrapped()):
+        mew.run(reporter=Capture(), memory_manager=probe, memory_iterations=1)
+        assert probe.seen == [
+            ("bench_direct", "bench_direct"),
+            ("bench_helper", "bench_helper"),
+            ("bench_family", "bench_family[n=1]"),
+        ]
+
+
+def test_memray_counts_python_objects(tmp_path):
+    """Python's allocator is traced on every build: without it, a body building thousands of
+    small objects showed only the arenas pymalloc newly requested, a ~35x lower peak."""
+    pytest.importorskip("memray")
+    from mew import memory as _memory
+
+    @mew.benchmark(min_time="1x")
+    def bench_rows(state):
+        for _ in state:
+            rows = [{"id": i, "name": f"row-{i}"} for i in range(5_000)]
+            del rows
+
+    rep = Capture()
+    mew.run(reporter=rep, memory_manager=_memory.manager(), memory_iterations=4)
+    memory = rep.runs[0]["memory"]
+    # 5,000 dicts and strings are well over 500 KiB; untraced, the peak was ~40 KiB.
+    assert memory["peak_bytes"] > 500 * 1024
+    assert memory["allocations_per_iteration"] > 5_000
