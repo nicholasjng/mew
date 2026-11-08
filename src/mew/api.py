@@ -37,7 +37,8 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
     """
     qualname = fn.__qualname__
     if not file:
-        module = getattr(fn, "__module__", "<unknown>")
+        # `or`: code run with empty globals, as by exec(), has a `None` module.
+        module = getattr(fn, "__module__", None) or "<unknown>"
         return f"{module}::{qualname}"
     path = Path(file).resolve()
     root = _project_root(path.parent) or Path.cwd()
