@@ -856,3 +856,47 @@ def test_cpu_manager_rejects_a_bad_interval(interval):
 
     with pytest.raises(ValueError, match="interval must be a positive finite number"):
         cpu.manager(interval=interval)
+
+
+def test_body_frame_finds_the_benchmark_when_the_loop_is_in_a_helper():
+    """Profilers name and cut at the benchmark body, also when a helper runs the loop and
+    when mew's family wrapper calls the body."""
+    import sys
+
+    from mew.api import body_frame
+
+    class Probe(mew.MemoryManager):
+        def __init__(self):
+            self.seen = []
+
+        def start(self):
+            body, state = body_frame(sys._getframe(1))
+            self.seen.append((body.f_code.co_name, state.name.rsplit(".", 1)[-1]))
+
+        def stop(self):
+            return None
+
+    def _loop(state):
+        for _ in state:
+            pass
+
+    @mew.benchmark(min_time="1x")
+    def bench_direct(state):
+        for _ in state:
+            pass
+
+    @mew.benchmark(min_time="1x")
+    def bench_helper(state):
+        _loop(state)
+
+    @mew.parametrize([{"n": 1}], min_time="1x")
+    def bench_family(state, n):
+        _loop(state)
+
+    probe = Probe()
+    mew.run(reporter=Capture(), memory_manager=probe, memory_iterations=1)
+    assert probe.seen == [
+        ("bench_direct", "bench_direct"),
+        ("bench_helper", "bench_helper"),
+        ("bench_family", "bench_family[n=1]"),
+    ]

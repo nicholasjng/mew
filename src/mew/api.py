@@ -9,9 +9,10 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
 from pathlib import Path
+from types import FrameType
 from typing import Any, Unpack, overload
 
-from mew._core import TimeUnit
+from mew._core import State, TimeUnit
 from mew._options import normalize_options
 from mew._registry import REGISTRY, Entry
 from mew._typing import BenchmarkFn, BenchmarkOptions, TimeUnitStr
@@ -55,6 +56,26 @@ def _project_root(directory: Path) -> Path | None:
     return next(
         (d for d in (directory, *directory.parents) if (d / "pyproject.toml").is_file()), None
     )
+
+
+def body_frame(frame: FrameType) -> tuple[FrameType, State | None]:
+    """The benchmark body's frame and its ``State``, from the frame that iterates the State.
+
+    Profilers start from the body's first loop step, so ``frame`` is where the
+    loop runs, which may be a helper the body calls. The body is the outermost
+    frame holding the same ``State``, not counting mew's own family wrapper.
+    Without a ``State`` in ``frame``'s locals, ``frame`` stands for the body.
+    """
+    state = next((v for v in frame.f_locals.values() if isinstance(v, State)), None)
+    if state is None:
+        return frame, None
+    body, caller = frame, frame.f_back
+    while caller is not None and any(v is state for v in caller.f_locals.values()):
+        code = caller.f_code
+        if not (code.co_name == "trampoline" and code.co_filename == __file__):
+            body = caller
+        caller = caller.f_back
+    return body, state
 
 
 def _check_addressable(text: str, what: str) -> None:

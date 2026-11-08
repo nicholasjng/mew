@@ -105,13 +105,13 @@ class MemrayManager(MemoryManager):
 
         self._dest = self._dir / f"capture-{self._i}.bin"
         self._i += 1
-        # GB calls this from the body's first loop step, so the direct Python
-        # caller is the benchmark body. Read before entering the tracker.
-        body = sys._getframe(1)
+        from mew.api import body_frame
+
+        # GB calls this from the first loop step, in the body or a helper it
+        # calls. Read before entering the tracker.
+        body, state = body_frame(sys._getframe(1))
         code = body.f_code
         self._root: Frame = (code.co_name, code.co_filename, body.f_lineno)
-        # mew passes the State first, whatever the parameter's name.
-        state = body.f_locals.get(code.co_varnames[0]) if code.co_argcount else None
         self._benchmark: str = getattr(state, "name", None) or code.co_name
         self._tracker = memray.Tracker(self._dest, trace_python_allocators=_TRACE_PYTHON_ALLOCATORS)
         self._tracker.__enter__()

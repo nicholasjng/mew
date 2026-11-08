@@ -135,6 +135,8 @@ change between minor releases.
 
 ### Fixed
 
+- memray reports and Tachyon profiles name and cut at the benchmark when its
+  loop runs in a helper function; memray no longer merges such benchmarks.
 - `mew compare` computes a counter's delta against the baseline's magnitude, so
   a higher-is-better counter going from -10 to -5 is +50% and no longer a
   regression, and one going from 0 to -5 is -∞%, not +∞%. The ratio column
