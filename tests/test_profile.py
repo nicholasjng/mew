@@ -16,7 +16,6 @@ import pytest
 from _helpers import Capture
 
 import mew
-from mew.cpu import _opcode_tables
 
 _MEMORY = {"peak_bytes": 1024, "total_bytes": 2048, "total_allocations": 5, "net_heap_growth": 512}
 _REQUIRED_MEMORY = {"peak_bytes": 1024, "total_allocations": 5}
@@ -25,8 +24,6 @@ _PROFILE = {
     "wall_time": 0.5,
     "sample_count": 500,
     "top_function": {"function": "foo", "file": "bar.py", "line": None, "self_time": 0.3},
-    "top_instructions": [],
-    "unspecialized_share": None,
 }
 
 
@@ -573,8 +570,6 @@ def test_sampler_reports_a_pass_without_samples(sampler):
         "profiler": sampler,
         "sample_count": 0,
         "top_function": None,
-        "top_instructions": [],
-        "unspecialized_share": None,
     }
 
 
@@ -670,11 +665,9 @@ def test_hottest_frame_excludes_pyinstrument_internals(tmp_path):
         ("PyinstrumentManager", {"interval": float("nan")}),
         ("TachyonManager", {"interval": 0}),
         ("TachyonManager", {"interval": float("nan")}),
-        ("TachyonManager", {"top_k": 0}),
-        ("TachyonManager", {"top_k": 2.5}),
         ("manager", {"sampler": "perf"}),
-        # Checked for pyinstrument too, which reads no instructions.
-        ("manager", {"top_k": 0, "sampler": "pyinstrument"}),
+        # Checked before the sampler is chosen, so on every interpreter.
+        ("manager", {"interval": 0, "sampler": "pyinstrument"}),
     ],
 )
 def test_cpu_profiling_rejects_invalid_arguments(factory, kwargs):
@@ -750,59 +743,6 @@ def test_tachyon_flame_graph_has_a_root_per_benchmark(tmp_path):
     assert "runner.py" not in html
 
 
-@pytest.mark.skipif(
-    _opcode_tables() is None, reason="this interpreter has no table of specialized opcodes"
-)
-def test_instruction_summary_ranks_names_and_flags_instructions(tmp_path):
-    """From fixed self times: on free-threaded builds, sampling and the
-    specializer decide which instructions lead, so a sampled run can't pin this."""
-    import opcode
-
-    from mew.cpu import _summarize_instructions
-
-    src = tmp_path / "mod.py"
-    src.write_text("total += i\nx = y.z\n", encoding="utf-8")
-    file, first, second = str(src), (1, 1, 0, 10), (2, 2, 4, 7)
-    add_int = opcode._specialized_opmap["BINARY_OP_ADD_INT"]  # ty: ignore[unresolved-attribute]
-    top, unspecialized = _summarize_instructions(
-        {
-            (file, second, opcode.opmap["LOAD_ATTR"]): 0.2,  # past top_k
-            (file, first, opcode.opmap["BINARY_OP"]): 0.3,
-            (file, first, add_int): 0.5,
-        },
-        total=2.0,  # the body's self time, of which instructions are a part
-        top_k=2,
-    )
-    row = {"source": "total += i", "file": "mod.py", "line": 1}
-    assert top == [
-        {"instruction": "BINARY_OP_ADD_INT", **row, "share": 0.25, "unspecialized": False},
-        {"instruction": "BINARY_OP", **row, "share": 0.15, "unspecialized": True},
-    ]
-    # Every generic instruction counts, also those past top_k.
-    assert unspecialized == pytest.approx(0.25)
-    assert _summarize_instructions({}, 1.0, 5) == ([], None)
-
-
-def test_instruction_source_slices_utf8_columns(tmp_path):
-    """`_instruction_source` slices by byte columns, keeps a multi-line span's first line, takes the
-    whole line without columns, and cuts long source to 40 characters."""
-    from mew.cpu import _instruction_source
-
-    src = tmp_path / "mod.py"
-    src.write_text('label = "äöü"; total = left + right\nnext = (\n    1)\n', encoding="utf-8")
-    first = src.read_text(encoding="utf-8").splitlines()[0].encode()
-    col = first.index(b"left + right")
-    # Column offsets count bytes: slicing the str would land two characters late.
-    assert _instruction_source(str(src), (1, 1, col, col + 12)) == "left + right"
-    # A span over several lines keeps its first line's part.
-    assert _instruction_source(str(src), (2, 3, 7, 5)) == "( …"
-    # Without columns (-X no_debug_ranges), the whole line.
-    assert _instruction_source(str(src), (2, 2, -1, -1)) == "next = ("
-    long = tmp_path / "long.py"
-    long.write_text("x = " + " + ".join(["value"] * 20) + "\n", encoding="utf-8")
-    assert len(_instruction_source(str(long), (1, 1, 4, 200))) == 40
-
-
 # --- The cpu_profile contract --------------------------------------------------
 
 
@@ -832,12 +772,6 @@ def test_samplers_summarize_the_hot_frame_in_one_shape(sampler):
     assert type(cpu["wall_time"]) is type(top["self_time"]) is float
     assert (cpu["profiler"], top["function"], top["file"]) == (sampler, "_spin", "test_profile.py")
     assert 0 < top["self_time"] <= cpu["wall_time"]
-    # Instructions are read on free-threaded Tachyon only, and then always.
-    reads = sampler == "tachyon" and _cpu.reads_instructions()
-    assert bool(cpu["top_instructions"]) is reads
-    assert (cpu["unspecialized_share"] is not None) is reads
-    for instruction in cpu["top_instructions"]:
-        assert instruction.keys() == _cpu.TopInstruction.__required_keys__
     if sampler == "pyinstrument":
         # pyinstrument's line is the def line, so the summary leaves it out.
         assert top["line"] is None

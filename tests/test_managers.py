@@ -86,8 +86,10 @@ def _load(value: str, root: Path, presets: dict[str, Preset] | None = None, *, s
 
 
 def test_parse_presets_turns_kebab_keys_into_keyword_arguments():
-    presets = _managers.parse_presets({"fine": {"class": "m:C", "top-k": 20, "interval": 1e-3}})
-    assert presets == {"fine": Preset("m:C", {"top_k": 20, "interval": 1e-3}, name="fine")}
+    presets = _managers.parse_presets(
+        {"fine": {"class": "m:C", "sample-rate": 20, "interval": 1e-3}}
+    )
+    assert presets == {"fine": Preset("m:C", {"sample_rate": 20, "interval": 1e-3}, name="fine")}
 
 
 @pytest.mark.parametrize(

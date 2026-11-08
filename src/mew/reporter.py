@@ -54,7 +54,7 @@ class Reporter(Protocol):
 
 
 def _fmt_profile(cpu: Mapping[str, Any] | None) -> list[str]:
-    """``42 samples``, ``hottest work (bench.py:6)`` and ``BINARY_OP 62%, 62% generic``."""
+    """``42 samples`` and ``hottest work (bench.py:6)``."""
     if cpu is None:  # The pass ended before its loop, or the profiler had nothing to say.
         return ["no profile"]
     parts = []
@@ -66,10 +66,6 @@ def _fmt_profile(cpu: Mapping[str, Any] | None) -> list[str]:
             where = ":".join(str(part) for part in (top["file"], top["line"]) if part is not None)
             top = f"{top['function']} ({where})" if where else top["function"]
         parts.append(f"hottest {top}")
-    if instructions := cpu.get("top_instructions"):
-        parts.append(f"{instructions[0]['instruction']} {instructions[0]['share']:.0%}")
-        if (generic := cpu.get("unspecialized_share") or 0.0) >= 0.005:
-            parts[-1] += f", {generic:.0%} generic"
     return parts
 
 
@@ -212,8 +208,7 @@ class RichReporter(Reporter):
     show_memory : bool, default False
         Add a ``Peak Mem`` column.
     show_cpu : bool, default False
-        List each row's sample count, hottest function and, where
-        :func:`mew.cpu.reads_instructions`, hottest bytecode instruction.
+        List each row's sample count and hottest function.
     name_width : int, optional
         Width of the name column, such as the longest name the run will report;
         by default all the width the other columns leave.

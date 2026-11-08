@@ -505,7 +505,6 @@ def test_run_sample_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     `<dir>/cpu`, the rows and console table the hottest function, and the context the
     preset that ran."""
     pytest.importorskip("profiling.sampling" if sys.version_info >= (3, 15) else "pyinstrument")
-    from mew.cpu import reads_instructions
 
     (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_SAMPLED))
     sampler = "TachyonManager" if sys.version_info >= (3, 15) else "PyinstrumentManager"
@@ -534,10 +533,6 @@ def test_run_sample_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
     (row,) = json.loads(out.read_text())["benchmarks"]
     top = row["cpu_profile"]["top_function"]
     assert f"{top['function']} ({top['file']}" in res.stdout
-    # Only free-threaded Tachyon reads bytecode instructions, at most five.
-    instructions = row["cpu_profile"]["top_instructions"]
-    assert bool(instructions) is reads_instructions()
-    assert len(instructions) <= 5
     assert row["context"]["profilers"] == {
         "cpu": {"preset": "fine", "class": f"mew.cpu:{sampler}", "options": {"interval": 1e-5}}
     }
@@ -677,8 +672,6 @@ def test_run_samples_with_pyinstrument_on_python_3_15(mew_cli, tmp_path):
     assert res.returncode == 0, res.stderr
     (row,) = json.loads(out.read_text())["benchmarks"]
     assert row["cpu_profile"]["profiler"] == "pyinstrument"
-    # pyinstrument reads no instructions.
-    assert row["cpu_profile"]["top_instructions"] == []
 
 
 # --- mew compare: --regression-threshold / --exit-non-zero-on-regression ---

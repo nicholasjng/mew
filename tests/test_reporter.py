@@ -282,26 +282,6 @@ def test_rich_reporter_renders_the_hottest_frame(top, shown):
     assert buf.getvalue().splitlines()[-1] == f"  1 sample · hottest {shown}"
 
 
-@pytest.mark.parametrize(
-    ("generic", "shown"), [(0.62, "BINARY_OP 62%, 62% generic"), (0.0, "BINARY_OP 62%")]
-)
-def test_rich_reporter_names_the_hottest_instruction(generic, shown):
-    """`RichReporter` shows the hottest instruction's share, and the generic share when nonzero."""
-    buf, rep = _rich(show_cpu=True)
-    row = _fake_row("bench.py::bench_x")
-    row["cpu_profile"] = {
-        "sample_count": 1,
-        # Only the first, hottest entry reaches the console.
-        "top_instructions": [
-            {"instruction": "BINARY_OP", "share": 0.62},
-            {"instruction": "STORE_FAST", "share": 0.01},
-        ],
-        "unspecialized_share": generic,
-    }
-    rep.report_runs([row])
-    assert buf.getvalue().splitlines()[-1] == f"  1 sample · {shown}"
-
-
 def test_rich_reporter_names_a_row_by_its_benchmark_field():
     """The `name[label]` form, as `mew compare` shows it, not GB's raw
     `/case:N/min_time:…` name; the case's label isn't repeated below it."""

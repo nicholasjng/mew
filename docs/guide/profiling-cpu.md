@@ -1,8 +1,7 @@
 # CPU profiling
 
 `--cpu-profiler sample` profiles each benchmark in a separate pass and attaches the sample
-count and hottest frame to its result, and on free-threaded 3.15+ the hottest
-bytecode instruction. It samples with
+count and hottest frame to its result. It samples with
 [Tachyon](https://docs.python.org/3.15/library/profiling.sampling.html), the
 standard library's sampling profiler, on Python 3.15+, and with
 [pyinstrument](https://pyinstrument.readthedocs.io/) before. Naming a sampler's
@@ -49,8 +48,7 @@ Tachyon's takes 1.1 to 1.3 times as long.
 So to compare CPU profiles of a suite across interpreter versions, sample every
 version with one sampler: with `--cpu-profiler mew.cpu:PyinstrumentManager` on 3.15+,
 differences between versions come from the code and the interpreter, not from
-the sampler. Otherwise keep `sample`: Tachyon also names the hottest line, and on
-free-threaded builds the hottest instructions. The `profiler` key and
+the sampler. Otherwise keep `sample`: Tachyon also names the hottest line. The `profiler` key and
 `context.python` tell the rows apart.
 
 ## Basics
@@ -82,7 +80,6 @@ Sampler settings are a preset's options in `pyproject.toml` (see
 [tool.mew.profilers.fine]
 class = "mew.cpu:TachyonManager"
 interval = 1e-5   # seconds between samples; default 1e-4
-top-k = 10        # hottest instructions listed; default 5, Tachyon only
 ```
 
 ```console
@@ -139,56 +136,11 @@ a NumPy call, a compiled extension — collapses into one wide frame with no
 detail beneath it. That flat frame is the signal to switch to
 {doc}`profiling-native`, which can see inside it.
 
-## Hottest instruction
-
-On free-threaded 3.15+, each row also names the bytecode instruction that took
-the most time, last on the line below it:
-
-```console
-$ mew run --cpu-profiler sample
-Benchmark            │        Iters │       Real │        CPU
-─────────────────────────────────────────────────────────────
-bench_small_ints     │      100,000 │   15.60 us │   15.58 us
-  7,793 samples · hottest bench_small_ints (bench.py:18) · BINARY_OP_ADD_INT 48%
-bench_big_ints       │       20,000 │   61.20 us │   61.15 us
-  8,145 samples · hottest bench_big_ints (bench.py:25) · BINARY_OP 61%, 61% generic
-```
-
-Both loops run `total += i`. In the second, `total` is too large for the
-small-int fast path, so the addition stays generic. The first percentage is the
-instruction's share of the body's time. `generic` is the share of the body's
-time spent in any instruction the interpreter can specialize but ran
-unspecialized; the console leaves it out when it rounds to 0%.
-
-JSON rows carry the five hottest instructions in
-`cpu_profile.top_instructions`, hottest first (from Python,
-`mew.cpu.manager(top_k=...)` sets another count), plus `unspecialized_share`; see
-[Row schema](#row-schema). `source` is the code the instruction covers, cut to
-its first line and 40 characters. `unspecialized` marks a generic instruction
-the interpreter can specialize. DuckDB reads the list as a list of structs:
-
-```sql
-SELECT benchmark, i.instruction, i.share
-FROM read_json_auto('results.jsonl'), unnest(cpu_profile.top_instructions) AS t(i)
-WHERE i.unspecialized;
-```
-
-On GIL builds and under pyinstrument, `top_instructions` is empty and
-`unspecialized_share` is `null`, for the reason given under
-[Reading the report](#reading-the-report). The query above then finds no rows
-rather than failing.
-
-A site that sees several types is not generic: the interpreter re-specializes
-it. An `o.x` over objects of two classes in turn, for example, shows up as
-`LOAD_ATTR_INSTANCE_VALUE` in some samples and `LOAD_ATTR_SLOT` in others. The
-flame graph's per-frame instruction list shows both forms.
-
 ## Row schema
 
 Each row's `cpu_profile` has the same keys and types whichever sampler and
 interpreter wrote it, so an archive of one suite run on several Python versions
-reads as one table. A figure the sampler can't measure is `null`, a list it
-can't measure empty:
+reads as one table. A figure the sampler can't measure is `null`:
 
 ```json
 {
@@ -196,14 +148,7 @@ can't measure empty:
   "wall_time": 0.52,
   "sample_count": 8145,
   "top_function": {"function": "bench_big_ints", "file": "bench.py",
-                   "line": 25, "self_time": 0.49},
-  "top_instructions": [
-    {"instruction": "BINARY_OP", "source": "total += i", "file": "bench.py",
-     "line": 25, "share": 0.61, "unspecialized": true},
-    {"instruction": "STORE_FAST", "source": "total", "file": "bench.py",
-     "line": 25, "share": 0.21, "unspecialized": false}
-  ],
-  "unspecialized_share": 0.62
+                   "line": 25, "self_time": 0.49}
 }
 ```
 
@@ -213,14 +158,11 @@ can't measure empty:
 | `wall_time`           | Seconds sampled: the timing loop minus `state.pause()` regions.            |
 | `sample_count`        | Samples taken. Each sampler counts differently, so compare times instead.  |
 | `top_function`        | The function with the most self time; `line` is `null` under pyinstrument, the whole key `null` without a sample. |
-| `top_instructions`    | The hottest bytecode instructions; empty unless free-threaded 3.15+.       |
-| `unspecialized_share` | Share of time in generic instructions; `null` unless free-threaded 3.15+.  |
 
 A synthetic frame such as `<GC>` has `null` for `file` and `line`.
 {class}`mew.cpu.CpuProfile` types the block. `context.python` records which
 interpreter wrote a row; see {doc}`context`.
 
 A pass shorter than the sampling interval can end without a sample. Its row
-still has a `cpu_profile`, with `sample_count` 0, `top_function` `null`,
-`top_instructions` empty and `unspecialized_share` `null`, and the console
+still has a `cpu_profile`, with `sample_count` 0 and `top_function` `null`, and the console
 shows `0 samples`. Raise `--min-time` or lower the sampler's `interval` to sample it.
