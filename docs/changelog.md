@@ -79,6 +79,8 @@ releases may break the API.
 
 ### Fixed
 
+- A benchmark defined by code without a module, as from `exec()`, was named
+  `None::bench_x`; it is now `<unknown>::bench_x`.
 - Memory profiling on GIL builds saw only the memory arenas Python's allocator
   requested, not the objects in them: `peak_bytes` and allocation counts for
   object-heavy code were about 35x too low. Python's allocator is now traced on

@@ -352,3 +352,10 @@ def test_parametrize_ids_must_be_strings(ids):
         def _bench(state, n):
             for _ in state:
                 pass
+
+
+def test_a_benchmark_without_a_module_or_file_is_named_unknown():
+    """Code from `exec` with empty globals has no source file and a `None` module."""
+    code = "import mew\n\n@mew.benchmark\ndef bench_x(state):\n    for _ in state:\n        pass\n"
+    exec(compile(code, "<string>", "exec"), {})  # ruff: ignore[S102]
+    assert [e.name for e in REGISTRY.all()] == ["<unknown>::bench_x"]
