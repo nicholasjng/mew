@@ -422,7 +422,7 @@ def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: 
         with _usage_error("show", ValueError, OSError):
             rows, context = load_session(path, selector)
         if name_filter is not None:
-            rows = [r for r in rows if name_filter.search(r["benchmark"])]
+            rows = [r for r in rows if name_filter.search(r["name"])]
         if not rows:
             continue
         if len(files) > 1:
@@ -433,7 +433,7 @@ def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: 
         reporter = RichReporter(
             show_memory=any(r.get("memory") for r in rows),
             show_cpu=any(r.get("cpu_profile") for r in rows),
-            name_width=max(len(r["benchmark"]) for r in rows),
+            name_width=max(len(r["name"]) for r in rows),
             show_repetitions=not summary_only,
         )
         reporter.report_context(context)

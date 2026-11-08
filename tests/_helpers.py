@@ -56,14 +56,21 @@ def row(name: str, real_time: float, **extra: Any) -> dict:
     """
     session = {dst: extra.pop(src) for src, dst in _SESSION_KEYS.items() if src in extra}
     context = extra.pop("custom", None)
+    # `skipped=True` for a skipped benchmark's row, as Google Benchmark's own term.
+    skip = {"reason": "skipped", "message": ""} if extra.pop("skipped", False) else None
     out: dict[str, Any] = {
+        "schema_version": 1,
         "name": name,
-        "benchmark": name,  # pass benchmark= for family / threaded rows
-        "real_time": real_time,
-        "cpu_time": real_time,
+        "params": {},
+        "repetition": 0,
+        "repetitions": 1,
+        "threads": 1,
         "iterations": 1000,
-        "time_unit": "ns",
-        "aggregate_name": "",
+        "real_time": real_time,  # in nanoseconds
+        "cpu_time": real_time,
+        "label": "",
+        "skip": skip,
+        "counters": [],
     }
     if session:
         out["session"] = session

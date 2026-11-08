@@ -15,9 +15,7 @@ from typing import (
     runtime_checkable,
 )
 
-from mew._core import CounterFlags, CounterOneK, TimeUnit
-
-TimeUnitStr = Literal["ns", "us", "ms", "s"]
+from mew._core import CounterFlags, CounterOneK
 
 
 class SessionInfo(TypedDict):
@@ -41,23 +39,50 @@ class SessionInfo(TypedDict):
     tag: NotRequired[str]
 
 
-class BenchmarkResult(TypedDict):
-    """The result of one benchmark repetition: its timings, counters and provenance.
-
-    Every key is present except those marked optional.
+class SkipInfo(TypedDict):
+    """Why a benchmark's row has no measurement.
 
     Attributes
     ----------
-    benchmark : str
+    reason : {"error", "skipped"}
+        ``"error"`` for ``state.skip_with_error()`` and a benchmark that raised,
+        ``"skipped"`` for ``state.skip_with_message()``.
+    message : str
+        The message, or ``Type: message`` for a benchmark that raised.
+    """
+
+    reason: Literal["error", "skipped"]
+    message: str
+
+
+class BenchmarkResult(TypedDict):
+    """The result of one benchmark repetition: its timings, counters and provenance.
+
+    Every key is present except those marked optional. Result files add
+    ``schema_version`` to each row.
+
+    Attributes
+    ----------
+    name : str
         The benchmark as mew addresses it: the registered name, ``[case label]``
-        for a family case, ``/threads:N`` when the benchmark set ``threads``. Shared
-        by all repetitions of one benchmark, unlike ``name``, which also carries
-        Google Benchmark's option fragments.
-    session : SessionInfo, optional
-        Identity of the run that produced this result.
-    context : dict, optional
-        Provenance: :func:`mew.machine_context`, plus what was set with
-        :func:`mew.set_context` or :func:`mew.update_context`.
+        for a family case, ``/threads:N`` when the benchmark set ``threads``.
+        Shared by all repetitions of one benchmark.
+    params : dict
+        A family case's parameters, ``{}`` for a plain benchmark. Values JSON
+        represents as themselves are kept; any other is its type's qualified
+        name, such as ``"torch.Tensor"``.
+    repetition, repetitions : int
+        Which repetition this is, from 0, of how many.
+    threads : int
+        Threads the benchmark ran on.
+    iterations : int
+        Iterations of the timed loop.
+    real_time, cpu_time : float
+        Per-iteration times in nanoseconds.
+    label : str
+        A label the benchmark set with ``state.set_label()``.
+    skip : SkipInfo or None
+        Why the row has no measurement, or ``None`` for a measured row.
     counters : list of dict
         The run's counters in name order, each with a ``name``, a ``value``
         (Google Benchmark has already applied the counter's flags) and, if the
@@ -65,6 +90,11 @@ class BenchmarkResult(TypedDict):
         ``one_k`` (1024 for binary prefixes), ``rate`` (shown per second),
         ``inverted`` (an inverted rate, shown in seconds) and ``exponent``
         (exponent notation).
+    session : SessionInfo, optional
+        Identity of the run that produced this result.
+    context : dict, optional
+        Provenance: :func:`mew.machine_context`, plus what was set with
+        :func:`mew.set_context` or :func:`mew.update_context`.
     memory : dict, optional
         The memory manager's figures (``peak_bytes``, ``total_allocations``,
         ``iterations``, ``allocations_per_iteration``, and optionally
@@ -76,25 +106,17 @@ class BenchmarkResult(TypedDict):
     """
 
     name: str
-    run_name: str
-    benchmark: str
-    family_index: int
-    per_family_instance_index: int
-    run_type: str
-    aggregate_name: str
+    params: dict[str, Any]
+    repetition: int
     repetitions: int
-    repetition_index: int
     threads: int
     iterations: int
     real_time: float
     cpu_time: float
-    real_accumulated_time: float
-    cpu_accumulated_time: float
-    time_unit: str
     label: str
-    skipped: bool
-    skip_message: str
+    skip: SkipInfo | None
     counters: list[dict[str, Any]]
+    schema_version: NotRequired[int]
     session: NotRequired[SessionInfo]
     context: NotRequired[dict[str, Any]]
     memory: NotRequired[dict[str, Any]]
@@ -120,7 +142,6 @@ class BenchmarkOptions(TypedDict, total=False):
     min_warmup_time: float
     iterations: int
     repetitions: int
-    unit: TimeUnitStr | TimeUnit
     use_real_time: bool
     use_manual_time: bool
     measure_process_cpu_time: bool
@@ -425,7 +446,7 @@ class State(Protocol):
         Parameters
         ----------
         msg : str
-            The reason, reported as the row's ``skip_message``.
+            The reason, reported as the row's ``skip.message``.
         """
         ...
 
@@ -435,7 +456,7 @@ class State(Protocol):
         Parameters
         ----------
         msg : str
-            The reason, reported as the row's ``skip_message``.
+            The reason, reported as the row's ``skip.message``.
         """
         ...
 

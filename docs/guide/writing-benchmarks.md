@@ -26,7 +26,6 @@ All options are optional and map 1:1 to Google Benchmark concepts:
 | `min_warmup_time`            | Seconds spent warming caches before measurement.              |
 | `iterations`                 | Force an exact iteration count (skips auto-tuning); excludes `min_time` and `min_warmup_time`. |
 | `repetitions`                | Re-run the whole benchmark _N_ times for variance metrics.    |
-| `unit`                       | Override reported time unit (`"ns"`, `"us"`, `"ms"`, `"s"`).  |
 | `use_real_time`              | Report wall-clock instead of CPU time.                        |
 | `use_manual_time`            | The benchmark calls `state.set_iteration_time()` itself; excludes `use_real_time`. |
 | `measure_process_cpu_time`   | Use process-wide CPU time (multi-threaded benchmarks).        |
@@ -34,7 +33,7 @@ All options are optional and map 1:1 to Google Benchmark concepts:
 
 mew checks the options when the decorator is applied, so a mistake fails at import, not during a run.
 The rules are the same as for `mew.run()`: a value of the wrong type, such as `repetitions=True` or `iterations=2.5`, raises `TypeError`.
-A value out of range, such as `repetitions=0` or `unit="usec"`, or two options that exclude each other raise `ValueError`.
+A value out of range, such as `repetitions=0`, or two options that exclude each other raise `ValueError`.
 
 Per-benchmark decorator options take precedence over the global `mew run` flags (`--min-time`, `--repetitions`, ...), with one exception: `--min-time 100x` also fixes the iteration count of a benchmark with its own `min_time` in seconds.
 See [](configuration.md).
@@ -58,7 +57,7 @@ Variants from `@parametrize` always get a `[label]` suffix.
 ## When a benchmark raises
 
 An exception skips the benchmark, and the run goes on. The row records the
-end of its traceback, such as `KeyError: 'k'` and any notes, as its `skip_message`,
+end of its traceback, such as `KeyError: 'k'` and any notes, as its `skip.message`,
 which the console prints in place of the timings. The full traceback goes to
 stderr, so with the default `--capture fd` it shows under "output from
 benchmarks" after the table. It stays out of the result file, which gets

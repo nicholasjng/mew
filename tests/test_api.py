@@ -29,24 +29,24 @@ def test_bare_decorator_registers_one_entry():
 def test_called_decorator_captures_options():
     """`@mew.benchmark(...)` and `@mew.parametrize(...)` store their options on the entry."""
 
-    @mew.benchmark(min_time=0.5, unit="us", repetitions=10)
+    @mew.benchmark(min_time=0.5, use_real_time=True, repetitions=10)
     def bench_x(state):
         for _ in state:
             pass
 
     # A parametrized family is one entry; its options apply to every case.
-    @mew.parametrize([{"n": 1}, {"n": 2}], min_time=0.25, unit="us")
+    @mew.parametrize([{"n": 1}, {"n": 2}], min_time=0.25, use_real_time=True)
     def bench_family(state, n):
         for _ in state:
             pass
 
     entry, family = REGISTRY.all()
     assert entry.options["min_time"] == 0.5
-    assert entry.options["unit"] == "us"
+    assert entry.options["use_real_time"] is True
     assert entry.options["repetitions"] == 10
     assert family.case_labels == ["n=1", "n=2"]
     assert family.options["min_time"] == 0.25
-    assert family.options["unit"] == "us"
+    assert family.options["use_real_time"] is True
 
 
 def test_min_time_takes_run_syntax_and_nx_fixes_the_iteration_count():
@@ -98,9 +98,8 @@ def test_min_time_takes_run_syntax_and_nx_fixes_the_iteration_count():
         ({"min_warmup_time": "0.1"}, TypeError, "min_warmup_time must be a number"),
         ({"min_warmup_time": -0.1}, ValueError, "min_warmup_time must be a finite"),
         ({"min_warmup_time": float("nan")}, ValueError, "min_warmup_time must be a finite"),
-        # Unchecked, a misspelled unit fails only once the benchmark runs.
-        ({"unit": 1}, TypeError, "unit must be a string"),
-        ({"unit": "usec"}, ValueError, "unit must be one of 'ns', 'us', 'ms', 's'"),
+        # Times are always nanoseconds, so there is no unit to pick.
+        ({"unit": "us"}, TypeError, "unknown option"),
         ({"use_real_time": 1}, TypeError, "use_real_time must be a bool"),
         # Google Benchmark checks these only in debug builds, which abort.
         (

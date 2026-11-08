@@ -10,6 +10,7 @@ import dataclasses
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from typing import Any
 
 from mew._options import thread_counts
 from mew._typing import BenchmarkFn, BenchmarkOptions
@@ -46,6 +47,9 @@ class Entry:
         Selection tags.
     case_labels : list[str], optional
         Human-readable family case labels.
+    case_params : list[dict], optional
+        Each family case's parameters as result rows hold them: JSON scalars,
+        other values as their type's qualified name.
     cases : list[int], optional
         Selected case indices; ``None`` selects every case.
     """
@@ -57,6 +61,7 @@ class Entry:
     tags: frozenset[str] = field(default_factory=frozenset)
     # Set on parametrized families: `fn` is a trampoline that takes the case index.
     case_labels: list[str] | None = None
+    case_params: list[dict[str, Any]] | None = None
     # ``None`` runs every case; a subset only exists on views from narrow_entry().
     cases: list[int] | None = None
 

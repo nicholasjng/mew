@@ -76,10 +76,9 @@ $ mew compare --key func ducky.jsonl duckdb.jsonl
 
 If stripping the prefix makes two benchmarks in one file collide, `compare` exits with an error rather than guessing.
 
-Rows match on their `benchmark` field: parametrized cases by their labels
+Rows match on their `name`: parametrized cases by their labels
 (`bench_sort[n=10]`), thread counts as a dimension (`/threads:2`). Per-benchmark
-options such as `min_time` do not affect matching. Time measurements are
-converted to a common unit before reducing repetitions.
+options such as `min_time` do not affect matching.
 
 ## Context and noise
 

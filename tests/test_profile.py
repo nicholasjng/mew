@@ -490,7 +490,7 @@ def test_memray_captures_the_loop_and_roots_its_flame_graph_at_the_body(tmp_path
     # The full name, escaped: a nested function's qualname holds `<locals>`.
     from html import escape
 
-    assert escape(rep.runs[0]["benchmark"]) in html
+    assert escape(rep.runs[0]["name"]) in html
     # A multi-frame stack renders through memray's real reporter, which pins the
     # attributes `_RootedRecord` must duck-type from `AllocationRecord`.
     assert "nested_alloc_helper" in html

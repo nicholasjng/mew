@@ -17,23 +17,17 @@ def cpu_info() -> dict:
     CPU count, and whether frequency scaling was detected (sysfs on Linux, sysctl on macOS).
     """
 
-class TimeUnit(enum.StrEnum):
-    """A time unit for per-iteration durations."""
-
-    ns = "ns"
-
-    us = "us"
-
-    ms = "ms"
-
-    s = "s"
-
 def run_benchmarks(
-    argv: Sequence[str], reporter: object, session_context: dict = {}, capture: object | None = None
+    argv: Sequence[str],
+    reporter: object,
+    session_context: dict = {},
+    params: dict = {},
+    capture: object | None = None,
 ) -> int:
     """
     Initialize Google Benchmark with `argv` and run all registered benchmarks,
     reporting through `reporter`.
+    `params` maps a registered name to its case's parameters, stamped on its rows.
     `capture` (an active mew._capture.OutputCapture) is suspended around every
     reporter callback, so reporters write to the real stdout/stderr.
     Returns the number of benchmarks run.
@@ -270,9 +264,6 @@ class BenchmarkHandle:
         """
         Repeat the whole benchmark `n` times; variance metrics need at least 2.
         """
-
-    def unit(self, unit: TimeUnit) -> BenchmarkHandle:
-        """Time unit for the reported per-iteration durations."""
 
     def use_real_time(self) -> BenchmarkHandle:
         """Report wall-clock rather than CPU time as the primary measure."""

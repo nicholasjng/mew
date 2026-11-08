@@ -18,7 +18,7 @@ from mew.reporter import Fanout, JSONLReporter, JSONReporter, RichReporter
 
 
 def _run_one(reporter):
-    @mew.benchmark(unit="us")
+    @mew.benchmark
     def bench_x(state):
         for _ in state:
             pass
@@ -26,28 +26,19 @@ def _run_one(reporter):
     mew.run(min_time="1x", reporter=reporter)
 
 
-def _fake_row(name: str, label: str = "", benchmark: str | None = None) -> BenchmarkResult:
+def _fake_row(name: str, label: str = "") -> BenchmarkResult:
     """A minimal BenchmarkResult row for driving reporters without a run."""
     return {
         "name": name,
-        "run_name": name,
-        "benchmark": benchmark or name,
-        "family_index": 0,
-        "per_family_instance_index": 0,
-        "run_type": "iteration",
-        "aggregate_name": "",
+        "params": {},
+        "repetition": 0,
         "repetitions": 1,
-        "repetition_index": 0,
         "threads": 1,
         "iterations": 1,
         "real_time": 1.0,
         "cpu_time": 1.0,
-        "real_accumulated_time": 0.0,
-        "cpu_accumulated_time": 0.0,
-        "time_unit": "ns",
         "label": label,
-        "skipped": False,
-        "skip_message": "",
+        "skip": None,
         "counters": [],
     }
 
@@ -60,18 +51,29 @@ def _feed(reporter, *rows: BenchmarkResult) -> None:
 
 
 def test_json_reporter_writes_the_documented_shape(tmp_path):
-    """`JSONReporter` writes `session`, `context` and `benchmarks`; each row carries its own
-    `session` and `context`, and enum fields as plain strings."""
+    """A row of result format 1 has exactly these keys, in this order, with the format version
+    first and its own `session` and `context`, so every row stands alone."""
     out = tmp_path / "results.json"
     _run_one(JSONReporter(output=out))
 
-    doc = json.loads(out.read_text())
-    assert {"session", "context", "benchmarks"} <= doc.keys()
-    (bench,) = doc["benchmarks"]
-    assert {"name", "benchmark", "iterations", "real_time", "cpu_time", "threads"} <= bench.keys()
-    assert {"session", "context"} <= bench.keys()  # every row stands alone
-    # Plain strings, not bound enums: a leaked `Run.time_unit` would be archived as "TimeUnit.us".
-    assert (bench["time_unit"], bench["run_type"]) == ("us", "iteration")
+    (bench,) = json.loads(out.read_text())["benchmarks"]
+    assert list(bench) == [
+        "schema_version",
+        "session",
+        "context",
+        "name",
+        "params",
+        "repetition",
+        "repetitions",
+        "threads",
+        "iterations",
+        "real_time",
+        "cpu_time",
+        "label",
+        "skip",
+        "counters",
+    ]
+    assert (bench["schema_version"], bench["params"], bench["skip"]) == (1, {}, None)
 
 
 def test_json_reporter_leaves_a_stream_open():
@@ -137,7 +139,7 @@ def test_jsonl_archive_is_queryable_by_duckdb(tmp_path, suffix):
     out = tmp_path / f"results{suffix}"
     _run_one(JSONLReporter(output=out))
 
-    query = f"SELECT benchmark, context.dataset.size, session.id FROM '{out}'"
+    query = f"SELECT name, context.dataset.size, session.id FROM '{out}'"
     ((name, size, session_id),) = duckdb.connect().execute(query).fetchall()
     assert name == mew.REGISTRY.all()[0].name
     assert size == 1024
@@ -246,10 +248,8 @@ def test_rich_reporter_wraps_a_skip_message_without_losing_any_of_it():
     buf, rep = _rich(width=60)
     path = "/a/very/long/path/" + "x" * 50 + "/bench.py"
     row = _fake_row("bench.py::bench_x")
-    row["skipped"] = True
-    row["skip_message"] = (
-        f'Traceback (most recent call last):\n  File "{path}", line 6\nValueError: boom'
-    )
+    message = f'Traceback (most recent call last):\n  File "{path}", line 6\nValueError: boom'
+    row["skip"] = {"reason": "error", "message": message}
     rep.report_runs([row])
     lines = buf.getvalue().splitlines()[3:]
     assert all(len(line) <= 60 for line in lines)
@@ -282,15 +282,6 @@ def test_rich_reporter_renders_the_hottest_frame(top, shown):
     assert buf.getvalue().splitlines()[-1] == f"  1 sample · hottest {shown}"
 
 
-def test_rich_reporter_names_a_row_by_its_benchmark_field():
-    """The `name[label]` form, as `mew compare` shows it, not GB's raw
-    `/case:N/min_time:…` name; the case's label isn't repeated below it."""
-    buf, rep = _rich()
-    raw = "bench.py::bench_x/case:0/min_time:0.200"
-    rep.report_runs([_fake_row(raw, label="small", benchmark="bench.py::bench_x[small]")])
-    assert buf.getvalue().splitlines()[-1].split(" │ ")[0].rstrip() == "bench.py::bench_x[small]"
-
-
 def test_fanout_finalizes_every_sink_in_order_despite_a_failure():
     """One sink failing to finalize (e.g. full disk) must not skip the others."""
     sinks = mock.Mock()
@@ -301,10 +292,10 @@ def test_fanout_finalizes_every_sink_in_order_despite_a_failure():
 
 
 def test_family_rows_are_named_by_their_case_not_their_label():
-    """A family's rows carry `name[case]` in `benchmark`, shared by repetitions; `set_label()` sets
-    only `label`."""
+    """A family's rows carry `name[case]` in `name`, shared by repetitions, and the case's
+    `params`; `set_label()` sets only `label`."""
 
-    # `benchmark` is the addressable `name[label]` (repetitions share it), and
+    # `name` is the addressable `name[label]` (repetitions share it), and
     # `set_label()` only sets `label`: cases that set the same one stay apart.
     @mew.parametrize([{"n": 1}, {"n": 2}], iterations=1, repetitions=2)
     def bench_fam(state, n):
@@ -315,10 +306,9 @@ def test_family_rows_are_named_by_their_case_not_their_label():
     cap = Capture()
     mew.run(reporter=cap)
     (entry,) = mew.REGISTRY.all()
-    assert [r["benchmark"] for r in cap.runs] == 2 * [f"{entry.name}[n=1]"] + 2 * [
-        f"{entry.name}[n=2]"
-    ]
+    assert [r["name"] for r in cap.runs] == 2 * [f"{entry.name}[n=1]"] + 2 * [f"{entry.name}[n=2]"]
     assert {r["label"] for r in cap.runs} == {"same for every case"}
+    assert [r["params"] for r in cap.runs] == 2 * [{"n": 1}] + 2 * [{"n": 2}]
 
 
 def test_repetitions_report_only_their_own_rows(tmp_path):
@@ -334,42 +324,40 @@ def test_repetitions_report_only_their_own_rows(tmp_path):
     console = RichReporter(terminal=Terminal(file=buf, width=200, color=False))
     mew.run(repetitions=3, reporter=[JSONReporter(output=out), console])
     rows = json.loads(out.read_text())["benchmarks"]
-    assert [r["repetition_index"] for r in rows] == [0, 1, 2]
-    assert {(r["run_type"], r["aggregate_name"]) for r in rows} == {("iteration", "")}
+    assert [r["repetition"] for r in rows] == [0, 1, 2]
     lines = buf.getvalue().splitlines()
     summary = lines.index("Median of repetitions")
     assert sum("bench_rep" in line for line in lines[:summary]) == 3
-    assert [cell.strip() for cell in lines[-1].split(" │ ")][:2] == [rows[0]["benchmark"], "3"]
+    assert [cell.strip() for cell in lines[-1].split(" │ ")][:2] == [rows[0]["name"], "3"]
 
 
-def _repetitions(name: str, reals: tuple[float, ...], family_index: int) -> list[BenchmarkResult]:
+def _repetitions(name: str, reals: tuple[float, ...]) -> list[BenchmarkResult]:
     runs = []
     for i, real in enumerate(reals):
         row = _fake_row(name)
-        row.update(real_time=real, repetition_index=i, repetitions=len(reals))
-        row.update(family_index=family_index)
+        row.update(real_time=real, repetition=i, repetitions=len(reals))
         runs.append(row)
     return runs
 
 
 def test_rich_reporter_sums_up_repetitions_at_the_end_like_mew_compare():
-    """`finalize()` prints a `Median of repetitions` table in registration order, for benchmarks
-    with more than one repetition."""
+    """`finalize()` prints a `Median of repetitions` table, in the order the benchmarks first
+    reported, for benchmarks with more than one repetition."""
     buf, rep = _rich()
     # Random interleaving reports benchmarks as they finish: here b before a.
-    rep.report_runs(_repetitions("bench.py::bench_b", (20.0, 30.0), family_index=1))
+    rep.report_runs(_repetitions("bench.py::bench_b", (20.0, 30.0)))
     rep.report_runs([_fake_row("bench.py::bench_once")])  # one run: nothing to sum up
-    rep.report_runs(_repetitions("bench.py::bench_a", (10.0, 11.0, 15.0), family_index=0))
+    rep.report_runs(_repetitions("bench.py::bench_a", (10.0, 11.0, 15.0)))
     assert "Median of repetitions" not in buf.getvalue()
     rep.finalize()
 
     lines = buf.getvalue().splitlines()
     assert lines[-6:-4] == ["", "Median of repetitions"]
     rows = [[cell.strip() for cell in line.split(" │ ")] for line in lines[-2:]]
-    # In registration order; the median times, the real time's stddev and stddev / mean.
+    # The median times, the real time's stddev and stddev / mean.
     assert rows == [
-        ["bench.py::bench_a", "3", "11.00 ns", "2.65 ns", "22.05%", "1.00 ns"],
         ["bench.py::bench_b", "2", "25.00 ns", "7.07 ns", "28.28%", "1.00 ns"],
+        ["bench.py::bench_a", "3", "11.00 ns", "2.65 ns", "22.05%", "1.00 ns"],
     ]
 
 
@@ -379,7 +367,7 @@ def test_rich_reporter_can_leave_repetitions_to_the_summary():
     buf, rep = _rich(show_repetitions=False)
     # No header yet: every row may end up in the summary, leaving an empty table.
     assert "Benchmark" not in buf.getvalue()
-    rep.report_runs(_repetitions("bench.py::bench_a", (10.0, 14.0, 12.0), family_index=0))
+    rep.report_runs(_repetitions("bench.py::bench_a", (10.0, 14.0, 12.0)))
     assert "bench_a" not in buf.getvalue()
     rep.report_runs([_fake_row("bench.py::bench_once")])  # a single run still streams
     rep.finalize()
@@ -395,7 +383,7 @@ def test_rich_reporter_reads_the_terminal_width_once_per_run(monkeypatch):
     monkeypatch.setattr("mew._console._terminal_width", lambda: probes.append(1) or 60)
     rep = RichReporter(terminal=Terminal(file=io.StringIO(), color=False))
     rep.report_context({})
-    rep.report_runs(_repetitions("bench.py::bench_a", (10.0, 11.0), family_index=0))
+    rep.report_runs(_repetitions("bench.py::bench_a", (10.0, 11.0)))
     rep.finalize()
     assert len(probes) == 1
 

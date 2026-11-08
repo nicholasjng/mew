@@ -48,10 +48,10 @@ from mew.compare import read_results, session_summaries
 newest = session_summaries("results.jsonl")[0]
 rows = [
     r for r in read_results("results.jsonl")
-    if r["session"]["id"] == newest.id and not r["skipped"]
+    if r["session"]["id"] == newest.id and r["skip"] is None
 ]
-for name in sorted({r["benchmark"] for r in rows}):
-    print(name, median(r["real_time"] for r in rows if r["benchmark"] == name))
+for name in sorted({r["name"] for r in rows}):
+    print(name, median(r["real_time"] for r in rows if r["name"] == name))
 ```
 
 For anything beyond a few lines of Python, query the file directly; see the
@@ -92,19 +92,28 @@ class MetricsExporter:
         self._sink.flush()
 ```
 
-Base measurement keys, `benchmark` included, are always present; `session`,
-`context`, `memory`, and `cpu_profile` are conditional.
-`benchmark` is the benchmark as
-mew addresses it (`file.py::func[label]`, plus `/threads:N` for threaded runs),
-shared by all rows of one benchmark, so queries group on it without parsing
-`name`. Names never contain `[`, so `split_part(benchmark, '[', 1)` recovers
-the function:
+A row's keys are listed in {class}`mew.BenchmarkResult`; `memory` and
+`cpu_profile` appear only when a profiler ran. `name` is the benchmark as mew
+addresses it (`file.py::func[label]`, plus `/threads:N` for threaded runs),
+shared by all rows of one benchmark. Function names never contain `[`, so
+`split_part(name, '[', 1)` recovers the function, and a family case's
+parameters are in `params`. Times are in nanoseconds, and a skipped row has
+`skip`, `{"reason": "error" | "skipped", "message": ...}`, instead of `null`:
 
 ```sql
-SELECT benchmark, median(real_time) FROM 'results.jsonl' GROUP BY benchmark;
-SELECT split_part(benchmark, '[', 1) AS func, avg(real_time)
-FROM 'results.jsonl' GROUP BY func;
+SELECT name, median(real_time) FROM 'results.jsonl' WHERE skip IS NULL GROUP BY name;
+SELECT split_part(name, '[', 1) AS func, params.n, avg(real_time)
+FROM 'results.jsonl' GROUP BY func, params.n;
 ```
+
+Result files add `schema_version` to every row: the result format, `1`. mew
+reads only its own format and rejects rows of another with a message, so
+re-run old benchmarks rather than converting their files. Parameters and
+context values that JSON can't represent are stored as their type's qualified
+name, such as `"torch.Tensor"`, never as a `str()` of the object. Floats keep
+NaN and infinity, written as `NaN` and `Infinity` as Python's `json` does:
+DuckDB and Python read them back, but `jq` turns them into `null` and the
+largest finite double.
 
 Pass it directly to {func}`mew.run`:
 
@@ -133,7 +142,7 @@ FROM 'results.jsonl'
 GROUP BY name, size;
 
 -- One counter per row: `counters` is a list of {name, value, format} records
-SELECT benchmark, c.value AS bytes_per_second
+SELECT name, c.value AS bytes_per_second
 FROM 'results.jsonl', unnest(counters) AS t(c)
 WHERE c.name = 'bytes_per_second';
 ```

@@ -119,7 +119,7 @@ def _fmt_value(sample: Sample, metric: str) -> str:
         return f"{int(sample.value):,}"
     if metric in MEMORY_METRICS:  # remaining memory metrics are byte-valued
         return fmt_bytes(int(sample.value))
-    return fmt_time(sample.value, "ns")
+    return fmt_time(sample.value)
 
 
 def _fmt_stddev(sample: Sample, metric: str) -> str:
@@ -132,7 +132,7 @@ def _fmt_stddev(sample: Sample, metric: str) -> str:
         return fmt_counter(sample.stddev, sample.counter_format)
     if metric not in TIME_METRICS:
         return f"{sample.stddev:.2f}"
-    _, unit = scale_time(sample.value, "ns")  # the value cell's unit
+    _, unit = scale_time(sample.value)  # the value cell's unit
     return f"{sample.stddev / NS_PER_UNIT[unit]:.2f} {unit}"
 
 

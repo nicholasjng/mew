@@ -13,7 +13,7 @@ from typing import Any, Protocol, TextIO, runtime_checkable
 
 from mew._console import COL_SEP, Table, Terminal, fill, sgr, truncate_left
 from mew._format import fmt_bytes, fmt_counter, fmt_time
-from mew._results import ROW_STAMP_FIELDS, open_text
+from mew._results import ROW_STAMP_FIELDS, SCHEMA_VERSION, open_text
 from mew._typing import BenchmarkResult
 
 
@@ -82,6 +82,13 @@ def _indent_block(text: str, spaces: int) -> str:
     return text.replace("\n", "\n" + " " * spaces)
 
 
+def _stamp(context: dict[str, Any]) -> dict[str, Any]:
+    """What a file reporter writes ahead of each row: the format version, then provenance."""
+    return {"schema_version": SCHEMA_VERSION} | {
+        k: context[k] for k in ROW_STAMP_FIELDS if k in context
+    }
+
+
 def _open_sink(
     output: Path | TextIO | None, mode: str = "w"
 ) -> contextlib.AbstractContextManager[TextIO]:
@@ -117,7 +124,7 @@ class JSONReporter(Reporter):
         self._fh = self._stack.enter_context(_open_sink(self._output))
         # Reset comma state when the reporter is reused.
         self._first_row = True
-        self._stamp = {k: context[k] for k in ROW_STAMP_FIELDS if k in context}
+        self._stamp = _stamp(context)
         # default=str: don't crash on Path/datetime; lossy by design.
         header = "".join(
             f'  "{key}": {_indent_block(json.dumps(value, indent=2, default=str), 2)},\n'
@@ -176,7 +183,7 @@ class JSONLReporter(Reporter):
 
     def report_context(self, context: dict[str, Any]) -> None:
         self._fh = self._stack.enter_context(_open_sink(self._output, "a" if self._append else "w"))
-        self._stamp = {k: context[k] for k in ROW_STAMP_FIELDS if k in context}
+        self._stamp = _stamp(context)
 
     def report_runs(self, runs: list[BenchmarkResult]) -> None:
         assert self._fh is not None  # report_context runs first, always
@@ -266,9 +273,9 @@ class RichReporter(Reporter):
 
     def report_runs(self, runs: list[BenchmarkResult]) -> None:
         for row in runs:
-            repeated = row["repetitions"] > 1 and not row["skipped"]
+            repeated = row["repetitions"] > 1 and not row["skip"]
             if repeated:
-                self._repeated.setdefault(row["benchmark"], []).append(row)
+                self._repeated.setdefault(row["name"], []).append(row)
             if self._show_repetitions or not repeated:
                 if not self._header_printed:
                     self._print_header()
@@ -277,13 +284,10 @@ class RichReporter(Reporter):
     def finalize(self) -> None:
         """Sum up the repeated benchmarks in a second table.
 
-        The table lists them in the order they were registered, since random
-        interleaving reports them in the order they finish.
+        The table lists them in the order they first reported, which random
+        interleaving shuffles.
         """
-        groups = sorted(
-            (rows for rows in self._repeated.values() if len(rows) > 1),
-            key=lambda rows: (rows[0]["family_index"], rows[0]["per_family_instance_index"]),
-        )
+        groups = [rows for rows in self._repeated.values() if len(rows) > 1]
         self._repeated = {}
         if not groups:
             return
@@ -292,15 +296,15 @@ class RichReporter(Reporter):
         for header in ("Reps", "Real", "± stddev", "CV", "CPU"):
             table.add_column(header, justify="right")
         for rows in groups:
-            real, unit = [row["real_time"] for row in rows], rows[0]["time_unit"]
+            real = [row["real_time"] for row in rows]
             mean, stddev = statistics.fmean(real), statistics.stdev(real)
             table.add_row(
-                rows[0]["benchmark"],
+                rows[0]["name"],
                 str(len(rows)),
-                fmt_time(statistics.median(real), unit),
-                fmt_time(stddev, unit),
+                fmt_time(statistics.median(real)),
+                fmt_time(stddev),
                 f"{stddev / abs(mean):.2%}" if mean else "-",
-                fmt_time(statistics.median(row["cpu_time"] for row in rows), unit),
+                fmt_time(statistics.median(row["cpu_time"] for row in rows)),
             )
         self._term.print()
         for line in table.render(self._width, color=self._term.color):
@@ -334,17 +338,17 @@ class RichReporter(Reporter):
         color = self._term.color
         # Canonical `file.py::f[label]` form, matching `mew compare`, left-ellipsized
         # to keep the disambiguating tail.
-        full_name = row["benchmark"]
+        full_name = row["name"]
         name = truncate_left(full_name, width)
 
         # Skipped rows carry no timing, so the dimmed reason fills the timing
         # columns. Its lines (a traceback has several) wrap, keeping their indent
         # and every character, since a cut path would no longer locate anything.
-        if row["skipped"]:
+        if skip := row["skip"]:
             lead = name.ljust(width) + COL_SEP
             avail = max(10, self._width - len(lead))
             lines: list[str] = []
-            for text in (row["skip_message"] or "skipped").splitlines():
+            for text in (skip["message"] or skip["reason"]).splitlines():
                 body = text.lstrip(" ")
                 pad = text[: len(text) - len(body)][: avail // 2]
                 lines += textwrap.wrap(
@@ -355,8 +359,7 @@ class RichReporter(Reporter):
                 self._term.print(sgr(prefix + line, "dim", enabled=color))
             return
 
-        unit = row["time_unit"]
-        real, cpu_time = fmt_time(row["real_time"], unit), fmt_time(row["cpu_time"], unit)
+        real, cpu_time = fmt_time(row["real_time"]), fmt_time(row["cpu_time"])
         cells = [name, f"{row['iterations']:,}", real, cpu_time]
         if self._show_memory:
             mem = row.get("memory")

@@ -8,7 +8,6 @@ from mew._core import (
     BENCHMARK_VERSION,
     CounterFlags,
     CounterOneK,
-    TimeUnit,
     clear_registered_benchmarks as _clear_registered_benchmarks,
     unregister_memory_manager as _unregister_memory_manager,
     unregister_profiler_manager as _unregister_profiler_manager,
@@ -22,6 +21,7 @@ from mew._typing import (
     ProfilerManager,
     ProfilerSummary,
     SessionInfo,
+    SkipInfo,
     State,
 )
 from mew.api import benchmark, grid, parametrize
@@ -65,9 +65,9 @@ __all__ = [
     "Reporter",
     "RichReporter",
     "SessionInfo",
+    "SkipInfo",
     "State",
     "Terminal",
-    "TimeUnit",
     "__version__",
     "benchmark",
     "clear_context",

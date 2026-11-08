@@ -9,6 +9,9 @@
 .. autoclass:: SessionInfo
    :no-members:
 
+.. autoclass:: SkipInfo
+   :no-members:
+
 .. autoclass:: Reporter
    :no-members:
 
