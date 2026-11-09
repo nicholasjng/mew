@@ -2,7 +2,7 @@
 
 :func:`machine_context` describes the CPU and interpreter, and every run
 records it. :func:`vcs_context` describes the working copy's commit, from jj or
-git; a setup file's ``context()`` hook adds it where wanted::
+git. A setup file's ``context()`` hook adds it where wanted::
 
     import mew
 
@@ -122,11 +122,15 @@ def machine_context() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        ``cpu_model``, the name the OS gives the CPU, such as ``"Apple M2"``,
-        or ``None`` where it gives none, as on Linux on Arm; ``num_cpus``;
-        ``cpu_scaling_enabled``, ``True`` only when frequency scaling was
-        detected; and ``python``, the interpreter's ``version``,
-        ``implementation``, ``free_threaded_build``, and ``gil_enabled``.
+        These keys:
+
+        - ``cpu_model``: the name the OS gives the CPU, such as ``"Apple M2"``,
+          or ``None`` where it gives none, as on Linux on Arm.
+        - ``num_cpus``: the number of CPUs.
+        - ``cpu_scaling_enabled``: ``True`` only when frequency scaling was
+          detected.
+        - ``python``: the interpreter's ``version``, ``implementation``,
+          ``free_threaded_build`` and ``gil_enabled``.
     """
     with _silence_native_stderr():
         info = _core.cpu_info()
@@ -200,7 +204,7 @@ def _git(cwd: Path | None) -> dict[str, Any] | None:
 def vcs_context(cwd: Path | None = None) -> dict[str, Any]:
     """Return source-control provenance for a working directory.
 
-    Tries jj, then git; returns ``{}`` outside a work tree or when neither tool
+    Tries jj, then git. Returns ``{}`` outside a work tree or when neither tool
     is installed.
 
     Parameters

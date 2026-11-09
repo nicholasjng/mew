@@ -350,7 +350,7 @@ def compare(
 
     Each value shows its repetitions' spread, ``±N%`` of their mean. Each other
     file's column shows its value, the delta and the speedup. The rows are the
-    benchmarks the baseline and the second file share; another file that lacks
+    benchmarks the baseline and the second file share. Another file that lacks
     one shows dashes in its row. A line under the table sums up the second file
     against the baseline.
 
@@ -365,10 +365,10 @@ def compare(
     metric : str, default "real_time"
         ``"real_time"``, ``"cpu_time"``, or, for results with
         memory figures, ``"memory.peak_bytes"`` or
-        ``"memory.allocations_per_iteration"``; the latter compares
+        ``"memory.allocations_per_iteration"``. The latter compares
         implementations of different speed. ``"counters.<name>"`` compares the
         counter ``<name>``, e.g. ``"counters.items_per_second"``, in the
-        direction ``counters`` gives it; without one, the delta is neither
+        direction ``counters`` gives it. Without one, the delta is neither
         good nor bad, and the counter can't be gated on.
     pattern : str, optional
         Regex searched for in benchmark names.
@@ -381,22 +381,22 @@ def compare(
         configures it. Without it, only ``items_per_second`` and
         ``bytes_per_second`` have one: higher is better.
     console : mew.Terminal, optional
-        Where to print; defaults to stdout.
+        Where to print, stdout by default.
 
     Returns
     -------
     int
-        ``0``; ``1`` when the baseline and the second file share no benchmark;
-        ``3`` when the regression gate fails.
+        ``0``, or ``1`` when the baseline and the second file share no
+        benchmark, or ``3`` when the regression gate fails.
 
     Raises
     ------
     ValueError
-        If an argument, such as ``pattern``, is invalid, or a file can't be
-        compared: it is not a mew result file or holds no measurements; or
-        ``regressions`` gates on a counter without a direction.
+        If an argument, such as ``pattern``, is invalid, if a file is not a
+        mew result file or holds no measurements, or if ``regressions`` gates
+        on a counter without a direction.
     OSError
-        If a file can't be read; :class:`FileNotFoundError` if it doesn't exist.
+        If a file can't be read, :class:`FileNotFoundError` if it doesn't exist.
     """
     counter = counter_name(metric)
     if metric not in METRICS and counter is None:

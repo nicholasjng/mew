@@ -104,7 +104,7 @@ def load(start: Path | None = None) -> Config:
     Parameters
     ----------
     start : Path, optional
-        Directory to start the upward search from; defaults to the cwd.
+        Directory to start the upward search from, the cwd by default.
 
     Returns
     -------

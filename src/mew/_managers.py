@@ -2,19 +2,19 @@
 
 Google Benchmark runs one manager per slot, so each slot has its flag, which
 takes one value. A preset is a ``[tool.mew.profilers.<name>]`` table. Its
-``class`` key names a class as ``module:attr`` or ``path.py:attr``; every other
+``class`` key names a class as ``module:attr`` or ``path.py:attr``. Every other
 key is a keyword argument for that class, kebab-case turned into snake_case. A
 flag takes a preset name, or a spec (anything with a ``:``) to run a class with
 its defaults.
 
 The contract for the class:
 
-- mew calls ``cls(**options)``;
-- the instance has its slot's methods: ``after_setup_start`` and
+- mew calls ``cls(**options)``.
+- The instance has its slot's methods: ``after_setup_start`` and
   ``before_teardown_stop`` for a CPU profiler (Google Benchmark's profiler
   manager), ``start`` and ``stop`` for a memory profiler. They must be defined
-  on the class; subclassing the protocol is optional;
-- if the instance is a context manager, mew enters it for the run and keeps
+  on the class. Subclassing the protocol is optional.
+- If the instance is a context manager, mew enters it for the run and keeps
   the instance itself, not what ``__enter__`` returns.
 
 mew's own presets may name a function instead of a class, so ``sample`` can

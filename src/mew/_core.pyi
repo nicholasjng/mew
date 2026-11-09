@@ -89,9 +89,9 @@ class PauseScope:
 
 class State:
     """
-    The state of a running benchmark; iterating it runs the timed loop.
+    The state of a running benchmark. Iterating it runs the timed loop.
 
-    Only the body of ``for _ in state:`` is timed; code before and after the
+    Only the body of ``for _ in state:`` is timed. Code before and after the
     loop is setup and teardown.
     """
 
@@ -122,7 +122,7 @@ class State:
         Yields
         ------
         int
-            ``n`` at each step; the final batch may exceed the iteration budget.
+            ``n`` at each step. The final batch may exceed the iteration budget.
 
         Raises
         ------
@@ -132,7 +132,7 @@ class State:
 
     def skip_with_error(self, msg: str) -> None:
         """
-        Abort this benchmark and mark it failed; the row reports as skipped.
+        Abort this benchmark and mark it failed. The row reports as skipped.
 
         Parameters
         ----------
@@ -157,7 +157,7 @@ class State:
         Parameters
         ----------
         label : str
-            The label; it replaces one set before.
+            The label string.
         """
 
     def set_iteration_time(self, seconds: float) -> None:
@@ -217,11 +217,15 @@ class State:
 
     @property
     def iterations(self) -> int:
-        """Iterations completed so far; the total once the loop finishes."""
+        """
+        Iterations completed so far, equal to the total iteration count once the loop finishes.
+        """
 
     @property
     def threads(self) -> int:
-        """Threads in this run; 1 without threaded mode or in a profiling pass."""
+        """
+        Threads used in this run, 1 without threaded mode or in a profiling pass.
+        """
 
     @property
     def thread_index(self) -> int:
@@ -256,7 +260,7 @@ def clear_registered_benchmarks() -> None:
 def register_memory_manager(manager: object) -> None:
     """
     Register `manager` as Google Benchmark's memory manager, replacing any other.
-    Requires `start()` and `stop()`; `stop()` returns memory metrics or None.
+    Requires `start()` and `stop()`. `stop()` returns memory metrics or None.
     Pair with `unregister_memory_manager`.
     """
 
@@ -264,7 +268,7 @@ def unregister_memory_manager() -> None: ...
 def register_profiler_manager(manager: object) -> None:
     """
     Register `manager` as Google Benchmark's profiler manager, replacing any other.
-    Requires `after_setup_start()` and `before_teardown_stop()`; supports optional
+    Requires `after_setup_start()` and `before_teardown_stop()`. Supports optional
     `get_result()`, `pause()`, and `resume()` hooks.
     Pair with `unregister_profiler_manager`.
     """

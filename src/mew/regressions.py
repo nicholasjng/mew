@@ -142,7 +142,7 @@ class CounterConfig:
     Attributes
     ----------
     rules : tuple[CounterRule, ...]
-        Rules in file order; the first match wins.
+        Rules in file order. The first match wins.
     """
 
     rules: tuple[CounterRule, ...] = ()
@@ -199,7 +199,7 @@ class RegressionConfig:
     default_threshold : float, default 5.0
         Percent slowdown tolerated by benchmarks no rule matches.
     rules : tuple[AllowRule, ...]
-        Allowlist rules in file order; the first match wins.
+        Allowlist rules in file order. The first match wins.
     """
 
     default_threshold: float = 5.0
@@ -234,7 +234,7 @@ class RegressionConfig:
             Full benchmark name (matched against ``rule.pattern``).
         delta_pct : float
             Signed percent change vs baseline. Positive means slower for
-            ``real_time`` / ``cpu_time``; for a counter where up is better,
+            ``real_time`` / ``cpu_time``. For a counter where up is better,
             pass ``higher_is_better=True``.
         higher_is_better : bool
             Invert the sign when computing the regression magnitude.

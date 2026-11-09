@@ -68,7 +68,7 @@ class BenchmarkResult(TypedDict):
         Shared by all repetitions of one benchmark.
     params : dict
         A family case's parameters, ``{}`` for a plain benchmark. Values JSON
-        represents as themselves are kept; any other is its type's qualified
+        represents as themselves are kept. Any other is its type's qualified
         name, such as ``"torch.Tensor"``.
     repetition, repetitions : int
         Which repetition this is, from 0, of how many.
@@ -101,8 +101,8 @@ class BenchmarkResult(TypedDict):
         ``total_bytes`` and ``net_heap_growth``), when one ran and measured
         something.
     cpu_profile : dict, optional
-        The profiler manager's summary, when it returned one; a
-        :class:`mew.cpu.CpuProfile` under ``--cpu-profiler sample``.
+        The profiler manager's summary, when it returned one. Under
+        ``--cpu-profiler sample``, a :class:`mew.cpu.CpuProfile`.
     """
 
     name: str
@@ -126,7 +126,7 @@ class BenchmarkResult(TypedDict):
 class BenchmarkOptions(TypedDict, total=False):
     """Per-benchmark Google Benchmark options.
 
-    All keys are optional; omit one to fall back to Google Benchmark's default.
+    All keys are optional. Omit one to fall back to Google Benchmark's default.
     ``min_time`` takes seconds (``0.5``, ``"0.5s"``, ``"500ms"``, ``"1m"``) or,
     as for :func:`mew.run`, a fixed iteration count (``"100x"``), the same as
     ``iterations=100``. A fixed iteration count cannot be combined with
@@ -194,8 +194,8 @@ class MemoryManager(Protocol):
         """Stop measuring and return the figures.
 
         Called after the pass's last loop step. A dict with a missing required
-        key or a value that isn't an int fails the run with ``TypeError``;
-        other keys are ignored.
+        key or a value that isn't an int fails the run with ``TypeError``.
+        Other keys are ignored.
 
         Returns
         -------
@@ -216,7 +216,7 @@ class MemoryManager(Protocol):
         Parameters
         ----------
         directory : Path
-            Where to write; it may not exist yet.
+            Where to write. It may not exist yet.
         """
         return
 
@@ -250,7 +250,7 @@ class ProfilerManager(Protocol):
     def get_result(self) -> ProfilerSummary | None:
         """Summarize the pass that just ended.
 
-        Called after each pass; the summary goes into the row's ``cpu_profile``
+        Called after each pass. The summary goes into the row's ``cpu_profile``
         block. Returns ``None`` unless a subclass overrides it.
 
         Returns
@@ -288,23 +288,23 @@ class ProfilerManager(Protocol):
         Parameters
         ----------
         directory : Path
-            Where to write; it may not exist yet.
+            Where to write. It may not exist yet.
         """
         return
 
 
 @runtime_checkable
 class State(Protocol):
-    """The state of a running benchmark; iterating it runs the timed loop.
+    """The state of a running benchmark. Iterating it runs the timed loop.
 
-    Only the body of ``for _ in state:`` is timed; code before and after the
+    Only the body of ``for _ in state:`` is timed. Code before and after the
     loop is setup and teardown.
     """
 
     # Keep the docstrings in sync with src/_mew/state.cpp.
     @property
     def threads(self) -> int:
-        """Threads in this run; 1 without threaded mode or in a profiling pass."""
+        """Threads used in this run, 1 without threaded mode or in a profiling pass."""
         ...
 
     @property
@@ -329,7 +329,9 @@ class State(Protocol):
 
     @property
     def iterations(self) -> int:
-        """Iterations completed so far; the total once the loop finishes."""
+        """Iterations completed so far, equal to the total iteration count once the
+        loop finishes.
+        """
         ...
 
     @property
@@ -351,7 +353,7 @@ class State(Protocol):
         Yields
         ------
         int
-            ``n`` at each step; the final batch may exceed the iteration budget.
+            ``n`` at each step. The final batch may exceed the iteration budget.
 
         Raises
         ------
@@ -402,7 +404,7 @@ class State(Protocol):
         Parameters
         ----------
         label : str
-            The label; it replaces one set before.
+            The label. It replaces one set before.
         """
         ...
 
@@ -439,7 +441,7 @@ class State(Protocol):
         ...
 
     def skip_with_error(self, msg: str) -> None:
-        """Abort this benchmark and mark it failed; the row reports as skipped.
+        """Abort this benchmark and mark it failed. The row reports as skipped.
 
         Parameters
         ----------
@@ -464,7 +466,7 @@ class BenchmarkFn(Protocol):
     """A benchmark function, called with a :class:`State` and its case's parameters.
 
     A case of a family from :func:`mew.parametrize` passes
-    its parameters as keyword arguments; a plain benchmark gets none.
+    its parameters as keyword arguments. A plain benchmark gets none.
     """
 
     __name__: str

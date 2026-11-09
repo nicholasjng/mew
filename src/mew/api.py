@@ -166,15 +166,15 @@ def benchmark(
     Parameters
     ----------
     fn : BenchmarkFn, optional
-        The function, when used bare (``@benchmark``); omitted when options are
+        The function, when used bare (``@benchmark``). Omitted when options are
         given (``@benchmark(min_time=...)``).
     name : str, optional
         Replaces the default name, ``path/to/file.py::qualname``. It can't
         contain ``::``, brackets or newlines, which mew's selectors use.
     tags : Iterable[str] or str, optional
-        Tags to select the benchmark by (``mew run --tag``); a string is one tag.
+        Tags to select the benchmark by (``mew run --tag``). A string is one tag.
     **options
-        Google Benchmark options; see :class:`~mew.api.BenchmarkOptions`.
+        Google Benchmark options, see :class:`~mew.api.BenchmarkOptions`.
 
     Returns
     -------
@@ -284,7 +284,7 @@ def parametrize(
     Parameters
     ----------
     parameters : Iterable[dict[str, Any]]
-        One dict of keyword arguments per case; read once, so a generator works.
+        One dict of keyword arguments per case, read once, so a generator works.
         :func:`grid` makes the dicts for every combination of some values.
     name : str, optional
         Replaces the family's default name.
@@ -350,7 +350,7 @@ def grid(**axes: Iterable[Any]) -> list[dict[str, Any]]:
     Raises
     ------
     TypeError
-        If no axis is given, or an axis is a string or not iterable; a string
+        If no axis is given, or an axis is a string or not iterable. A string
         would split into its characters.
 
     Examples

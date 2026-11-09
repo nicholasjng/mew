@@ -42,9 +42,9 @@ class TopFunction(TypedDict):
     function : str
         Its name, or a synthetic frame's such as ``<GC>``.
     file : str or None
-        Its file's name; ``None`` for a synthetic frame.
+        Its file's name, or ``None`` for a synthetic frame.
     line : int or None
-        Its line with the most time; ``None`` under pyinstrument, which sees
+        Its line with the most time, or ``None`` under pyinstrument, which sees
         lines only where a call or return happened.
     self_time : float
         Seconds spent in the function itself, not in what it called.
@@ -73,7 +73,7 @@ class CpuProfile(TypedDict):
         sampler counts differently, so compare ``wall_time`` and ``self_time``
         across samplers instead.
     top_function : TopFunction or None
-        The function with the most self time; ``None`` when no sample caught
+        The function with the most self time, or ``None`` when no sample caught
         the body running, as in a pass shorter than the sampling interval.
     """
 
@@ -99,7 +99,7 @@ def manager(
     sampler : {"auto", "tachyon", "pyinstrument"}, default "auto"
         ``"auto"`` picks Tachyon on Python 3.15+ and pyinstrument before. Pick
         pyinstrument on 3.15+ to profile a suite with one sampler across
-        interpreter versions; free-threaded builds need Tachyon.
+        interpreter versions. Free-threaded builds need Tachyon.
 
     Returns
     -------
@@ -235,7 +235,7 @@ class PyinstrumentManager(ProfilerManager):
         Parameters
         ----------
         directory : Path
-            Where to write the report; created if missing.
+            Where to write the report, created if missing.
         """
         if not any(session.sample_count for session in self.sessions):
             _warn_no_samples()
@@ -340,7 +340,7 @@ class TachyonManager(ProfilerManager):
     minus ``state.pause()`` regions, in a pass outside the measured repetitions.
 
     Free-threaded builds sample beside the body. On a GIL build every sample
-    needs the GIL, so the pass lowers the switch interval to ``interval``; the
+    needs the GIL, so the pass lowers the switch interval to ``interval``. The
     body still hands the GIL over only where the interpreter checks for a
     switch, such as a loop jump. A C call that holds the GIL thus delays the
     next sample until it returns, so each sample counts as the time since the
@@ -535,7 +535,7 @@ class TachyonManager(ProfilerManager):
         Parameters
         ----------
         directory : Path
-            Where to write the report; created if missing.
+            Where to write the report, created if missing.
         """
         directory.mkdir(parents=True, exist_ok=True)
         # export() reports progress on stdout, which may carry a JSON result
