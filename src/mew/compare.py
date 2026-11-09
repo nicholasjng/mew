@@ -45,7 +45,6 @@ from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, r
 
 __all__ = ["RunSummary", "compare", "read_results", "run_summaries"]
 
-_KEYS = frozenset({"name", "func"})
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
 # `host` only where a suite records it; mew doesn't, since it often names a person.
@@ -235,7 +234,6 @@ def _render(
     regressions: RegressionConfig | None,
     console: Terminal | None,
     higher_is_better: bool | None,
-    key: str = "name",
 ) -> int:
     """Compare the first column against the rest and render the table.
 
@@ -263,10 +261,6 @@ def _render(
             msg += f" with {metric!r} data (produced with --memory-profiler memray?)"
         elif counter is not None:
             msg += f" with the counter {counter!r} (set with state.set_counter?)"
-        elif key == "name":
-            msg += (
-                " (suites with matching function names in different files overlap with --key func)"
-            )
         print(msg, file=sys.stderr)
         return 1
 
@@ -360,7 +354,6 @@ def compare(
     files: Sequence[str | Path],
     *,
     metric: str = "real_time",
-    key: str = "name",
     pattern: str | None = None,
     literal: bool = False,
     statistic: Statistic | None = None,
@@ -394,9 +387,6 @@ def compare(
         counter ``<name>``, e.g. ``"counters.items_per_second"``, in the
         direction ``counters`` gives it; without one, the delta is neither
         good nor bad, and the counter can't be gated on.
-    key : str, default "name"
-        How rows match across files: ``"name"`` by the full name, ``"func"``
-        without the ``file.py::`` prefix, so A/B suites in different files line up.
     pattern : str, optional
         Regex searched for in benchmark names.
     literal : bool, default False
@@ -444,8 +434,6 @@ def compare(
             f"cannot gate on {metric!r}: no direction is declared; add a "
             f"[[tool.mew.counters]] rule matching {counter!r} that sets higher-is-better"
         )
-    if key not in _KEYS:
-        raise ValueError(f"unknown key {key!r}; choose from {sorted(_KEYS)}")
     name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
 
     if len(files) < 2:
@@ -457,9 +445,7 @@ def compare(
 
     columns = []
     for path, selector in parsed:  # the baseline first, as git diff and pyperf take it
-        samples, ctx, skipped = load_column(
-            path, metric, key, selector, statistic, reader=read_once
-        )
+        samples, ctx, skipped = load_column(path, metric, selector, statistic, reader=read_once)
         # Files that share a stem are told apart by their full path.
         base = str(path) if stems[path.stem] > 1 else path.stem
         label = f"{base}@{selector}" if selector else base
@@ -479,5 +465,4 @@ def compare(
         regressions=regressions,
         console=console,
         higher_is_better=higher_is_better,
-        key=key,
     )

@@ -399,7 +399,6 @@ def compare(
     files: list[str],
     *,
     metric: str,
-    key: str,
     pattern: str | None,
     literal: bool,
     statistic: str | None,
@@ -427,7 +426,6 @@ def compare(
         code = _compare(
             files,
             metric=metric,
-            key=key,
             pattern=pattern,
             literal=literal,
             statistic=reduce,
@@ -811,13 +809,6 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         "--metric",
         default="real_time",
         help="Compare using <metric> (default real_time), or the counter counters.<name>.",
-    )
-    p.add_argument(
-        "--key",
-        default="name",
-        choices=("name", "func"),
-        metavar="<key>",
-        help="Match benchmarks by name or func (default name).",
     )
     _add_filter_args(p, verb="Compare")
     p.add_argument(

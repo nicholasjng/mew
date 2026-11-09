@@ -8,21 +8,31 @@ one. Run each side in its own process and merge the results into one file.
 mew has no orchestrator for this; a shell loop does it, and can use a different
 interpreter per side.
 
-## Label each suite
+## One file for both sides
 
-Use the same `name=` on both sides so the rows line up, and record what each
-side is with `--context`, so the comparison documents the version skew:
+Write the benchmarks once and let an environment variable pick the engine, so
+both sides run the same code under the same names, and their rows line up:
 
 ```python
-# bench_alpha.py; bench_beta.py is the same against the beta engine
+# benchmarks/bench_engine.py
+import importlib
+import os
+
 import mew
 
+engine = importlib.import_module(os.environ["ENGINE"])  # "alpha" or "beta"
 
-@mew.benchmark(name="scan")
+
+@mew.benchmark
 def bench_scan(state):
     for _ in state:
-        ...
+        engine.scan()
 ```
+
+Each process imports only its own engine. If the two APIs differ, map them
+onto one in the file, e.g. with a dict of small adapter functions per engine.
+Record what each side is with `--context`, so the comparison documents the
+version skew.
 
 What both sides share, such as the commit they ran at, belongs in the setup
 file's `context()` hook (see {doc}`context`):
@@ -43,16 +53,15 @@ each file's runs with `@*`:
 
 ```console
 $ for i in 1 2 3 4 5; do
->   mew run bench_alpha.py --context engine="alpha 1.5.3" --append -o alpha.jsonl
->   mew run bench_beta.py  --context engine="beta 2.0.0"  --append -o beta.jsonl
+>   ENGINE=alpha mew run --context engine="alpha 1.5.3" --append -o alpha.jsonl
+>   ENGINE=beta  mew run --context engine="beta 2.0.0"  --append -o beta.jsonl
 > done
-$ mew compare --key func 'alpha.jsonl@*' 'beta.jsonl@*'
+$ mew compare 'alpha.jsonl@*' 'beta.jsonl@*'
 ```
 
 Interleave the suites (A B A B …, not AAAAA BBBBB) to avoid bias from thermal
-and load drift. `--key func` matches on the function name, so the differing
-file prefixes do not matter. Each file's context line above the table shows
-only the values that differ between the files, here `engine=…`.
+and load drift. Each file's context line above the table shows only the values
+that differ between the files, here `engine=…`.
 
 ```console
 alpha@*: 5 runs, newest 2026-11-09T09:10:36 engine=alpha 1.5.3
@@ -90,9 +99,9 @@ on each column's context line, so the sides label themselves.
 The profiling flags work per invocation, so give each side its own artifact path:
 
 ```console
-$ mew run bench_alpha.py -o alpha.jsonl --memory-profiler memray --profile-dir profiles.alpha/
-$ mew run bench_beta.py  -o beta.jsonl  --memory-profiler memray --profile-dir profiles.beta/
-$ mew compare --key func --metric memory.allocations_per_iteration alpha.jsonl beta.jsonl
+$ ENGINE=alpha mew run -o alpha.jsonl --memory-profiler memray --profile-dir profiles.alpha/
+$ ENGINE=beta  mew run -o beta.jsonl  --memory-profiler memray --profile-dir profiles.beta/
+$ mew compare --metric memory.allocations_per_iteration alpha.jsonl beta.jsonl
 ```
 
 Use `memory.allocations_per_iteration` for cross-engine allocation comparisons:
