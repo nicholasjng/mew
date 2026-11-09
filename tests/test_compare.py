@@ -350,6 +350,44 @@ def test_name_selector_picks_the_newest_run_of_that_name(tmp_path: Path) -> None
         assert ctx["run"]["name"] == "other"
 
 
+def test_star_selector_pools_every_run_in_a_file(tmp_path: Path, capsys) -> None:
+    """`@*` pools every run as repetitions of one sample, for an A/B loop that appends a run per
+    round; provenance comes from the newest run. Runs from one machine pool quietly."""
+    p = tmp_path / "r.jsonl"
+    same = {"cpu_model": "M2", "python": {"version": "3.13"}}
+    _write_jsonl(
+        p,
+        [
+            _row("b", 10.0, date="2026-01-01T00:00:00", run_id="aaaa", custom=same),
+            _row("b", 20.0, date="2026-02-01T00:00:00", run_id="bbbb", custom=same),
+        ],
+    )
+    pooled, ctx = load_column(p, "real_time", selector="*")
+    assert pooled["b"].values == (10.0, 20.0)
+    assert ctx["run"]["id"] == "bbbb"
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("other", "field"),
+    [({"cpu_model": "M4"}, "cpu_model"), ({"python": {"version": "3.15"}}, "python")],
+)
+def test_star_selector_warns_when_pooled_runs_differ(tmp_path: Path, capsys, other, field) -> None:
+    """Pooling runs from another machine or interpreter warns: their repetitions mix
+    environments."""
+    p = tmp_path / "r.jsonl"
+    base = {"cpu_model": "M2", "python": {"version": "3.13"}}
+    _write_jsonl(
+        p,
+        [
+            _row("b", 10.0, date="2026-01-01T00:00:00", run_id="aaaa", custom=base),
+            _row("b", 20.0, date="2026-02-01T00:00:00", run_id="bbbb", custom={**base, **other}),
+        ],
+    )
+    load_column(p, "real_time", selector="*")
+    assert f"r.jsonl@* pools runs that differ in {field}" in capsys.readouterr().err
+
+
 def test_unknown_selector_lists_the_run_names(tmp_path: Path) -> None:
     """An unknown run name errors with the file's first five names, as does an empty selector."""
     p = tmp_path / "r.json"

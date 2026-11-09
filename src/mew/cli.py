@@ -717,7 +717,7 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--run-name",
         metavar="<name>",
-        help="Name this run <name>, which <file>@<name> selects ('latest' is reserved).",
+        help="Name this run <name>, which <file>@<name> selects ('latest' and '*' are reserved).",
     )
     p.add_argument(
         "--append",

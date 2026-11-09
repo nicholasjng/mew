@@ -84,6 +84,7 @@ def test_run_reports_rows_and_the_run_context():
         ({"run_name": ""}, ValueError, "run_name must not be empty"),
         # `mew compare path@latest` selects the newest run.
         ({"run_name": "latest"}, ValueError, "run_name 'latest' is reserved"),
+        ({"run_name": "*"}, ValueError, r"run_name '\*' is reserved"),
     ],
 )
 def test_run_rejects_invalid_options(kwargs, error, message):

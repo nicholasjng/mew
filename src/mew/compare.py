@@ -26,6 +26,7 @@ from mew._registry import compile_name_filter
 from mew._results import (
     MEMORY_METRICS,
     METRICS,
+    SKEW_FIELDS,
     TIME_METRICS,
     RunSummary,
     Sample,
@@ -46,7 +47,6 @@ _KEYS = frozenset({"name", "func"})
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
 # `host` only where a suite records it; mew doesn't, since it often names a person.
-_CTX_SKEW_FIELDS = ("host", "cpu_model", "num_cpus", "cpu_scaling_enabled", "mew")
 
 
 def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
@@ -87,7 +87,7 @@ def _warn_context_skew(columns: list[_Column]) -> None:
 
     The deltas then compare environments, not just code.
     """
-    for fld in _CTX_SKEW_FIELDS:
+    for fld in SKEW_FIELDS:
         values = {c.label: (c.context.get("context") or {}).get(fld) for c in columns if c.context}
         if len({v for v in values.values() if v is not None}) > 1:
             detail = ", ".join(f"{label}: {v}" for label, v in values.items())

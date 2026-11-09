@@ -80,9 +80,10 @@ def check_run_name(name: object) -> None:
         raise TypeError(f"run_name must be a string, got {name!r}")
     if not name.strip():
         raise ValueError("run_name must not be empty")
-    if name == "latest":
+    if name in ("latest", "*"):
         raise ValueError(
-            "run_name 'latest' is reserved: `mew compare path@latest` selects the newest run"
+            f"run_name {name!r} is reserved: `mew compare path@latest` selects the newest run, "
+            "and `path@*` pools every run"
         )
 
 
