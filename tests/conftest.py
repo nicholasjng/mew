@@ -24,7 +24,8 @@ def pytest_sessionstart() -> None:
     if sys.version_info >= (3, 15):
         from mew.cpu import _unwinder
 
-        # Attach before any Memray test runs because Tachyon cannot attach after Memray has tracked the process on macOS.
+        # Attach before any Memray test runs: on macOS, Tachyon can't attach
+        # after Memray has tracked the process.
         # mew.cpu keeps this unwinder.
         _unwinder(os.getpid())
 

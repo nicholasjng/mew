@@ -115,8 +115,13 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-extend-select = ["UP"]
-ignore = ["PLW1510"]  # don't require check=False on subprocesses bound to a variable.
+extend-select = ["UP", "B", "SIM", "RET", "PIE", "C4", "FURB", "PERF", "PT", "RUF", "E501"]
+ignore = [
+    "PLW1510",  # don't require check=False on subprocesses bound to a variable.
+    "PT018",  # allow `assert a and b`.
+    "RUF001",  # `×` and non-ASCII digits in strings are deliberate.
+    "RUF003",  # the same in comments.
+]
 
 [tool.ruff.lint.isort]
 # Merge `from x import y` and `from x import z as z` into one statement.

@@ -88,7 +88,8 @@ def test_collect_files_accepts_single_file(tmp_path):
     assert files == [f.resolve()]
 
 
-def test_discovered_unloads_only_what_it_added(tmp_path, _restore_sys_path):
+@pytest.mark.usefixtures("_restore_sys_path")
+def test_discovered_unloads_only_what_it_added(tmp_path):
     """`discovered` drops the imported benchmark module and its `sys.path` entry on exit, but keeps
     modules that module imported."""
     _write(tmp_path / "_bench_fixtures.py", "VALUE = 7\n")

@@ -101,7 +101,8 @@ def test_vcs_context_in_a_git_repo(tmp_path: Path):
 
 @pytest.mark.usefixtures("_isolated_vcs")
 def test_vcs_context_prefers_jj(tmp_path: Path):
-    """In a colocated jj and git repo, `vcs_context` reports jj: change id, commit and dirty flag."""
+    """In a colocated jj and git repo, `vcs_context` reports jj: change id, commit and dirty
+    flag."""
     if not shutil.which("jj"):
         pytest.skip("jj not available")
     # Colocated with one commit, git has a HEAD too: only the order picks jj.

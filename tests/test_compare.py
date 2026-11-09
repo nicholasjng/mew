@@ -605,7 +605,8 @@ def test_compare_missing_counter_hints_set_counter(
 def test_compare_memory_metric_without_data_hints_profile_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A memory metric on results without memory data exits 1 and points to `--memory-profiler memray`."""
+    """A memory metric on results without memory data exits 1 and points to
+    `--memory-profiler memray`."""
     other, base = _write_pair(tmp_path, other=[_row("bench_x", 1.0)], base=[_row("bench_x", 1.0)])
     code = compare([base, other], metric="memory.peak_bytes", console=Console())
     assert code == 1
