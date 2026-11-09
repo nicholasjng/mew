@@ -50,10 +50,6 @@ importable from `mew` directly:
    REGISTRY
    BENCHMARK_VERSION
    BENCHMARK_COMMIT
-   set_context
-   update_context
-   get_context
-   clear_context
    vcs_context
    machine_context
 ```

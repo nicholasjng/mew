@@ -8,7 +8,6 @@ import sys
 import pytest
 
 from mew._registry import REGISTRY
-from mew.context import clear_context
 from mew.machine import _gil_enabled, _is_free_threaded_build
 
 
@@ -45,7 +44,5 @@ def pytest_runtest_protocol(item: pytest.Item):
 @pytest.fixture(autouse=True)
 def _clean_globals():
     REGISTRY.clear()
-    clear_context()
     yield
     REGISTRY.clear()
-    clear_context()

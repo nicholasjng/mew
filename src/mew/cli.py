@@ -9,10 +9,10 @@ import os
 import re
 import sys
 import traceback
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO, cast
+from typing import TYPE_CHECKING, Any, TextIO, cast
 
 if TYPE_CHECKING:
     from _typeshed import SupportsWrite
@@ -43,7 +43,6 @@ from mew._options import (
 from mew._registry import compile_name_filter, longest_row_name, selected_cases
 from mew._results import load_run, result_format, run_summaries, split_selector
 from mew._statistics import resolve_statistic
-from mew.context import set_context
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -88,9 +87,10 @@ def _import_or_exit(path: Path, command: str) -> None:
 def _import_setup(cfg: _config.Config, command: str) -> None:
     """Import ``[tool.mew] setup`` before discovery, if configured.
 
-    Imported first and unconditionally, so what it establishes -- context
-    providers, shared fixtures, environment -- applies to every invocation,
-    not only the ones that happen to select the file it was written next to.
+    Imported first and unconditionally, so what it establishes -- shared
+    fixtures, environment, its ``context()`` hook -- applies to every
+    invocation, not only the ones that happen to select the file it was
+    written next to.
     """
     if not cfg.setup:
         return
@@ -99,6 +99,35 @@ def _import_setup(cfg: _config.Config, command: str) -> None:
         print(f"mew: invalid config: [tool.mew] setup file not found: {path}", file=sys.stderr)
         raise SystemExit(2)
     _import_or_exit(path, command)
+
+
+def _setup_context(cfg: _config.Config) -> dict[str, Any]:
+    """Call the setup file's ``context()``, if it defines one, for the run's context.
+
+    Called once ``mew run`` has discovered its benchmarks, so ``mew list`` never
+    runs it. A hook that raises, or returns anything but a mapping with string
+    keys, exits 2 before any benchmark runs.
+    """
+    if not cfg.setup:
+        return {}
+    path = cfg.project_root / cfg.setup
+    # Imported during discovery: this returns that module, without running it again.
+    hook = getattr(_discovery.import_file(path), "context", None)
+    if not callable(hook):
+        return {}
+    try:
+        value = hook()
+    except Exception as e:
+        traceback.print_exc()
+        print(f"mew run: context() in {path} raised", file=sys.stderr)
+        raise SystemExit(2) from e
+    if not isinstance(value, Mapping) or not all(isinstance(k, str) for k in value):
+        print(
+            f"mew run: context() in {path} must return a dict with string keys, got {value!r}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return dict(value)
 
 
 def _collect(
@@ -322,9 +351,10 @@ def run(
             )
         profiler_manager = managers["cpu"].manager if "cpu" in managers else None
         memory_manager = managers["memory"].manager if "memory" in managers else None
+        context = _setup_context(cfg)
         if managers:
             # Provenance, as the machine's: `mew compare` shows where files differ.
-            set_context("profilers", {slot: m.record for slot, m in managers.items()})
+            context["profilers"] = {slot: m.record for slot, m in managers.items()}
 
         with _usage_error("run", ValueError):
             reporters = _build_reporters(
@@ -345,6 +375,7 @@ def run(
             repetitions=repetitions,
             random_interleaving=random_interleaving,
             run_name=run_name,
+            context=context,
             strict=strict,
             capture_output=capture == "fd",
             memory_manager=memory_manager,

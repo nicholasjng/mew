@@ -1,8 +1,9 @@
-"""User-defined context: dotted keys, snapshots, runner integration."""
+"""A run's context: what `mew.run(context=...)` records, and how its values are encoded."""
 
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -12,101 +13,77 @@ import mew
 from mew.reporter import JSONReporter
 
 
-@pytest.mark.parametrize(
-    ("calls", "expected"),
-    [
-        ([("commit", "abc123")], {"commit": "abc123"}),
-        (
-            [("dataset.size", 1024), ("dataset.name", "synthetic")],
-            {"dataset": {"size": 1024, "name": "synthetic"}},
-        ),
-        # The last write wins in either order: a value replaces what was nested
-        # below its key, and a dotted key replaces a non-dict value with a dict.
-        ([("dataset.size", 1024), ("dataset", "scalar")], {"dataset": "scalar"}),
-        ([("dataset", "scalar"), ("dataset.size", 1024)], {"dataset": {"size": 1024}}),
-        ([("dataset", None), ("dataset.size", 1024)], {"dataset": {"size": 1024}}),
-        ([("a.x", 0), ("a.b", 1), ("a.b.c", 2)], {"a": {"x": 0, "b": {"c": 2}}}),
-    ],
-)
-def test_set_context_nests_dotted_keys(calls, expected):
-    """Dotted keys nest into dicts, and the last write to a key or to its parent wins."""
-    for key, value in calls:
-        mew.set_context(key, value)
-    assert mew.get_context() == expected
+def _bench() -> None:
+    @mew.benchmark
+    def bench_x(state):
+        for _ in state:
+            pass
 
 
-def test_set_context_copies_values():
-    """`set_context` stores deep copies: dotted writes and the caller's later changes stay apart."""
-    dataset, shape = {"size": 1024, "source": {"name": "uniform"}}, [2, 3]
-    mew.set_context("dataset", dataset)
-    mew.set_context("shape", shape)
-    mew.set_context("dataset.size", 1)
-    mew.set_context("dataset.source.name", "zipf")
-    shape.append(4)
-    assert dataset == {"size": 1024, "source": {"name": "uniform"}}
-    assert mew.get_context()["shape"] == [2, 3]
+def test_run_records_its_context_beside_the_machines():
+    """`context=` lands in every row's `context`, beside mew's version and the machine's
+    details; its keys win over mew's own."""
+    _bench()
+    cap = Capture()
+    context = {"dataset": {"name": "uniform", "size": 1024}, "cpu_model": "named by the suite"}
+    mew.run(min_time="1x", reporter=cap, context=context)
+    assert cap.context is not None
+    recorded = cap.context["context"]
+    assert recorded["dataset"] == {"name": "uniform", "size": 1024}
+    assert recorded["cpu_model"] == "named by the suite"
+    assert recorded["mew"] == mew.__version__
+    assert "python" in recorded
 
 
-def test_update_context_applies_mappings_then_kwargs():
-    """`update_context` nests dotted keys from mappings and keyword arguments; keywords win."""
-    # Dotted keys nest in both forms; keyword arguments override the mappings.
-    mew.update_context(
-        {"dataset.size": 1024, "commit": "abc"},
-        commit="def",
-        **{"env.python": "3.13"},
-    )
-    assert mew.get_context() == {
-        "dataset": {"size": 1024},
-        "commit": "def",
-        "env": {"python": "3.13"},
-    }
-
-
-@pytest.mark.parametrize(
-    ("key", "message"), [("", "non-empty string"), ("dataset..size", "empty path segment")]
-)
-def test_malformed_key_raises(key, message):
-    """An empty key or an empty dotted path segment raises `ValueError`."""
-    with pytest.raises(ValueError, match=message):
-        mew.set_context(key, 1)
-
-
-def test_get_context_returns_a_snapshot():
-    """`get_context` returns a deep copy; changing it leaves the stored context as it was."""
-    mew.set_context("a", {"nested": 1})
-    snap = mew.get_context()
-    snap["a"]["nested"] = 999
-    snap["new"] = "value"
-    assert mew.get_context() == {"a": {"nested": 1}}
-
-
-def test_context_snapshot_is_captured_at_run_start():
-    """Reporters get the context as it was when `mew.run` started, not as a benchmark changed it."""
-    mew.set_context("snapshot_phase", "before")
+def test_context_is_captured_at_run_start():
+    """Reporters get the context as it was when `mew.run` started, not as a benchmark changed
+    the dict it was given."""
+    context = {"phase": "before"}
 
     @mew.benchmark
     def bench_x(state):
-        # Mutating during the run shouldn't affect the snapshot the reporter sees.
-        mew.set_context("snapshot_phase", "during")
+        context["phase"] = "during"
         for _ in state:
             pass
 
     cap = Capture()
-    mew.run(min_time="1x", reporter=cap)
+    mew.run(min_time="1x", reporter=cap, context=context)
     assert cap.context is not None
-    assert cap.context["context"]["snapshot_phase"] == "before"
+    assert cap.context["context"]["phase"] == "before"
 
 
-def test_json_reporter_writes_what_json_cannot_as_str(tmp_path: Path):
-    """`JSONReporter` writes a context value JSON cannot encode, such as a `Path`, as its `str`."""
-    mew.set_context("path", Path("data.csv"))
+class _Model:
+    """Stands in for an object whose `str()` would be large or meaningless."""
 
-    @mew.benchmark
-    def bench_x(state):
-        for _ in state:
-            pass
+    def __str__(self) -> str:
+        return "x" * 100_000
 
+
+def test_context_values_json_cannot_hold_are_named_by_type(tmp_path: Path):
+    """A value JSON can't represent is stored as its type's qualified name, never its `str()`;
+    a path as its string; tuples as lists, number keys as strings, and NaN as JSON's `NaN`."""
+    _bench()
     out = tmp_path / "results.json"
-    mew.run(min_time="1x", reporter=JSONReporter(output=out))
-    # Lossy, but the run doesn't crash on a Path or a datetime.
-    assert json.loads(out.read_text())["context"]["path"] == "data.csv"
+    context = {
+        "model": _Model(),
+        "data": Path("data") / "train.csv",
+        "shape": (2, 3),
+        "by_size": {1: "small"},
+        "loss": math.nan,
+    }
+    mew.run(min_time="1x", reporter=JSONReporter(output=out), context=context)
+    (row,) = json.loads(out.read_text())["benchmarks"]
+    recorded = row["context"]
+    assert recorded["model"] == f"{__name__}._Model"
+    assert recorded["data"] == str(Path("data") / "train.csv")
+    assert recorded["shape"] == [2, 3]
+    assert recorded["by_size"] == {"1": "small"}
+    assert math.isnan(recorded["loss"])
+
+
+@pytest.mark.parametrize("context", [["not", "a", "mapping"], {1: "a non-string key"}])
+def test_run_rejects_a_context_that_is_not_a_mapping_with_string_keys(context):
+    """A context must be a mapping with string keys: row context is a JSON object."""
+    _bench()
+    with pytest.raises(TypeError, match="context must be a mapping with string keys"):
+        mew.run(min_time="1x", reporter=Capture(), context=context)

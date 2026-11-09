@@ -1,17 +1,18 @@
 # Context
 
-Use context to record metadata needed to interpret or filter results.
+Use context to record what you need to interpret or filter results later: a
+commit, a dataset, a build flavour. From Python, pass it to {func}`mew.run`:
 
 ```python
 import mew
 
-mew.update_context(
-    git_sha="abc123",
-    dataset={"name": "uniform-1k", "size": 1000},
-)
+mew.run(context={"git_sha": "abc123", "dataset": {"name": "uniform-1k", "size": 1000}})
 ```
 
-{func}`mew.run` snapshots context at startup.
+From the CLI, a setup file's `context()` hook supplies it; see
+[below](#the-context-hook).
+
+mew snapshots the context when the run starts.
 `run` identifies the run; `context` holds user and machine provenance. Every
 row of a result file carries both blocks:
 
@@ -57,12 +58,14 @@ select the newest run of that name in a file that holds several
 reserved: `results.jsonl@latest` selects the newest run. Benchmark selection
 tags (`-t`) are unrelated.
 
-## Applying context to every run
+(the-context-hook)=
+## The `context()` hook
 
-Context is run-wide, but only selected benchmark files are imported.
-Put shared setup in a dedicated file:
-
-Point `[tool.mew] setup` at a file mew imports before discovery, every time:
+`mew run` takes its context from the setup file that `[tool.mew] setup` names.
+mew imports that file before discovery, every time, so it is also the place for
+setup every run needs, such as environment variables. If it defines
+`context()`, `mew run` calls it once, after discovering the benchmarks and
+before running them:
 
 ```toml
 [tool.mew]
@@ -75,11 +78,20 @@ import os
 
 import mew
 
-mew.update_context(mew.vcs_context())
-mew.set_context("ci.job", os.environ.get("CI_JOB_ID"))
+os.environ.setdefault("OMP_NUM_THREADS", "1")  # plain setup, at import
+
+
+def context() -> dict:
+    return {**mew.vcs_context(), "ci": {"job": os.environ.get("CI_JOB_ID")}}
 ```
 
-The path is relative to `pyproject.toml` and is imported before discovery.
+- The path is relative to `pyproject.toml`.
+- `mew list` doesn't call the hook, so listing never shells out to git or jj.
+- A hook that raises, or returns anything but a dict with string keys, stops
+  `mew run` with exit code 2 before any benchmark runs.
+- Every selected benchmark gets the same context, whichever files the run
+  imported. For data that differs per case, such as an input size, use
+  `@mew.parametrize`: each row records its case in `params`.
 
 (recording-the-host)=
 ### Recording the host
@@ -87,44 +99,28 @@ The path is relative to `pyproject.toml` and is imported before discovery.
 mew doesn't record the machine's host name, since it often names a person, as
 on macOS, and result files get shared. The CPU and interpreter fields describe
 what timings depend on. To tell machines apart anyway, such as CI runners,
-record a name in the setup file:
+return a name from the hook:
 
 ```python
 import socket
 
-mew.set_context("host", socket.gethostname())  # or os.environ["RUNNER_NAME"]
+
+def context() -> dict:
+    return {"host": socket.gethostname()}  # or os.environ["RUNNER_NAME"]
 ```
 
 `mew compare` then warns when files differ in `host`, as it does for the CPU.
 
-## Dotted keys
+## Values
 
-Dotted keys produce nested dictionaries:
-
-```python
-mew.set_context("dataset.size", 1000)
-mew.set_context("dataset.kind", "uniform")
-# -> {"dataset": {"size": 1000, "kind": "uniform"}}
-```
-
-The last write wins. Setting `dataset` replaces everything nested under it, and
-setting `dataset.size` replaces a `dataset` value that is not a dict, `None`
-included, with a new dict. Values are copied when you set them, so changing a
-dict or list you passed changes neither the context nor, through later writes
-to the context, your own object.
-
-A DuckDB query on the resulting run data might look like:
+Nested dicts and lists are kept, so a DuckDB query reaches into them:
 
 ```sql
 SELECT context.dataset.size AS size, real_time
 FROM 'results.jsonl';
 ```
 
-## API surface
-
-- {func}`mew.set_context`: set one key (dotted keys produce a nested struct).
-- {func}`mew.update_context`: set many keys at once.
-- {func}`mew.get_context`: snapshot the current state (deep-copied).
-- {func}`mew.clear_context`: wipe all entries.
-
-Prefer JSON-native values; unsupported objects are stringified.
+A value JSON can't hold is stored as its type's qualified name, such as
+`"torch.Tensor"`, never as its `str()`, which for a large object can run to
+megabytes. A path is stored as its string, a tuple as a list, and NaN and
+infinity as JSON's `NaN` and `Infinity` (see [](reporters.md)).

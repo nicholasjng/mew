@@ -165,7 +165,6 @@ def test_cpuinfo_model(lines: list[str], model: str | None):
 )
 def test_run_stamps_its_identity_on_every_row(tmp_path: Path, reporter, suffix: str):
     """JSON and JSONL rows alike carry the run's `run` and `context` blocks."""
-    mew.set_context("build", "asan")
 
     @mew.benchmark
     def bench_s(state):
@@ -173,7 +172,10 @@ def test_run_stamps_its_identity_on_every_row(tmp_path: Path, reporter, suffix: 
             pass
 
     out = tmp_path / f"out{suffix}"
-    mew.run(min_time="1x", repetitions=2, reporter=reporter(output=out), run_name="before")
+    rep = reporter(output=out)
+    mew.run(
+        min_time="1x", repetitions=2, reporter=rep, run_name="before", context={"build": "asan"}
+    )
     # read_results rejects anything but rows, such as a JSONL context line.
     first, second = read_results(out)
     run = first["run"]

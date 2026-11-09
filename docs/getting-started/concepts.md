@@ -63,6 +63,6 @@ See [](../guide/reporters.md).
 
 ## Context
 
-`mew.set_context()` and `mew.update_context()` populate metadata stored under the reporter's `context` key.
+`mew.run(context=...)`, or the `context()` hook of the setup file `mew run` imports, adds metadata to each row's `context`.
 Use it to stamp results with a git SHA, dataset identifiers, or hardware tags, anything you'd later want to filter on.
 See [](../guide/context.md).

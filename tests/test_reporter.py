@@ -17,13 +17,13 @@ from mew.compare import read_results
 from mew.reporter import Fanout, JSONLReporter, JSONReporter, RichReporter
 
 
-def _run_one(reporter):
+def _run_one(reporter, context=None):
     @mew.benchmark
     def bench_x(state):
         for _ in state:
             pass
 
-    mew.run(min_time="1x", reporter=reporter)
+    mew.run(min_time="1x", reporter=reporter, context=context)
 
 
 def _fake_row(name: str, label: str = "") -> BenchmarkResult:
@@ -135,9 +135,8 @@ def test_jsonl_archive_is_queryable_by_duckdb(tmp_path, suffix):
     # The archive contract: self-contained rows, gzipped or not, that DuckDB
     # queries directly, with nested blocks (`context`, `session`) as structs.
     duckdb = pytest.importorskip("duckdb")
-    mew.set_context("dataset.size", 1024)
     out = tmp_path / f"results{suffix}"
-    _run_one(JSONLReporter(output=out))
+    _run_one(JSONLReporter(output=out), context={"dataset": {"size": 1024}})
 
     query = f"SELECT name, context.dataset.size, run.id FROM '{out}'"
     ((name, size, session_id),) = duckdb.connect().execute(query).fetchall()

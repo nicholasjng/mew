@@ -25,7 +25,6 @@ from mew._typing import (
     State,
 )
 from mew.api import benchmark, grid, parametrize
-from mew.context import clear_context, get_context, set_context, update_context
 from mew.machine import machine_context
 from mew.reporter import (
     Fanout,
@@ -70,13 +69,9 @@ __all__ = [
     "Terminal",
     "__version__",
     "benchmark",
-    "clear_context",
-    "get_context",
     "grid",
     "machine_context",
     "parametrize",
     "run",
-    "set_context",
-    "update_context",
     "vcs_context",
 ]

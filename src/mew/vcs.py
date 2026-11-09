@@ -1,11 +1,12 @@
 """Source-control provenance from jj or git.
 
 :func:`vcs_context` returns the working copy's commit and dirty state as a
-mapping that :func:`mew.update_context` accepts::
+mapping to merge into a run's context, as in a setup file's ``context()`` hook::
 
     import mew
 
-    mew.update_context(mew.vcs_context())
+    def context():
+        return {**mew.vcs_context(), "dataset": "uniform-1k"}
 
 It shells out to jj, then git, and returns ``{}`` outside a work tree.
 """
