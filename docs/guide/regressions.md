@@ -82,7 +82,7 @@ A benchmark that a file has as skipped is reported with its reason
 (`warning: skipped in head.json: …`), apart from benchmarks the file lacks.
 
 For repeated measurements, each value carries its spread: the coefficient of
-variation (stddev over the mean of the repetitions, whatever the `--statistic`),
+variation (stddev over the mean of the repetitions),
 as `±N%`. Above 25% it turns red as `±N% (!)`; treat that delta as unreliable.
 
 (comparing-runs-in-one-file)=

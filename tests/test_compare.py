@@ -6,7 +6,6 @@ import gzip
 import json
 import math
 import re
-import statistics
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,7 @@ from _helpers import (
     write_pair as _write_pair,
 )
 
-from mew._results import Sample, Statistic, load_column, split_selector
+from mew._results import Sample, load_column, split_selector
 from mew.compare import (
     _compare_samples,
     _fmt_delta,
@@ -28,24 +27,6 @@ from mew.compare import (
     run_summaries,
 )
 from mew.regressions import CounterConfig, CounterRule, RegressionConfig
-
-
-def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
-    """`compare(statistic=max)` reduces each benchmark by its maximum instead of the median."""
-    # Both files: a tight cluster plus one outlier. median ignores it; max picks it.
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("b", 1.0), _row("b", 2.0), _row("b", 51.0)],
-        base=[_row("b", 1.0), _row("b", 2.0), _row("b", 99.0)],
-    )
-
-    console = Console(width=200)
-    code = compare([base, other], statistic=max, console=console)
-    assert code == 0
-    out = console.export_text()
-    assert "99.00 ns" in out
-    assert "51.00 ns" in out
-    assert "-48.48%" in out
 
 
 def test_load_skips_skipped_rows(tmp_path: Path) -> None:
@@ -588,21 +569,18 @@ def test_compare_memory_metric_without_data_hints_profile_flag(
 
 
 @pytest.mark.parametrize(
-    ("other", "base", "statistic", "markers"),
+    ("other", "base", "markers"),
     [
         # Baseline reps scatter wildly (CV >> 25%): stdev([40,100,160])/mean = 60/100.
-        ((99.0, 100.0, 101.0), (40.0, 100.0, 160.0), None, ["±60% (!)"]),
-        # The CV divides by the mean whatever the statistic; by min, it would be 150%.
-        ((99.0, 100.0, 101.0), (40.0, 100.0, 160.0), min, ["±60% (!)"]),
+        ((99.0, 100.0, 101.0), (40.0, 100.0, 160.0), ["±60% (!)"]),
         # Both sides steady.
-        ((49.0, 50.0, 51.0), (99.0, 100.0, 101.0), None, []),
+        ((49.0, 50.0, 51.0), (99.0, 100.0, 101.0), []),
     ],
 )
 def test_compare_marks_only_high_cv_rows(
     tmp_path: Path,
     other: tuple[float, ...],
     base: tuple[float, ...],
-    statistic: Statistic | None,
     markers: list[str],
 ) -> None:
     """Only values whose repetitions vary by more than 25% of the mean get a `±N% (!)` marker."""
@@ -610,7 +588,7 @@ def test_compare_marks_only_high_cv_rows(
         tmp_path, other=[_row("b", v) for v in other], base=[_row("b", v) for v in base]
     )
     console = Console(width=200)
-    assert compare([base_path, other_path], statistic=statistic, console=console) == 0
+    assert compare([base_path, other_path], console=console) == 0
     assert re.findall(r"±\d+% \(!\)", console.export_text()) == markers
 
 
@@ -648,19 +626,6 @@ def test_fmt_delta_colors_by_improvement_direction() -> None:
     assert _fmt_delta(0.2, higher_is_better=None) == ("+20.00%", "")
     # A zero baseline against a nonzero contender must not read as +0.00%.
     assert _fmt_delta(math.inf) == ("+∞%", "red")
-
-
-def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
-    """An exception in a custom statistic surfaces as a `ValueError` naming the benchmark."""
-
-    # A failing reducer must fail loudly, not drop every benchmark and report
-    # "no overlapping benchmarks".
-    def failing(values: list[float]) -> float:
-        raise statistics.StatisticsError("needs more data")
-
-    other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
-    with pytest.raises(ValueError, match="statistic failed on 'b': needs more data"):
-        compare([base, other], statistic=failing, console=Console(width=200))
 
 
 def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:

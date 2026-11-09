@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, cast
 
 from mew._managers import Preset, parse_presets
-from mew._results import resolve_statistic
 from mew.regressions import AllowRule, CounterConfig, CounterRule, RegressionConfig
 
 # `[tool.mew]` keys.
@@ -17,7 +16,6 @@ _KEYS = (
     "benchpaths",
     "python-files",
     "setup",
-    "statistic",
     "regressions",
     "counters",
     "profilers",
@@ -39,8 +37,6 @@ class Config:
         A Python file, relative to ``project_root``, imported before any
         benchmark file: the place for context every run should record, whichever
         benchmarks it selects.
-    statistic : str or None
-        Default ``mew compare`` reducer; ``None`` keeps the median.
     regressions : RegressionConfig
         The ``[tool.mew.regressions]`` gate: default threshold and allowlist rules.
     counters : CounterConfig
@@ -58,7 +54,6 @@ class Config:
     benchpaths: list[str] = field(default_factory=lambda: ["benchmarks"])
     python_files: list[str] = field(default_factory=lambda: ["bench_*.py", "*_bench.py"])
     setup: str | None = None
-    statistic: str | None = None
     regressions: RegressionConfig = field(default_factory=RegressionConfig)
     counters: CounterConfig = field(default_factory=CounterConfig)
     profilers: dict[str, Preset] = field(default_factory=dict)
@@ -147,19 +142,12 @@ def _parse_config(raw: Mapping[str, Any], *, project_root: Path) -> Config:
     """Validate a raw ``[tool.mew]`` table into a :class:`Config`."""
     tool = _read_table(raw, _KEYS, "[tool.mew]")
     cfg = Config(
-        statistic=_parse_str(tool, "statistic"),
         setup=_parse_str(tool, "setup"),
         regressions=_parse_regressions(tool.get("regressions", {})),
         counters=_parse_counters(tool.get("counters", [])),
         profilers=parse_presets(tool.get("profilers", {})),
         project_root=project_root,
     )
-    if cfg.statistic is not None:
-        # Fail at load, not at the first `mew compare`.
-        try:
-            resolve_statistic(cfg.statistic)
-        except ValueError as e:
-            raise ValueError(f"[tool.mew] {e}") from e
     if (value := tool.get("benchpaths")) is not None:
         cfg.benchpaths = _parse_str_list(value, "benchpaths")
     if (value := tool.get("python_files")) is not None:

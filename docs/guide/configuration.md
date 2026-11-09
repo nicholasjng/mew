@@ -9,11 +9,6 @@ Keys are spelled with dashes, as TOML has it: `python-files`, not `python_files`
 benchpaths = ["benchmarks"]
 # Glob patterns for benchmark file discovery.
 python-files = ["bench_*.py", "*_bench.py"]
-# Default reducer `mew compare` applies over per-repetition values: min, max,
-# mean, median, or gmean.
-# Omit to keep the median; --statistic wins.
-statistic = "median"
-
 # Python file imported once, before any benchmark file. Relative to this
 # pyproject.toml, so it applies from any working directory.
 setup = "benchmarks/conf.py"
@@ -28,9 +23,9 @@ $ mew list
 mew: invalid config: /path/to/project/pyproject.toml: unknown key 'benchpath' in [tool.mew]; did you mean 'benchpaths'?
 ```
 
-An invalid `statistic` also stops `mew run`, not only `mew compare`, and so
-does an error in `[tool.mew.regressions]` or its allowlist rules, in
-`[[tool.mew.counters]]` (see {doc}`regressions`), or in a profiler preset.
+An error in `[tool.mew.regressions]` or its allowlist rules, in
+`[[tool.mew.counters]]` (see {doc}`regressions`), or in a profiler preset
+stops `mew run` too, not only `mew compare`.
 
 ## Profiler presets
 

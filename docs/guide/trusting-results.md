@@ -45,9 +45,8 @@ $ mew run --repetitions 10 -o head.json
 $ mew compare baseline.json head.json
 ```
 
-`compare` reduces each benchmark's per-repetition rows itself — median by
-default, or `--statistic` for `min`, `max`, `mean`, or `gmean` — and
-computes the coefficient of variation (stddev / mean, whatever the statistic).
+`compare` reduces each benchmark's per-repetition rows to their median, and
+computes the coefficient of variation (stddev / mean).
 Each value carries it as `±N%`; above **25%** it is flagged red as `±N% (!)`:
 
 ```text

@@ -1,5 +1,5 @@
 """The result row format: encode values for rows, read result files, group their
-rows by run, and reduce them to samples with a statistic and a significance test.
+rows by run, and reduce them to samples: their median and a significance test.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from itertools import groupby
 from pathlib import Path
-from typing import Any, Literal, SupportsFloat, TextIO, cast
+from typing import Any, Literal, TextIO, cast
 
 from mew._console import overflow
 from mew._typing import BenchmarkResult
@@ -85,8 +85,8 @@ class Sample:
     Attributes
     ----------
     value : float
-        The statistic over the repetitions, the median by default. Times are
-        in nanoseconds, whatever unit the file stored them in.
+        The median of the repetitions. Times are in nanoseconds, whatever
+        unit the file stored them in.
     values : tuple[float, ...]
         The per-repetition values, in ``value``'s unit, for the significance test.
     counter_format : dict or None
@@ -108,9 +108,7 @@ class Sample:
     def cv(self) -> float | None:
         """The coefficient of variation, ``stddev`` over the mean of ``values``.
 
-        Uses the mean whatever statistic ``value`` holds, so the choice of
-        statistic does not move the noise marker. ``None`` without repetitions
-        or for a zero mean.
+        ``None`` without repetitions or for a zero mean.
         """
         if (stddev := self.stddev) is None:
             return None
@@ -243,9 +241,8 @@ def read_rows(path: Path) -> list[dict[str, Any]]:
 def _samples_from_groups(
     groups: dict[str, list[dict[str, Any]]],
     metric: str,
-    statistic: Statistic | None = None,
 ) -> dict[str, Sample]:
-    """Aggregate per-name row groups into center/stddev :class:`Sample`s."""
+    """Reduce per-name row groups to :class:`Sample`s, each centered on its median."""
     samples: dict[str, Sample] = {}
     counter = counter_name(metric)
     for name, group in groups.items():
@@ -256,13 +253,9 @@ def _samples_from_groups(
         if counter is not None:
             # From the first row that has the counter: flags don't change between repetitions.
             fmt = next((r.get("format") for g in group if (r := _counter(g, counter))), None)
-        try:
-            # A user reducer may return e.g. a numpy scalar.
-            center = float((statistic or statistics.median)(values))
-        except statistics.StatisticsError as e:
-            # E.g. gmean over a zero before Python 3.13; fail rather than drop the benchmark.
-            raise ValueError(f"statistic failed on {name!r}: {e}") from e
-        samples[name] = Sample(value=center, values=tuple(values), counter_format=fmt)
+        samples[name] = Sample(
+            value=float(statistics.median(values)), values=tuple(values), counter_format=fmt
+        )
     return samples
 
 
@@ -339,7 +332,6 @@ def load_column(
     path: Path,
     metric: str,
     selector: str | None = None,
-    statistic: Statistic | None = None,
     reader: Callable[[Path], list[dict[str, Any]]] = read_rows,
 ) -> tuple[dict[str, Sample], dict[str, Any], dict[str, str]]:
     """Load one comparison column from a result file: read, select a run, reduce.
@@ -361,7 +353,7 @@ def load_column(
     for r in measured:
         groups[r["name"]].append(r)
     try:
-        samples = _samples_from_groups(groups, metric, statistic)
+        samples = _samples_from_groups(groups, metric)
     except ValueError as e:
         raise ValueError(f"{path}: {e}") from e
     skipped = {
@@ -487,33 +479,6 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
         If the file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
     return cast("list[BenchmarkResult]", read_rows(Path(path)))
-
-
-# Any float-castable result, e.g. a numpy scalar; callers convert it with float().
-Statistic = Callable[[list[float]], SupportsFloat]
-
-
-_BUILTIN_STATISTICS: dict[str, Statistic] = {
-    "min": min,
-    "max": max,
-    "mean": statistics.fmean,
-    "median": statistics.median,
-    "gmean": statistics.geometric_mean,
-}
-
-
-def resolve_statistic(spec: str) -> Statistic:
-    """Resolve a statistic name to a reducer callable.
-
-    ``min``, ``max``, ``mean``, ``median`` or ``gmean``; raises :class:`ValueError`
-    for anything else. Percentiles are left out: over the few repetitions a run
-    has, they only interpolate between its largest values.
-    """
-    if spec in _BUILTIN_STATISTICS:
-        return _BUILTIN_STATISTICS[spec]
-    raise ValueError(
-        f"statistic {spec!r}: unknown name; choose from {', '.join(sorted(_BUILTIN_STATISTICS))}"
-    )
 
 
 def _average_ranks(values: list[float]) -> tuple[list[float], float]:

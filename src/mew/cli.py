@@ -41,7 +41,7 @@ from mew._options import (
     parse_seconds,
 )
 from mew._registry import compile_name_filter, longest_row_name, selected_cases
-from mew._results import load_run, resolve_statistic, result_format, run_summaries, split_selector
+from mew._results import load_run, result_format, run_summaries, split_selector
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -401,7 +401,6 @@ def compare(
     metric: str,
     pattern: str | None,
     literal: bool,
-    statistic: str | None,
     regression_threshold: float | None,
     exit_non_zero_on_regression: bool,
 ) -> None:
@@ -409,11 +408,6 @@ def compare(
     from mew.compare import compare as _compare
 
     cfg = _load_config_or_exit()
-    # --statistic wins; else fall back to [tool.mew] statistic; else stdlib median.
-    spec = statistic if statistic is not None else cfg.statistic
-    with _usage_error("compare", ValueError):
-        reduce = resolve_statistic(spec) if spec is not None else None
-
     # Any regression flag opts into gating, so the gate flag alone is not a
     # silent no-op; it gates at the default threshold.
     gate = None
@@ -428,7 +422,6 @@ def compare(
             metric=metric,
             pattern=pattern,
             literal=literal,
-            statistic=reduce,
             regressions=gate,
             counters=cfg.counters,
         )
@@ -811,11 +804,6 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         help="Compare using <metric> (default real_time), or the counter counters.<name>.",
     )
     _add_filter_args(p, verb="Compare")
-    p.add_argument(
-        "--statistic",
-        metavar="<name>",
-        help="Reduce repetitions with min, max, mean, median or gmean.",
-    )
     p.add_argument(
         "--regression-threshold",
         type=_percent,

@@ -32,7 +32,6 @@ from mew._results import (
     TIME_METRICS,
     RunSummary,
     Sample,
-    Statistic,
     counter_name,
     load_column,
     mannwhitney_p,
@@ -356,7 +355,6 @@ def compare(
     metric: str = "real_time",
     pattern: str | None = None,
     literal: bool = False,
-    statistic: Statistic | None = None,
     regressions: RegressionConfig | None = None,
     counters: CounterConfig | None = None,
     console: Terminal | None = None,
@@ -391,9 +389,6 @@ def compare(
         Regex searched for in benchmark names.
     literal : bool, default False
         Match ``pattern`` as plain text, e.g. to keep a ``name[label]``'s brackets.
-    statistic : Callable[[list[float]], SupportsFloat], optional
-        Reduces each benchmark's repetition values to the value shown and
-        gated; the median by default. The spread is unaffected.
     regressions : RegressionConfig, optional
         Gate the second file against the baseline, and print a regression panel.
     counters : CounterConfig, optional
@@ -414,8 +409,8 @@ def compare(
     ValueError
         If an argument, such as ``pattern``, is invalid, or a file can't be
         compared: it is not a mew result file, holds no measurements or no
-        run with the given name, or ``statistic`` fails on a benchmark's
-        values; or ``regressions`` gates on a counter without a direction.
+        run with the given name; or ``regressions`` gates on a counter without
+        a direction.
     OSError
         If a file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
@@ -445,7 +440,7 @@ def compare(
 
     columns = []
     for path, selector in parsed:  # the baseline first, as git diff and pyperf take it
-        samples, ctx, skipped = load_column(path, metric, selector, statistic, reader=read_once)
+        samples, ctx, skipped = load_column(path, metric, selector, reader=read_once)
         # Files that share a stem are told apart by their full path.
         base = str(path) if stems[path.stem] > 1 else path.stem
         label = f"{base}@{selector}" if selector else base
