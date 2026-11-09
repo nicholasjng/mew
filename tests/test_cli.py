@@ -465,7 +465,7 @@ def test_run_profile_memray_renders_the_run_and_annotates_rows(mew_cli, tmp_path
     """`--memory-profiler memray --profile-dir` writes a memray report per benchmark to `<dir>/memory`,
     and the rows and console table show peak memory."""
     pytest.importorskip("memray")
-    from mew._format import fmt_bytes
+    from mew._console import fmt_bytes
 
     (tmp_path / "bench_profiled.py").write_text(textwrap.dedent(_ALLOCATING))
     reports, out = tmp_path / "flames", tmp_path / "rows.json"

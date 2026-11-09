@@ -17,10 +17,9 @@ import pytest
 import mew
 from mew import runner
 from mew.compare import read_results, run_summaries
-from mew.machine import _cpuinfo_model
+from mew.machine import _cpuinfo_model, vcs_context
 from mew.reporter import JSONLReporter, JSONReporter
 from mew.runner import _new_run_id
-from mew.vcs import vcs_context
 
 
 @pytest.fixture
@@ -210,7 +209,7 @@ def test_jsonl_append_keeps_both_runs(tmp_path: Path, suffix: str):
 def test_git_dirty_state_is_unknown_when_status_fails(monkeypatch):
     """A failed `git status`, e.g. a timeout, leaves `dirty` out rather than recording clean.
     Clean and dirty trees are covered with a real repository above."""
-    from mew import vcs
+    from mew import machine as vcs
 
     def fake_run(cwd, program, *args):
         if program == "jj":

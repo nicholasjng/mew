@@ -13,9 +13,9 @@ from types import FrameType
 from typing import Any, Unpack, overload
 
 from mew._core import State
-from mew._encode import encode_param
 from mew._options import normalize_options
 from mew._registry import REGISTRY, Entry
+from mew._results import encode_param
 from mew._typing import BenchmarkFn, BenchmarkOptions
 
 

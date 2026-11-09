@@ -11,8 +11,17 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol, TextIO, runtime_checkable
 
-from mew._console import COL_SEP, Table, Terminal, fill, sgr, truncate_left
-from mew._format import fmt_bytes, fmt_counter, fmt_time
+from mew._console import (
+    COL_SEP,
+    Table,
+    Terminal,
+    fill,
+    fmt_bytes,
+    fmt_counter,
+    fmt_time,
+    sgr,
+    truncate_left,
+)
 from mew._results import ROW_STAMP_FIELDS, SCHEMA_VERSION, open_text
 from mew._typing import BenchmarkResult
 

@@ -28,8 +28,8 @@ from mew import (
     RichReporter,
     __version__ as _mew_version,
     _completions,
-    _discovery,
     _managers,
+    _registry,
     run as _run,
 )
 from mew._console import Table, Terminal, color_enabled, sgr
@@ -41,8 +41,7 @@ from mew._options import (
     parse_seconds,
 )
 from mew._registry import compile_name_filter, longest_row_name, selected_cases
-from mew._results import load_run, result_format, run_summaries, split_selector
-from mew._statistics import resolve_statistic
+from mew._results import load_run, resolve_statistic, result_format, run_summaries, split_selector
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -77,7 +76,7 @@ def _import_or_exit(path: Path, command: str) -> None:
     rejects; uncaught, it would exit 1, the code for "nothing matched".
     """
     try:
-        _discovery.import_file(path)
+        _registry.import_file(path)
     except Exception as e:
         traceback.print_exc()
         print(f"mew {command}: cannot import {path}", file=sys.stderr)
@@ -112,7 +111,7 @@ def _setup_context(cfg: _config.Config) -> dict[str, Any]:
         return {}
     path = cfg.project_root / cfg.setup
     # Imported during discovery: this returns that module, without running it again.
-    hook = getattr(_discovery.import_file(path), "context", None)
+    hook = getattr(_registry.import_file(path), "context", None)
     if not callable(hook):
         return {}
     try:
@@ -153,8 +152,8 @@ def _collect(
     # a.py::x and b.py::y also selects a.py::y and b.py::x. Compiled before any
     # import, so a bad pattern fails before benchmark code runs.
     with _usage_error(command, ValueError):
-        selectors = [_discovery.parse(p, literal=literal) for p in paths]
-        selectors += [_discovery.parse(line, literal=True) for line in lines if line]
+        selectors = [_registry.parse(p, literal=literal) for p in paths]
+        selectors += [_registry.parse(line, literal=True) for line in lines if line]
         if pattern:
             compile_name_filter(pattern, literal=literal)
     # Files to import come from positional args and stdin selectors, else
@@ -165,11 +164,11 @@ def _collect(
         # a hard error like a mistyped positional path.
         root = cfg.project_root
         selectors = [
-            sel for p in cfg.benchpaths if (sel := _discovery.parse(p, root=root)).path.exists()
+            sel for p in cfg.benchpaths if (sel := _registry.parse(p, root=root)).path.exists()
         ]
 
     try:
-        files = _discovery.collect_files(selectors, file_patterns=cfg.python_files)
+        files = _registry.collect_files(selectors, file_patterns=cfg.python_files)
     except FileNotFoundError as e:
         print(f"mew: path does not exist: {e.args[0]}", file=sys.stderr)
         raise SystemExit(2) from e
@@ -185,7 +184,7 @@ def _collect(
         (entry, Path(os.path.abspath(entry.file)) if entry.file else None)
         for entry in REGISTRY.filter(pattern, tags=tags, literal=literal)
     ]
-    entries = _discovery.select_entries(candidates, selectors)
+    entries = _registry.select_entries(candidates, selectors)
     if not entries:
         print("no benchmarks found", file=sys.stderr)
         raise SystemExit(1)
@@ -205,7 +204,7 @@ def list_(
     show_cases: bool,
 ) -> None:
     """List discovered benchmarks without running them."""
-    with _discovery.discovered():
+    with _registry.discovered():
         entries = _collect(
             paths,
             cfg=_load_config_or_exit(),
@@ -327,7 +326,7 @@ def run(
         print(f"mew run: --profile-dir {profile_dir} is not a directory", file=sys.stderr)
         raise SystemExit(2)
     cfg = _load_config_or_exit()
-    with _discovery.discovered(), ExitStack() as stack:
+    with _registry.discovered(), ExitStack() as stack:
         entries = _collect(
             paths,
             cfg=cfg,

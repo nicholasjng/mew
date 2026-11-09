@@ -13,14 +13,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from mew._console import Span, Table, Terminal, fill, sgr
-from mew._format import (
+from mew._console import (
     NS_PER_UNIT,
+    Span,
+    Table,
+    Terminal,
+    fill,
     fmt_bytes,
     fmt_counter,
     fmt_time,
     overflow,
     scale_time,
+    sgr,
 )
 from mew._registry import compile_name_filter
 from mew._results import (
@@ -30,14 +34,15 @@ from mew._results import (
     TIME_METRICS,
     RunSummary,
     Sample,
+    Statistic,
     counter_name,
     load_column,
+    mannwhitney_p,
     read_results,
     read_rows,
     run_summaries,
     split_selector,
 )
-from mew._statistics import Statistic, mannwhitney_p
 from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, render_panel
 
 __all__ = ["RunSummary", "compare", "read_results", "run_summaries"]

@@ -9,8 +9,7 @@ from pathlib import Path
 import pytest
 from _helpers import row, write_json
 
-from mew._results import load_column
-from mew._statistics import resolve_statistic
+from mew._results import load_column, resolve_statistic
 
 
 def test_statistic_replaces_the_median_but_not_the_stddev(tmp_path: Path) -> None:
