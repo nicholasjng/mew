@@ -79,7 +79,7 @@ warns when machine properties differ. When all rows share one file prefix, such
 as `benchmarks/bench_sort.py::`, the title names it once and the rows drop it.
 
 A benchmark that a file has as skipped is reported with its reason
-(`warning: skipped in head.json: …`), apart from benchmarks the file lacks.
+(`mew: warning: skipped in head.json: …`), apart from benchmarks the file lacks.
 
 For repeated measurements, each value carries its spread: the coefficient of
 variation (stddev over the mean of the repetitions),

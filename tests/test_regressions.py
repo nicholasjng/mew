@@ -108,9 +108,9 @@ _ALLOW = '[[tool.mew.regressions.allow]]\npattern = "b*"\n'
 @pytest.mark.parametrize(
     ("body", "match"),
     [
-        (_ALLOW + "threshold = inf", "'reason' is required"),
+        (_ALLOW + "threshold = inf", "missing 'reason'"),
         # A rule's threshold is required, a number, and not negative or NaN.
-        (_ALLOW + 'reason = "r"', "'threshold' is required, a percent or inf to exempt"),
+        (_ALLOW + 'reason = "r"', "missing 'threshold'"),
         (_ALLOW + 'reason = "r"\nthreshold = "10"', "a non-negative number or inf"),
         (_ALLOW + 'reason = "r"\nthreshold = -1.0', "a non-negative number or inf"),
         (_ALLOW + 'reason = "r"\nthreshold = nan', "a non-negative number or inf"),
@@ -118,11 +118,14 @@ _ALLOW = '[[tool.mew.regressions.allow]]\npattern = "b*"\n'
         # The table and its rules both reject typos (test_config covers the rest).
         (
             "[tool.mew.regressions]\ndefault-treshold = 7.5",
-            "in [tool.mew.regressions]; did you mean 'default-threshold'?",
+            "in [tool.mew.regressions]\nhint: did you mean 'default-threshold'?",
         ),
         (
             _ALLOW + 'reason = "r"\ntreshold = 10.0',
-            "unknown key 'treshold' in [[tool.mew.regressions.allow]]; did you mean 'threshold'?",
+            (
+                "unknown key 'treshold' in [[tool.mew.regressions.allow]]\n"
+                "hint: did you mean 'threshold'?"
+            ),
         ),
     ],
 )
@@ -160,12 +163,12 @@ def test_render_panel_exit_codes() -> None:
     )
     assert "⚠️" in text
     assert code == 0
-    assert "(allowlisted: 99.0% threshold; r)" in text
+    assert "(allowlisted: 99.0% threshold, r)" in text
     # An exempt benchmark still shows, so the allowlist stays visible.
     text, code = render_panel(
         [BenchmarkVerdict("x", 50.0, Verdict.ALLOWED_OVER, _EXEMPT)], default_threshold=5.0
     )
-    assert "(allowlisted: no threshold; flaky)" in text
+    assert "(allowlisted: no threshold, flaky)" in text
     assert text.endswith("0 regression(s), 1 over-but-allowed.")
     assert code == 0
 
@@ -210,5 +213,5 @@ def test_render_panel_names_the_stricter_rule_a_regression_failed() -> None:
     verdict = RegressionConfig(rules=(_TIGHT,)).evaluate("bench", 3.0)
     assert verdict.verdict is Verdict.REGRESSED
     text, code = render_panel([verdict], default_threshold=5.0)
-    assert "❌ bench   +3.00%   (rule: 2.0% threshold; hot path)" in text
+    assert "❌ bench   +3.00%   (rule: 2.0% threshold, hot path)" in text
     assert code == 3

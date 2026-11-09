@@ -77,7 +77,7 @@ def test_run_reports_rows_and_the_run_context():
     ("kwargs", "error", "message"),
     [
         ({"repetitions": 0}, ValueError, "repetitions must be >= 1"),
-        ({"min_time": "forever"}, ValueError, "min_time must be positive"),
+        ({"min_time": "forever"}, ValueError, "min_time: expected a positive duration"),
         ({"min_warmup_time": -1}, ValueError, "min_warmup_time must be a finite"),
         ({"run_name": 1}, TypeError, "run_name must be a string"),
         ({"run_name": ""}, ValueError, "run_name must not be empty"),
@@ -195,7 +195,7 @@ def test_threaded_benchmark_skipped_on_gil_build():
     """Threaded mode would deadlock on GB's start barrier under the GIL, so mew
     warns and drops the benchmark, without a row."""
     cap = Capture()
-    with pytest.warns(RuntimeWarning, match="skipping 1 threaded benchmark"):
+    with pytest.warns(RuntimeWarning, match="skipped 1 threaded benchmark on a GIL build"):
         assert mew.run(min_time="1x", reporter=cap) == 0
     assert cap.runs == []
 
@@ -203,7 +203,7 @@ def test_threaded_benchmark_skipped_on_gil_build():
 @pytest.mark.usefixtures("threaded_bench_on_gil_build")
 def test_threaded_benchmark_strict_raises_on_gil_build():
     """`strict=True` errors so CI cannot mask a misconfiguration with a skip."""
-    with pytest.raises(RuntimeError, match="free-threaded interpreter"):
+    with pytest.raises(RuntimeError, match="1 threaded benchmark needs a free-threaded build"):
         mew.run(min_time="1x", reporter=Capture(), strict=True)
 
 

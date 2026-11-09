@@ -126,7 +126,7 @@ def test_invalid_filter_fails_before_any_import(mew_cli, tmp_path):
     (tmp_path / "bench_x.py").write_text("print('imported')\n")
     res = mew_cli("list", "-k", "bench(", "bench_x.py", cwd=tmp_path)
     assert res.returncode == 2
-    assert res.stderr.startswith("mew list: invalid benchmark filter pattern 'bench('")
+    assert res.stderr.startswith("mew: error: invalid benchmark filter pattern 'bench('")
     assert "imported" not in res.stdout
 
 
@@ -232,7 +232,7 @@ def test_bench_file_that_fails_to_import_exits_2(mew_cli, tmp_path):
     assert res.returncode == 2
     assert "ValueError: repetitions must be >= 1, got 0" in res.stderr
     last = res.stderr.splitlines()[-1]
-    assert last.startswith("mew run: cannot import ") and last.endswith("bench_bad.py")
+    assert last.startswith("mew: error: cannot import ") and last.endswith("bench_bad.py")
 
 
 def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_path, monkeypatch):
@@ -244,41 +244,44 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
     )
     res = mew_cli("run", "--strict", "bench_t.py", cwd=tmp_path)
     assert res.returncode == 2
-    assert res.stderr.startswith("mew run: threaded benchmarks require")
+    assert res.stderr.startswith("mew: error: 1 threaded benchmark needs")
 
 
 @pytest.mark.parametrize(
     ("args", "message"),
     [
-        (("list", "nonexistent_dir"), "path does not exist"),
-        (("run", "-o", "results.txt"), "unsupported output format"),
-        (("run", "-o", "missing/results.json"), "output directory does not exist"),
+        (("list", "nonexistent_dir"), "no such file or directory: "),
+        (("run", "-o", "results.txt"), "results.txt: not -, a .json, .jsonl or .jsonl.gz file"),
+        (("run", "-o", "missing/results.json"), "no such file or directory: "),
         # Neither stdout nor a single-document JSON file can be appended to,
         # even next to a JSONL sink.
-        (("run", "--append"), "--append requires"),
-        (("run", "--append", "-o", "out.jsonl", "-o", "out.json"), "--append requires"),
+        (("run", "--append"), "--append needs a .jsonl"),
+        (("run", "--append", "-o", "out.jsonl", "-o", "out.json"), "--append needs a .jsonl"),
         (("run", "-o", "a.json", "-o", "./a.json"), "duplicate output sink: ./a.json"),
         # `--flag:` names the flag in argparse's error line; the usage line above
         # it lists every flag.
-        (("run", "--min-time", "0x"), "--min-time: invalid --min-time '0x'"),
-        (("run", "--min-warmup-time", "-1"), "--min-warmup-time: invalid --min-warmup-time"),
+        (
+            ("run", "--min-time", "0x"),
+            "--min-time: expected a positive duration or Nx iterations, got '0x'",
+        ),
+        (("run", "--min-warmup-time", "-1"), "--min-warmup-time: expected a duration, got '-1'"),
         (("run", "--repetitions", "0"), "--repetitions: expected a positive integer"),
         # Checked before reading the result files, which don't exist here. The
         # `=` keeps argparse from taking `-1%` for an option.
-        (("compare", "a.json", "b.json", "--regression-threshold=5"), "like '5%', got '5'"),
+        (("compare", "a.json", "b.json", "--regression-threshold=5"), "expected <n>%, got '5'"),
         (("compare", "a.json", "b.json", "--regression-threshold=-1%"), "got '-1%'"),
         (("compare", "a.json", "b.json", "--regression-threshold=nan%"), "got 'nan%'"),
         # What the library raises, as one line rather than a traceback.
-        (("compare", "a.json"), "mew compare: expected at least two result files"),
-        (("compare", "a.json", "b.json"), "mew compare: result file not found: a.json"),
-        (("log", "a.json"), "mew log: result file not found: a.json"),
+        (("compare", "a.json"), "mew: error: expected at least two result files"),
+        (("compare", "a.json", "b.json"), "mew: error: no such file or directory: a.json"),
+        (("log", "a.json"), "mew: error: no such file or directory: a.json"),
         # Prefixes of long options are not expanded, so a new option can't break them.
         (("run", "--rep", "3"), "unrecognized arguments: --rep"),
         # Checked before the run, not after it.
         (
             ("run", "--cpu-profiler", "sample", "--profile-dir", "benchmarks/bench_fixture.py"),
             # The OS's separators, as the user's shell shows paths.
-            f"mew run: --profile-dir {Path('benchmarks/bench_fixture.py')} is not a directory",
+            f"mew: error: not a directory: {Path('benchmarks/bench_fixture.py')}",
         ),
     ],
 )
@@ -296,12 +299,12 @@ def test_usage_errors_exit_2(mew_cli, benchdir, args, message):
     [
         # The message names the file.
         ("[tool.mew]\nbenchpaths = 42\n", ("list",), "pyproject.toml: [tool.mew] benchpaths"),
-        ('[tool.mew]\nsetup = "nope.py"\n', ("run",), "setup file not found"),
+        ('[tool.mew]\nsetup = "nope.py"\n', ("run",), "setup: no such file or directory"),
         # Read before the result files, which don't exist here.
         (
             '[[tool.mew.regressions.allow]]\npattern = "b"\nthreshold = inf\n',
             ("compare", "a.json", "b.json", "--regression-threshold", "5%"),
-            "'reason' is required",
+            "missing 'reason'",
         ),
     ],
 )
@@ -390,7 +393,7 @@ def test_run_format_without_stdout_sink_warns(mew_cli, benchdir, tmp_path):
         "run", str(benchdir), "--min-time", "1x", "--format", "jsonl", "-o", str(out), cwd=tmp_path
     )
     assert res.returncode == 0, res.stderr
-    assert "no effect without a stdout sink" in res.stderr
+    assert "mew: warning: --format jsonl ignored: no stdout output" in res.stderr
     assert res.stdout.strip() == ""
 
 
@@ -607,7 +610,7 @@ def test_run_exits_2_on_a_missing_option(mew_cli, benchdir, tmp_path):
     (tmp_path / "profilers.py").write_text(_USER_MEMORY_MANAGER)
     res = mew_cli("run", str(benchdir), "--memory-profiler", "profilers.py:Fixed", cwd=tmp_path)
     assert res.returncode == 2
-    assert "mew run: profilers.py:Fixed: " in res.stderr
+    assert "mew: error: profilers.py:Fixed: " in res.stderr
     assert "Traceback" not in res.stderr
 
 
@@ -616,7 +619,7 @@ def test_run_rejects_tachyon_before_python_3_15(mew_cli, benchdir, tmp_path):
     """Tachyon exits 2 on Python versions before 3.15."""
     res = mew_cli("run", str(benchdir), "--cpu-profiler", "mew.cpu:TachyonManager", cwd=tmp_path)
     assert res.returncode == 2
-    assert "mew run: Tachyon CPU sampling requires Python 3.15" in res.stderr
+    assert "mew: error: Tachyon needs Python 3.15" in res.stderr
 
 
 @pytest.mark.parametrize(
@@ -639,7 +642,7 @@ def test_run_unusable_profiler_exits_2(
 
     monkeypatch.setattr(factory, unusable)
     res = mew_cli("run", str(benchdir), flag, preset, cwd=tmp_path)
-    assert (res.returncode, res.stdout, res.stderr) == (2, "", "mew run: unusable here\n")
+    assert (res.returncode, res.stdout, res.stderr) == (2, "", "mew: error: unusable here\n")
 
 
 @pytest.mark.skipif(sys.version_info < (3, 15), reason="pyinstrument is the default here")
@@ -707,7 +710,7 @@ def test_compare_regression_threshold_wins_over_the_configured_default(mew_cli, 
     ("pyproject", "code", "message"),
     [
         # No rule, no direction: a usage error.
-        ("", 2, "no direction is declared"),
+        ("", 2, "no direction to gate on"),
         ('[[tool.mew.counters]]\npattern = "*_misses"\nhigher-is-better = false\n', 3, "❌"),
     ],
 )
@@ -820,7 +823,7 @@ def test_show_prints_each_run_as_mew_run_printed_it(mew_cli, tmp_path):
     ("args", "code", "message"),
     [
         (("r.json", "-k", "nothing"), 1, "no benchmarks match 'nothing'"),
-        (("missing.json",), 2, "result file not found"),
+        (("missing.json",), 2, "no such file or directory: missing.json"),
     ],
 )
 def test_show_errors(mew_cli, tmp_path, args, code, message):

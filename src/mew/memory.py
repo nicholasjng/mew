@@ -12,6 +12,7 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from mew._console import warn
 from mew._typing import MemoryManager, MemoryMetrics
 
 if TYPE_CHECKING:
@@ -79,10 +80,7 @@ class MemrayManager(MemoryManager):
 
     def __init__(self) -> None:
         if find_spec("memray") is None:
-            raise ImportError(
-                "memray is required for memory profiling. "
-                "Install it with: uv add 'mew-bench[memory]'"
-            )
+            raise ImportError("memory profiling needs memray\nhint: uv add 'mew-bench[memory]'")
         # Removed with the manager. A TemporaryDirectory would do the same, but warns
         # (ResourceWarning) when the garbage collector, not cleanup(), removes it.
         self._dir = Path(tempfile.mkdtemp(prefix="mew-memray-"))
@@ -151,10 +149,9 @@ class MemrayManager(MemoryManager):
             Where to write the reports; created if missing.
         """
         if not self._captures:
-            print(
-                "warning: no memory captures recorded; skipping flame graphs "
-                "(did any benchmark body enter its timing loop?)",
-                file=sys.stderr,
+            warn(
+                "no memory captures, no flame graphs\n"
+                "hint: no benchmark body may have entered its timing loop"
             )
             return
 

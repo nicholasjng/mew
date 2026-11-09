@@ -39,7 +39,7 @@ def parse_min_time(value: str | float) -> str:
     count like ``"100x"``.
     """
     if isinstance(value, bool) or not isinstance(value, str | int | float):
-        raise TypeError(f"min_time must be seconds or a string like '100x', got {value!r}")
+        raise TypeError(f"min_time: expected a duration or Nx iterations, got {value!r}")
     text = str(value).strip()
     # isascii: isdigit alone takes other scripts' digits, which Google Benchmark
     # would read as 0 iterations.
@@ -51,10 +51,7 @@ def parse_min_time(value: str | float) -> str:
     except ValueError:
         seconds = float("nan")
     if not isfinite(seconds) or seconds <= 0:
-        raise ValueError(
-            "min_time must be positive seconds ('0.5', '0.5s', '500ms', '1m') or an "
-            f"iteration count like '100x', got {value!r}"
-        )
+        raise ValueError(f"min_time: expected a positive duration or Nx iterations, got {value!r}")
     return f"{seconds}s"
 
 
@@ -95,27 +92,27 @@ def is_threaded(opts: BenchmarkOptions) -> bool:
     return max(thread_counts(opts)) > 1
 
 
-THREADED_ON_GIL = (
-    "threaded benchmarks require a free-threaded interpreter; "
-    "this interpreter has the GIL enabled, where threaded mode "
-    "would deadlock on Google Benchmark's start barrier"
-)
-
-
 def threaded_on_gil(entries: Iterable[Entry]) -> tuple[list[Entry], str]:
-    """The threaded benchmarks this build can't run, and the first few names."""
+    """The threaded benchmarks this build can't run, and ``N threaded benchmark(s)``.
+
+    Threaded mode would deadlock on Google Benchmark's start barrier with the GIL.
+    """
     threaded = [e for e in entries if is_threaded(e.options)] if _gil_enabled() else []
-    return threaded, ", ".join(e.name for e in threaded[:3]) + overflow(len(threaded), 3)
+    n = len(threaded)
+    return threaded, f"{n} threaded benchmark{'s' if n > 1 else ''}"
+
+
+def names_of(entries: list[Entry]) -> str:
+    """The first three names of ``entries``, and how many more there are."""
+    return ", ".join(e.name for e in entries[:3]) + overflow(len(entries), 3)
 
 
 def check_strict(entries: Iterable[Entry]) -> None:
     """Raise :class:`RuntimeError` if this build can't run some of the threaded ``entries``."""
-    threaded, names = threaded_on_gil(entries)
+    threaded, count = threaded_on_gil(entries)
     if threaded:
-        raise RuntimeError(
-            f"{THREADED_ON_GIL}. Affected: {names}. Run on a free-threaded build, "
-            "drop the threads option, or pass strict=False to skip them."
-        )
+        need = "needs" if len(threaded) == 1 else "need"
+        raise RuntimeError(f"{count} {need} a free-threaded build: {names_of(threaded)}")
 
 
 def _normalize_threads(value: Any) -> tuple[int, ...]:
@@ -142,7 +139,9 @@ def normalize_options(options: Mapping[str, Any]) -> BenchmarkOptions:
     """
     extra = set(options) - _OPTION_KEYS
     if extra:
-        raise TypeError(f"unknown option(s): {sorted(extra)}")
+        raise TypeError(
+            f"unknown option{'s' if len(extra) > 1 else ''}: {', '.join(sorted(extra))}"
+        )
     opts = {k: v for k, v in options.items() if v is not None}
     # Fail at decoration time: GB guards many of these with asserts compiled out
     # of release builds, so bad values would misbehave silently.

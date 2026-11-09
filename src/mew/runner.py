@@ -21,12 +21,12 @@ from typing import Any, BinaryIO
 
 from mew import _core
 from mew._options import (
-    THREADED_ON_GIL,
     check_count,
     check_min_warmup_time,
     check_run_name,
     check_strict,
     is_threaded,
+    names_of,
     parse_min_time,
     threaded_on_gil,
 )
@@ -189,12 +189,12 @@ def run(
 
     if strict:
         check_strict(selected)
-    skipped, names = threaded_on_gil(selected)
+    skipped, count = threaded_on_gil(selected)
     if skipped:
         # Dropped without rows: they never ran, so they have nothing to report.
         warnings.warn(
-            f"skipping {len(skipped)} threaded benchmark(s) on a GIL interpreter "
-            f"({names}), run on a free-threaded build to execute them; {THREADED_ON_GIL}.",
+            f"skipped {count} on a GIL build: {names_of(skipped)}\n"
+            "hint: threads need a free-threaded interpreter",
             RuntimeWarning,
             stacklevel=2,
         )

@@ -154,8 +154,7 @@ class Registry:
         # merge into one distribution on compare.
         if entry.name in self._entries:
             raise ValueError(
-                f"a benchmark named {entry.name!r} is already registered; "
-                "pass a unique name= to disambiguate"
+                f"{entry.name}: already registered\nhint: pass name= to tell them apart"
             )
         self._entries[entry.name] = entry
 
