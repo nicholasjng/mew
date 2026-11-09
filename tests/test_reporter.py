@@ -56,7 +56,9 @@ def test_json_reporter_writes_the_documented_shape(tmp_path):
     out = tmp_path / "results.json"
     _run_one(JSONReporter(output=out))
 
-    (bench,) = json.loads(out.read_text())["benchmarks"]
+    doc = json.loads(out.read_text())
+    assert list(doc) == ["benchmarks"]  # no header: the rows carry the run themselves
+    (bench,) = doc["benchmarks"]
     assert list(bench) == [
         "schema_version",
         "run",

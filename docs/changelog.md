@@ -7,6 +7,8 @@ releases may break the API.
 
 ### Breaking changes
 
+- The JSON document is `{"benchmarks": [...]}`: its rows carry `run` and
+  `context` themselves, as in JSONL, so the document no longer repeats them.
 - `set_context()`, `update_context()`, `get_context()`, `clear_context()` and
   dotted context keys are gone. Pass `mew.run(context={...})`; for `mew run`,
   define `context()` in the `[tool.mew] setup` file, which `mew run` calls

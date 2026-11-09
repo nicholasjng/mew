@@ -96,11 +96,10 @@ def _stamp(context: dict | None) -> dict:
 def write_json(path: Path, benches: list[dict], context: dict | None = None) -> None:
     """Write a single-document JSON result file (the JSONReporter shape).
 
-    ``context`` plays the role of the run's ``run`` / ``context`` blocks:
-    they head the document and are stamped onto rows that lack them.
+    ``context``'s ``run`` / ``context`` blocks are stamped onto rows that lack them.
     """
     stamp = _stamp(context)
-    doc = {**stamp, "benchmarks": [{**stamp, **b} for b in benches]}
+    doc = {"benchmarks": [{**stamp, **b} for b in benches]}
     path.write_text(json.dumps(doc))
 
 

@@ -99,11 +99,11 @@ def _open_sink(
 
 
 class JSONReporter(Reporter):
-    """Write results as one JSON document of the run, context and benchmark rows.
+    """Write results as one JSON document, ``{"benchmarks": [...]}``.
 
-    Each row carries ``run`` and ``context`` as :class:`JSONLReporter`
-    writes them; the top level repeats them. The document is valid JSON only
-    once the run finishes, so prefer :class:`JSONLReporter` where a run may be
+    Its rows are the ones :class:`JSONLReporter` writes, each carrying the
+    ``run`` and ``context`` itself. The document is valid JSON only once the
+    run finishes, so prefer :class:`JSONLReporter` where a run may be
     interrupted.
 
     Parameters
@@ -125,12 +125,8 @@ class JSONReporter(Reporter):
         # Reset comma state when the reporter is reused.
         self._first_row = True
         self._stamp = _stamp(context)
-        # default=str: don't crash on Path/datetime; lossy by design.
-        header = "".join(
-            f'  "{key}": {_indent_block(json.dumps(value, indent=2, default=str), 2)},\n'
-            for key, value in context.items()
-        )
-        self._fh.write("{\n" + header + '  "benchmarks": [')
+        # No header: every row carries the run and its context, as in JSONL.
+        self._fh.write('{\n  "benchmarks": [')
         self._fh.flush()
 
     def report_results(self, results: list[BenchmarkResult]) -> None:
@@ -138,7 +134,8 @@ class JSONReporter(Reporter):
         for row in results:
             prefix = "" if self._first_row else ","
             self._first_row = False
-            rendered = _indent_block(json.dumps({**self._stamp, **row}, indent=2, default=str), 4)
+            # mew encoded every value when it built the row, so plain json.dumps holds it.
+            rendered = _indent_block(json.dumps({**self._stamp, **row}, indent=2), 4)
             self._fh.write(f"{prefix}\n    {rendered}")
         self._fh.flush()
 
@@ -189,7 +186,7 @@ class JSONLReporter(Reporter):
         assert self._fh is not None  # report_context runs first, always
         for row in results:
             # Preserve row-carried context when merging data from another process.
-            self._fh.write(json.dumps({**self._stamp, **row}, default=str) + "\n")
+            self._fh.write(json.dumps({**self._stamp, **row}) + "\n")
         self._fh.flush()
 
     def finalize(self) -> None:
