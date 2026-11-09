@@ -106,7 +106,7 @@ def test_parse_presets_rejects(raw, message):
     [
         ("mew.cpu:manager,interval=1", "--cpu-profiler .*: ',' and '=' are reserved"),
         ("smaple", "did you mean 'sample'"),
-        ("zzz", "presets: memray, sample"),
+        ("zzz", "hint: presets are memray, sample"),
     ],
 )
 def test_resolve_rejects(value, message):
@@ -162,7 +162,7 @@ def test_builtin_records_the_class_its_function_chose(root, monkeypatch):
         ("managers.py:not_a_class", "is a function, not a class"),
         ("managers.py:Missing", "has no attribute 'Missing'"),
         ("nowhere.py:Mem", "no file nowhere.py"),
-        ("managers.py:Prof", "Prof is not a memory profiler; pass it to --cpu-profiler"),
+        ("managers.py:Prof", "Prof is not a memory profiler\nhint: pass it to --cpu-profiler"),
         ("managers.py:Half", "Half has no stop()"),
         ("managers.py:Nothing", r"Nothing is not a memory profiler: define start\(\) and stop\(\)"),
         (
@@ -177,7 +177,7 @@ def test_load_rejects(root, value, message):
 
 
 def test_unknown_option_suggests_the_close_one(root):
-    with pytest.raises(ValueError, match="unknown option 'peek'; did you mean 'peak'"):
+    with pytest.raises(ValueError, match="unknown option 'peek'\nhint: did you mean 'peak'"):
         _load("m", root, {"m": Preset("managers.py:Mem", {"peek": 1}, name="m")})
 
 
@@ -188,5 +188,7 @@ def test_option_for_a_class_without_init_fails_as_a_value_error(root):
 
 
 def test_a_memory_profiler_named_for_the_cpu_slot_points_to_its_flag(root):
-    with pytest.raises(ValueError, match="Mem is not a CPU profiler; pass it to --memory-profiler"):
+    with pytest.raises(
+        ValueError, match="Mem is not a CPU profiler\nhint: pass it to --memory-profiler"
+    ):
         _load("managers.py:Mem", root, slot="cpu")

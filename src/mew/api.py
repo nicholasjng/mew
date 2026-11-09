@@ -93,14 +93,14 @@ def _check_addressable(text: str, what: str) -> None:
     if not text.strip():
         raise ValueError(f"{what} must not be empty")
     for bad, why in (
-        ("\n", "list output and --stdin selection are line-oriented"),
-        ("\r", "list output and --stdin selection are line-oriented"),
-        ("::", "'::' separates path::filter selectors and the file prefix"),
-        ("[", "'[...]' addresses family cases (name[label])"),
-        ("]", "'[...]' addresses family cases (name[label])"),
+        ("\n", "mew list and --stdin are line-oriented"),
+        ("\r", "mew list and --stdin are line-oriented"),
+        ("::", "'::' separates a file from its benchmarks"),
+        ("[", "'[...]' addresses family cases"),
+        ("]", "'[...]' addresses family cases"),
     ):
         if bad in text:
-            raise ValueError(f"{what} {text!r} must not contain {bad!r}; {why}")
+            raise ValueError(f"{what} {text!r} must not contain {bad!r}\nhint: {why}")
 
 
 def _normalize_tags(tags: Iterable[str] | str | None) -> frozenset[str]:
@@ -244,8 +244,9 @@ def _register_family(
         dupes = sorted(label for label, n in Counter(labels).items() if n > 1)
         # Ambiguous labels break `name[label]` addressing (-k filters, compare merging).
         raise ValueError(
-            f"duplicate case label(s) {dupes}; pass explicit ids= to disambiguate "
-            "(non-scalar parameter values collapse to their type name)"
+            f"duplicate case labels: {', '.join(dupes)}\n"
+            "hint: non-scalar values are labelled by their type name\n"
+            "hint: pass ids= to tell them apart"
         )
 
     # The runner registers each case on its own, with its index bound as `case`.
@@ -365,10 +366,8 @@ def grid(**axes: Iterable[Any]) -> list[dict[str, Any]]:
     ... )
     """
     if not axes:
-        raise TypeError("grid() needs at least one axis, such as grid(n=[1, 2])")
+        raise TypeError("grid() needs at least one axis")
     for name, values in axes.items():
         if isinstance(values, str) or not isinstance(values, Iterable):
-            raise TypeError(
-                f"grid axis {name!r} must be an iterable such as a list, got {values!r}"
-            )
+            raise TypeError(f"grid axis {name!r} must be an iterable, got {values!r}")
     return [dict(zip(axes, combo, strict=True)) for combo in itertools.product(*axes.values())]

@@ -118,11 +118,11 @@ def parse_presets(raw: Any) -> dict[str, Preset]:
         if not _PRESET_NAME.fullmatch(name):
             raise ValueError(f"{where}: a preset name takes letters, digits, '-' and '_'")
         if name in BUILTINS:
-            raise ValueError(f"{where}: {name!r} is a built-in preset; choose another name")
+            raise ValueError(f"{where}: {name!r} is a built-in preset")
         if not isinstance(body, dict):
             raise ValueError(f"{where} must be a table")  # ruff: ignore[TRY004]
         if "func" in body:
-            raise ValueError(f"{where}: 'func' is reserved; name a class with 'class'")
+            raise ValueError(f"{where}: 'func' is reserved\nhint: name a class with 'class'")
         spec = body.get("class")
         if not isinstance(spec, str) or ":" not in spec:
             raise ValueError(f"{where}: 'class' must be a 'module:Class' or 'path.py:Class' string")
@@ -150,8 +150,8 @@ def resolve(value: str, presets: Mapping[str, Preset], *, flag: str) -> Preset:
     if value in known:
         return known[value]
     close = difflib.get_close_matches(value, known, n=1)
-    hint = f"; did you mean {close[0]!r}?" if close else f"; presets: {', '.join(sorted(known))}"
-    raise ValueError(f"{flag}: no preset {value!r}{hint}")
+    hint = f"did you mean {close[0]!r}?" if close else f"presets are {', '.join(sorted(known))}"
+    raise ValueError(f"{flag}: no preset {value!r}\nhint: {hint}")
 
 
 def _import(preset: Preset, root: Path) -> Any:
@@ -190,7 +190,7 @@ def _check_options(preset: Preset, target: Any) -> None:
             shown = key.replace("_", "-")
             options = [a.replace("_", "-") for a in accepted]
             close = difflib.get_close_matches(shown, options, n=1)
-            hint = f"; did you mean {close[0]!r}?" if close else ""
+            hint = f"\nhint: did you mean {close[0]!r}?" if close else ""
             raise ValueError(f"{preset.label}: unknown option {shown!r}{hint}")
 
 
@@ -210,7 +210,7 @@ def _check_slot(preset: Preset, manager: Any, slot: Slot) -> None:
     kind = "a CPU profiler" if slot == "cpu" else "a memory profiler"
     other: Slot = "memory" if slot == "cpu" else "cpu"
     if all(map(has, _SLOTS[other])):
-        raise ValueError(f"{preset.label}: {name} is not {kind}; pass it to {FLAGS[other]}")
+        raise ValueError(f"{preset.label}: {name} is not {kind}\nhint: pass it to {FLAGS[other]}")
     if len(missing) == 1:  # half a pair: name the other half
         raise ValueError(f"{preset.label}: {name} has no {missing[0]}()")
     first, second = _SLOTS[slot]

@@ -94,7 +94,7 @@ def test_compare_empty_overlap(tmp_path: Path, capsys: pytest.CaptureFixture[str
     other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("a", 1.0)])
     code = compare([base, other], console=Console())
     assert code == 1
-    assert "no overlapping benchmarks" in capsys.readouterr().err
+    assert "no benchmarks in both" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -179,27 +179,27 @@ _ROW_LINE = json.dumps(_row("b", 1.0))
 @pytest.mark.parametrize(
     ("filename", "content", "match"),
     [
-        ("a.json", None, "result file not found"),
-        ("a.txt", "", "unsupported result file"),
+        ("a.json", None, "no such file or directory"),
+        ("a.txt", "", r"a\.txt: not a \.json, \.jsonl or \.jsonl\.gz file"),
         ("a.json", "not json", "a.json: invalid JSON"),
         ("a.json", "[1, 2]", "missing 'benchmarks' array"),  # valid JSON, wrong shape
-        ("a.json", '{"benchmarks": [1]}', r"benchmarks\[0\]: expected a mew result row"),
+        ("a.json", '{"benchmarks": [1]}', r"benchmarks\[0\]: not a mew result row"),
         ("a.jsonl", _ROW_LINE + "\nnot json\n", "a.jsonl:2: invalid JSON"),
         # Every row carries the result format it was written in.
-        ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', r"a.jsonl:2: .*\(no schema\)"),
+        ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', r"a\.jsonl:2: no schema \(this mew reads"),
         (
             "a.jsonl",
             _ROW_LINE + '\n{"name": "x", "schema": "v2"}\n',
-            r"\(schema 'v2'\); this mew reads schema 'v1'",
+            r"unsupported schema 'v2' \(this mew reads 'v1'\)",
         ),
         (
             "a.jsonl",
             _ROW_LINE + '\n{"schema": "v1"}\n',
-            "a.jsonl:2: expected a mew result row",
+            "a.jsonl:2: not a mew result row",
         ),
         # Cut off, as by a full disk or an interrupted copy.
         # A fixed gzip timestamp keeps the test ID stable.
-        ("a.jsonl.gz", gzip.compress(_ROW_LINE.encode(), mtime=0)[:-8], "cannot read result file"),
+        ("a.jsonl.gz", gzip.compress(_ROW_LINE.encode(), mtime=0)[:-8], "cannot read"),
     ],
 )
 def test_load_rejects_unreadable_files(
@@ -287,7 +287,7 @@ def test_pooled_runs_warn_when_they_differ(tmp_path: Path, capsys, other, field)
         ],
     )
     load_column(p, "real_time")
-    assert f"r.jsonl pools 2 runs that differ in {field}" in capsys.readouterr().err
+    assert f"r.jsonl: pooled runs differ in {field}: " in capsys.readouterr().err
 
 
 def test_load_of_an_empty_file_errors_naming_it(tmp_path: Path) -> None:
@@ -334,8 +334,8 @@ def test_compare_prints_context_and_warns_on_skew(
     assert "engine=ducky 0.1" in out
     assert "engine=duckdb 1.5.3" in out
     err = capsys.readouterr().err
-    assert "differ in host (base: h1, other: h2)" in err
-    assert "differ in cpu_model (base: Apple M1, other: Apple M2)" in err
+    assert "mew: warning: result files differ in host: base: h1, other: h2" in err
+    assert "result files differ in cpu_model: base: Apple M1, other: Apple M2" in err
     assert "num_cpus" in err
 
 
@@ -423,7 +423,7 @@ def test_compare_refuses_to_gate_on_counters_without_a_direction(tmp_path: Path)
     other, base = _write_pair(
         tmp_path, other=[counter_row("b", "work", 0)], base=[counter_row("b", "work", 1)]
     )
-    with pytest.raises(ValueError, match="no direction is declared"):
+    with pytest.raises(ValueError, match=r"counters\.work: no direction to gate on"):
         compare([base, other], metric="counters.work", regressions=RegressionConfig(5))
 
 
@@ -466,7 +466,7 @@ def test_compare_missing_counter_hints_set_counter(
     )
     assert compare([base, other], metric="counters.missing", console=Console()) == 1
     err = capsys.readouterr().err
-    assert "'missing'" in err
+    assert "no benchmarks with counters.missing in both" in err
     assert "set_counter" in err
 
 
@@ -633,7 +633,7 @@ def test_compare_filter_matching_nothing_says_so(tmp_path: Path, capsys) -> None
     """A `-k` pattern that matches nothing says that, not that the files don't overlap."""
     other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("b", 1.0)])
     assert compare([base, other], pattern="nomatch", console=Console()) == 1
-    assert capsys.readouterr().err.strip() == "no benchmarks match 'nomatch'"
+    assert capsys.readouterr().err.strip() == "mew: error: no benchmarks match 'nomatch'"
 
 
 def test_a_file_of_only_skipped_rows_has_no_measurements(tmp_path: Path) -> None:
@@ -654,7 +654,7 @@ def test_unreadable_values_name_the_file(tmp_path: Path) -> None:
     """A file that isn't UTF-8, or a value that isn't a number, gives an error naming the file."""
     binary = tmp_path / "bin.json"
     binary.write_bytes(b"\xff\xfe{}")
-    with pytest.raises(ValueError, match=f"cannot read result file {re.escape(str(binary))}"):
+    with pytest.raises(ValueError, match=f"cannot read {re.escape(str(binary))}"):
         load_column(binary, "real_time")
     bad = tmp_path / "bad.json"
     _write_json(bad, [_row("b", 1.0) | {"real_time": "fast"}])
@@ -675,7 +675,7 @@ def test_compare_tells_skipped_benchmarks_from_missing_ones(tmp_path: Path, caps
     err = capsys.readouterr().err
     assert f"skipped in {head}: gpu (no GPU)" in err
     assert f"skipped in {base}: new (skipped)" in err
-    assert f"{other} missing 2 benchmark(s): gpu, new" in err
+    assert f"{other}: missing 2 benchmark(s): gpu, new" in err
 
 
 @pytest.mark.parametrize(
@@ -736,6 +736,5 @@ def test_compare_summary_without_repetitions_says_there_is_no_test(tmp_path: Pat
     compare([base, other], console=console)
     last = console.export_text().splitlines()[-1]
     assert (
-        last
-        == "other against base: 1 compared; no significance test, which needs 2+ repetitions a side"
+        last == "other against base: 1 compared, no significance test (needs 2+ repetitions a side)"
     )

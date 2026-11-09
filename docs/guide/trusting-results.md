@@ -95,8 +95,7 @@ disagree on the CPU model, CPU count, or CPU scaling, or on a `host` that the
 suite records (see [](context.md#recording-the-host)):
 
 ```console
-warning: result files differ in cpu_model (baseline: AMD EPYC 7763, head: Apple M1 Pro);
-deltas may reflect the environment, not the code
+mew: warning: result files differ in cpu_model: baseline: AMD EPYC 7763, head: Apple M1 Pro
 ```
 
 Treat this warning as invalidating. Context values that differ

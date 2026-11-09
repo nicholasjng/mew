@@ -20,7 +20,8 @@ stop with exit code 2 on an error. An unknown key is an error, so a typo such as
 
 ```console
 $ mew list
-mew: invalid config: /path/to/project/pyproject.toml: unknown key 'benchpath' in [tool.mew]; did you mean 'benchpaths'?
+mew: error: invalid config: /path/to/project/pyproject.toml: unknown key 'benchpath' in [tool.mew]
+hint: did you mean 'benchpaths'?
 ```
 
 An error in `[tool.mew.regressions]` or its allowlist rules, in

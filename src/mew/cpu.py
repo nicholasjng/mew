@@ -24,6 +24,7 @@ from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from mew._console import warn
 from mew._typing import ProfilerManager
 from mew.machine import _gil_enabled
 
@@ -166,16 +167,13 @@ class PyinstrumentManager(ProfilerManager):
     def __init__(self, interval: float = 1e-4) -> None:
         _check_interval(interval)
         if not _gil_enabled():
+            # Importing its native sampler would enable the GIL.
             raise RuntimeError(
-                "pyinstrument does not support free-threaded Python: importing its "
-                "native sampler would enable the GIL. On Python 3.15+, mew samples "
-                "with Tachyon instead."
+                "pyinstrument: not supported on free-threaded builds\n"
+                "hint: on Python 3.15+, mew samples with Tachyon"
             )
         if find_spec("pyinstrument") is None:
-            raise ImportError(
-                "pyinstrument is required for CPU profiling. "
-                "Install it with: uv add 'mew-bench[cpu]'"
-            )
+            raise ImportError("CPU profiling needs pyinstrument\nhint: uv add 'mew-bench[cpu]'")
         self._interval = interval
         self._prof: Profiler | None = None
         self._session: Session | None = None
@@ -280,7 +278,7 @@ def _require_tachyon() -> None:
     """Raise :class:`RuntimeError` before Python 3.15, which has no Tachyon."""
     # Not inlined: type checkers would take the code after the check as unreachable.
     if sys.version_info < (3, 15):
-        raise RuntimeError("Tachyon CPU sampling requires Python 3.15 or newer")
+        raise RuntimeError("Tachyon needs Python 3.15 or newer")
 
 
 @functools.cache
@@ -553,8 +551,4 @@ def _stack_totals() -> defaultdict[tuple[int, tuple[Any, ...]], list[float]]:
 
 
 def _warn_no_samples() -> None:
-    print(
-        "warning: no CPU samples collected; skipping the HTML report "
-        "(are the profiled passes shorter than the sampling interval?)",
-        file=sys.stderr,
-    )
+    warn("no CPU samples, no HTML report\nhint: passes may be shorter than the sampling interval")

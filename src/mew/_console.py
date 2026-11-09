@@ -27,6 +27,16 @@ COL_SEP = " │ "
 _FLEX_FLOOR = 20
 
 
+def error(message: str) -> None:
+    """Print ``mew: error: <message>`` to stderr. A ``hint:`` line in it prints as is."""
+    print(f"mew: error: {message}", file=sys.stderr)
+
+
+def warn(message: str) -> None:
+    """Print ``mew: warning: <message>`` to stderr. A ``hint:`` line in it prints as is."""
+    print(f"mew: warning: {message}", file=sys.stderr)
+
+
 def fill(parts: list[str], width: int, *, indent: str, hang: str, sep: str) -> list[str]:
     """Lay ``parts`` out on lines no wider than ``width``, never splitting one.
 

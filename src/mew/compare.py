@@ -16,12 +16,14 @@ from mew._console import (
     Span,
     Table,
     Terminal,
+    error,
     fill,
     fmt_bytes,
     fmt_counter,
     fmt_time,
     overflow,
     sgr,
+    warn,
 )
 from mew._registry import compile_name_filter
 from mew._results import (
@@ -86,11 +88,7 @@ def _warn_context_skew(columns: list[_Column]) -> None:
         values = {c.label: (c.context.get("context") or {}).get(fld) for c in columns if c.context}
         if len({v for v in values.values() if v is not None}) > 1:
             detail = ", ".join(f"{label}: {v}" for label, v in values.items())
-            print(
-                f"warning: result files differ in {fld} ({detail}); "
-                "deltas may reflect the environment, not the code",
-                file=sys.stderr,
-            )
+            warn(f"result files differ in {fld}: {detail}")
 
 
 def _custom_diffs(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -210,7 +208,7 @@ def _summary(outcomes: list[tuple[int, bool | None]], *, metric: str, has_direct
     if not outcomes:
         return "nothing to compare"
     if all(sig is None for _, sig in outcomes):
-        return f"{len(outcomes)} compared; no significance test, which needs 2+ repetitions a side"
+        return f"{len(outcomes)} compared, no significance test (needs 2+ repetitions a side)"
     changed = [d for d, sig in outcomes if sig]
     rest = len(outcomes) - len(changed)
     if not has_direction:
@@ -242,22 +240,20 @@ def _render(
     if pattern is not None:
         all_names = {n for n in all_names if pattern.search(n)}
         if not all_names:
-            print(f"no benchmarks match {pattern.pattern!r}", file=sys.stderr)
+            error(f"no benchmarks match {pattern.pattern!r}")
             return 1
 
     # The rows are what baseline and candidate share, gated or not: a benchmark
     # missing from an extra column, such as an older run, shows dashes there.
     shared = all_names.intersection(columns[0].samples, columns[1].samples)
     if not shared:
-        msg = (
-            f"no overlapping benchmarks between {columns[1].source} "
-            f"and the baseline {columns[0].source}"
-        )
+        what = "benchmarks" if metric in TIME_METRICS else f"benchmarks with {metric}"
+        msg = f"no {what} in both {columns[0].source} and {columns[1].source}"
         if metric in MEMORY_METRICS:
-            msg += f" with {metric!r} data (produced with --memory-profiler memray?)"
+            msg += "\nhint: memory metrics need --memory-profiler memray"
         elif counter is not None:
-            msg += f" with the counter {counter!r} (set with state.set_counter?)"
-        print(msg, file=sys.stderr)
+            msg += "\nhint: benchmarks set counters with state.set_counter()"
+        error(msg)
         return 1
 
     for c in columns:
@@ -265,18 +261,12 @@ def _render(
         skipped = sorted(all_names & c.skipped.keys() - c.samples.keys())
         if skipped:
             shown = ", ".join(f"{n} ({c.skipped[n]})" for n in skipped[:5])
-            print(
-                f"warning: skipped in {c.source}: {shown}{overflow(len(skipped), 5)}",
-                file=sys.stderr,
-            )
+            warn(f"skipped in {c.source}: {shown}{overflow(len(skipped), 5)}")
         missing = sorted(all_names - c.samples.keys() - c.skipped.keys())
         if missing:
             preview = ", ".join(missing[:5])
             extra = overflow(len(missing), 5)
-            print(
-                f"warning: {c.source} missing {len(missing)} benchmark(s): {preview}{extra}",
-                file=sys.stderr,
-            )
+            warn(f"{c.source}: missing {len(missing)} benchmark(s): {preview}{extra}")
 
     _warn_context_skew(columns)
     diffs = _custom_diffs([c.context for c in columns])
@@ -411,7 +401,7 @@ def compare(
     counter = counter_name(metric)
     if metric not in METRICS and counter is None:
         raise ValueError(
-            f"unknown metric {metric!r}; choose from {sorted(METRICS)} or counters.<name>"
+            f"unknown metric {metric!r}\nhint: use {', '.join(sorted(METRICS))} or counters.<name>"
         )
     # Lower is better for times and memory; a counter goes the way `counters` says.
     higher_is_better = (
@@ -420,8 +410,8 @@ def compare(
     if regressions is not None and higher_is_better is None:
         # A gate that skipped the counter would pass without checking anything.
         raise ValueError(
-            f"cannot gate on {metric!r}: no direction is declared; add a "
-            f"[[tool.mew.counters]] rule matching {counter!r} that sets higher-is-better"
+            f"{metric}: no direction to gate on\n"
+            "hint: add a [[tool.mew.counters]] rule with higher-is-better"
         )
     name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
 

@@ -8,7 +8,6 @@ import json
 import math
 import os
 import statistics
-import sys
 import zlib
 from collections import defaultdict
 from collections.abc import Mapping
@@ -17,6 +16,7 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
+from mew._console import warn
 from mew._typing import BenchmarkResult
 
 # Stamped onto every row so each one stands alone, in JSON and JSONL alike.
@@ -121,13 +121,10 @@ def _is_measurement_row(row: dict[str, Any]) -> bool:
 def _check_row(obj: Any, where: str) -> None:
     """Reject anything but a result row of this mew's format."""
     if not isinstance(obj, dict) or not isinstance(obj.get("name"), str):
-        raise ValueError(f"{where}: expected a mew result row (a JSON object with a 'name')")  # ruff: ignore[TRY004]
+        raise ValueError(f"{where}: not a mew result row")  # ruff: ignore[TRY004]
     if (schema := obj.get("schema")) != SCHEMA:
-        written = "no schema" if schema is None else f"schema {schema!r}"
-        raise ValueError(
-            f"{where}: written in another result format ({written}); this mew reads "
-            f"schema {SCHEMA!r}. Re-run the benchmarks to compare them"
-        )
+        found = "no schema" if schema is None else f"unsupported schema {schema!r}"
+        raise ValueError(f"{where}: {found} (this mew reads {SCHEMA!r})")
 
 
 def _rows_from_json(path: Path) -> list[dict[str, Any]]:
@@ -222,17 +219,18 @@ def read_rows(path: Path) -> list[dict[str, Any]]:
     """
     fmt = result_format(path.name)
     if fmt is None:
-        raise ValueError(f"unsupported result file: {path} (use .json, .jsonl, or .jsonl.gz)")
+        raise ValueError(f"{path}: not a .json, .jsonl or .jsonl.gz file")
     reader = _rows_from_json if fmt == "json" else _rows_from_jsonl
     try:
         return reader(path)
     except FileNotFoundError as e:
-        raise FileNotFoundError(f"result file not found: {path}") from e
+        raise FileNotFoundError(f"no such file or directory: {path}") from e
     except OSError as e:
-        raise type(e)(f"cannot read result file {path}: {e.strerror or e}") from e
+        reason = e.strerror.lower() if e.strerror else f"cannot read ({e})"
+        raise type(e)(f"{reason}: {path}") from e
     # A truncated or corrupt archive, or a file that isn't UTF-8 text.
     except (EOFError, zlib.error, UnicodeDecodeError) as e:
-        raise ValueError(f"cannot read result file {path}: {e}") from e
+        raise ValueError(f"cannot read {path}: {e}") from e
 
 
 def _samples_from_groups(
@@ -280,14 +278,15 @@ def _pooled_rows(path: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     runs = list(_group_by_run(rows).values())
     if len(runs) > 1:
         for field in (*SKEW_FIELDS, "python", "commit"):
-            values = {json.dumps(_skew_value(r[0], field), sort_keys=True) for r in runs}
+            values = {_shown(_skew_value(r[0], field)) for r in runs}
             if len(values) > 1:
-                print(
-                    f"warning: {path} pools {len(runs)} runs that differ in {field} "
-                    f"({', '.join(sorted(values))}); their repetitions mix environments",
-                    file=sys.stderr,
-                )
+                warn(f"{path}: pooled runs differ in {field}: {', '.join(sorted(values))}")
     return rows
+
+
+def _shown(value: Any) -> str:
+    """A context value as a warning shows it: a string as is, anything else as JSON."""
+    return value if isinstance(value, str) else json.dumps(value, sort_keys=True)
 
 
 def _skew_value(row: dict[str, Any], field: str) -> Any:

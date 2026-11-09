@@ -514,7 +514,7 @@ def test_memray_write_outputs_warns_when_nothing_was_captured(tmp_path, capsys):
     out = tmp_path / "flames"
     _memory.MemrayManager().write_outputs(out)
     assert not out.exists()
-    assert "no memory captures recorded" in capsys.readouterr().err
+    assert "mew: warning: no memory captures, no flame graphs" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("sampler", _SAMPLERS)
@@ -522,7 +522,7 @@ def test_sampler_write_outputs_warns_when_nothing_was_sampled(tmp_path, capsys, 
     """`write_outputs()` writes no report and warns on stderr when the sampler collected nothing."""
     _sampled_manager(sampler).write_outputs(tmp_path)
     assert not (tmp_path / "index.html").exists()
-    assert "no CPU samples collected" in capsys.readouterr().err
+    assert "mew: warning: no CPU samples, no HTML report" in capsys.readouterr().err
 
 
 def _sampling_nothing(sampler: str) -> Any:
@@ -584,7 +584,7 @@ def test_pyinstrument_is_rejected_before_import_on_free_threaded():
     hooks in conftest.py turn into a failure."""
     from mew.cpu import PyinstrumentManager
 
-    with pytest.raises(RuntimeError, match="does not support free-threaded Python"):
+    with pytest.raises(RuntimeError, match="pyinstrument: not supported on free-threaded builds"):
         PyinstrumentManager()
 
 
@@ -606,7 +606,7 @@ def test_missing_profiler_package_raises_import_error(monkeypatch, module, creat
     as the CLI picks the exit code."""
     mod = importlib.import_module(f"mew.{module}")
     monkeypatch.setattr(mod, "find_spec", lambda name: None)
-    with pytest.raises(ImportError, match="Install it with"):
+    with pytest.raises(ImportError, match=r"needs .*\nhint: uv add 'mew-bench\["):
         create(mod)
 
 

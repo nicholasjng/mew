@@ -136,6 +136,9 @@ releases may break the API.
 - `mew compare` reports skipped benchmarks with their reason instead of as missing.
 - `mew compare` names a file prefix all rows share once, in the title.
 - `mew compare` sums up the second file against the baseline under the table.
+- Errors and warnings are shorter, in the form `mew: error: <what>: <problem>`
+  and `mew: warning: …`, with a fix, where one helps, on a `hint:` line. The
+  CLI prints mew's own Python warnings the same way, without a source location.
 
 ### Fixed
 

@@ -63,11 +63,14 @@ def test_load_reads_every_setting(tmp_path: Path):
         ("benchpaths = 42", "benchpaths must be a string or a list of strings"),
         ("setup = 95", "setup must be a string"),
         # A typo would otherwise load the default.
-        ('benchpath = "perf"', "unknown key 'benchpath' in [tool.mew]; did you mean 'benchpaths'?"),
+        (
+            'benchpath = "perf"',
+            "unknown key 'benchpath' in [tool.mew]\nhint: did you mean 'benchpaths'?",
+        ),
         # Keys are dashed, as TOML spells them.
         (
             'python_files = "*.py"',
-            "unknown key 'python_files' in [tool.mew]; did you mean 'python-files'?",
+            "unknown key 'python_files' in [tool.mew]\nhint: did you mean 'python-files'?",
         ),
         # Not TOML at all: tomllib words the error; mew's part is the file prefix.
         ("benchpaths = ", "pyproject.toml: "),
@@ -76,7 +79,7 @@ def test_load_reads_every_setting(tmp_path: Path):
         # A rule's purpose is the direction.
         (
             '[[tool.mew.counters]]\npattern = "hits"',
-            "counter rule 'hits': 'higher-is-better' is required",
+            "counter rule 'hits': missing 'higher-is-better'",
         ),
         (
             '[[tool.mew.counters]]\npattern = "hits"\nhigher-is-better = "yes"',
@@ -85,7 +88,7 @@ def test_load_reads_every_setting(tmp_path: Path):
         (
             '[[tool.mew.counters]]\npattern = "hits"\nhigher_is_better = true',
             (
-                "unknown key 'higher_is_better' in [[tool.mew.counters]]; "
+                "unknown key 'higher_is_better' in [[tool.mew.counters]]\nhint: "
                 "did you mean 'higher-is-better'?"
             ),
         ),

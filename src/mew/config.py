@@ -72,7 +72,7 @@ def _read_table(raw: Any, known: Sequence[str], table: str) -> dict[str, Any]:
     for key in raw:
         if key not in known:
             close = difflib.get_close_matches(key, known, n=1)
-            hint = f"; did you mean {close[0]!r}?" if close else ""
+            hint = f"\nhint: did you mean {close[0]!r}?" if close else ""
             raise ValueError(f"unknown key {key!r} in {table}{hint}")
     return {key.replace("-", "_"): value for key, value in raw.items()}
 
@@ -183,7 +183,7 @@ def _parse_counter_rule(raw: Mapping[str, Any]) -> CounterRule:
         raise ValueError("counter rule missing 'pattern'")
     if "higher_is_better" not in rule:
         # A rule's purpose is the direction; a counter without one needs no rule.
-        raise ValueError(f"counter rule {pattern!r}: 'higher-is-better' is required")
+        raise ValueError(f"counter rule {pattern!r}: missing 'higher-is-better'")
     try:
         return CounterRule(pattern, cast(bool, rule["higher_is_better"]))
     except (TypeError, ValueError) as e:
@@ -199,14 +199,10 @@ def _parse_allow_rule(raw: Mapping[str, Any]) -> AllowRule:
 
     reason = rule.get("reason")
     if not isinstance(reason, str) or not reason.strip():
-        raise ValueError(
-            f"allow rule {pattern!r}: 'reason' is required (document why this is allowlisted)"
-        )
+        raise ValueError(f"allow rule {pattern!r}: missing 'reason'")
 
     if "threshold" not in rule:
-        raise ValueError(
-            f"allow rule {pattern!r}: 'threshold' is required, a percent or inf to exempt"
-        )
+        raise ValueError(f"allow rule {pattern!r}: missing 'threshold'")
     try:
         return AllowRule(
             pattern=pattern, reason=reason.strip(), threshold=cast(float, rule["threshold"])

@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import functools
 import math
 import os
 import re
 import sys
 import traceback
-from collections.abc import Generator, Mapping
+import warnings
+from collections.abc import Callable, Generator, Mapping
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO, cast
+from typing import TYPE_CHECKING, Any, NoReturn, TextIO, cast
 
 if TYPE_CHECKING:
     from _typeshed import SupportsWrite
@@ -32,7 +34,7 @@ from mew import (
     _registry,
     run as _run,
 )
-from mew._console import Table, Terminal, color_enabled, sgr
+from mew._console import Table, Terminal, color_enabled, error, sgr, warn
 from mew._options import (
     check_min_warmup_time,
     check_run_name,
@@ -51,13 +53,13 @@ def _load_config_or_exit() -> _config.Config:
     try:
         return _config.load()
     except ValueError as e:
-        print(f"mew: invalid config: {e}", file=sys.stderr)
+        error(f"invalid config: {e}")
         raise SystemExit(2) from e
 
 
 @contextmanager
-def _usage_error(command: str, *errors: type[Exception]) -> Generator[None]:
-    """Turn ``errors`` into a one-line ``mew <command>: ...`` message and exit 2.
+def _usage_error(*errors: type[Exception]) -> Generator[None]:
+    """Turn ``errors`` into a ``mew: error: ...`` message and exit 2.
 
     2 is the usage-or-environment code; uncaught, they would exit 1, the code
     for "nothing matched".
@@ -65,11 +67,11 @@ def _usage_error(command: str, *errors: type[Exception]) -> Generator[None]:
     try:
         yield
     except errors as e:
-        print(f"mew {command}: {e}", file=sys.stderr)
+        error(str(e))
         raise SystemExit(2) from e
 
 
-def _import_or_exit(path: Path, command: str) -> None:
+def _import_or_exit(path: Path) -> None:
     """Import a benchmark or setup file; if it raises, exit 2 after its traceback.
 
     The traceback shows what the file got wrong, e.g. an option a decorator
@@ -79,11 +81,11 @@ def _import_or_exit(path: Path, command: str) -> None:
         _registry.import_file(path)
     except Exception as e:
         traceback.print_exc()
-        print(f"mew {command}: cannot import {path}", file=sys.stderr)
+        error(f"cannot import {path}")
         raise SystemExit(2) from e
 
 
-def _import_setup(cfg: _config.Config, command: str) -> None:
+def _import_setup(cfg: _config.Config) -> None:
     """Import ``[tool.mew] setup`` before discovery, if configured.
 
     Imported first and unconditionally, so what it establishes -- shared
@@ -95,9 +97,9 @@ def _import_setup(cfg: _config.Config, command: str) -> None:
         return
     path = cfg.project_root / cfg.setup  # an absolute setup replaces root
     if not path.is_file():
-        print(f"mew: invalid config: [tool.mew] setup file not found: {path}", file=sys.stderr)
+        error(f"invalid config: [tool.mew] setup: no such file or directory: {path}")
         raise SystemExit(2)
-    _import_or_exit(path, command)
+    _import_or_exit(path)
 
 
 def _setup_context(cfg: _config.Config) -> dict[str, Any]:
@@ -118,15 +120,17 @@ def _setup_context(cfg: _config.Config) -> dict[str, Any]:
         value = hook()
     except Exception as e:
         traceback.print_exc()
-        print(f"mew run: context() in {path} raised", file=sys.stderr)
+        error(f"context() in {path} raised")
         raise SystemExit(2) from e
     if not isinstance(value, Mapping) or not all(isinstance(k, str) for k in value):
-        print(
-            f"mew run: context() in {path} must return a dict with string keys, got {value!r}",
-            file=sys.stderr,
-        )
+        error(f"context() in {path} must return a dict with string keys, got {value!r}")
         raise SystemExit(2)
     return dict(value)
+
+
+def _shown_path(path: Path) -> Path:
+    """``path`` relative to the cwd when it is inside it, as the user likely typed it."""
+    return path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path
 
 
 def _collect(
@@ -137,13 +141,11 @@ def _collect(
     tags: list[str],
     literal: bool = False,
     stdin: bool = False,
-    command: str,
 ) -> list[Entry]:
     """Resolve CLI path args into a filtered list of registered entries.
 
     Exits ``1`` (the shared "nothing matched" code) if nothing is selected,
-    and ``2`` if a file fails to import; ``command`` names the command in
-    that message.
+    and ``2`` if a file fails to import.
 
     Stdin lines are selectors, as positional paths are, but always literal.
     """
@@ -151,7 +153,7 @@ def _collect(
     # Keep each filter attached to its discovery path. Otherwise selecting
     # a.py::x and b.py::y also selects a.py::y and b.py::x. Compiled before any
     # import, so a bad pattern fails before benchmark code runs.
-    with _usage_error(command, ValueError):
+    with _usage_error(ValueError):
         selectors = [_registry.parse(p, literal=literal) for p in paths]
         selectors += [_registry.parse(line, literal=True) for line in lines if line]
         if pattern:
@@ -170,13 +172,13 @@ def _collect(
     try:
         files = _registry.collect_files(selectors, file_patterns=cfg.python_files)
     except FileNotFoundError as e:
-        print(f"mew: path does not exist: {e.args[0]}", file=sys.stderr)
+        error(f"no such file or directory: {_shown_path(e.args[0])}")
         raise SystemExit(2) from e
 
     REGISTRY.clear()
-    _import_setup(cfg, command)
+    _import_setup(cfg)
     for f in files:
-        _import_or_exit(f, command)
+        _import_or_exit(f)
 
     candidates = [
         # abspath, not resolve(): a symlinked bench file inside a benchpath was
@@ -186,7 +188,7 @@ def _collect(
     ]
     entries = _registry.select_entries(candidates, selectors)
     if not entries:
-        print("no benchmarks found", file=sys.stderr)
+        error("no benchmarks found")
         raise SystemExit(1)
     return entries
 
@@ -211,7 +213,6 @@ def list_(
             pattern=pattern,
             tags=tag,
             literal=literal,
-            command="list",
         )
         for e in entries:
             tags_suffix = f"\t[{','.join(sorted(e.tags)) if e.tags else '-'}]" if show_tags else ""
@@ -243,7 +244,7 @@ def _build_reporters(
     """
     formats = [None if raw == "-" else result_format(raw) for raw in outputs]
     if append and ("jsonl" not in formats or "json" in formats):
-        raise ValueError("--append requires a .jsonl or .jsonl.gz sink and no .json sink")
+        raise ValueError("--append needs a .jsonl or .jsonl.gz output and no .json output")
 
     reps: list[Reporter] = []
     seen: set[str | Path] = set()
@@ -269,21 +270,18 @@ def _build_reporters(
             continue
         # Opened only once the run starts; fail before it does.
         if not sink.parent.is_dir():
-            raise ValueError(f"output directory does not exist: {sink.parent}")
+            raise ValueError(f"no such file or directory: {Path(raw).parent}")
         fmt = result_format(raw)
         if fmt == "json":
             reps.append(JSONReporter(output=Path(raw)))
         elif fmt == "jsonl":
             reps.append(JSONLReporter(output=Path(raw), append=append))
         else:
-            raise ValueError(
-                f"unsupported output format: {raw} (use `-`, *.json, *.jsonl, or *.jsonl.gz)"
-            )
+            raise ValueError(f"{raw}: not -, a .json, .jsonl or .jsonl.gz file")
     if stdout_format != "rich" and "-" not in seen:
-        print(
-            f"warning: --format {stdout_format} has no effect without a stdout sink "
-            "(every -o target is a file); add `-o -` to also stream to stdout",
-            file=sys.stderr,
+        warn(
+            f"--format {stdout_format} ignored: no stdout output\n"
+            "hint: add -o - to also print to stdout"
         )
     return reps
 
@@ -315,14 +313,14 @@ def run(
     # argparse checks the other options mew.run takes. Before discovery, so a
     # bad name fails before any benchmark file is imported.
     if run_name is not None:
-        with _usage_error("run", TypeError, ValueError):
+        with _usage_error(TypeError, ValueError):
             check_run_name(run_name)
     if profile_dir is not None and cpu_profiler is None and memory_profiler is None:
-        print("mew run: --profile-dir needs --cpu-profiler or --memory-profiler", file=sys.stderr)
+        error("--profile-dir needs --cpu-profiler or --memory-profiler")
         raise SystemExit(2)
     if profile_dir is not None and profile_dir.exists() and not profile_dir.is_dir():
         # Checked now, not after the suite has run.
-        print(f"mew run: --profile-dir {profile_dir} is not a directory", file=sys.stderr)
+        error(f"not a directory: {profile_dir}")
         raise SystemExit(2)
     cfg = _load_config_or_exit()
     with _registry.discovered(), ExitStack() as stack:
@@ -333,15 +331,14 @@ def run(
             tags=tag,
             literal=literal,
             stdin=stdin,
-            command="run",
         )
         if strict:
             # Here rather than in mew.run, so it exits 2 like a profiler that can't run.
-            with _usage_error("run", RuntimeError):
+            with _usage_error(RuntimeError):
                 check_strict(entries)
         # A bad preset, or a manager that can't run here, such as a sampler
         # without its package or a bad setting for it.
-        with _usage_error("run", ImportError, RuntimeError, ValueError):
+        with _usage_error(ImportError, RuntimeError, ValueError):
             managers = _managers.load_all(
                 {"cpu": cpu_profiler, "memory": memory_profiler},
                 cfg.profilers,
@@ -356,7 +353,7 @@ def run(
             # Provenance, as the machine's: `mew compare` shows where files differ.
             context["profilers"] = {slot: m.record for slot, m in managers.items()}
 
-        with _usage_error("run", ValueError):
+        with _usage_error(ValueError):
             reporters = _build_reporters(
                 output,
                 stdout_format=format,
@@ -386,7 +383,7 @@ def run(
         # re-executes the suite.
         if profile_dir is not None:
             # A directory that can't be written, e.g. read-only, still ends in one line.
-            with _usage_error("run", OSError):
+            with _usage_error(OSError):
                 for slot, m in managers.items():
                     # Optional, as the run's own hooks are: a manager needn't subclass the protocol.
                     if (write := getattr(m.manager, "write_outputs", None)) is not None:
@@ -414,7 +411,7 @@ def compare(
         if regression_threshold is not None:  # wins over default-threshold
             gate = dataclasses.replace(gate, default_threshold=regression_threshold)
 
-    with _usage_error("compare", ValueError, OSError):
+    with _usage_error(ValueError, OSError):
         code = _compare(
             files,
             metric=metric,
@@ -433,11 +430,11 @@ def compare(
 
 def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: bool) -> None:
     """Print the results stored in files as ``mew run`` printed them."""
-    with _usage_error("show", ValueError):
+    with _usage_error(ValueError):
         name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
     shown = 0
     for file in files:
-        with _usage_error("show", ValueError, OSError):
+        with _usage_error(ValueError, OSError):
             runs = load_runs(Path(file))
         named = False
         for rows, context in runs:  # oldest first, so the newest ends next to the prompt
@@ -463,7 +460,7 @@ def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: 
             reporter.finalize()
             shown += len(rows)
     if not shown:
-        print(f"mew show: no benchmarks match {pattern!r}", file=sys.stderr)
+        error(f"no benchmarks match {pattern!r}")
         raise SystemExit(1)
 
 
@@ -492,7 +489,7 @@ def log(files: list[Path]) -> None:
         table.add_column("Name", flex=True)
         table.add_column("Benchmarks", justify="right")
         table.add_column("Rows", justify="right")
-        with _usage_error("log", ValueError, OSError):
+        with _usage_error(ValueError, OSError):
             summaries = run_summaries(path)
         width = _unique_prefix_width([s.id for s in summaries if s.id])
         for s in summaries:
@@ -543,6 +540,11 @@ class _Parser(argparse.ArgumentParser):
     Subcommand parsers are this class too, as argparse makes them the parent's type.
     """
 
+    def error(self, message: str) -> NoReturn:
+        """Print the usage, then ``mew: error: <message>``, and exit 2."""
+        self.print_usage(sys.stderr)
+        self.exit(2, f"mew: error: {message}\n")
+
     def print_help(self, file: SupportsWrite[str] | None = None) -> None:
         self._print_styled(self.format_help(), file)
 
@@ -581,10 +583,7 @@ def _warmup_seconds(value: str) -> float:
     except ValueError:
         # ArgumentTypeError gets argparse's usage-error exit (2); SystemExit
         # would exit 1, colliding with the "nothing matched" code.
-        raise argparse.ArgumentTypeError(
-            f"invalid --min-warmup-time {value!r}; use seconds ('10s', '0.5'), "
-            "milliseconds ('500ms'), or minutes ('1m')"
-        ) from None
+        raise argparse.ArgumentTypeError(f"expected a duration, got {value!r}") from None
     return seconds
 
 
@@ -594,8 +593,7 @@ def _min_time(value: str) -> str:
         return parse_min_time(value)
     except ValueError as e:
         raise argparse.ArgumentTypeError(
-            f"invalid --min-time {value!r}; use positive seconds ('0.5', '1s'), "
-            "milliseconds ('500ms'), minutes ('1m'), or iterations ('100x')"
+            f"expected a positive duration or Nx iterations, got {value!r}"
         ) from e
 
 
@@ -622,7 +620,7 @@ def _percent(value: str) -> float:
             raise ValueError
         return parsed
     except ValueError:
-        raise argparse.ArgumentTypeError(f"expected a percent like '5%', got {value!r}") from None
+        raise argparse.ArgumentTypeError(f"expected <n>%, got {value!r}") from None
 
 
 def _add_filter_args(p: argparse.ArgumentParser, *, verb: str) -> None:
@@ -884,8 +882,30 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     kwargs = {k: v for k, v in vars(args).items() if not k.startswith("_")}
-    func(**kwargs)
+    with warnings.catch_warnings():
+        warnings.showwarning = functools.partial(_show_warning, warnings.showwarning)
+        func(**kwargs)
     return 0
+
+
+def _show_warning(
+    default: Callable[..., None],
+    message: Warning | str,
+    category: type[Warning],
+    filename: str,
+    lineno: int,
+    file: TextIO | None = None,
+    line: str | None = None,
+) -> None:
+    """Print mew's own warnings as ``mew: warning: ...``, others with ``default``.
+
+    mew warns with ``stacklevel=2``, so from the CLI the location is mew's own
+    code, which tells the user nothing.
+    """
+    if Path(filename).is_relative_to(Path(__file__).parent):
+        warn(str(message))
+    else:
+        default(message, category, filename, lineno, file, line)
 
 
 if __name__ == "__main__":
