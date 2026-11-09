@@ -69,7 +69,6 @@ def _new_run_id() -> str:
 
 
 _DEFAULT_MIN_TIME = "0.5s"
-_DEFAULT_MEMORY_ITERATIONS = 16
 
 
 def _gb_argv(
@@ -77,7 +76,6 @@ def _gb_argv(
     min_warmup_time: float | None,
     repetitions: int | None,
     random_interleaving: bool,
-    memory_iterations: int | None = None,
 ) -> list[str]:
     """Validate the global run options and render them as Google Benchmark flags.
 
@@ -86,20 +84,17 @@ def _gb_argv(
     process. Decorator options take precedence, except that an ``Nx`` min_time
     also overrides a decorator's min_time.
     """
-    for name, count in (("repetitions", repetitions), ("memory_iterations", memory_iterations)):
-        if count is not None:
-            check_count(count, name)
+    if repetitions is not None:
+        check_count(repetitions, "repetitions")
     if min_warmup_time is not None:
         check_min_warmup_time(min_warmup_time)
     mt = parse_min_time(min_time) if min_time is not None else _DEFAULT_MIN_TIME
-    mi = memory_iterations if memory_iterations is not None else _DEFAULT_MEMORY_ITERATIONS
     return [
         "mew",
         f"--benchmark_min_time={mt}",
         f"--benchmark_min_warmup_time={min_warmup_time if min_warmup_time is not None else 0}",
         f"--benchmark_repetitions={repetitions if repetitions is not None else 1}",
         f"--benchmark_enable_random_interleaving={'true' if random_interleaving else 'false'}",
-        f"--benchmark_memory_iterations={mi}",
     ]
 
 
@@ -115,7 +110,6 @@ def run(
     context: Mapping[str, Any] | None = None,
     strict: bool = False,
     memory_manager: MemoryManager | None = None,
-    memory_iterations: int | None = None,
     profiler_manager: ProfilerManager | None = None,
     capture_output: bool = True,
 ) -> int:
@@ -157,13 +151,9 @@ def run(
         can't run, instead of warning and leaving them out of the results: in
         CI, that can hide a misconfiguration.
     memory_manager : MemoryManager, optional
-        Measures memory in an extra, untimed pass, e.g.
-        :class:`mew.memory.MemrayManager`; its figures land in each row's
-        ``memory`` block.
-    memory_iterations : int, optional
-        Iterations of the memory pass, at most the timed run's; 16 by default.
-        Raise it to amortize one-time allocations in
-        ``allocations_per_iteration``.
+        Measures memory in an extra, untimed pass of at most 16 iterations, as
+        in Google Benchmark, e.g. :class:`mew.memory.MemrayManager`; its
+        figures land in each row's ``memory`` block.
     profiler_manager : ProfilerManager, optional
         Profiles an extra, untimed pass, e.g. :class:`mew.cpu.TachyonManager`;
         its summary lands in each row's ``cpu_profile`` block.
@@ -188,7 +178,7 @@ def run(
     RuntimeError
         With ``strict``, if threaded benchmarks are selected on a GIL build.
     """
-    cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, memory_iterations)
+    cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving)
     if run_name is not None:
         check_run_name(run_name)
     if context is not None and (
