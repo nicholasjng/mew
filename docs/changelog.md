@@ -87,6 +87,8 @@ releases may break the API.
 
 ### Added
 
+- `mew run --context <key>=<value>` records a string in one run's context, over
+  the setup file's `context()`.
 - `file@*` pools every run in a file, for A/B loops that append a run per
   round; `mew compare` warns when the pooled runs came from different machines,
   interpreters or mew versions.

@@ -10,21 +10,30 @@ interpreter per side.
 
 ## Label each suite
 
-Record what each side is in its context, so the comparison documents the
-version skew, and use the same `name=` on both sides so the rows line up:
+Use the same `name=` on both sides so the rows line up, and record what each
+side is with `--context`, so the comparison documents the version skew:
 
 ```python
-# bench_alpha.py
+# bench_alpha.py; bench_beta.py is the same against the beta engine
 import mew
-
-mew.update_context(mew.vcs_context())  # records the commit both sides ran at
-mew.set_context("engine", "alpha 1.5.3")
 
 
 @mew.benchmark(name="scan")
 def bench_scan(state):
     for _ in state:
         ...
+```
+
+What both sides share, such as the commit they ran at, belongs in the setup
+file's `context()` hook (see {doc}`context`):
+
+```python
+# benchmarks/conf.py, named by [tool.mew] setup
+import mew
+
+
+def context() -> dict:
+    return mew.vcs_context()
 ```
 
 ## Run them interleaved
@@ -34,8 +43,8 @@ each file's runs with `@*`:
 
 ```console
 $ for i in 1 2 3 4 5; do
->   mew run bench_alpha.py --append -o alpha.jsonl
->   mew run bench_beta.py  --append -o beta.jsonl
+>   mew run bench_alpha.py --context engine="alpha 1.5.3" --append -o alpha.jsonl
+>   mew run bench_beta.py  --context engine="beta 2.0.0"  --append -o beta.jsonl
 > done
 $ mew compare --key func 'beta.jsonl@*' 'alpha.jsonl@*'
 ```

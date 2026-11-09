@@ -939,6 +939,34 @@ def test_a_failing_context_hook_exits_2_before_any_benchmark(
     assert not out.exists()
 
 
+def test_context_option_adds_to_and_overrides_the_hook(mew_cli, benchdir, tmp_path):
+    """`--context key=value` records strings as given, over the setup file's `context()`: a
+    later repeat wins, the value may hold `=`, and a dotted key stays one key."""
+    (tmp_path / "pyproject.toml").write_text('[tool.mew]\nsetup = "benchmarks/conf.py"\n')
+    (benchdir / "conf.py").write_text(
+        'def context():\n    return {"engine": "from the hook", "team": "perf"}\n'
+    )
+    out = tmp_path / "out.json"
+    args = ["--context", "engine=alpha 1.5.3", "--context", "n=8", "--context", "n=16"]
+    args += ["--context", "expr=a=b", "--context", "ci.job=42"]
+    res = mew_cli("run", "-k", "bench_one", "--min-time=1x", *args, "-o", str(out), cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    context = json.loads(out.read_text())["benchmarks"][0]["context"]
+    assert context["engine"] == "alpha 1.5.3"
+    assert context["team"] == "perf"
+    assert context["n"] == "16"  # a string: --context doesn't guess types
+    assert context["expr"] == "a=b"
+    assert context["ci.job"] == "42" and "ci" not in context
+
+
+@pytest.mark.parametrize("value", ["no-equals", "=value"])
+def test_context_option_needs_a_key_and_a_value(mew_cli, benchdir, tmp_path, value):
+    """A `--context` without `=`, or without a key, is a usage error."""
+    res = mew_cli("run", str(benchdir), "--context", value, cwd=tmp_path)
+    assert res.returncode == 2
+    assert "expected <key>=<value>" in res.stderr
+
+
 def test_list_never_calls_the_context_hook(mew_cli, benchdir, tmp_path):
     """`mew list` imports the setup file but not its `context()`, which may shell out."""
     (tmp_path / "pyproject.toml").write_text('[tool.mew]\nsetup = "benchmarks/conf.py"\n')
