@@ -29,7 +29,7 @@ SKEW_FIELDS = ("host", "cpu_model", "num_cpus", "cpu_scaling_enabled", "mew")
 
 #: The result format this mew writes and reads, on every row of a result file.
 #: Bumped only for changes that break readers; added fields don't bump it.
-SCHEMA_VERSION = 1
+SCHEMA = "v1"
 
 
 def result_format(name: str) -> Literal["json", "jsonl"] | None:
@@ -122,11 +122,11 @@ def _check_row(obj: Any, where: str) -> None:
     """Reject anything but a result row of this mew's format."""
     if not isinstance(obj, dict) or not isinstance(obj.get("name"), str):
         raise ValueError(f"{where}: expected a mew result row (a JSON object with a 'name')")  # ruff: ignore[TRY004]
-    if (version := obj.get("schema_version")) != SCHEMA_VERSION:
-        written = "no schema_version" if version is None else f"schema_version {version!r}"
+    if (schema := obj.get("schema")) != SCHEMA:
+        written = "no schema" if schema is None else f"schema {schema!r}"
         raise ValueError(
             f"{where}: written in another result format ({written}); this mew reads "
-            f"schema_version {SCHEMA_VERSION}. Re-run the benchmarks to compare them"
+            f"schema {SCHEMA!r}. Re-run the benchmarks to compare them"
         )
 
 

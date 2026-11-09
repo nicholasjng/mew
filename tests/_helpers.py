@@ -59,7 +59,7 @@ def row(name: str, real_time: float, **extra: Any) -> dict:
     # `skipped=True` for a skipped benchmark's row, as Google Benchmark's own term.
     skip = {"reason": "skipped", "message": ""} if extra.pop("skipped", False) else None
     out: dict[str, Any] = {
-        "schema_version": 1,
+        "schema": "v1",
         "name": name,
         "params": {},
         "repetition": 0,

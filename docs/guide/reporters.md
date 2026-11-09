@@ -106,7 +106,7 @@ SELECT split_part(name, '[', 1) AS func, params.n, avg(real_time)
 FROM 'results.jsonl' GROUP BY func, params.n;
 ```
 
-Result files add `schema_version` to every row: the result format, `1`. mew
+Result files add `schema` to every row: the result format, `"v1"`. mew
 reads only its own format and rejects rows of another with a message, so
 re-run old benchmarks rather than converting their files. Parameters and
 context values that JSON can't represent are stored as their type's qualified

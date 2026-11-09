@@ -50,7 +50,7 @@ def _feed(reporter, *rows: BenchmarkResult) -> None:
 
 
 def test_json_reporter_writes_the_documented_shape(tmp_path):
-    """A row of result format 1 has exactly these keys, in this order, with the format version
+    """A row of result format v1 has exactly these keys, in this order, with the format version
     first and its own `session` and `context`, so every row stands alone."""
     out = tmp_path / "results.json"
     _run_one(JSONReporter(output=out))
@@ -59,7 +59,7 @@ def test_json_reporter_writes_the_documented_shape(tmp_path):
     assert list(doc) == ["benchmarks"]  # no header: the rows carry the run themselves
     (bench,) = doc["benchmarks"]
     assert list(bench) == [
-        "schema_version",
+        "schema",
         "run",
         "context",
         "name",
@@ -74,7 +74,7 @@ def test_json_reporter_writes_the_documented_shape(tmp_path):
         "skip",
         "counters",
     ]
-    assert (bench["schema_version"], bench["params"], bench["skip"]) == (1, {}, None)
+    assert (bench["schema"], bench["params"], bench["skip"]) == ("v1", {}, None)
 
 
 def test_json_reporter_leaves_a_stream_open():

@@ -58,7 +58,7 @@ class BenchmarkResult(TypedDict):
     """The result of one benchmark repetition: its timings, counters and provenance.
 
     Every key is present except those marked optional. Result files add
-    ``schema_version`` to each row.
+    ``schema`` to each row.
 
     Attributes
     ----------
@@ -116,7 +116,7 @@ class BenchmarkResult(TypedDict):
     label: str
     skip: SkipInfo | None
     counters: list[dict[str, Any]]
-    schema_version: NotRequired[int]
+    schema: NotRequired[str]
     run: NotRequired[RunInfo]
     context: NotRequired[dict[str, Any]]
     memory: NotRequired[dict[str, Any]]

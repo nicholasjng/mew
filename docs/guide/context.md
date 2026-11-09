@@ -18,7 +18,7 @@ row of a result file carries both blocks:
 
 ```text
 {
-  "schema_version": 1,
+  "schema": "v1",
   "run": {
     "id": "01975f2e-9c40-7b31-a1d4-8f0e2c5b7a90",
     "date": "2026-05-19T10:00:00.000Z",
