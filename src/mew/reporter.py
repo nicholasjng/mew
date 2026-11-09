@@ -22,7 +22,7 @@ from mew._console import (
     sgr,
     truncate_left,
 )
-from mew._results import ROW_STAMP_FIELDS, SCHEMA_VERSION, open_text
+from mew._results import ROW_STAMP_FIELDS, SCHEMA, open_text
 from mew._typing import BenchmarkResult
 
 
@@ -93,9 +93,7 @@ def _indent_block(text: str, spaces: int) -> str:
 
 def _stamp(context: dict[str, Any]) -> dict[str, Any]:
     """What a file reporter writes ahead of each row: the format version, then provenance."""
-    return {"schema_version": SCHEMA_VERSION} | {
-        k: context[k] for k in ROW_STAMP_FIELDS if k in context
-    }
+    return {"schema": SCHEMA} | {k: context[k] for k in ROW_STAMP_FIELDS if k in context}
 
 
 def _open_sink(

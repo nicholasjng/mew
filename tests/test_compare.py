@@ -186,15 +186,15 @@ _ROW_LINE = json.dumps(_row("b", 1.0))
         ("a.json", '{"benchmarks": [1]}', r"benchmarks\[0\]: expected a mew result row"),
         ("a.jsonl", _ROW_LINE + "\nnot json\n", "a.jsonl:2: invalid JSON"),
         # Every row carries the result format it was written in.
-        ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', r"a.jsonl:2: .*\(no schema_version\)"),
+        ("a.jsonl", _ROW_LINE + '\n{"name": "x"}\n', r"a.jsonl:2: .*\(no schema\)"),
         (
             "a.jsonl",
-            _ROW_LINE + '\n{"name": "x", "schema_version": 2}\n',
-            r"\(schema_version 2\); this mew reads schema_version 1",
+            _ROW_LINE + '\n{"name": "x", "schema": "v2"}\n',
+            r"\(schema 'v2'\); this mew reads schema 'v1'",
         ),
         (
             "a.jsonl",
-            _ROW_LINE + '\n{"schema_version": 1}\n',
+            _ROW_LINE + '\n{"schema": "v1"}\n',
             "a.jsonl:2: expected a mew result row",
         ),
         # Cut off, as by a full disk or an interrupted copy.

@@ -41,7 +41,7 @@ releases may break the API.
   prints each run. To compare runs of one archive, extract them first, e.g.
   with DuckDB.
 - `session.mew_version` is `context.mew`, and `mew compare` warns when it differs.
-- Result format 1: every row of a result file starts with `schema_version: 1`,
+- Result format v1: every row of a result file starts with `"schema": "v1"`,
   and mew rejects rows without it, such as files from earlier versions.
 - A row's `name` is mew's addressable name (it was `benchmark`); Google
   Benchmark's `name` and `run_name`, `run_type`, `aggregate_name`,
