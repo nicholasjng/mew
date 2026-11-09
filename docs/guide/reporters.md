@@ -23,7 +23,7 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
   appear only there.
 
 {class}`~mew.JSONReporter`
-: Streams one `{"run": ..., "context": ..., "benchmarks": [...]}` document
+: Streams one `{"benchmarks": [...]}` document
   whose rows are the same self-contained objects JSONL writes. It becomes valid
   JSON at `finalize()`. Pass a path, text stream, or omit for stdout.
 
