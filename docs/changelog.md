@@ -7,6 +7,7 @@ releases may break the API.
 
 ### Breaking changes
 
+- `mew.Fanout` is gone: pass a list to `mew.run(reporter=[...])`.
 - `mew compare` no longer takes `--metric iterations`: Google Benchmark picks
   the count to fill `min_time`, so it only mirrored the time.
 - The JSON document is `{"benchmarks": [...]}`: its rows carry `run` and

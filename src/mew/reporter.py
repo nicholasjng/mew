@@ -382,8 +382,8 @@ class RichReporter(Reporter):
             self._term.print(sgr(line, "dim", enabled=color))
 
 
-class Fanout(Reporter):
-    """Pass every callback on to several reporters, in order.
+class _Fanout(Reporter):
+    """Pass every callback on to several reporters, in order, for ``run(reporter=[...])``.
 
     A callback that raises propagates before the reporters after it get the
     call; ``finalize()`` still reaches every reporter.
@@ -416,7 +416,6 @@ class Fanout(Reporter):
 
 
 __all__ = [
-    "Fanout",
     "JSONLReporter",
     "JSONReporter",
     "Reporter",

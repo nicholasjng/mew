@@ -34,7 +34,7 @@ from mew._registry import REGISTRY, Entry, longest_row_name, selected_cases
 from mew._results import encode_context
 from mew._typing import MemoryManager, ProfilerManager
 from mew.machine import machine_context
-from mew.reporter import Fanout, Reporter, RichReporter
+from mew.reporter import Reporter, RichReporter, _Fanout
 
 __all__ = ["run"]
 
@@ -221,7 +221,7 @@ def run(
     else:
         reps = list(reporter) if reporter is not None else []
     if len(reps) > 1:
-        rep = Fanout(reps)
+        rep = _Fanout(reps)
     elif reps:
         rep = reps[0]
     else:

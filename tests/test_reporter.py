@@ -13,7 +13,7 @@ import mew
 from mew import BenchmarkResult
 from mew._console import Terminal, human_readable
 from mew.compare import read_results
-from mew.reporter import Fanout, JSONLReporter, JSONReporter, RichReporter
+from mew.reporter import JSONLReporter, JSONReporter, RichReporter, _Fanout
 
 
 def _run_one(reporter, context=None):
@@ -289,7 +289,7 @@ def test_fanout_finalizes_every_sink_in_order_despite_a_failure():
     sinks = mock.Mock()
     sinks.boom.finalize.side_effect = RuntimeError("disk full")
     with pytest.raises(RuntimeError, match="disk full"):
-        Fanout([sinks.boom, sinks.ok]).finalize()
+        _Fanout([sinks.boom, sinks.ok]).finalize()
     assert sinks.method_calls == [mock.call.boom.finalize(), mock.call.ok.finalize()]
 
 

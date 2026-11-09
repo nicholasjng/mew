@@ -37,7 +37,6 @@ importable from `mew` directly:
    RichReporter
    JSONReporter
    JSONLReporter
-   Fanout
    Terminal
    BenchmarkResult
    RunInfo
