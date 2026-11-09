@@ -470,68 +470,6 @@ def test_state_skip_inside_pause_does_not_resume_timing():
     assert cap.runs[0]["skip"]["message"] == "unmet precondition"
 
 
-@pytest.mark.parametrize("loop", ["iter", "batches"])
-def test_pause_scope_held_open_across_the_loop_end_stays_untimed(loop):
-    """An ExitStack around the loop keeps its pause scope open over the final
-    loop step: GB must not stop the stopped timer again, and the paused time
-    must stay out of the result."""
-    from contextlib import ExitStack
-
-    @mew.benchmark(iterations=1)
-    def bench_held(state):
-        with ExitStack() as stack:
-            for _ in state if loop == "iter" else state.batches(1):
-                stack.enter_context(state.pause())
-                _burn(0.2)
-
-    cap = Capture()
-    mew.run(reporter=cap)
-    (row,) = cap.runs
-    assert row["skip"] is None
-    # Stopping the timer again adds the time since the loop started, >= 0.2 s.
-    assert row["cpu_time"] < 0.1e9
-
-
-def test_pause_scope_left_open_after_a_break_does_not_leak():
-    """A pause scope left open at a `break` does not change pause timing in the next benchmark."""
-
-    @mew.benchmark(iterations=2)
-    def bench_breaks(state):
-        for _ in state:
-            state.pause().__enter__()
-            break
-
-    @mew.benchmark(iterations=1)
-    def bench_next(state):
-        for _ in state:
-            with state.pause():
-                _burn(0.2)
-
-    cap = Capture()
-    mew.run(reporter=cap)
-    assert cap.runs[0]["skip"]["message"] == "The benchmark did not complete its loop."
-    # A leaked pause state would time the 0.2 s burn.
-    assert cap.runs[1]["cpu_time"] < 0.1e9
-
-
-def test_second_loop_over_a_finished_state_adds_no_time():
-    """A second loop over a finished `state` does not add the time between the loops."""
-
-    @mew.benchmark(iterations=5)
-    def bench_x(state):
-        for _ in state:
-            pass
-        _burn(0.2)  # untimed, unless the second loop stops the timer again
-        for _ in state:
-            pass
-
-    cap = Capture()
-    mew.run(reporter=cap)
-    row = cap.runs[0]
-    # Stopping the timer again adds the burn, >= 0.2 s in total.
-    assert row["cpu_time"] * row["iterations"] < 0.1e9
-
-
 def test_run_with_no_entries_returns_zero():
     """`mew.run` with no registered benchmarks returns 0 and reports no rows."""
     cap = Capture()

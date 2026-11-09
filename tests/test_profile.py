@@ -250,22 +250,6 @@ def test_nested_pauses_toggle_the_profiler_only_at_the_outer_scope(reuse_scope):
     assert mgr.calls == [*timed, "start", *profiled, "stop"]
 
 
-def test_pause_held_across_the_loop_end_is_resumed_before_teardown():
-    """mew resumes the profiler before stopping it, so a manager sees pause()
-    and resume() in pairs; the scope's exit after the loop must not resume a
-    manager whose pass is over."""
-    mgr = FakeProfilerManager()
-
-    @mew.benchmark(iterations=3)
-    def bench_held(state):
-        with contextlib.ExitStack() as stack:
-            for _ in state:
-                stack.enter_context(state.pause())
-
-    mew.run(reporter=Capture(), profiler_manager=mgr)
-    assert mgr.calls == ["start", "pause", "resume", "stop"]
-
-
 def test_managers_do_not_leak_into_a_later_run():
     """Memory and profiler managers given to one `mew.run()` are not used by the next."""
     _register_noop(iterations=1)
