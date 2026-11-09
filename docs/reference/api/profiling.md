@@ -30,9 +30,8 @@ type checkers expect every method of the protocol.
   the run with `TypeError`; other keys are ignored.
 - A profiler's `get_result()` summary becomes the row's `cpu_profile` block,
   even when empty; `None` leaves the block out.
-- `pause()` and `resume()` come in pairs. When a body leaves a `state.pause()`
-  scope open at the end of its loop, mew calls `resume()` before
-  `before_teardown_stop()`, so a manager never stops while paused.
+- `pause()` and `resume()` come in pairs, and a manager never stops while
+  paused.
 
 - `write_outputs(directory)` writes a manager's files, such as HTML reports,
   after the run; `mew run --profile-dir DIR` passes `DIR/cpu` and

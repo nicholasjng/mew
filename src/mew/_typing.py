@@ -266,8 +266,6 @@ class ProfilerManager(Protocol):
 
         Calls come from the profiling thread only, and in pairs: every
         ``pause()`` is followed by a ``resume()`` before
-        ``before_teardown_stop()``. When a body leaves a pause scope open at
-        the end of its loop, mew calls ``resume()`` itself before
         ``before_teardown_stop()``. Does nothing unless a subclass overrides
         it, so the paused region is profiled.
         """
