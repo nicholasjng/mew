@@ -27,26 +27,26 @@ from mew._results import (
     MEMORY_METRICS,
     METRICS,
     TIME_METRICS,
+    RunSummary,
     Sample,
-    SessionSummary,
     counter_name,
     load_column,
     read_results,
     read_rows,
-    session_summaries,
+    run_summaries,
     split_selector,
 )
 from mew._statistics import Statistic, mannwhitney_p
 from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, render_panel
 
-__all__ = ["SessionSummary", "compare", "read_results", "session_summaries"]
+__all__ = ["RunSummary", "compare", "read_results", "run_summaries"]
 
 _HIGHER_IS_BETTER = frozenset({"iterations"})
 _KEYS = frozenset({"name", "func"})
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
 # `host` only where a suite records it; mew doesn't, since it often names a person.
-_CTX_SKEW_FIELDS = ("host", "cpu_model", "num_cpus", "cpu_scaling_enabled")
+_CTX_SKEW_FIELDS = ("host", "cpu_model", "num_cpus", "cpu_scaling_enabled", "mew")
 
 
 def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
@@ -66,15 +66,15 @@ def _ctx_summary(ctx: dict[str, Any], *, exclude: Collection[str]) -> list[str]:
 
     ``exclude`` omits user-context keys already shown in the column label.
     """
-    sess = ctx.get("session") or {}
+    run = ctx.get("run") or {}
     provenance = ctx.get("context") or {}
     parts: list[str] = []
-    if sess.get("tag"):
-        parts.append(f"session={sess['tag']}")
-    elif sess.get("id"):
-        parts.append(f"session={str(sess['id'])[:12]}")
-    if sess.get("date"):
-        parts.append(f"date={str(sess['date'])[:19]}")
+    if run.get("name"):
+        parts.append(f"run={run['name']}")
+    elif run.get("id"):
+        parts.append(f"run={str(run['id'])[:12]}")
+    if run.get("date"):
+        parts.append(f"date={str(run['date'])[:19]}")
     for k, v in _flatten(provenance).items():
         if k in exclude:
             continue
@@ -201,7 +201,7 @@ def _value_cell(sample: Sample, metric: str) -> str | list[Span]:
 
 @dataclass(slots=True)
 class _Column:
-    """One comparison column: a result file, or one ``path@selector`` session of it.
+    """One comparison column: a result file, or one ``path@selector`` run of it.
 
     ``source`` identifies the column in warnings (``path`` or ``path@selector``);
     ``label`` heads its table column.
@@ -227,7 +227,7 @@ def _render(
     """Compare the first column against the rest and render the table.
 
     Column-shaped on purpose: anything producing labelled sample sets with contexts
-    (files, ``path@selector`` sessions) compares the same way. ``higher_is_better``
+    (files, ``path@selector`` runs) compares the same way. ``higher_is_better``
     is the metric's direction; ``None`` leaves deltas uncolored and can't be gated.
     """
     counter = counter_name(metric)
@@ -363,9 +363,9 @@ def compare(
     files : Sequence[str or Path]
         JSON, JSONL or gzipped JSONL result files, the baseline last:
         ``mew compare head.json base.json`` compares head against base. A file
-        with several sessions contributes its newest; ``path@<tag>`` selects
-        the sessions run with that ``--session-tag``, and ``path@latest`` the
-        newest explicitly (``latest`` is reserved, never a tag). A path splits
+        with several runs contributes its newest; ``path@<name>`` selects the
+        newest run with that ``--run-name``, and ``path@latest`` the newest
+        explicitly (``latest`` is reserved, never a name). A path splits
         at its last ``@`` only after a ``.json``, ``.jsonl`` or ``.jsonl.gz``
         extension, so ``a@b.json`` is a file name.
     metric : str, default "real_time"
@@ -408,7 +408,7 @@ def compare(
     ValueError
         If an argument, such as ``pattern``, is invalid, or a file can't be
         compared: it is not a mew result file, holds no measurements or no
-        session with the given tag, or ``statistic`` fails on a benchmark's
+        run with the given name, or ``statistic`` fails on a benchmark's
         values; or ``regressions`` gates on a counter without a direction.
     OSError
         If a file can't be read; :class:`FileNotFoundError` if it doesn't exist.

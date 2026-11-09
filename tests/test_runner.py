@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import json
 import platform
+import re
 import sys
 import time
 import weakref
@@ -41,8 +42,8 @@ def test_native_registry_keeps_the_callable_alive_until_cleared():
     assert ref() is None
 
 
-def test_run_reports_rows_and_the_session_context():
-    """A run reports one row per benchmark and a context with mew's session and Python details."""
+def test_run_reports_rows_and_the_run_context():
+    """A run reports one row per benchmark and a context with the run and its Python details."""
 
     @mew.benchmark
     def bench_x(state):
@@ -56,9 +57,11 @@ def test_run_reports_rows_and_the_session_context():
     assert cap.finalized
     # The context is what mew assembled; Google Benchmark's own adds nothing.
     assert cap.context is not None
-    assert set(cap.context) == {"session", "context"}
+    assert set(cap.context) == {"run", "context"}
     # Rows from several interpreters or mew releases stay apart in one archive.
-    assert cap.context["session"]["mew_version"] == mew.__version__
+    assert cap.context["context"]["mew"] == mew.__version__
+    # UTC with milliseconds and a "Z": fixed width, so dates sort as strings.
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", cap.context["run"]["date"])
     assert cap.context["context"]["python"] == {
         "version": platform.python_version(),
         "implementation": sys.implementation.name,
@@ -76,10 +79,10 @@ def test_run_reports_rows_and_the_session_context():
         ({"memory_iterations": 0}, ValueError, "memory_iterations must be >= 1"),
         ({"min_time": "forever"}, ValueError, "min_time must be positive"),
         ({"min_warmup_time": -1}, ValueError, "min_warmup_time must be a finite"),
-        ({"session_tag": 1}, TypeError, "session_tag must be a string"),
-        ({"session_tag": ""}, ValueError, "session_tag must not be empty"),
-        # `mew compare path@latest` selects the newest session.
-        ({"session_tag": "latest"}, ValueError, "session_tag 'latest' is reserved"),
+        ({"run_name": 1}, TypeError, "run_name must be a string"),
+        ({"run_name": ""}, ValueError, "run_name must not be empty"),
+        # `mew compare path@latest` selects the newest run.
+        ({"run_name": "latest"}, ValueError, "run_name 'latest' is reserved"),
     ],
 )
 def test_run_rejects_invalid_options(kwargs, error, message):
@@ -604,7 +607,7 @@ def test_reporter_failure_aborts_the_run():
             pass
 
     class Exploding(Capture):
-        def report_runs(self, runs):
+        def report_results(self, runs):
             raise RuntimeError("sink is broken")
 
     with pytest.raises(RuntimeError, match="sink is broken"):
@@ -646,10 +649,10 @@ def test_benchmark_output_is_printed_to_stderr_after_the_run(capfd):
     import os
 
     class Recording(Capture):
-        def report_runs(self, runs):
+        def report_results(self, runs):
             # Reporters write to the real streams while the capture is suspended.
             os.write(1, b"reporter row\n")
-            super().report_runs(runs)
+            super().report_results(runs)
 
     @mew.benchmark(iterations=1)
     def bench_noisy(state):

@@ -35,13 +35,13 @@ from mew import (
 from mew._console import Table, Terminal, color_enabled, sgr
 from mew._options import (
     check_min_warmup_time,
-    check_session_tag,
+    check_run_name,
     check_strict,
     parse_min_time,
     parse_seconds,
 )
 from mew._registry import compile_name_filter, longest_row_name, selected_cases
-from mew._results import load_session, result_format, session_summaries, split_selector
+from mew._results import load_run, result_format, run_summaries, split_selector
 from mew._statistics import resolve_statistic
 from mew.context import set_context
 
@@ -274,7 +274,7 @@ def run(
     random_interleaving: bool,
     repetitions: int | None,
     summary_only: bool,
-    session_tag: str | None,
+    run_name: str | None,
     append: bool,
     strict: bool,
     capture: str,
@@ -285,10 +285,10 @@ def run(
 ) -> None:
     """Discover and run benchmarks."""
     # argparse checks the other options mew.run takes. Before discovery, so a
-    # bad tag fails before any benchmark file is imported.
-    if session_tag is not None:
+    # bad name fails before any benchmark file is imported.
+    if run_name is not None:
         with _usage_error("run", TypeError, ValueError):
-            check_session_tag(session_tag)
+            check_run_name(run_name)
     if profile_dir is not None and cpu_profiler is None and memory_profiler is None:
         print("mew run: --profile-dir needs --cpu-profiler or --memory-profiler", file=sys.stderr)
         raise SystemExit(2)
@@ -344,7 +344,7 @@ def run(
             min_warmup_time=min_warmup_time,
             repetitions=repetitions,
             random_interleaving=random_interleaving,
-            session_tag=session_tag,
+            run_name=run_name,
             strict=strict,
             capture_output=capture == "fd",
             memory_manager=memory_manager,
@@ -420,7 +420,7 @@ def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: 
     for file in files:
         path, selector = split_selector(file)
         with _usage_error("show", ValueError, OSError):
-            rows, context = load_session(path, selector)
+            rows, context = load_run(path, selector)
         if name_filter is not None:
             rows = [r for r in rows if name_filter.search(r["name"])]
         if not rows:
@@ -437,7 +437,7 @@ def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: 
             show_repetitions=not summary_only,
         )
         reporter.report_context(context)
-        reporter.report_runs(rows)
+        reporter.report_results(rows)
         reporter.finalize()
         shown += len(rows)
     if not shown:
@@ -445,23 +445,23 @@ def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: 
         raise SystemExit(1)
 
 
-def sessions(files: list[Path]) -> None:
-    """List the sessions stored in result files, newest first."""
+def log(files: list[Path]) -> None:
+    """List the runs stored in result files, newest first."""
     term = Terminal()
     for path in files:
         table = Table(title=str(path) if len(files) > 1 else None)
         table.add_column("Id")
         table.add_column("Date")
-        table.add_column("Tag", flex=True)
+        table.add_column("Name", flex=True)
         table.add_column("Benchmarks", justify="right")
         table.add_column("Rows", justify="right")
-        with _usage_error("sessions", ValueError, OSError):
-            summaries = session_summaries(path)
+        with _usage_error("log", ValueError, OSError):
+            summaries = run_summaries(path)
         for s in summaries:
             table.add_row(
                 (s.id or "-")[:8],
                 (s.date or "-")[:19],
-                s.tag or "-",
+                s.name or "-",
                 str(s.benchmarks),
                 str(s.rows),
             )
@@ -684,14 +684,14 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     )
     _add_summary_only_arg(p)
     p.add_argument(
-        "--session-tag",
-        metavar="<tag>",
-        help="Identify this run as session <tag> ('latest' is reserved).",
+        "--run-name",
+        metavar="<name>",
+        help="Name this run <name>, which <file>@<name> selects ('latest' is reserved).",
     )
     p.add_argument(
         "--append",
         action="store_true",
-        help="Append a session to existing JSONL output.",
+        help="Append this run to existing JSONL output.",
     )
     p.add_argument(
         "--strict",
@@ -736,7 +736,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "files",
         nargs="+",
-        help="Compare result files against the last file (<file>@<tag> picks a session).",
+        help="Compare result files against the last file (<file>@<name> picks a run).",
     )
     p.add_argument(
         "-m",
@@ -777,17 +777,17 @@ def _add_show_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "files",
         nargs="+",
-        help="Print result files' newest session (<file>@<tag> picks a session).",
+        help="Print result files' newest run (<file>@<name> picks a run).",
     )
     _add_filter_args(p, verb="Show")
     _add_summary_only_arg(p)
     p.set_defaults(_func=show)
 
 
-def _add_sessions_cmd(sub: argparse._SubParsersAction) -> None:
-    p = _add_command(sub, "sessions", help="List the sessions stored in result files.")
+def _add_log_cmd(sub: argparse._SubParsersAction) -> None:
+    p = _add_command(sub, "log", help="List the runs stored in result files.")
     p.add_argument("files", nargs="+", type=Path, help="Result files to inspect.")
-    p.set_defaults(_func=sessions)
+    p.set_defaults(_func=log)
 
 
 def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
@@ -827,7 +827,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_run_cmd(sub)
     _add_compare_cmd(sub)
     _add_show_cmd(sub)
-    _add_sessions_cmd(sub)
+    _add_log_cmd(sub)
     _add_completions_cmd(sub)
 
     return parser

@@ -1,4 +1,4 @@
-"""Read result files, group their rows by session, and reduce them to samples."""
+"""Read result files, group their rows by run, and reduce them to samples."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from mew._statistics import Statistic
 from mew._typing import BenchmarkResult
 
 # Stamped onto every row so each one stands alone, in JSON and JSONL alike.
-ROW_STAMP_FIELDS = ("session", "context")
+ROW_STAMP_FIELDS = ("run", "context")
 
 #: The result format this mew writes and reads, on every row of a result file.
 #: Bumped only for changes that break readers; added fields don't bump it.
@@ -153,19 +153,19 @@ def _rows_from_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _session_key(row: dict[str, Any]) -> tuple[str, str]:
+def _run_key(row: dict[str, Any]) -> tuple[str, str]:
     """Return ``(date, id)`` for a result row.
 
-    Sorts oldest first: the ISO-8601 date leads, and the time-ordered UUIDv7 id
-    breaks ties between equal dates.
+    Sorts oldest first: the fixed-width ISO-8601 date leads, and the
+    time-ordered UUIDv7 id breaks ties between equal dates.
     """
-    sess = _session_block(row)
-    return (str(sess.get("date") or ""), str(sess.get("id") or ""))
+    run = _run_block(row)
+    return (str(run.get("date") or ""), str(run.get("id") or ""))
 
 
-def _session_block(row: dict[str, Any]) -> dict[str, Any]:
-    """The normalized row's session block."""
-    block = row.get("session") or {}
+def _run_block(row: dict[str, Any]) -> dict[str, Any]:
+    """The row's ``run`` block, or ``{}``."""
+    block = row.get("run") or {}
     return block if isinstance(block, dict) else {}
 
 
@@ -272,16 +272,16 @@ def _samples_from_groups(
     return samples
 
 
-def _group_by_session(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """Group rows by session, oldest key first.
+def _group_by_run(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Group rows by run, oldest key first.
 
     ISO-8601 dates lead the key, so it sorts chronologically. Every row counts,
-    skipped ones included, so a selector names the same session in ``mew show``,
-    ``mew sessions`` and ``mew compare``.
+    skipped ones included, so a selector names the same run in ``mew show``,
+    ``mew log`` and ``mew compare``.
     """
     buckets: defaultdict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
-        buckets[_session_key(r)].append(r)
+        buckets[_run_key(r)].append(r)
     return dict(sorted(buckets.items()))
 
 
@@ -299,33 +299,29 @@ def split_selector(raw: str) -> tuple[Path, str | None]:
 
 def _select_rows(
     path: Path,
-    by_session: dict[tuple[str, str], list[dict[str, Any]]],
+    by_run: dict[tuple[str, str], list[dict[str, Any]]],
     selector: str | None,
 ) -> list[dict[str, Any]]:
-    """Pick the rows a ``path@selector`` names.
+    """Pick the rows of the run a ``path@selector`` names.
 
-    ``None`` and ``latest`` select the newest session; :func:`mew.run` rejects
-    ``latest`` as a session tag. Any other selector is a session tag; every
-    session carrying it is selected, so repeated runs under one tag pool as
-    repetitions. ``mew sessions`` lists what a file holds.
+    ``None`` and ``latest`` select the newest run; :func:`mew.run` rejects
+    ``latest`` as a run name. Any other selector is a run name, and selects the
+    newest run of that name: runs are never pooled, since two runs may come from
+    different machines or interpreters. ``mew log`` lists what a file holds.
     """
-    if not by_session:
+    if not by_run:
         raise ValueError(f"{path}: no measurements in file")
     if selector is None or selector == "latest":
-        return by_session[max(by_session)]
+        return by_run[max(by_run)]
     if not selector:
-        raise ValueError(f"{path}: empty session selector after '@'")
-    tagged = [
-        rows for rows in by_session.values() if _session_block(rows[0]).get("tag") == selector
-    ]
-    if not tagged:
-        tags = sorted(
-            {t for rows in by_session.values() if (t := _session_block(rows[0]).get("tag"))}
-        )
-        shown = ", ".join(tags[:5]) + overflow(len(tags), 5)
-        hint = f" (tags in file: {shown})" if tags else " (no tagged sessions in file)"
-        raise ValueError(f"{path}: no session tagged {selector!r}{hint}; see `mew sessions {path}`")
-    return [r for rows in tagged for r in rows]
+        raise ValueError(f"{path}: empty run name after '@'")
+    named = [key for key, rows in by_run.items() if _run_block(rows[0]).get("name") == selector]
+    if not named:
+        names = sorted({n for rows in by_run.values() if (n := _run_block(rows[0]).get("name"))})
+        shown = ", ".join(names[:5]) + overflow(len(names), 5)
+        hint = f" (run names in file: {shown})" if names else " (no named runs in file)"
+        raise ValueError(f"{path}: no run named {selector!r}{hint}; see `mew log {path}`")
+    return by_run[max(named)]
 
 
 def load_column(
@@ -336,16 +332,16 @@ def load_column(
     statistic: Statistic | None = None,
     reader: Callable[[Path], list[dict[str, Any]]] = read_rows,
 ) -> tuple[dict[str, Sample], dict[str, Any]]:
-    """Load one comparison column from a result file: read, select a session, re-key.
+    """Load one comparison column from a result file: read, select a run, re-key.
 
     ``reader`` lets a caller comparing several selectors of one file parse it once.
     """
-    # Selected before filtering, so `@latest` is the session `mew show` prints
+    # Selected before filtering, so `@latest` is the run `mew show` prints
     # even when all of it was skipped.
-    selected = _select_rows(path, _group_by_session(reader(path)), selector)
+    selected = _select_rows(path, _group_by_run(reader(path)), selector)
     measured = [r for r in selected if _is_measurement_row(r)]
     if not measured:
-        which = "the latest session" if selector in (None, "latest") else f"session {selector!r}"
+        which = "the latest run" if selector in (None, "latest") else f"run {selector!r}"
         raise ValueError(f"{path}: {which} has no measurements, only skipped rows")
     # Repetitions of one benchmark share its `name[label]`.
     groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -358,7 +354,7 @@ def load_column(
     return _normalize_samples(samples, key, str(path)), _provenance(measured)
 
 
-def load_session(
+def load_run(
     path: Path, selector: str | None = None
 ) -> tuple[list[BenchmarkResult], dict[str, Any]]:
     """Load the rows a ``path@selector`` names, as ``mew run`` reported them.
@@ -368,31 +364,30 @@ def load_session(
     Returns
     -------
     tuple[list[BenchmarkResult], dict]
-        The rows in file order, and the provenance (``session`` and
-        ``context``) of the newest one.
+        The rows in file order, and their provenance (``run`` and ``context``).
     """
-    selected = _select_rows(path, _group_by_session(read_rows(path)), selector)
+    selected = _select_rows(path, _group_by_run(read_rows(path)), selector)
     return cast("list[BenchmarkResult]", selected), _provenance(selected)
 
 
 def _provenance(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """The ``session`` and ``context`` of the newest row, which speaks for all of them."""
-    newest = max(rows, key=_session_key)
+    """The ``run`` and ``context`` of the newest row, which speaks for all of them."""
+    newest = max(rows, key=_run_key)
     return {k: newest[k] for k in ROW_STAMP_FIELDS if k in newest}
 
 
 @dataclass(frozen=True, slots=True)
-class SessionSummary:
-    """A summary of one session in a result file.
+class RunSummary:
+    """A summary of one run in a result file.
 
     Attributes
     ----------
     id : str or None
-        The session's time-ordered id.
+        The run's time-ordered id.
     date : str or None
-        When the session started, in ISO 8601.
-    tag : str or None
-        Its ``--session-tag``.
+        When the run started, in ISO 8601.
+    name : str or None
+        Its ``--run-name``.
     benchmarks : int
         Distinct benchmarks it measured, without skipped rows.
     rows : int
@@ -401,15 +396,15 @@ class SessionSummary:
 
     id: str | None
     date: str | None
-    tag: str | None
+    name: str | None
     benchmarks: int
     rows: int
 
 
-def session_summaries(path: str | Path) -> list[SessionSummary]:
-    """Summarize every session in a result file, newest first.
+def run_summaries(path: str | Path) -> list[RunSummary]:
+    """Summarize every run in a result file, newest first, as ``mew log`` lists them.
 
-    ``rows`` counts every stored row of the session; ``benchmarks`` counts
+    ``rows`` counts every stored row of the run; ``benchmarks`` counts
     distinct measured benchmarks (skipped rows excluded).
 
     Parameters
@@ -419,9 +414,9 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
 
     Returns
     -------
-    list[SessionSummary]
-        One summary per session; sessions with the same date are ordered by
-        their time-ordered id.
+    list[RunSummary]
+        One summary per run; runs with the same date are ordered by their
+        time-ordered id.
 
     Raises
     ------
@@ -430,17 +425,17 @@ def session_summaries(path: str | Path) -> list[SessionSummary]:
     OSError
         If the file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
-    by_session = _group_by_session(read_rows(Path(path)))
-    out: list[SessionSummary] = []
-    for (date, sid), session_rows in reversed(by_session.items()):
-        measured = {r["name"] for r in session_rows if _is_measurement_row(r)}
+    by_run = _group_by_run(read_rows(Path(path)))
+    out: list[RunSummary] = []
+    for (date, run_id), run_rows in reversed(by_run.items()):
+        measured = {r["name"] for r in run_rows if _is_measurement_row(r)}
         out.append(
-            SessionSummary(
-                id=sid or None,
+            RunSummary(
+                id=run_id or None,
                 date=date or None,
-                tag=_session_block(session_rows[0]).get("tag"),
+                name=_run_block(run_rows[0]).get("name"),
                 benchmarks=len(measured),
-                rows=len(session_rows),
+                rows=len(run_rows),
             )
         )
     return out
@@ -450,7 +445,7 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
     """Read result rows in file order.
 
     Accepts JSON, JSONL, and gzip-compressed results; every row carries its own
-    ``session`` and ``context``.
+    ``run`` and ``context``.
 
     Parameters
     ----------

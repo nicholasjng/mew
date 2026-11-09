@@ -35,19 +35,19 @@ class Reporter(Protocol):
         Parameters
         ----------
         context : dict[str, Any]
-            The run's ``session`` block, a :class:`mew.SessionInfo`, and its
+            The run's ``run`` block, a :class:`mew.RunInfo`, and its
             ``context`` block.
         """
         ...
 
-    def report_runs(self, runs: list[BenchmarkResult], /) -> None:
+    def report_results(self, results: list[BenchmarkResult], /) -> None:
         """Receive result rows.
 
         Called as results arrive, with the rows since the last call.
 
         Parameters
         ----------
-        runs : list[BenchmarkResult]
+        results : list[BenchmarkResult]
             The new result rows.
         """
         ...
@@ -99,9 +99,9 @@ def _open_sink(
 
 
 class JSONReporter(Reporter):
-    """Write results as one JSON document of the session, context and benchmark rows.
+    """Write results as one JSON document of the run, context and benchmark rows.
 
-    Each row carries ``session`` and ``context`` as :class:`JSONLReporter`
+    Each row carries ``run`` and ``context`` as :class:`JSONLReporter`
     writes them; the top level repeats them. The document is valid JSON only
     once the run finishes, so prefer :class:`JSONLReporter` where a run may be
     interrupted.
@@ -133,9 +133,9 @@ class JSONReporter(Reporter):
         self._fh.write("{\n" + header + '  "benchmarks": [')
         self._fh.flush()
 
-    def report_runs(self, runs: list[BenchmarkResult]) -> None:
+    def report_results(self, results: list[BenchmarkResult]) -> None:
         assert self._fh is not None  # report_context runs first, always
-        for row in runs:
+        for row in results:
             prefix = "" if self._first_row else ","
             self._first_row = False
             rendered = _indent_block(json.dumps({**self._stamp, **row}, indent=2, default=str), 4)
@@ -165,8 +165,8 @@ class JSONLReporter(Reporter):
         A path is opened for the run and closed after it, gzip-compressed for
         ``.gz``; a stream is written as is; ``None`` writes to ``sys.stdout``.
     append : bool, default False
-        Append to a path instead of replacing it, adding the run as a new
-        session.
+        Append to a path instead of replacing it, adding the run to those
+        already in the file.
     """
 
     def __init__(
@@ -185,9 +185,9 @@ class JSONLReporter(Reporter):
         self._fh = self._stack.enter_context(_open_sink(self._output, "a" if self._append else "w"))
         self._stamp = _stamp(context)
 
-    def report_runs(self, runs: list[BenchmarkResult]) -> None:
+    def report_results(self, results: list[BenchmarkResult]) -> None:
         assert self._fh is not None  # report_context runs first, always
-        for row in runs:
+        for row in results:
             # Preserve row-carried context when merging data from another process.
             self._fh.write(json.dumps({**self._stamp, **row}, default=str) + "\n")
         self._fh.flush()
@@ -271,8 +271,8 @@ class RichReporter(Reporter):
         self._term.print(sgr("─" * len(line), "dim", enabled=color))
         self._header_printed = True
 
-    def report_runs(self, runs: list[BenchmarkResult]) -> None:
-        for row in runs:
+    def report_results(self, results: list[BenchmarkResult]) -> None:
+        for row in results:
             repeated = row["repetitions"] > 1 and not row["skip"]
             if repeated:
                 self._repeated.setdefault(row["name"], []).append(row)
@@ -395,9 +395,9 @@ class Fanout(Reporter):
         for r in self._reporters:
             r.report_context(context)
 
-    def report_runs(self, runs: list[BenchmarkResult]) -> None:
+    def report_results(self, results: list[BenchmarkResult]) -> None:
         for r in self._reporters:
-            r.report_runs(runs)
+            r.report_results(results)
 
     def finalize(self) -> None:
         """Finalize the reporters that define ``finalize()``, in order, even if one raises."""

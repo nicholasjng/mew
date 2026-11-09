@@ -89,41 +89,32 @@ For repeated measurements, a red `±N% (!)` marks a coefficient of variation
 (stddev over the mean of the repetitions, whatever the `--statistic`) above 25%.
 Treat that delta as unreliable.
 
-(comparing-sessions-in-one-file)=
-## Comparing sessions in one file
+(comparing-runs-in-one-file)=
+## Comparing runs in one file
 
-Each `mew run` is one *session* (see [](context.md#session-identity)). A file
-that holds several, because it was written with `--append`, contributes its
-newest session by default; `mew sessions FILE` lists them. To pick a different
-one, tag the runs and address them with `path@<tag>`:
+Each `mew run` is one *run* (see [](context.md#run-identity)). A file that
+holds several, because it was written with `--append`, contributes its newest
+run by default; `mew log FILE` lists them. To pick a different one, name the
+runs and address them with `path@<name>`:
 
 ```console
-$ mew run --session-tag before -o results.jsonl
+$ mew run --run-name before -o results.jsonl
 # ... change something ...
-$ mew run --session-tag after --append -o results.jsonl
+$ mew run --run-name after --append -o results.jsonl
 $ mew compare results.jsonl@after results.jsonl@before
 ```
 
-`path@latest` names the newest session explicitly, so `latest` is reserved:
-`--session-tag latest` is an error. Every session carrying a tag is selected,
-so repeated runs under one tag pool as repetitions:
-
-```console
-$ for i in 1 2 3 4 5; do
->   mew run bench_a.py --session-tag a --append -o results.jsonl
->   mew run bench_b.py --session-tag b --append -o results.jsonl
-> done
-$ mew compare --key func results.jsonl@b results.jsonl@a
-```
-
-Interleaving decorrelates thermal and load drift from the axis you are
-comparing, and all five repetitions of each side feed the statistic. Two
-files, one per side, work the same way without tags (see {doc}`ab-comparison`).
+`path@latest` names the newest run explicitly, so `latest` is reserved:
+`--run-name latest` is an error. A name selects the newest run that has it, so
+running again under a name replaces the earlier run in comparisons; runs are
+never pooled, since two runs can come from different machines or interpreters.
+For more repetitions, raise `--repetitions` in one run. Two files, one per
+side, work the same way without names (see {doc}`ab-comparison`).
 The selector follows the last `@` that comes after a `.json`, `.jsonl`, or
 `.jsonl.gz` extension. Any other `@` is part of the file name, so
 `runs@ci.jsonl` names a file.
 
-For anything richer than "this session against that one", query the archive
+For anything richer than "this run against that one", query the archive
 directly; see [](reporters.md#sql-and-dataframe-recipes).
 
 ## Gating CI

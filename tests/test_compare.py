@@ -26,7 +26,7 @@ from mew.compare import (
     _fmt_delta,
     compare,
     read_results,
-    session_summaries,
+    run_summaries,
 )
 from mew.regressions import CounterConfig, CounterRule, RegressionConfig
 
@@ -281,14 +281,14 @@ def test_split_selector(raw: str, path: str, selector: str | None) -> None:
     assert split_selector(raw) == (Path(path), selector)
 
 
-def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
-    """`file@tag` selectors compare two sessions of one file, with distinct column labels."""
+def test_compare_two_runs_of_one_file(tmp_path: Path) -> None:
+    """`file@name` selectors compare two runs of one file, with distinct column labels."""
     p = tmp_path / "results.json"
     _write_json(
         p,
         [
-            _row("b", 100.0, date="2026-01-01", session_id="0197aaaa11", session_tag="before"),
-            _row("b", 80.0, date="2026-02-01", session_id="0197bbbb22", session_tag="after"),
+            _row("b", 100.0, date="2026-01-01", run_id="0197aaaa11", run_name="before"),
+            _row("b", 80.0, date="2026-02-01", run_id="0197bbbb22", run_name="after"),
         ],
     )
     console = Console(width=200)
@@ -297,7 +297,7 @@ def test_compare_two_sessions_of_one_file(tmp_path: Path) -> None:
     # Selector-aware labels keep the two columns distinct.
     assert "@before" in out and "@after" in out
     assert "-20.00%" in out  # 100 -> 80
-    assert "session=before" in out and "session=after" in out
+    assert "run=before" in out and "run=after" in out
 
 
 @pytest.mark.parametrize("suffix", [".json", ".jsonl", ".jsonl.gz"])
@@ -319,68 +319,67 @@ def test_same_second_runs_stay_distinct_and_order_by_session_id(tmp_path: Path) 
     _write_json(
         p,
         [
-            _row("b", 10.0, date=when, session_id="0197-aaaa", session_tag="before"),
-            _row("b", 20.0, date=when, session_id="0197-bbbb", session_tag="after"),
+            _row("b", 10.0, date=when, run_id="0197-aaaa", run_name="before"),
+            _row("b", 20.0, date=when, run_id="0197-bbbb", run_name="after"),
         ],
     )
     assert load_column(p, "real_time", selector="before")[0]["b"].value == 10.0
     assert load_column(p, "real_time")[0]["b"].value == 20.0
-    assert [s.id for s in session_summaries(p)] == ["0197-bbbb", "0197-aaaa"]
+    assert [s.id for s in run_summaries(p)] == ["0197-bbbb", "0197-aaaa"]
 
 
-def test_tag_selector_pools_runs_sharing_the_tag(tmp_path: Path) -> None:
-    """Repeated runs under one tag reduce together, so an interleaved A/B loop
-    keeps every repetition. Without a selector, or with `@latest`, only the
-    newest run counts."""
+def test_name_selector_picks_the_newest_run_of_that_name(tmp_path: Path) -> None:
+    """`@name` selects the newest run with that name; older runs of the name are not pooled
+    into it, since they may come from another machine. Without a selector, or with `@latest`,
+    the newest run of any name counts."""
     p = tmp_path / "r.json"
     _write_json(
         p,
         [
-            _row("b", 10.0, date="2026-01-01T00:00:00", session_id="aaaa", session_tag="ab"),
-            _row("b", 20.0, date="2026-02-01T00:00:00", session_id="bbbb", session_tag="ab"),
-            _row("b", 99.0, date="2026-03-01T00:00:00", session_id="cccc", session_tag="other"),
+            _row("b", 10.0, date="2026-01-01T00:00:00", run_id="aaaa", run_name="ab"),
+            _row("b", 20.0, date="2026-02-01T00:00:00", run_id="bbbb", run_name="ab"),
+            _row("b", 99.0, date="2026-03-01T00:00:00", run_id="cccc", run_name="other"),
         ],
     )
-    pooled, ctx = load_column(p, "real_time", selector="ab")
-    assert pooled["b"].values == (10.0, 20.0)
-    assert pooled["b"].value == 15.0
-    assert ctx["session"]["id"] == "bbbb"  # provenance from the newest pooled run
+    named, ctx = load_column(p, "real_time", selector="ab")
+    assert named["b"].values == (20.0,)
+    assert ctx["run"]["id"] == "bbbb"
     for selector in (None, "latest"):
         newest, ctx = load_column(p, "real_time", selector=selector)
         assert newest["b"].value == 99.0
-        assert ctx["session"]["tag"] == "other"
+        assert ctx["run"]["name"] == "other"
 
 
-def test_unknown_selector_lists_the_tags(tmp_path: Path) -> None:
-    """An unknown session tag errors with the file's first five tags, as does an empty selector."""
+def test_unknown_selector_lists_the_run_names(tmp_path: Path) -> None:
+    """An unknown run name errors with the file's first five names, as does an empty selector."""
     p = tmp_path / "r.json"
-    _write_json(p, [_row("b", 1.0, session_id=f"s{i}", session_tag=f"t{i}") for i in range(7)])
+    _write_json(p, [_row("b", 1.0, run_id=f"s{i}", run_name=f"t{i}") for i in range(7)])
     with pytest.raises(
         ValueError,
-        match=r"no session tagged 'nope' \(tags in file: t0, t1, t2, t3, t4 \(\+2 more\)",
+        match=r"no run named 'nope' \(run names in file: t0, t1, t2, t3, t4 \(\+2 more\)",
     ):
         load_column(p, "real_time", selector="nope")
-    with pytest.raises(ValueError, match="empty session selector"):
+    with pytest.raises(ValueError, match="empty run name"):
         load_column(p, "real_time", selector="")
 
 
 def test_session_summaries_newest_first(tmp_path: Path) -> None:
-    """`session_summaries` lists sessions newest first, with benchmark and row counts."""
+    """`run_summaries` lists sessions newest first, with benchmark and row counts."""
     p = tmp_path / "r.json"
-    new = dict(date="2026-02-01T00:00:00", session_id="new")
+    new = dict(date="2026-02-01T00:00:00", run_id="new")
     _write_json(
         p,
         [
-            _row("b", 1.0, date="2026-01-01T00:00:00", session_id="old"),
-            _row("b[n=1]", 1.0, session_tag="t", **new),
-            _row("b[n=1]", 2.0, session_tag="t", **new),
-            _row("c", 0.0, skipped=True, session_tag="t", **new),
+            _row("b", 1.0, date="2026-01-01T00:00:00", run_id="old"),
+            _row("b[n=1]", 1.0, run_name="t", **new),
+            _row("b[n=1]", 2.0, run_name="t", **new),
+            _row("c", 0.0, skipped=True, run_name="t", **new),
         ],
     )
-    newest, oldest = session_summaries(p)
+    newest, oldest = run_summaries(p)
     # `benchmarks` counts measured benchmarks; `rows` counts every stored row.
-    assert (newest.id, newest.tag, newest.benchmarks, newest.rows) == ("new", "t", 1, 3)
-    assert (oldest.id, oldest.tag, oldest.benchmarks, oldest.rows) == ("old", None, 1, 1)
+    assert (newest.id, newest.name, newest.benchmarks, newest.rows) == ("new", "t", 1, 3)
+    assert (oldest.id, oldest.name, oldest.benchmarks, oldest.rows) == ("old", None, 1, 1)
 
 
 def test_load_of_an_empty_file_errors_naming_it(tmp_path: Path) -> None:
@@ -654,13 +653,13 @@ def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
     _write_json(
         p,
         [
-            _row("b", 10.0, session_id="s1", custom={"engine": "x"}),
-            _row("b", 0.0, skipped=True, session_id="s1"),
+            _row("b", 10.0, run_id="s1", custom={"engine": "x"}),
+            _row("b", 0.0, skipped=True, run_id="s1"),
         ],
     )
     rows = read_results(p)
     assert len(rows) == 2, "skipped rows are not filtered here"
-    assert rows[0]["session"]["id"] == "s1"
+    assert rows[0]["run"]["id"] == "s1"
     assert rows[0]["context"]["engine"] == "x"
 
 
@@ -751,14 +750,14 @@ def test_compare_selects_the_session_show_selects(tmp_path: Path) -> None:
     _write_jsonl(
         p,
         [
-            _row("b", 1.0, date="2026-01-01T00:00:00", session_id="old"),
-            _row("b", 0.0, date="2026-02-01T00:00:00", session_id="new", session_tag="SKIP",
+            _row("b", 1.0, date="2026-01-01T00:00:00", run_id="old"),
+            _row("b", 0.0, date="2026-02-01T00:00:00", run_id="new", run_name="SKIP",
                  skipped=True),
         ],
     )  # fmt: skip
-    with pytest.raises(ValueError, match="the latest session has no measurements"):
+    with pytest.raises(ValueError, match="the latest run has no measurements"):
         load_column(p, "real_time")
-    with pytest.raises(ValueError, match="session 'SKIP' has no measurements"):
+    with pytest.raises(ValueError, match="run 'SKIP' has no measurements"):
         load_column(p, "real_time", selector="SKIP")
 
 

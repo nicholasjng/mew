@@ -7,6 +7,15 @@ releases may break the API.
 
 ### Breaking changes
 
+- A row's `session` block is `run`: `{id, date, name}`, with `date` in UTC
+  with milliseconds (`2026-11-08T12:24:23.559Z`). `--session-tag` and
+  `session_tag=` are `--run-name` and `run_name=`; `mew sessions` is `mew log`;
+  `SessionInfo`, `SessionSummary` and `session_summaries()` are `RunInfo`,
+  `RunSummary` and `run_summaries()`; `Reporter.report_runs()` is
+  `report_results()`.
+- `file@<name>` selects the newest run with that name instead of pooling every
+  run with the tag, which could merge runs from different machines.
+- `session.mew_version` is `context.mew`, and `mew compare` warns when it differs.
 - Result format 1: every row of a result file starts with `schema_version: 1`,
   and mew rejects rows without it, such as files from earlier versions.
 - A row's `name` is mew's addressable name (it was `benchmark`); Google

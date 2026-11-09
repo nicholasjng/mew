@@ -45,8 +45,8 @@ def _fake_row(name: str, label: str = "") -> BenchmarkResult:
 
 def _feed(reporter, *rows: BenchmarkResult) -> None:
     """Drive a reporter through one run of ``rows``, without running anything."""
-    reporter.report_context({"session": {}, "context": {}})
-    reporter.report_runs(list(rows))
+    reporter.report_context({"run": {}, "context": {}})
+    reporter.report_results(list(rows))
     reporter.finalize()
 
 
@@ -59,7 +59,7 @@ def test_json_reporter_writes_the_documented_shape(tmp_path):
     (bench,) = json.loads(out.read_text())["benchmarks"]
     assert list(bench) == [
         "schema_version",
-        "session",
+        "run",
         "context",
         "name",
         "params",
@@ -115,12 +115,12 @@ def test_file_reporter_can_be_reused(tmp_path, reporter, suffix):
 
 @pytest.mark.parametrize("reporter", [JSONReporter, JSONLReporter])
 def test_file_reporters_write_each_row_as_it_arrives(tmp_path, reporter):
-    """JSON and JSONL reporters write each row to disk in `report_runs()`, before `finalize()`."""
+    """JSON and JSONL reporters write each row to disk in `report_results()`, before `finalize()`."""
     # On disk before the run ends, not buffered; JSONL is the format that survives an interruption.
     out = tmp_path / "results"
     rep = reporter(output=out)
     rep.report_context({})
-    rep.report_runs([_fake_row("a::one")])
+    rep.report_results([_fake_row("a::one")])
     assert "a::one" in out.read_text()
     rep.finalize()
 
@@ -139,7 +139,7 @@ def test_jsonl_archive_is_queryable_by_duckdb(tmp_path, suffix):
     out = tmp_path / f"results{suffix}"
     _run_one(JSONLReporter(output=out))
 
-    query = f"SELECT name, context.dataset.size, session.id FROM '{out}'"
+    query = f"SELECT name, context.dataset.size, run.id FROM '{out}'"
     ((name, size, session_id),) = duckdb.connect().execute(query).fetchall()
     assert name == mew.REGISTRY.all()[0].name
     assert size == 1024
@@ -160,7 +160,7 @@ def _rich(width: int = 200, **flags) -> tuple[io.StringIO, RichReporter]:
     rep = RichReporter(terminal=Terminal(file=buf, width=width, color=False), **flags)
     rep.report_context(
         {
-            "session": {},
+            "run": {},
             "context": {"cpu_model": "Apple M2", "num_cpus": 4, "cpu_scaling_enabled": False},
         }
     )
@@ -198,7 +198,7 @@ def test_rich_reporter_scales_times_to_a_readable_unit():
     buf, rep = _rich()
     row = _fake_row("bench.py::bench_x")
     row["real_time"], row["cpu_time"] = 305_028_333.33, 24_763.67
-    rep.report_runs([row])
+    rep.report_results([row])
     cells = [c.strip() for c in buf.getvalue().splitlines()[-1].split(" │ ")]
     assert cells[2:] == ["305.03 ms", "24.76 us"]
 
@@ -218,7 +218,7 @@ def test_rich_reporter_memory_column_and_profile_line():
     }
     unsampled = _fake_row("bench.py::bench_y")
     unsampled["cpu_profile"] = {"sample_count": 0, "top_function": None}
-    rep.report_runs([row, unsampled, _fake_row("bench.py::bench_z")])
+    rep.report_results([row, unsampled, _fake_row("bench.py::bench_z")])
     lines = buf.getvalue().splitlines()[-6:]
     assert lines[0].split(" │ ")[-1].strip() == "2.0 MB"
     assert lines[1] == "  4,200 samples · hottest hot_fn (mod.py:10)"
@@ -235,7 +235,7 @@ def test_rich_reporter_lists_what_has_no_column_below_the_row():
     row = _fake_row("bench.py::bench_x", label="warm-cache")
     row["counters"] = [{"name": "items_per_second", "value": 2.5e8, "format": {"rate": True}}]
     row["cpu_profile"] = {"sample_count": 1, "top_function": "work (bench.py:6)"}
-    rep.report_runs([row])
+    rep.report_results([row])
     assert buf.getvalue().splitlines()[-2:] == [
         "  warm-cache · items_per_second=250M/s · 1 sample",
         "    hottest work (bench.py:6)",
@@ -250,7 +250,7 @@ def test_rich_reporter_wraps_a_skip_message_without_losing_any_of_it():
     row = _fake_row("bench.py::bench_x")
     message = f'Traceback (most recent call last):\n  File "{path}", line 6\nValueError: boom'
     row["skip"] = {"reason": "error", "message": message}
-    rep.report_runs([row])
+    rep.report_results([row])
     lines = buf.getvalue().splitlines()[3:]
     assert all(len(line) <= 60 for line in lines)
     # The reason fills the timing columns: past the 20-column name and the separator.
@@ -278,7 +278,7 @@ def test_rich_reporter_renders_the_hottest_frame(top, shown):
     buf, rep = _rich(show_cpu=True)
     row = _fake_row("bench.py::bench_x")
     row["cpu_profile"] = {"sample_count": 1, "top_function": top}
-    rep.report_runs([row])
+    rep.report_results([row])
     assert buf.getvalue().splitlines()[-1] == f"  1 sample · hottest {shown}"
 
 
@@ -345,9 +345,9 @@ def test_rich_reporter_sums_up_repetitions_at_the_end_like_mew_compare():
     reported, for benchmarks with more than one repetition."""
     buf, rep = _rich()
     # Random interleaving reports benchmarks as they finish: here b before a.
-    rep.report_runs(_repetitions("bench.py::bench_b", (20.0, 30.0)))
-    rep.report_runs([_fake_row("bench.py::bench_once")])  # one run: nothing to sum up
-    rep.report_runs(_repetitions("bench.py::bench_a", (10.0, 11.0, 15.0)))
+    rep.report_results(_repetitions("bench.py::bench_b", (20.0, 30.0)))
+    rep.report_results([_fake_row("bench.py::bench_once")])  # one run: nothing to sum up
+    rep.report_results(_repetitions("bench.py::bench_a", (10.0, 11.0, 15.0)))
     assert "Median of repetitions" not in buf.getvalue()
     rep.finalize()
 
@@ -367,9 +367,9 @@ def test_rich_reporter_can_leave_repetitions_to_the_summary():
     buf, rep = _rich(show_repetitions=False)
     # No header yet: every row may end up in the summary, leaving an empty table.
     assert "Benchmark" not in buf.getvalue()
-    rep.report_runs(_repetitions("bench.py::bench_a", (10.0, 14.0, 12.0)))
+    rep.report_results(_repetitions("bench.py::bench_a", (10.0, 14.0, 12.0)))
     assert "bench_a" not in buf.getvalue()
-    rep.report_runs([_fake_row("bench.py::bench_once")])  # a single run still streams
+    rep.report_results([_fake_row("bench.py::bench_once")])  # a single run still streams
     rep.finalize()
     lines = buf.getvalue().splitlines()
     assert lines[1].startswith("Benchmark") and lines[3].startswith("bench.py::bench_once")
@@ -383,7 +383,7 @@ def test_rich_reporter_reads_the_terminal_width_once_per_run(monkeypatch):
     monkeypatch.setattr("mew._console._terminal_width", lambda: probes.append(1) or 60)
     rep = RichReporter(terminal=Terminal(file=io.StringIO(), color=False))
     rep.report_context({})
-    rep.report_runs(_repetitions("bench.py::bench_a", (10.0, 11.0)))
+    rep.report_results(_repetitions("bench.py::bench_a", (10.0, 11.0)))
     rep.finalize()
     assert len(probes) == 1
 
@@ -391,7 +391,7 @@ def test_rich_reporter_reads_the_terminal_width_once_per_run(monkeypatch):
 def test_rich_reporter_prints_no_summary_without_repetitions():
     """`finalize()` prints nothing when no benchmark ran more than one repetition."""
     buf, rep = _rich()
-    rep.report_runs([_fake_row("bench.py::bench_x")])
+    rep.report_results([_fake_row("bench.py::bench_x")])
     before = buf.getvalue()
     rep.finalize()
     assert buf.getvalue() == before
@@ -457,5 +457,5 @@ def test_rich_reporter_shows_counters_like_google_benchmark():
         {"name": "hits", "value": 42.0},
         {"name": "latency", "value": 2e-7, "format": {"rate": True, "inverted": True}},
     ]
-    rep.report_runs([row])
+    rep.report_results([row])
     assert buf.getvalue().splitlines()[-1] == "  bytes_per_second=1.2Gi/s · hits=42 · latency=200ns"

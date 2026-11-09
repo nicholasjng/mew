@@ -36,25 +36,25 @@ class Capture:
     def report_context(self, context: dict[str, Any]) -> None:
         self.context = context
 
-    def report_runs(self, runs: list[Any]) -> None:
+    def report_results(self, runs: list[Any]) -> None:
         self.runs.extend(runs)
 
     def finalize(self) -> None:
         self.finalized = True
 
 
-#: Flat kwargs the tests spell, mapped into the row's `session` block.
-_SESSION_KEYS = {"session_id": "id", "session_tag": "tag", "date": "date"}
+#: Flat kwargs the tests spell, mapped into the row's `run` block.
+_RUN_KEYS = {"run_id": "id", "run_name": "name", "date": "date"}
 
 
 def row(name: str, real_time: float, **extra: Any) -> dict:
     """A minimal per-repetition result row, as mew's sinks write it.
 
-    Session identity and provenance are spelled flat here (``session_id=``,
-    ``custom=``) and folded into the stamped ``session`` /
+    Run identity and provenance are spelled flat here (``run_id=``,
+    ``custom=``) and folded into the stamped ``run`` /
     ``context`` blocks, so a test reads as one row rather than nested literals.
     """
-    session = {dst: extra.pop(src) for src, dst in _SESSION_KEYS.items() if src in extra}
+    run = {dst: extra.pop(src) for src, dst in _RUN_KEYS.items() if src in extra}
     context = extra.pop("custom", None)
     # `skipped=True` for a skipped benchmark's row, as Google Benchmark's own term.
     skip = {"reason": "skipped", "message": ""} if extra.pop("skipped", False) else None
@@ -72,8 +72,8 @@ def row(name: str, real_time: float, **extra: Any) -> dict:
         "skip": skip,
         "counters": [],
     }
-    if session:
-        out["session"] = session
+    if run:
+        out["run"] = run
     if context is not None:
         out["context"] = context
     return {**out, **extra}
@@ -90,13 +90,13 @@ def counter_row(name: str, counter: str, value: float, **record: Any) -> dict:
 
 
 def _stamp(context: dict | None) -> dict:
-    return {k: v for k, v in (context or {}).items() if k in ("session", "context")}
+    return {k: v for k, v in (context or {}).items() if k in ("run", "context")}
 
 
 def write_json(path: Path, benches: list[dict], context: dict | None = None) -> None:
     """Write a single-document JSON result file (the JSONReporter shape).
 
-    ``context`` plays the role of the run's ``session`` / ``context`` blocks:
+    ``context`` plays the role of the run's ``run`` / ``context`` blocks:
     they head the document and are stamped onto rows that lack them.
     """
     stamp = _stamp(context)
@@ -108,7 +108,7 @@ def write_jsonl(path: Path, benches: list[dict], context: dict | None = None) ->
     """Write a JSONL result file: one self-contained row per line.
 
     ``context`` plays the role of the JSON document's file-level block: its
-    ``session`` / ``context`` keys are stamped onto rows that lack them.
+    ``run`` / ``context`` keys are stamped onto rows that lack them.
     """
     stamp = _stamp(context)
     text = "".join(json.dumps({**stamp, **b}) + "\n" for b in benches)

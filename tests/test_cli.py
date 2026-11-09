@@ -271,9 +271,9 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         # What the library raises, as one line rather than a traceback.
         (("compare", "a.json"), "mew compare: expected at least two result files"),
         (("compare", "a.json", "b.json"), "mew compare: result file not found: b.json"),
-        (("sessions", "a.json"), "mew sessions: result file not found: a.json"),
-        # `@latest` selects the newest session, so no session may carry the tag.
-        (("run", "--min-time", "1x", "--session-tag", "latest"), "mew run: session_tag 'latest'"),
+        (("log", "a.json"), "mew log: result file not found: a.json"),
+        # `@latest` selects the newest run, so no run may carry that name.
+        (("run", "--min-time", "1x", "--run-name", "latest"), "mew run: run_name 'latest'"),
         # Prefixes of long options are not expanded, so a new option can't break them.
         (("run", "--rep", "3"), "unrecognized arguments: --rep"),
         # Arabic-Indic digits: Google Benchmark would read them as 0 iterations.
@@ -287,7 +287,7 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
     ],
 )
 def test_usage_errors_exit_2(mew_cli, benchdir, args, message):
-    """Invalid arguments to `list`, `run`, `compare` and `sessions` exit 2 with a message."""
+    """Invalid arguments to `list`, `run`, `compare` and `log` exit 2 with a message."""
     # 2, not the "nothing matched" code 1. Run from the project root, so the
     # sink checks after discovering benchmarks/ are reached too.
     res = mew_cli(*args, cwd=benchdir.parent)
@@ -762,21 +762,17 @@ def test_compare_options_reach_the_comparison(mew_cli, tmp_path, pyproject, args
     assert hidden not in output
 
 
-def test_sessions_lists_newest_first(mew_cli, tmp_path):
-    """`mew sessions` lists a result file's sessions with their tags, newest first."""
+def test_log_lists_runs_newest_first(mew_cli, tmp_path):
+    """`mew log` lists a result file's runs with their names, newest first."""
     p = tmp_path / "r.json"
     _write_json(
         p,
         [
-            _row(
-                "b", 1.0, date="2026-01-01T00:00:00", session_id="aaaaaaaa-1", session_tag="before"
-            ),
-            _row(
-                "b", 2.0, date="2026-02-01T00:00:00", session_id="bbbbbbbb-2", session_tag="after"
-            ),
+            _row("b", 1.0, date="2026-01-01T00:00:00", run_id="aaaaaaaa-1", run_name="before"),
+            _row("b", 2.0, date="2026-02-01T00:00:00", run_id="bbbbbbbb-2", run_name="after"),
         ],
     )
-    res = mew_cli("sessions", str(p), cwd=tmp_path)
+    res = mew_cli("log", str(p), cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     lines = res.stdout.splitlines()
     assert lines[0].startswith("Id")
@@ -784,10 +780,10 @@ def test_sessions_lists_newest_first(mew_cli, tmp_path):
     assert lines[3].startswith("aaaaaaaa") and "before" in lines[3]
 
 
-def _two_sessions(path: Path) -> None:
+def _two_runs(path: Path) -> None:
     """`before` with `old`, then `after` with `new` (counted) and `broken` (skipped)."""
-    before = {"date": "2026-01-01T00:00:00", "session_id": "a-1", "session_tag": "before"}
-    after = {"date": "2026-02-01T00:00:00", "session_id": "b-2", "session_tag": "after"}
+    before = {"date": "2026-01-01T00:00:00", "run_id": "a-1", "run_name": "before"}
+    after = {"date": "2026-02-01T00:00:00", "run_id": "b-2", "run_name": "after"}
     hits = [{"name": "hits", "value": 42.0}]
     _write_json(
         path,
@@ -799,9 +795,9 @@ def _two_sessions(path: Path) -> None:
     )
 
 
-def test_show_prints_the_newest_session_as_run_printed_it(mew_cli, tmp_path):
-    """`mew show` prints the newest session's rows, counters and skips like `mew run`."""
-    _two_sessions(tmp_path / "r.json")
+def test_show_prints_the_newest_run_as_mew_run_printed_it(mew_cli, tmp_path):
+    """`mew show` prints the newest run's rows, counters and skips like `mew run`."""
+    _two_runs(tmp_path / "r.json")
     res = mew_cli("show", "r.json", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     assert res.stdout.startswith("mew · ")
@@ -810,9 +806,9 @@ def test_show_prints_the_newest_session_as_run_printed_it(mew_cli, tmp_path):
     assert "old" not in res.stdout
 
 
-def test_show_picks_a_tagged_session_and_filters_it(mew_cli, tmp_path):
-    """`file@tag` picks a session and `-k` narrows its rows, as in `mew compare`."""
-    _two_sessions(tmp_path / "r.json")
+def test_show_picks_a_named_run_and_filters_it(mew_cli, tmp_path):
+    """`file@name` picks a run and `-k` narrows its rows, as in `mew compare`."""
+    _two_runs(tmp_path / "r.json")
     res = mew_cli("show", "r.json@before", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     assert "old" in res.stdout
@@ -826,13 +822,13 @@ def test_show_picks_a_tagged_session_and_filters_it(mew_cli, tmp_path):
     ("args", "code", "message"),
     [
         (("r.json", "-k", "nothing"), 1, "no benchmarks match 'nothing'"),
-        (("r.json@nope",), 2, "no session tagged 'nope'"),
+        (("r.json@nope",), 2, "no run named 'nope'"),
         (("missing.json",), 2, "result file not found"),
     ],
 )
 def test_show_errors(mew_cli, tmp_path, args, code, message):
     """No match exits 1; a bad file or selector is a usage error."""
-    _two_sessions(tmp_path / "r.json")
+    _two_runs(tmp_path / "r.json")
     res = mew_cli("show", *args, cwd=tmp_path)
     assert res.returncode == code
     assert message in res.stderr
@@ -1010,12 +1006,12 @@ def test_e2e_benchmark_output_cannot_corrupt_json_on_stdout(tmp_path):
     assert "from print" in res.stderr and "from fd 1" in res.stderr
 
 
-def test_session_tags_with_double_slashes_can_be_selected(mew_cli, benchdir, tmp_path):
-    """`file@tag` stays a string: a path would normalize the tag `a//b` to `a/b`."""
+def test_run_names_with_double_slashes_can_be_selected(mew_cli, benchdir, tmp_path):
+    """`file@name` stays a string: a path would normalize the name `a//b` to `a/b`."""
     out = tmp_path / "r.jsonl"
     for tag in ("a//b", "c"):
         res = mew_cli(
-            "run", str(benchdir), "-k", "bench_one", "--min-time", "1x", "--session-tag", tag,
+            "run", str(benchdir), "-k", "bench_one", "--min-time", "1x", "--run-name", tag,
             "-o", str(out), "--append", cwd=tmp_path,
         )  # fmt: skip
         assert res.returncode == 0, res.stderr

@@ -3,15 +3,15 @@
 ## Reading results
 
 {func}`~mew.compare.read_results` gives a file's rows as stored;
-{func}`~mew.compare.session_summaries` lists the sessions it holds.
+{func}`~mew.compare.run_summaries` lists the runs it holds.
 
 ```{eval-rst}
 .. currentmodule:: mew.compare
 
 .. autofunction:: read_results
-.. autofunction:: session_summaries
+.. autofunction:: run_summaries
 
-.. autoclass:: SessionSummary
+.. autoclass:: RunSummary
    :members:
 ```
 
@@ -20,5 +20,5 @@
 ```{eval-rst}
 .. automodule:: mew.compare
    :members:
-   :exclude-members: SessionSummary, read_results, session_summaries
+   :exclude-members: RunSummary, read_results, run_summaries
 ```

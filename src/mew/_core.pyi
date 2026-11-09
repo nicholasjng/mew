@@ -20,7 +20,7 @@ def cpu_info() -> dict:
 def run_benchmarks(
     argv: Sequence[str],
     reporter: object,
-    session_context: dict = {},
+    run_context: dict = {},
     params: dict = {},
     capture: object | None = None,
 ) -> int:

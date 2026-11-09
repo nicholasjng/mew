@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import os
 import tempfile
+import threading
 import time
 import uuid
 import warnings
@@ -19,7 +20,7 @@ from mew._options import (
     THREADED_ON_GIL,
     check_count,
     check_min_warmup_time,
-    check_session_tag,
+    check_run_name,
     check_strict,
     is_threaded,
     parse_min_time,
@@ -38,10 +39,21 @@ if TYPE_CHECKING:
 __all__ = ["run"]
 
 
-def _new_session_id() -> str:
-    """Return a time-ordered UUIDv7 string."""
-    unix_ms = time.time_ns() // 1_000_000
-    rand_a = int.from_bytes(os.urandom(2)) & 0x0FFF
+_last_run_id = 0
+_run_id_lock = threading.Lock()
+
+
+def _new_run_id() -> str:
+    """Return a time-ordered UUIDv7 string, later than any this process made before.
+
+    Sub-millisecond time fills ``rand_a`` (RFC 9562, method 3). An id that
+    wouldn't sort after the previous one takes its successor instead, so runs
+    that start within one clock tick, such as two short runs that append to
+    one file, keep their order in ``mew log``.
+    """
+    global _last_run_id
+    unix_ms, sub_ms_ns = divmod(time.time_ns(), 1_000_000)
+    rand_a = sub_ms_ns * 4096 // 1_000_000
     rand_b = int.from_bytes(os.urandom(8)) & 0x3FFF_FFFF_FFFF_FFFF
     value = (
         ((unix_ms & 0xFFFF_FFFF_FFFF) << 80)  # unix_ts_ms
@@ -50,6 +62,9 @@ def _new_session_id() -> str:
         | (0b10 << 62)  # RFC 4122/9562 variant
         | rand_b
     )
+    with _run_id_lock:
+        value = max(value, _last_run_id + 1)
+        _last_run_id = value
     return str(uuid.UUID(int=value))
 
 
@@ -117,7 +132,7 @@ def run(
     min_warmup_time: float | None = None,
     repetitions: int | None = None,
     random_interleaving: bool = False,
-    session_tag: str | None = None,
+    run_name: str | None = None,
     strict: bool = False,
     memory_manager: MemoryManager | None = None,
     memory_iterations: int | None = None,
@@ -126,8 +141,8 @@ def run(
 ) -> int:
     """Run benchmarks, by default every registered one.
 
-    Each call is one session, whose time-ordered ID every row carries, so
-    several runs can share a result file.
+    Each call is one run, whose time-ordered ID every row carries, so several
+    runs can share a result file.
 
     Parameters
     ----------
@@ -148,10 +163,10 @@ def run(
     random_interleaving : bool, default False
         Shuffle repetitions across benchmarks, so drift in load or temperature
         spreads over all of them. Needs ``repetitions > 1``.
-    session_tag : str, optional
-        A label for the session, e.g. ``"before"``, stored with its ID, which
-        ``mew compare path@<tag>`` selects by. It can't be empty or
-        ``"latest"``, which selects the newest session.
+    run_name : str, optional
+        A name for the run, e.g. ``"before"``, stored with its ID;
+        ``mew compare path@<name>`` selects the newest run of that name. It
+        can't be empty or ``"latest"``, which selects the newest run.
     strict : bool, default False
         Raise when threaded benchmarks are selected on a GIL build, where they
         can't run, instead of warning and leaving them out of the results: in
@@ -183,14 +198,14 @@ def run(
     TypeError
         If a run option has the wrong type.
     ValueError
-        If a run option is out of range, or ``session_tag`` is empty or
+        If a run option is out of range, or ``run_name`` is empty or
         ``"latest"``.
     RuntimeError
         With ``strict``, if threaded benchmarks are selected on a GIL build.
     """
     cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, memory_iterations)
-    if session_tag is not None:
-        check_session_tag(session_tag)
+    if run_name is not None:
+        check_run_name(run_name)
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
         return 0
@@ -229,16 +244,18 @@ def run(
 
     from mew import __version__  # deferred: mew imports this module
 
-    session: dict[str, Any] = {
-        "id": _new_session_id(),
-        "date": datetime.now(UTC).isoformat(),
-        "mew_version": __version__,
+    run: dict[str, Any] = {
+        "id": _new_run_id(),
+        # Fixed width (UTC, milliseconds, "Z"), so dates sort as strings.
+        "date": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
     }
-    if session_tag is not None:
-        session["tag"] = session_tag
-    # Machine context first so a suite's providers can override it. It also loads
-    # GB's CPU info, whose probes print to fd 2, silenced, before the run.
-    session_context = {"session": session, "context": {**machine_context(), **get_context()}}
+    if run_name is not None:
+        run["name"] = run_name
+    # The mew that ran it and the machine first, so a suite's own values can
+    # override them. machine_context() also loads GB's CPU info, whose probes
+    # print to fd 2, silenced, before the run.
+    context = {"mew": __version__, **machine_context(), **get_context()}
+    run_context = {"run": run, "context": context}
 
     # Clear before registering so a second mew.run() in the same process
     # doesn't double-register entries.
@@ -275,4 +292,4 @@ def run(
         if capture_output:
             capture = OutputCapture(stack.enter_context(tempfile.TemporaryFile()))
             stack.callback(capture.close)
-        return _core.run_benchmarks(cli, rep, session_context, params, capture)
+        return _core.run_benchmarks(cli, rep, run_context, params, capture)

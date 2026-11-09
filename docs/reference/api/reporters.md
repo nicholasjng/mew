@@ -6,7 +6,7 @@
 .. autoclass:: BenchmarkResult
    :no-members:
 
-.. autoclass:: SessionInfo
+.. autoclass:: RunInfo
    :no-members:
 
 .. autoclass:: SkipInfo
