@@ -906,16 +906,46 @@ def test_completions_parse_in_their_shell(mew_cli, tmp_path, shell):
     assert subprocess.run([exe, "-n", str(script)]).returncode == 0  # parse only
 
 
-def test_setup_file_context_applies_to_a_single_file_run(mew_cli, benchdir, tmp_path):
-    """Setup-file context must not depend on which benchmark files are selected."""
+def test_setup_file_context_hook_applies_to_a_single_file_run(mew_cli, benchdir, tmp_path):
+    """The setup file's `context()` gives every run its context, whichever benchmark files are
+    selected. (The CLI's own `profilers` entry is checked with the user preset above.)"""
     (tmp_path / "pyproject.toml").write_text('[tool.mew]\nsetup = "benchmarks/conf.py"\n')
-    (benchdir / "conf.py").write_text('import mew\n\nmew.set_context("team", "perf")\n')
+    (benchdir / "conf.py").write_text('def context():\n    return {"team": "perf"}\n')
     out = tmp_path / "one.json"
     res = mew_cli(
         "run", "benchmarks/bench_fixture.py", "--min-time=1x", "-o", str(out), cwd=tmp_path
     )
     assert res.returncode == 0, res.stderr
-    assert json.loads(out.read_text())["context"]["team"] == "perf"
+    assert json.loads(out.read_text())["benchmarks"][0]["context"]["team"] == "perf"
+
+
+@pytest.mark.parametrize(
+    ("hook", "message"),
+    [
+        ("def context():\n    raise RuntimeError('no VCS')\n", "context() in"),
+        ("def context():\n    return ['team', 'perf']\n", "must return a dict with string keys"),
+    ],
+)
+def test_a_failing_context_hook_exits_2_before_any_benchmark(
+    mew_cli, benchdir, tmp_path, hook, message
+):
+    """A hook that raises, or returns anything but a dict, stops `mew run` before it runs."""
+    (tmp_path / "pyproject.toml").write_text('[tool.mew]\nsetup = "benchmarks/conf.py"\n')
+    (benchdir / "conf.py").write_text(hook)
+    out = tmp_path / "out.json"
+    res = mew_cli("run", "--min-time=1x", "-o", str(out), cwd=tmp_path)
+    assert res.returncode == 2
+    assert message in res.stderr
+    assert not out.exists()
+
+
+def test_list_never_calls_the_context_hook(mew_cli, benchdir, tmp_path):
+    """`mew list` imports the setup file but not its `context()`, which may shell out."""
+    (tmp_path / "pyproject.toml").write_text('[tool.mew]\nsetup = "benchmarks/conf.py"\n')
+    (benchdir / "conf.py").write_text("def context():\n    raise AssertionError('called')\n")
+    res = mew_cli("list", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "bench_one" in res.stdout
 
 
 @pytest.mark.parametrize(
@@ -1020,13 +1050,10 @@ def test_run_names_with_double_slashes_can_be_selected(mew_cli, benchdir, tmp_pa
     assert res.returncode == 0, res.stderr
 
 
-def test_run_leaves_the_registry_and_context_as_it_found_them(mew_cli, benchdir, tmp_path):
-    """A suite's context values don't leak into the next run in the process, and a run
-    doesn't drop benchmarks registered before it, as in a notebook."""
+def test_run_leaves_the_registry_as_it_found_it(mew_cli, benchdir, tmp_path):
+    """A run doesn't drop benchmarks registered before it, as in a notebook, nor leave its
+    suite's benchmarks registered."""
     from mew._registry import REGISTRY
-    from mew.context import get_context
-
-    (benchdir / "bench_ctx.py").write_text('import mew\n\nmew.set_context("dataset", "A")\n')
 
     @mew.benchmark
     def bench_mine(state):
@@ -1036,7 +1063,6 @@ def test_run_leaves_the_registry_and_context_as_it_found_them(mew_cli, benchdir,
     before = REGISTRY.all()
     res = mew_cli("run", str(benchdir), "-k", "bench_one", "--min-time", "1x", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
-    assert get_context() == {}
     assert REGISTRY.all() == before
 
 

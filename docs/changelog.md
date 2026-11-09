@@ -7,6 +7,13 @@ releases may break the API.
 
 ### Breaking changes
 
+- `set_context()`, `update_context()`, `get_context()`, `clear_context()` and
+  dotted context keys are gone. Pass `mew.run(context={...})`; for `mew run`,
+  define `context()` in the `[tool.mew] setup` file, which `mew run` calls
+  once before the first benchmark. Benchmark files can no longer add context
+  when imported.
+- Context values JSON can't hold are stored as their type's qualified name
+  instead of their `str()`; paths as their string.
 - A row's `session` block is `run`: `{id, date, name}`, with `date` in UTC
   with milliseconds (`2026-11-08T12:24:23.559Z`). `--session-tag` and
   `session_tag=` are `--run-name` and `run_name=`; `mew sessions` is `mew log`;

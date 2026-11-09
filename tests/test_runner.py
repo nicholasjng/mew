@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import json
+import math
 import platform
 import re
 import sys
@@ -723,3 +724,28 @@ def test_run_without_reporter_prints_mews_console_table(capsys, monkeypatch, rep
     assert "bench_plain" in out
     # Google Benchmark's own console reporter prints a "Run on (...)" header.
     assert "Run on (" not in out
+
+
+class _Model:
+    """Stands in for a parameter whose `str()` would be large, such as a tensor."""
+
+    def __str__(self) -> str:
+        return "x" * 100_000
+
+
+def test_rows_carry_case_params_with_objects_named_by_type():
+    """A family case's `params` keep JSON scalars and name any other value by its qualified
+    type, never its `str()`; the label keeps the short type name."""
+
+    @mew.parametrize([{"n": 3, "model": _Model(), "ratio": float("nan")}], min_time="1x")
+    def bench_p(state, n, model, ratio):
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    (row,) = cap.runs
+    assert row["name"].endswith("bench_p[n=3-model=_Model-ratio=nan]")
+    params = row["params"]
+    assert (params["n"], params["model"]) == (3, f"{__name__}._Model")
+    assert math.isnan(params["ratio"])

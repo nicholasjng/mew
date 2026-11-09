@@ -9,13 +9,14 @@ import threading
 import time
 import uuid
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from mew import _core
 from mew._capture import OutputCapture
+from mew._encode import encode_context
 from mew._options import (
     THREADED_ON_GIL,
     check_count,
@@ -29,7 +30,6 @@ from mew._options import (
 )
 from mew._registry import REGISTRY, Entry, longest_row_name, selected_cases
 from mew._typing import MemoryManager, ProfilerManager
-from mew.context import get_context
 from mew.machine import machine_context
 from mew.reporter import Fanout, Reporter, RichReporter
 
@@ -133,6 +133,7 @@ def run(
     repetitions: int | None = None,
     random_interleaving: bool = False,
     run_name: str | None = None,
+    context: Mapping[str, Any] | None = None,
     strict: bool = False,
     memory_manager: MemoryManager | None = None,
     memory_iterations: int | None = None,
@@ -167,6 +168,11 @@ def run(
         A name for the run, e.g. ``"before"``, stored with its ID;
         ``mew compare path@<name>`` selects the newest run of that name. It
         can't be empty or ``"latest"``, which selects the newest run.
+    context : Mapping[str, Any], optional
+        What to record about the run beside the machine, e.g. a dataset or a
+        commit, in every row's ``context``; its keys win over mew's own. Nested
+        mappings and lists are kept; a value JSON can't hold is stored as its
+        type's qualified name, a path as its string.
     strict : bool, default False
         Raise when threaded benchmarks are selected on a GIL build, where they
         can't run, instead of warning and leaving them out of the results: in
@@ -206,6 +212,10 @@ def run(
     cli = _gb_argv(min_time, min_warmup_time, repetitions, random_interleaving, memory_iterations)
     if run_name is not None:
         check_run_name(run_name)
+    if context is not None and (
+        not isinstance(context, Mapping) or not all(isinstance(k, str) for k in context)
+    ):
+        raise TypeError(f"context must be a mapping with string keys, got {context!r}")
     selected = list(entries) if entries is not None else REGISTRY.all()
     if not selected:
         return 0
@@ -254,8 +264,8 @@ def run(
     # The mew that ran it and the machine first, so a suite's own values can
     # override them. machine_context() also loads GB's CPU info, whose probes
     # print to fd 2, silenced, before the run.
-    context = {"mew": __version__, **machine_context(), **get_context()}
-    run_context = {"run": run, "context": context}
+    provenance = {"mew": __version__, **machine_context(), **encode_context(context or {})}
+    run_context = {"run": run, "context": provenance}
 
     # Clear before registering so a second mew.run() in the same process
     # doesn't double-register entries.

@@ -92,8 +92,9 @@ class BenchmarkResult(TypedDict):
     run : RunInfo, optional
         Identity of the run that produced this result.
     context : dict, optional
-        Provenance: :func:`mew.machine_context`, plus what was set with
-        :func:`mew.set_context` or :func:`mew.update_context`.
+        Provenance: the mew version as ``mew``, :func:`mew.machine_context`,
+        and what the run's ``context=``, or a setup file's ``context()`` hook,
+        added.
     memory : dict, optional
         The memory manager's figures (``peak_bytes``, ``total_allocations``,
         ``iterations``, ``allocations_per_iteration``, and optionally
