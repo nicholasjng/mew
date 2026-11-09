@@ -11,13 +11,12 @@ import statistics
 import sys
 import zlib
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import groupby
 from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
-from mew._console import overflow
 from mew._typing import BenchmarkResult
 
 # Stamped onto every row so each one stands alone, in JSON and JSONL alike.
@@ -27,8 +26,6 @@ ROW_STAMP_FIELDS = ("run", "context")
 #: results that differ in them compare environments, not only code.
 SKEW_FIELDS = ("host", "cpu_model", "num_cpus", "cpu_scaling_enabled", "mew")
 
-#: The selector that pools every run in a file.
-POOL_ALL = "*"
 
 #: The result format this mew writes and reads, on every row of a result file.
 #: Bumped only for changes that break readers; added fields don't bump it.
@@ -263,8 +260,8 @@ def _group_by_run(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict
     """Group rows by run, oldest key first.
 
     ISO-8601 dates lead the key, so it sorts chronologically. Every row counts,
-    skipped ones included, so a selector names the same run in ``mew show``,
-    ``mew log`` and ``mew compare``.
+    skipped ones included, so ``mew show``, ``mew log`` and ``mew compare`` see
+    the same runs.
     """
     buckets: defaultdict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
@@ -272,82 +269,50 @@ def _group_by_run(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict
     return dict(sorted(buckets.items()))
 
 
-def split_selector(raw: str) -> tuple[Path, str | None]:
-    """Split ``path@selector`` at the last ``@``, if a result-file extension precedes it.
+def _pooled_rows(path: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """All of a file's rows, one sample however many runs appended them.
 
-    Otherwise the whole argument is the path, so ``a@b.json`` names a file.
-    Decided by name alone, so an argument means the same whichever files exist.
+    Warns on stderr when the runs came from different machines, interpreters,
+    mew versions or commits: their repetitions would mix environments.
     """
-    base, sep, selector = raw.rpartition("@")
-    if sep and result_format(base) is not None:
-        return Path(base), selector
-    return Path(raw), None
-
-
-def _select_rows(
-    path: Path,
-    by_run: dict[tuple[str, str], list[dict[str, Any]]],
-    selector: str | None,
-) -> list[dict[str, Any]]:
-    """Pick the rows of the run a ``path@selector`` names.
-
-    ``None`` and ``latest`` select the newest run, and ``*`` pools every run in
-    the file, as repetitions of one sample, with a warning on stderr when the
-    runs came from different machines, interpreters or mew versions;
-    :func:`mew.run` rejects both as run names. Any other selector is a run name,
-    and selects the newest run of that name: a name never pools, since two runs
-    may come from different machines. ``mew log`` lists what a file holds.
-    """
-    if not by_run:
+    if not rows:
         raise ValueError(f"{path}: no measurements in file")
-    if selector is None or selector == "latest":
-        return by_run[max(by_run)]
-    if selector == POOL_ALL:
-        _warn_pooled_skew(path, list(by_run.values()))
-        return [r for rows in by_run.values() for r in rows]
-    if not selector:
-        raise ValueError(f"{path}: empty run name after '@'")
-    named = [key for key, rows in by_run.items() if _run_block(rows[0]).get("name") == selector]
-    if not named:
-        names = sorted({n for rows in by_run.values() if (n := _run_block(rows[0]).get("name"))})
-        shown = ", ".join(names[:5]) + overflow(len(names), 5)
-        hint = f" (run names in file: {shown})" if names else " (no named runs in file)"
-        raise ValueError(f"{path}: no run named {selector!r}{hint}; see `mew log {path}`")
-    return by_run[max(named)]
+    runs = list(_group_by_run(rows).values())
+    if len(runs) > 1:
+        for field in (*SKEW_FIELDS, "python", "commit"):
+            values = {json.dumps(_skew_value(r[0], field), sort_keys=True) for r in runs}
+            if len(values) > 1:
+                print(
+                    f"warning: {path} pools {len(runs)} runs that differ in {field} "
+                    f"({', '.join(sorted(values))}); their repetitions mix environments",
+                    file=sys.stderr,
+                )
+    return rows
 
 
-def _warn_pooled_skew(path: Path, runs: list[list[dict[str, Any]]]) -> None:
-    """Warn when the runs ``file@*`` pools differ in their machine or interpreter."""
-    for field in (*SKEW_FIELDS, "python"):
-        values = {json.dumps((r[0].get("context") or {}).get(field), sort_keys=True) for r in runs}
-        if len(values) > 1:
-            print(
-                f"warning: {path}@{POOL_ALL} pools runs that differ in {field} "
-                f"({', '.join(sorted(values))}); their repetitions mix environments",
-                file=sys.stderr,
-            )
+def _skew_value(row: dict[str, Any], field: str) -> Any:
+    """A context value pooled runs should share; ``commit`` is the VCS commit."""
+    context = row.get("context") or {}
+    if field == "commit":
+        vcs = context.get("vcs")
+        return vcs.get("commit") if isinstance(vcs, dict) else None
+    return context.get(field)
 
 
 def load_column(
     path: Path,
     metric: str,
-    selector: str | None = None,
-    reader: Callable[[Path], list[dict[str, Any]]] = read_rows,
 ) -> tuple[dict[str, Sample], dict[str, Any], dict[str, str]]:
-    """Load one comparison column from a result file: read, select a run, reduce.
+    """Load one comparison column from a result file: every run in it, reduced.
 
     Returns the samples by name, the provenance of the newest measured row, and
-    the benchmarks the run skipped, by name, with their reasons, so a caller can
-    tell a skipped benchmark from a missing one. ``reader`` lets a caller
-    comparing several selectors of one file parse it once.
+    the benchmarks the file has only as skipped, by name, with their reasons, so
+    a caller can tell a skipped benchmark from a missing one.
     """
-    # Selected before filtering, so `@latest` is the run `mew show` prints
-    # even when all of it was skipped.
-    selected = _select_rows(path, _group_by_run(reader(path)), selector)
+    selected = _pooled_rows(path, read_rows(path))
     measured = [r for r in selected if _is_measurement_row(r)]
     if not measured:
-        which = "the latest run" if selector in (None, "latest") else f"run {selector!r}"
-        raise ValueError(f"{path}: {which} has no measurements, only skipped rows")
+        raise ValueError(f"{path}: no measurements, only skipped rows")
     # Repetitions of one benchmark share its `name[label]`.
     groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in measured:
@@ -362,26 +327,30 @@ def load_column(
         if isinstance(r.get("skip"), dict) and r["name"] not in groups
     }
     provenance = _provenance(measured)
-    # `@*` pools runs; the newest speaks for them, so say how many there were.
+    # The newest run speaks for a file's runs, so say how many there were.
     if (runs := len({_run_key(r) for r in measured})) > 1:
         provenance["runs"] = runs
     return samples, provenance, skipped
 
 
-def load_run(
-    path: Path, selector: str | None = None
-) -> tuple[list[BenchmarkResult], dict[str, Any]]:
-    """Load the rows a ``path@selector`` names, as ``mew run`` reported them.
+def load_runs(path: Path) -> list[tuple[list[BenchmarkResult], dict[str, Any]]]:
+    """Load each run in a result file, oldest first, as ``mew run`` reported it.
 
     Skipped rows stay, since the run reported them too.
 
     Returns
     -------
-    tuple[list[BenchmarkResult], dict]
-        The rows in file order, and their provenance (``run`` and ``context``).
+    list[tuple[list[BenchmarkResult], dict]]
+        Per run, its rows in file order and their provenance (``run`` and
+        ``context``).
     """
-    selected = _select_rows(path, _group_by_run(read_rows(path)), selector)
-    return cast("list[BenchmarkResult]", selected), _provenance(selected)
+    rows = read_rows(path)
+    if not rows:
+        raise ValueError(f"{path}: no measurements in file")
+    return [
+        (cast("list[BenchmarkResult]", run), _provenance(run))
+        for run in _group_by_run(rows).values()
+    ]
 
 
 def _provenance(rows: list[dict[str, Any]]) -> dict[str, Any]:

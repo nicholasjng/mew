@@ -85,36 +85,20 @@ For repeated measurements, each value carries its spread: the coefficient of
 variation (stddev over the mean of the repetitions),
 as `±N%`. Above 25% it turns red as `±N% (!)`; treat that delta as unreliable.
 
-(comparing-runs-in-one-file)=
-## Comparing runs in one file
+(files-with-several-runs)=
+## Files with several runs
 
-Each `mew run` is one *run* (see [](context.md#run-identity)). A file that
-holds several, because it was written with `--append`, contributes its newest
-run by default; `mew log FILE` lists them. To pick a different one, name the
-runs and address them with `path@<name>`:
+Each `mew run` is one *run* (see [](context.md#run-identity)), and `mew log
+FILE` lists the runs a file holds. A file is one sample: the runs `--append`
+added to it pool as repetitions. Runs from different machines, interpreters,
+mew versions or commits would mix environments, so `mew compare` warns when the
+pooled runs differ in them, and each file's context line says how many runs it
+pooled.
 
-```console
-$ mew run --run-name before -o results.jsonl
-# ... change something ...
-$ mew run --run-name after --append -o results.jsonl
-$ mew compare results.jsonl@before results.jsonl@after
-```
-
-`path@latest` names the newest run explicitly, so `latest` is reserved:
-`--run-name latest` is an error. A name selects the newest run that has it, so
-running again under a name replaces the earlier run in comparisons. Two
-files, one per side, work the same way without names (see {doc}`ab-comparison`).
-
-`path@*` pools every run in a file as repetitions of one sample, for a loop
-that appends a run per round (see {doc}`ab-comparison`). Runs from different
-machines, interpreters or mew versions would mix environments, so `mew compare`
-warns when the pooled runs differ in them; `*` can't be a run name either.
-The selector follows the last `@` that comes after a `.json`, `.jsonl`, or
-`.jsonl.gz` extension. Any other `@` is part of the file name, so
-`runs@ci.jsonl` names a file.
-
-For anything richer than "this run against that one", query the archive
-directly; see [](reporters.md#sql-and-dataframe-recipes).
+To compare runs against each other, write each to its own file. To pull one
+run out of a growing archive, extract it first, e.g. by its `--run-name`; for
+that and anything richer than "this file against that one", query the archive
+directly: see [](reporters.md#sql-and-dataframe-recipes).
 
 ## Gating CI
 

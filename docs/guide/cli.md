@@ -76,7 +76,7 @@ stderr after the run under `output from benchmarks:`. It can neither break up th
 table nor corrupt JSON on stdout. `--capture=no` shows it live instead, e.g. when
 debugging a crash: captured output is lost if the process dies.
 
-`--append` adds the run to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). Combined with `--run-name`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-runs-in-one-file). `latest` is reserved and can't be a run name: `path@latest` always selects the newest run.
+`--append` adds the run to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). `mew compare` pools a file's runs as one sample; see [](regressions.md#files-with-several-runs). `--run-name` labels the run in `mew log`, `mew show` and `mew compare`.
 
 `--context <key>=<value>` records a string in the run's context, over what the setup file's `context()` returns, and repeats; see [](context.md#the-context-hook).
 
@@ -146,13 +146,13 @@ With `--exit-non-zero-on-regression`, a regression exits with code 3.
 
 ## `mew show`
 
-Print what a result file holds as `mew run` printed it: the newest run by
-default, or the newest run of the name a `@<name>` selector gives. Skipped benchmarks show with
-their reason, and repeated ones get the closing summary.
+Print what a result file holds as `mew run` printed it: every run, oldest
+first, each under its own banner. Skipped benchmarks show with their reason,
+and repeated ones get the closing summary.
 
 ```console
 $ mew show results.jsonl
-$ mew show results.jsonl@before -k sort
+$ mew show results.jsonl -k sort
 $ mew show --summary-only results.jsonl
 ```
 
@@ -163,8 +163,7 @@ its name.
 
 ## `mew log`
 
-List the runs a result file holds, newest first, to pick a `@<name>` selector
-for `mew compare` or `mew show`:
+List the runs a result file holds, newest first:
 
 ```console
 $ mew log results.jsonl

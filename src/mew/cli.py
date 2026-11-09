@@ -41,7 +41,7 @@ from mew._options import (
     parse_seconds,
 )
 from mew._registry import compile_name_filter, longest_row_name, selected_cases
-from mew._results import load_run, result_format, run_summaries, split_selector
+from mew._results import load_runs, result_format, run_summaries
 
 _VERSION = f"mew {_mew_version} (Google Benchmark {BENCHMARK_VERSION})"
 
@@ -437,28 +437,31 @@ def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: 
         name_filter = compile_name_filter(pattern, literal=literal) if pattern else None
     shown = 0
     for file in files:
-        path, selector = split_selector(file)
         with _usage_error("show", ValueError, OSError):
-            rows, context = load_run(path, selector)
-        if name_filter is not None:
-            rows = [r for r in rows if name_filter.search(r["name"])]
-        if not rows:
-            continue
-        if len(files) > 1:
-            # Which file each banner belongs to, a blank line apart.
+            runs = load_runs(Path(file))
+        named = False
+        for rows, context in runs:  # oldest first, so the newest ends next to the prompt
+            if name_filter is not None:
+                rows = [r for r in rows if name_filter.search(r["name"])]
+            if not rows:
+                continue
+            # Runs and files a blank line apart; with several files, each run
+            # follows its file's name.
             if shown:
                 print()
-            print(file)
-        reporter = RichReporter(
-            show_memory=any(r.get("memory") for r in rows),
-            show_cpu=any(r.get("cpu_profile") for r in rows),
-            name_width=max(len(r["name"]) for r in rows),
-            show_repetitions=not summary_only,
-        )
-        reporter.report_context(context)
-        reporter.report_results(rows)
-        reporter.finalize()
-        shown += len(rows)
+            if len(files) > 1 and not named:
+                print(file)
+                named = True
+            reporter = RichReporter(
+                show_memory=any(r.get("memory") for r in rows),
+                show_cpu=any(r.get("cpu_profile") for r in rows),
+                name_width=max(len(r["name"]) for r in rows),
+                show_repetitions=not summary_only,
+            )
+            reporter.report_context(context)
+            reporter.report_results(rows)
+            reporter.finalize()
+            shown += len(rows)
     if not shown:
         print(f"mew show: no benchmarks match {pattern!r}", file=sys.stderr)
         raise SystemExit(1)
@@ -733,7 +736,7 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--run-name",
         metavar="<name>",
-        help="Name this run <name>, which <file>@<name> selects ('latest' and '*' are reserved).",
+        help="Name this run <name>, as `mew log` and `mew compare` show it.",
     )
     p.add_argument(
         "--context",
@@ -787,7 +790,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "files",
         nargs="+",
-        help="Compare result files against the first, the baseline (<file>@<name> picks a run).",
+        help="Compare result files against the first, the baseline; a file's runs pool.",
     )
     p.add_argument(
         "-m",
@@ -815,7 +818,7 @@ def _add_show_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "files",
         nargs="+",
-        help="Print result files' newest run (<file>@<name> picks a run).",
+        help="Print every run stored in result files, oldest first.",
     )
     _add_filter_args(p, verb="Show")
     _add_summary_only_arg(p)

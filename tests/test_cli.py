@@ -272,8 +272,6 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         (("compare", "a.json"), "mew compare: expected at least two result files"),
         (("compare", "a.json", "b.json"), "mew compare: result file not found: a.json"),
         (("log", "a.json"), "mew log: result file not found: a.json"),
-        # `@latest` selects the newest run, so no run may carry that name.
-        (("run", "--min-time", "1x", "--run-name", "latest"), "mew run: run_name 'latest'"),
         # Prefixes of long options are not expanded, so a new option can't break them.
         (("run", "--rep", "3"), "unrecognized arguments: --rep"),
         # Checked before the run, not after it.
@@ -802,39 +800,31 @@ def _two_runs(path: Path) -> None:
     )
 
 
-def test_show_prints_the_newest_run_as_mew_run_printed_it(mew_cli, tmp_path):
-    """`mew show` prints the newest run's rows, counters and skips like `mew run`."""
+def test_show_prints_each_run_as_mew_run_printed_it(mew_cli, tmp_path):
+    """`mew show` prints every run, oldest first, each with its banner, and its rows,
+    counters and skips like `mew run`; `-k` narrows the rows, as in `mew compare`."""
     _two_runs(tmp_path / "r.json")
     res = mew_cli("show", "r.json", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
     assert res.stdout.startswith("mew · ")
+    assert res.stdout.count("mew · ") == 2
+    assert res.stdout.index("old") < res.stdout.index("new")
     assert "hits=42" in res.stdout
     assert "no GPU" in res.stdout
-    assert "old" not in res.stdout
-
-
-def test_show_picks_a_named_run_and_filters_it(mew_cli, tmp_path):
-    """`file@name` picks a run and `-k` narrows its rows, as in `mew compare`."""
-    _two_runs(tmp_path / "r.json")
-    res = mew_cli("show", "r.json@before", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    assert "old" in res.stdout
-    assert "new" not in res.stdout
-    res = mew_cli("show", "r.json@after", "-k", "new", cwd=tmp_path)
-    assert "new" in res.stdout
-    assert "broken" not in res.stdout
+    res = mew_cli("show", "r.json", "-k", "new", cwd=tmp_path)
+    assert res.stdout.count("mew · ") == 1  # the run the filter empties is left out
+    assert "old" not in res.stdout and "broken" not in res.stdout
 
 
 @pytest.mark.parametrize(
     ("args", "code", "message"),
     [
         (("r.json", "-k", "nothing"), 1, "no benchmarks match 'nothing'"),
-        (("r.json@nope",), 2, "no run named 'nope'"),
         (("missing.json",), 2, "result file not found"),
     ],
 )
 def test_show_errors(mew_cli, tmp_path, args, code, message):
-    """No match exits 1; a bad file or selector is a usage error."""
+    """No match exits 1; a missing file is a usage error."""
     _two_runs(tmp_path / "r.json")
     res = mew_cli("show", *args, cwd=tmp_path)
     assert res.returncode == code
@@ -1069,20 +1059,6 @@ def test_e2e_benchmark_output_cannot_corrupt_json_on_stdout(tmp_path):
     assert res.returncode == 0, res.stderr
     assert len(json.loads(res.stdout)["benchmarks"]) == 1
     assert "from print" in res.stderr and "from fd 1" in res.stderr
-
-
-def test_run_names_with_double_slashes_can_be_selected(mew_cli, benchdir, tmp_path):
-    """`file@name` stays a string: a path would normalize the name `a//b` to `a/b`."""
-    out = tmp_path / "r.jsonl"
-    for tag in ("a//b", "c"):
-        res = mew_cli(
-            "run", str(benchdir), "-k", "bench_one", "--min-time", "1x", "--run-name", tag,
-            "-o", str(out), "--append", cwd=tmp_path,
-        )  # fmt: skip
-        assert res.returncode == 0, res.stderr
-    assert mew_cli("show", f"{out}@a//b", cwd=tmp_path).returncode == 0
-    res = mew_cli("compare", f"{out}@c", f"{out}@a//b", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
 
 
 def test_run_leaves_the_registry_as_it_found_it(mew_cli, benchdir, tmp_path):

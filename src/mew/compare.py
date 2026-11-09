@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import json
 import math
 import re
@@ -36,9 +35,7 @@ from mew._results import (
     load_column,
     mannwhitney_p,
     read_results,
-    read_rows,
     run_summaries,
-    split_selector,
 )
 from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, render_panel
 
@@ -188,11 +185,11 @@ def _value_cell(sample: Sample, metric: str) -> str | list[Span]:
 
 @dataclass(slots=True)
 class _Column:
-    """One comparison column: a result file, or one ``path@selector`` run of it.
+    """One comparison column: a result file, all of its runs as one sample.
 
-    ``source`` identifies the column in warnings (``path`` or ``path@selector``);
-    ``label`` heads its table column; ``skipped`` maps the benchmarks its run
-    skipped to their reasons.
+    ``source`` identifies the column in warnings, its path; ``label`` heads its
+    table column; ``skipped`` maps the benchmarks the file has only as skipped
+    to their reasons.
     """
 
     source: str
@@ -237,7 +234,7 @@ def _render(
     """Compare the first column against the rest and render the table.
 
     Column-shaped on purpose: anything producing labelled sample sets with contexts
-    (files, ``path@selector`` runs) compares the same way. ``higher_is_better``
+    (files, or anything else) compares the same way. ``higher_is_better``
     is the metric's direction; ``None`` leaves deltas uncolored and can't be gated.
     """
     counter = counter_name(metric)
@@ -372,11 +369,9 @@ def compare(
     files : Sequence[str or Path]
         JSON, JSONL or gzipped JSONL result files, the baseline first:
         ``mew compare base.json head.json`` compares head against base. A file
-        with several runs contributes its newest; ``path@<name>`` selects the
-        newest run with that ``--run-name``, and ``path@latest`` the newest
-        explicitly (``latest`` is reserved, never a name). A path splits
-        at its last ``@`` only after a ``.json``, ``.jsonl`` or ``.jsonl.gz``
-        extension, so ``a@b.json`` is a file name.
+        is one sample: the runs ``--append`` added to it pool as repetitions,
+        with a warning when they differ in machine, interpreter, mew version
+        or commit. To compare one run of an archive, extract it first.
     metric : str, default "real_time"
         ``"real_time"``, ``"cpu_time"``, or, for results with
         memory figures, ``"memory.peak_bytes"`` or
@@ -408,9 +403,8 @@ def compare(
     ------
     ValueError
         If an argument, such as ``pattern``, is invalid, or a file can't be
-        compared: it is not a mew result file, holds no measurements or no
-        run with the given name; or ``regressions`` gates on a counter without
-        a direction.
+        compared: it is not a mew result file or holds no measurements; or
+        ``regressions`` gates on a counter without a direction.
     OSError
         If a file can't be read; :class:`FileNotFoundError` if it doesn't exist.
     """
@@ -433,21 +427,17 @@ def compare(
 
     if len(files) < 2:
         raise ValueError(f"expected at least two result files, got {len(files)}")
-    parsed = [split_selector(str(p)) for p in files]
-    stems = Counter(p.stem for p, _ in parsed)
-    # Two selectors on one archive must not parse it twice.
-    read_once = functools.cache(read_rows)
+    paths = [Path(p) for p in files]
+    stems = Counter(p.stem for p in paths)
 
     columns = []
-    for path, selector in parsed:  # the baseline first, as git diff and pyperf take it
-        samples, ctx, skipped = load_column(path, metric, selector, reader=read_once)
-        # Files that share a stem are told apart by their full path.
-        base = str(path) if stems[path.stem] > 1 else path.stem
-        label = f"{base}@{selector}" if selector else base
+    for path in paths:  # the baseline first, as git diff and pyperf take it
+        samples, ctx, skipped = load_column(path, metric)
         columns.append(
             _Column(
-                source=f"{path}@{selector}" if selector else str(path),
-                label=label,
+                source=str(path),
+                # Files that share a stem are told apart by their full path.
+                label=str(path) if stems[path.stem] > 1 else path.stem,
                 samples=samples,
                 context=ctx,
                 skipped=skipped,

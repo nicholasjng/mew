@@ -34,8 +34,8 @@ def _value_kind(action: argparse.Action) -> str | list[str] | None:
     """Completion kind for an action's value: choices, ``"file"``, or None."""
     if action.choices:
         return [str(c) for c in action.choices]
-    # list/run's `file::name` and compare/show's `file@tag` selectors complete
-    # their path half; `-o` also takes `-`.
+    # list/run's `file::name` selectors complete their path half; `-o` also
+    # takes `-`.
     if action.type is Path or action.dest in ("paths", "files", "output"):
         return "file"
     return None
