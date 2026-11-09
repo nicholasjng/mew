@@ -84,6 +84,10 @@ releases may break the API.
 - Result files written by 0.2.0 are no longer read.
 - On a GIL build, threaded benchmarks left out of the run no longer get a
   skipped row.
+- `mew compare` takes the baseline first: `mew compare baseline.json head.json`.
+  With more files, the second is the one gated.
+- `mew compare --stddev` and `compare(show_stddev=)` are gone: each value
+  carries its spread.
 
 ### Added
 
@@ -113,9 +117,16 @@ releases may break the API.
   per side without ties.
 - The `mew compare` ratio column shows `—` when a counter is negative.
 - A memory manager's `stop()` may return extra keys; mew ignores them.
+- `mew compare` shows each value's spread inline, as `±N%`, red past 25%.
+- `mew compare` context lines show a run's name and date, how many runs `@*`
+  pooled, and only the context values that differ between the files.
+- `mew compare` reports skipped benchmarks with their reason instead of as missing.
+- `mew compare` names a file prefix all rows share once, in the title.
+- `mew compare` sums up the second file against the baseline under the table.
 
 ### Fixed
 
+- `mew log` shows run ids long enough to tell apart runs from the same minute.
 - `MemrayManager` raised a `ResourceWarning` when it was garbage-collected.
 - A benchmark defined by code without a module, as from `exec()`, was named
   `None::bench_x`; it is now `<unknown>::bench_x`.

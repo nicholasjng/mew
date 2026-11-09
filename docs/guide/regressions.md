@@ -1,19 +1,20 @@
 # Comparisons and regression gating
 
-`mew compare` diffs `.json`, `.jsonl`, or `.jsonl.gz` results. The last file is the baseline.
+`mew compare` diffs `.json`, `.jsonl`, or `.jsonl.gz` results. The first file is the baseline.
 Add a regression threshold and exit flag to use it as a CI gate.
-With more than two files, the first is the candidate and the files between are
-informational. The table lists the benchmarks that the candidate and the baseline
-share, with or without a gate; a file between them that lacks one shows dashes.
-The gate compares the candidate against the baseline.
+With more than two files, the second is the candidate and the files after it are
+informational. The table lists the benchmarks that the baseline and the candidate
+share, with or without a gate; a later file that lacks one shows dashes.
+The gate compares the candidate against the baseline, and a line under the table
+sums it up: how many benchmarks got significantly slower or faster, and how many
+did not change significantly.
 
 ## Basic comparison
 
 ```console
-$ mew compare head.json baseline.json
-$ mew compare --metric cpu_time head.json baseline.json
-$ mew compare --pattern 'sort' head.json baseline.json
-$ mew compare --stddev head.json baseline.json    # show stddev cols if present
+$ mew compare baseline.json head.json
+$ mew compare --metric cpu_time baseline.json head.json
+$ mew compare --pattern 'sort' baseline.json head.json
 ```
 
 Supported metrics: `real_time` (default), `cpu_time`, `iterations`.
@@ -21,8 +22,8 @@ For `iterations`, higher is better, so the regression direction is inverted.
 Files produced with `--memory-profiler memray` additionally support `memory.peak_bytes` and `memory.allocations_per_iteration`:
 
 ```console
-$ mew compare -m memory.peak_bytes head.json baseline.json
-$ mew compare -m memory.allocations_per_iteration ducky.jsonl duckdb.jsonl
+$ mew compare -m memory.peak_bytes baseline.json head.json
+$ mew compare -m memory.allocations_per_iteration duckdb.jsonl ducky.jsonl
 ```
 
 Use `memory.allocations_per_iteration` across runs because total allocations
@@ -32,8 +33,8 @@ depend on the memory-pass iteration count. `peak_bytes` is comparable as-is.
 `state.set_counter()`, `set_items_processed()` or `set_bytes_processed()`:
 
 ```console
-$ mew compare -m counters.items_per_second head.json baseline.json
-$ mew compare -m counters.tlb_misses --regression-threshold 5% head.json baseline.json
+$ mew compare -m counters.items_per_second baseline.json head.json
+$ mew compare -m counters.tlb_misses --regression-threshold 5% baseline.json head.json
 ```
 
 Which direction is an improvement comes from `[[tool.mew.counters]]` rules in
@@ -71,7 +72,7 @@ For equivalent benchmarks in different files, use `--key func`:
 ```console
 $ mew run benchmarks/bench_ducky.py -o ducky.jsonl
 $ mew run benchmarks/bench_duckdb.py -o duckdb.jsonl
-$ mew compare --key func ducky.jsonl duckdb.jsonl
+$ mew compare --key func duckdb.jsonl ducky.jsonl
 ```
 
 If stripping the prefix makes two benchmarks in one file collide, `compare` exits with an error rather than guessing.
@@ -82,12 +83,17 @@ options such as `min_time` do not affect matching.
 
 ## Context and noise
 
-Context is printed per file above the table. `compare` warns when machine
-properties differ and adds differing custom values to that file's context line.
+Each file gets a context line above the table: its run's name (or ID) and
+date, then only the context values that differ between the files. `compare`
+warns when machine properties differ. When all rows share one file prefix, such
+as `benchmarks/bench_sort.py::`, the title names it once and the rows drop it.
 
-For repeated measurements, a red `±N% (!)` marks a coefficient of variation
-(stddev over the mean of the repetitions, whatever the `--statistic`) above 25%.
-Treat that delta as unreliable.
+A benchmark that a file has as skipped is reported with its reason
+(`warning: skipped in head.json: …`), apart from benchmarks the file lacks.
+
+For repeated measurements, each value carries its spread: the coefficient of
+variation (stddev over the mean of the repetitions, whatever the `--statistic`),
+as `±N%`. Above 25% it turns red as `±N% (!)`; treat that delta as unreliable.
 
 (comparing-runs-in-one-file)=
 ## Comparing runs in one file
@@ -101,7 +107,7 @@ runs and address them with `path@<name>`:
 $ mew run --run-name before -o results.jsonl
 # ... change something ...
 $ mew run --run-name after --append -o results.jsonl
-$ mew compare results.jsonl@after results.jsonl@before
+$ mew compare results.jsonl@before results.jsonl@after
 ```
 
 `path@latest` names the newest run explicitly, so `latest` is reserved:
@@ -123,7 +129,7 @@ directly; see [](reporters.md#sql-and-dataframe-recipes).
 ## Gating CI
 
 ```console
-$ mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json baseline.json
+$ mew compare --regression-threshold 5% --exit-non-zero-on-regression baseline.json head.json
 ```
 
 The `%` suffix is required. A threshold prints the panel;
@@ -184,7 +190,7 @@ The panel goes to stderr. `REGRESSED` controls the optional exit code 3.
   run: mew run --min-time 1s -o head.json
 
 - name: Gate on regressions
-  run: mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json baseline.json
+  run: mew compare --regression-threshold 5% --exit-non-zero-on-regression baseline.json head.json
 ```
 
 Persist `head.json` after merging so it becomes the next baseline.

@@ -134,13 +134,13 @@ Exits with code 1 if nothing matches (see [](#exit-codes)).
 
 ## `mew compare`
 
-Compare two or more result files (`.json`, `.jsonl`, or `.jsonl.gz`). The last is the baseline; earlier files are diffed against it.
+Compare two or more result files (`.json`, `.jsonl`, or `.jsonl.gz`). The first is the baseline; later files are diffed against it.
 
 ```console
-$ mew compare head.json baseline.json
+$ mew compare baseline.json head.json
 $ mew compare --metric cpu_time --pattern 'sort' a.json b.json
 $ mew compare --key func suite_a.jsonl suite_b.jsonl   # match by function name
-$ mew compare --regression-threshold 5% --exit-non-zero-on-regression head.json baseline.json
+$ mew compare --regression-threshold 5% --exit-non-zero-on-regression baseline.json head.json
 ```
 
 See [](regressions.md) for matching, metrics, the regression gate, and allowlist.

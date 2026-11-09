@@ -42,18 +42,18 @@ Raising `min_time` reduces sampling error, but not clock or system-load drift.
 
 ```console
 $ mew run --repetitions 10 -o head.json
-$ mew compare head.json baseline.json --stddev
+$ mew compare baseline.json head.json
 ```
 
 `compare` reduces each benchmark's per-repetition rows itself — median by
 default, or `--statistic` for `min`, `max`, `mean`, or `gmean` — and
 computes the coefficient of variation (stddev / mean, whatever the statistic).
-Any row above **25%** is flagged red as `±N% (!)`:
+Each value carries it as `±N%`; above **25%** it is flagged red as `±N% (!)`:
 
 ```text
-Benchmark    │ baseline │ ± stddev │            head │      Δ% │ speedup
-──────────────────────────────────────────────────────────────────────────
-bench_parse  │  1.20 us │  0.31 us │ 1.44 us ±26% (!) │ +20.00% │  ×0.833
+Benchmark   │      baseline │             head │      Δ% │ speedup
+──────────────────────────────────────────────────────────────────
+bench_parse │ 1.20 us ±3.1% │ 1.44 us ±26% (!) │ +20.00% │  ×0.833
 ```
 
 Treat a flagged row as inconclusive. Improve the environment or collect more
@@ -100,8 +100,9 @@ warning: result files differ in cpu_model (baseline: AMD EPYC 7763, head: Apple 
 deltas may reflect the environment, not the code
 ```
 
-Treat this warning as invalidating. Differing custom {doc}`context <context>`
-values are shown next to each file's label on its context line above the table.
+Treat this warning as invalidating. Context values that differ
+between the files, custom {doc}`context <context>` included, are shown on each
+file's context line above the table.
 
 ## A defensible CI gate
 
@@ -110,7 +111,7 @@ from the same runner:
 
 ```console
 $ mew run --min-time 0.5 --repetitions 10 --random-interleaving -o head.json
-$ mew compare head.json baseline.json \
+$ mew compare baseline.json head.json \
       --regression-threshold 5% --exit-non-zero-on-regression
 ```
 

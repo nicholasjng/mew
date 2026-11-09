@@ -46,23 +46,26 @@ $ for i in 1 2 3 4 5; do
 >   mew run bench_alpha.py --context engine="alpha 1.5.3" --append -o alpha.jsonl
 >   mew run bench_beta.py  --context engine="beta 2.0.0"  --append -o beta.jsonl
 > done
-$ mew compare --key func 'beta.jsonl@*' 'alpha.jsonl@*'
+$ mew compare --key func 'alpha.jsonl@*' 'beta.jsonl@*'
 ```
 
 Interleave the suites (A B A B …, not AAAAA BBBBB) to avoid bias from thermal
 and load drift. `--key func` matches on the function name, so the differing
-file prefixes do not matter. Differing context values (`engine=…`) are shown
-next to each file's label on its context line above the table.
+file prefixes do not matter. Each file's context line above the table shows
+only the values that differ between the files, here `engine=…`.
 
 ```console
-Comparison (real_time, baseline alpha)
-Benchmark │   alpha │    beta │                Δ% │ speedup
-───────────────────────────────────────────────────────────
-scan      │ 1.79 us │ 3.28 us │ +83.41% (signif.) │  ×0.545
+alpha@*: 5 runs, newest 2026-11-09T09:10:36 engine=alpha 1.5.3
+beta@*: 5 runs, newest 2026-11-09T09:10:36 engine=beta 2.0.0
+Comparison (real_time, baseline alpha@*)
+Benchmark │         alpha@* │          beta@* │                Δ% │ speedup
+───────────────────────────────────────────────────────────────────────────
+scan      │ 503.63 ns ±1.6% │ 948.33 ns ±1.9% │ +88.30% (signif.) │  ×0.531
+beta@* against alpha@*: 1 slower, 0 faster, 0 not significantly different
 ```
 
 To keep both sides in one archive instead, give each run a `--run-name` and
-address them as `results.jsonl@beta results.jsonl@alpha`; see
+address them as `results.jsonl@alpha results.jsonl@beta`; see
 [](regressions.md#comparing-runs-in-one-file).
 
 ## Different interpreters
@@ -74,7 +77,7 @@ $ for i in 1 2 3; do
 >   .venv-gil/bin/mew run bench_x.py --append -o gil.jsonl
 >   .venv-ft/bin/mew  run bench_x.py --append -o ft.jsonl
 > done
-$ mew compare 'ft.jsonl@*' 'gil.jsonl@*'
+$ mew compare 'gil.jsonl@*' 'ft.jsonl@*'
 ```
 
 Here both sides are the *same* benchmark file, distinguished by the
@@ -89,7 +92,7 @@ The profiling flags work per invocation, so give each side its own artifact path
 ```console
 $ mew run bench_alpha.py -o alpha.jsonl --memory-profiler memray --profile-dir profiles.alpha/
 $ mew run bench_beta.py  -o beta.jsonl  --memory-profiler memray --profile-dir profiles.beta/
-$ mew compare --key func --metric memory.allocations_per_iteration beta.jsonl alpha.jsonl
+$ mew compare --key func --metric memory.allocations_per_iteration alpha.jsonl beta.jsonl
 ```
 
 Use `memory.allocations_per_iteration` for cross-engine allocation comparisons:

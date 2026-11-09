@@ -9,12 +9,11 @@ import re
 import sys
 from collections import Counter
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from mew._console import (
-    NS_PER_UNIT,
     Span,
     Table,
     Terminal,
@@ -23,7 +22,6 @@ from mew._console import (
     fmt_counter,
     fmt_time,
     overflow,
-    scale_time,
     sgr,
 )
 from mew._registry import compile_name_filter
@@ -66,24 +64,22 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def _ctx_summary(ctx: dict[str, Any], *, exclude: Collection[str]) -> list[str]:
-    """The ``key=value`` parts of a comparison column's provenance line.
+def _ctx_summary(ctx: dict[str, Any], differing: dict[str, Any]) -> list[str]:
+    """The parts of a comparison column's provenance line: its run, and the
+    context values that differ from another column's. What every column shares
+    goes unsaid; the skew warnings flag a machine that differs.
 
-    ``exclude`` omits user-context keys already shown in the column label.
-    """
+    An unnamed run goes by its date: a short id would not tell runs apart, as a
+    UUIDv7's leading digits are its time to about a minute."""
     run = ctx.get("run") or {}
-    provenance = ctx.get("context") or {}
     parts: list[str] = []
-    if run.get("name"):
+    if (runs := ctx.get("runs", 1)) > 1:
+        parts.append(f"{runs} runs, newest")
+    elif run.get("name"):
         parts.append(f"run={run['name']}")
-    elif run.get("id"):
-        parts.append(f"run={str(run['id'])[:12]}")
     if run.get("date"):
-        parts.append(f"date={str(run['date'])[:19]}")
-    for k, v in _flatten(provenance).items():
-        if k in exclude:
-            continue
-        parts.append(f"{k}={v}")
+        parts.append(str(run["date"])[:19])
+    parts += [f"{k}={v}" for k, v in differing.items()]
     return parts
 
 
@@ -125,20 +121,6 @@ def _fmt_value(sample: Sample, metric: str) -> str:
     if metric in MEMORY_METRICS:  # remaining memory metrics are byte-valued
         return fmt_bytes(int(sample.value))
     return fmt_time(sample.value)
-
-
-def _fmt_stddev(sample: Sample, metric: str) -> str:
-    """Stddev cell, scaled to the same unit as its paired value cell."""
-    if sample.stddev is None:
-        return "-"
-    if metric == "memory.peak_bytes":
-        return fmt_bytes(int(sample.stddev))
-    if counter_name(metric) is not None:
-        return fmt_counter(sample.stddev, sample.counter_format)
-    if metric not in TIME_METRICS:
-        return f"{sample.stddev:.2f}"
-    _, unit = scale_time(sample.value)  # the value cell's unit
-    return f"{sample.stddev / NS_PER_UNIT[unit]:.2f} {unit}"
 
 
 # p-value threshold for the Mann-Whitney-U test.
@@ -196,12 +178,17 @@ def _fmt_delta(delta: float, *, higher_is_better: bool | None = False) -> tuple[
 
 
 def _value_cell(sample: Sample, metric: str) -> str | list[Span]:
-    """The value text, with a red ``±N% (!)`` marker when repetitions scatter too much."""
+    """The value and its repetitions' spread, ``±N%`` of their mean: dim, or red with
+    ``(!)`` when they scatter too much to trust the value."""
     value = _fmt_value(sample, metric)
     cv = sample.cv
-    if cv is None or cv < _CV_UNRELIABLE:
+    if cv is None:  # a single repetition has no spread
         return value
-    return [(value, None), (f" ±{cv * 100.0:.0f}% (!)", "red")]
+    pct = cv * 100.0
+    spread = f" ±{pct:.1f}%" if pct < 10 else f" ±{pct:.0f}%"
+    if cv < _CV_UNRELIABLE:
+        return [(value, None), (spread, "dim")]
+    return [(value, None), (spread + " (!)", "red")]
 
 
 @dataclass(slots=True)
@@ -209,13 +196,38 @@ class _Column:
     """One comparison column: a result file, or one ``path@selector`` run of it.
 
     ``source`` identifies the column in warnings (``path`` or ``path@selector``);
-    ``label`` heads its table column.
+    ``label`` heads its table column; ``skipped`` maps the benchmarks its run
+    skipped to their reasons.
     """
 
     source: str
     label: str
     samples: dict[str, Sample]
     context: dict[str, Any]
+    skipped: dict[str, str] = field(default_factory=dict)
+
+
+def _shared_file_prefix(names: Collection[str]) -> str:
+    """The ``path.py::`` every name starts with, or ``""`` if they don't share one."""
+    prefixes = {n.split("::", 1)[0] + "::" if "::" in n else "" for n in names}
+    return prefixes.pop() if len(prefixes) == 1 else ""
+
+
+def _summary(outcomes: list[tuple[int, bool | None]], *, metric: str, has_direction: bool) -> str:
+    """One line on the first file against the baseline: what changed significantly."""
+    if not outcomes:
+        return "nothing to compare"
+    if all(sig is None for _, sig in outcomes):
+        return f"{len(outcomes)} compared; no significance test, which needs 2+ repetitions a side"
+    changed = [d for d, sig in outcomes if sig]
+    rest = len(outcomes) - len(changed)
+    if not has_direction:
+        return f"{len(changed)} changed significantly, {rest} not"
+    worse, better = ("slower", "faster") if metric in TIME_METRICS else ("worse", "better")
+    n_worse = sum(1 for d in changed if d > 0)
+    return (
+        f"{n_worse} {worse}, {len(changed) - n_worse} {better}, {rest} not significantly different"
+    )
 
 
 def _render(
@@ -223,7 +235,6 @@ def _render(
     *,
     metric: str,
     pattern: re.Pattern[str] | None,
-    show_stddev: bool,
     regressions: RegressionConfig | None,
     console: Terminal | None,
     higher_is_better: bool | None,
@@ -263,9 +274,17 @@ def _render(
         return 1
 
     for c in columns:
-        missing = all_names - c.samples.keys()
+        # A benchmark the run skipped is there, with a reason; a missing one isn't.
+        skipped = sorted(all_names & c.skipped.keys() - c.samples.keys())
+        if skipped:
+            shown = ", ".join(f"{n} ({c.skipped[n]})" for n in skipped[:5])
+            print(
+                f"warning: skipped in {c.source}: {shown}{overflow(len(skipped), 5)}",
+                file=sys.stderr,
+            )
+        missing = sorted(all_names - c.samples.keys() - c.skipped.keys())
         if missing:
-            preview = ", ".join(sorted(missing)[:5])
+            preview = ", ".join(missing[:5])
             extra = overflow(len(missing), 5)
             print(
                 f"warning: {c.source} missing {len(missing)} benchmark(s): {preview}{extra}",
@@ -273,47 +292,39 @@ def _render(
             )
 
     _warn_context_skew(columns)
-    # Differing custom-context keys (e.g. engine=...) go on the context line, not
-    # the table header, to save width.
     diffs = _custom_diffs([c.context for c in columns])
-    annotated_labels = [
-        f"{c.label} ({', '.join(f'{k}={v}' for k, v in diff.items())})" if diff else c.label
-        for c, diff in zip(columns, diffs, strict=True)
-    ]
-
     term = console or Terminal()
-    for label, c, diff in zip(annotated_labels, columns, diffs, strict=True):
+    for c, diff in zip(columns, diffs, strict=True):
         if c.context:
-            parts = [f"{label}:", *_ctx_summary(c.context, exclude=diff.keys())]
+            parts = [f"{c.label}:", *_ctx_summary(c.context, diff)]
             for line in fill(parts, term.width, indent="", hang="  ", sep=" "):
                 term.print(sgr(line, "dim", enabled=term.color))
 
+    # One file's benchmarks share its `path.py::` prefix: said once, in the title.
+    prefix = _shared_file_prefix(shared)
+    of = f" of {prefix.removesuffix('::')}" if prefix else ""
     labels = [c.label for c in columns]
-    table = Table(title=f"Comparison ({metric}, baseline {labels[0]})")
+    table = Table(title=f"Comparison{of} ({metric}, baseline {labels[0]})")
     table.add_column("Benchmark", flex=True)
     table.add_column(labels[0], justify="right")
-    if show_stddev:
-        table.add_column("± stddev", justify="right")
     # Memory and counters: less isn't "faster".
     ratio_label = "ratio" if metric in MEMORY_METRICS or counter is not None else "speedup"
     for lbl in labels[1:]:
         table.add_column(lbl, justify="right")
         table.add_column("Δ%", justify="right")
         table.add_column(ratio_label, justify="right")
-        if show_stddev:
-            table.add_column("± stddev", justify="right")
 
     baseline = columns[0].samples
     verdicts: list[BenchmarkVerdict] = []
+    # The first file against the baseline: (direction, significant) per row.
+    outcomes: list[tuple[int, bool | None]] = []
 
     for name in sorted(shared):
         base = baseline[name]
-        row: list[Any] = [name, _value_cell(base, metric)]
-        if show_stddev:
-            row.append(_fmt_stddev(base, metric))
+        row: list[Any] = [name.removeprefix(prefix), _value_cell(base, metric)]
         for idx, c in enumerate(columns[1:]):
             if name not in c.samples:
-                row.extend(["-"] * (4 if show_stddev else 3))
+                row.extend(["-"] * 3)
                 continue
             s = c.samples[name]
             result = _compare_samples(base, s, higher_is_better)
@@ -324,17 +335,21 @@ def _render(
                         name, result.delta * 100.0, higher_is_better=bool(higher_is_better)
                     )
                 )
+            significant = None if result.p_value is None else result.p_value < _SIGNIFICANCE_ALPHA
+            if idx == 0:
+                worse = -result.delta if higher_is_better else result.delta
+                outcomes.append((0 if worse == 0 else (1 if worse > 0 else -1), significant))
             delta_cell: list[Span] = [_fmt_delta(result.delta, higher_is_better=higher_is_better)]
-            if result.p_value is not None and result.p_value < _SIGNIFICANCE_ALPHA:
+            if significant:
                 delta_cell.append((" (signif.)", "bold"))
             row.append(_value_cell(s, metric))
             row.append(delta_cell)
             row.append("—" if result.speedup is None else f"×{result.speedup:.3f}")
-            if show_stddev:
-                row.append(_fmt_stddev(s, metric))
         table.add_row(*row)
 
     term.print(table)
+    summary = _summary(outcomes, metric=metric, has_direction=higher_is_better is not None)
+    term.print(sgr(f"{labels[1]} against {labels[0]}: {summary}", "dim", enabled=term.color))
 
     if regressions is not None:
         text, code = render_panel(verdicts, default_threshold=regressions.default_threshold)
@@ -351,23 +366,24 @@ def compare(
     key: str = "name",
     pattern: str | None = None,
     literal: bool = False,
-    show_stddev: bool = False,
     statistic: Statistic | None = None,
     regressions: RegressionConfig | None = None,
     counters: CounterConfig | None = None,
     console: Terminal | None = None,
 ) -> int:
-    """Print a table comparing result files against the last one, the baseline.
+    """Print a table comparing result files against the first one, the baseline.
 
-    Each other file's column shows its value, the delta and the speedup. The
-    rows are the benchmarks the first file and the baseline share; another file
-    that lacks one shows dashes in its row.
+    Each value shows its repetitions' spread, ``±N%`` of their mean. Each other
+    file's column shows its value, the delta and the speedup. The rows are the
+    benchmarks the baseline and the second file share; another file that lacks
+    one shows dashes in its row. A line under the table sums up the second file
+    against the baseline.
 
     Parameters
     ----------
     files : Sequence[str or Path]
-        JSON, JSONL or gzipped JSONL result files, the baseline last:
-        ``mew compare head.json base.json`` compares head against base. A file
+        JSON, JSONL or gzipped JSONL result files, the baseline first:
+        ``mew compare base.json head.json`` compares head against base. A file
         with several runs contributes its newest; ``path@<name>`` selects the
         newest run with that ``--run-name``, and ``path@latest`` the newest
         explicitly (``latest`` is reserved, never a name). A path splits
@@ -388,13 +404,11 @@ def compare(
         Regex searched for in benchmark names.
     literal : bool, default False
         Match ``pattern`` as plain text, e.g. to keep a ``name[label]``'s brackets.
-    show_stddev : bool, default False
-        Add a stddev column per file, where results have repetitions.
     statistic : Callable[[list[float]], SupportsFloat], optional
         Reduces each benchmark's repetition values to the value shown and
-        gated; the median by default. Stddev is unaffected.
+        gated; the median by default. The spread is unaffected.
     regressions : RegressionConfig, optional
-        Gate the first file against the baseline, and print a regression panel.
+        Gate the second file against the baseline, and print a regression panel.
     counters : CounterConfig, optional
         Which direction is an improvement per counter, as ``[[tool.mew.counters]]``
         configures it. Without it, only ``items_per_second`` and
@@ -405,7 +419,7 @@ def compare(
     Returns
     -------
     int
-        ``0``; ``1`` when the first file and the baseline share no benchmark;
+        ``0``; ``1`` when the baseline and the second file share no benchmark;
         ``3`` when the regression gate fails.
 
     Raises
@@ -441,15 +455,14 @@ def compare(
         raise ValueError(f"expected at least two result files, got {len(files)}")
     parsed = [split_selector(str(p)) for p in files]
     stems = Counter(p.stem for p, _ in parsed)
-    # CLI convention: the last file is the baseline ("compare head against
-    # baseline"), while `_render` expects columns[0] to be the baseline.
-    ordered = [parsed[-1], *parsed[:-1]]
     # Two selectors on one archive must not parse it twice.
     read_once = functools.cache(read_rows)
 
     columns = []
-    for path, selector in ordered:
-        samples, ctx = load_column(path, metric, key, selector, statistic, reader=read_once)
+    for path, selector in parsed:  # the baseline first, as git diff and pyperf take it
+        samples, ctx, skipped = load_column(
+            path, metric, key, selector, statistic, reader=read_once
+        )
         # Files that share a stem are told apart by their full path.
         base = str(path) if stems[path.stem] > 1 else path.stem
         label = f"{base}@{selector}" if selector else base
@@ -459,13 +472,13 @@ def compare(
                 label=label,
                 samples=samples,
                 context=ctx,
+                skipped=skipped,
             )
         )
     return _render(
         columns,
         metric=metric,
         pattern=name_filter,
-        show_stddev=show_stddev,
         regressions=regressions,
         console=console,
         higher_is_better=higher_is_better,

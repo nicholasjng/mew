@@ -178,7 +178,7 @@ def test_compare_config_allow_rule_passes_the_gate(tmp_path: Path) -> None:
         '[[tool.mew.regressions.allow]]\npattern = "b"\nthreshold = 50.0\nreason = "noisy"\n'
     )
     cfg = load(tmp_path).regressions
-    assert compare([other, base], regressions=cfg, console=Console(width=200)) == 0
+    assert compare([base, other], regressions=cfg, console=Console(width=200)) == 0
 
 
 def test_compare_iterations_metric_regression(
@@ -193,7 +193,7 @@ def test_compare_iterations_metric_regression(
     )
     cfg = RegressionConfig(default_threshold=5.0)
     code = compare(
-        [other, base],
+        [base, other],
         metric="iterations",
         regressions=cfg,
         console=Console(width=200),

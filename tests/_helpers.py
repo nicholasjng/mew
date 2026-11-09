@@ -129,8 +129,8 @@ def write_pair(
 ) -> tuple[Path, Path]:
     """Write an ``(other, base)`` result-file pair for two-file compare tests.
 
-    Returned in ``compare([other, base])`` argument order (the CLI convention:
-    baseline last), so call sites read ``other, base = write_pair(...)``.
+    Returned as ``(other, base)``; ``compare([base, other])`` takes them baseline
+    first.
     """
     writer = write_jsonl if suffix.startswith(".jsonl") else write_json
     other_path = tmp_path / f"other{suffix}"
