@@ -140,7 +140,6 @@ def test_compare_pattern_is_a_regex_unless_literal(
         (1, {}, "at least two"),
         (2, {"metric": "bogus"}, "unknown metric"),
         (2, {"metric": "counters."}, "unknown metric"),
-        (2, {"key": "bogus"}, "unknown key"),
         (2, {"pattern": "foo("}, "invalid benchmark filter pattern"),
     ],
 )
@@ -234,31 +233,6 @@ def test_load_rejects_unreadable_files(
         p.write_text(content)
     with pytest.raises(FileNotFoundError if content is None else ValueError, match=match):
         load_column(p, "real_time")
-
-
-def test_load_key_func_rejects_collisions(tmp_path: Path) -> None:
-    """`key="func"` raises when two benchmarks in one file map to the same function name."""
-    p = tmp_path / "a.json"
-    _write_json(p, [_row("a.py::bench_x", 1.0), _row("b.py::bench_x", 2.0)])
-    with pytest.raises(ValueError, match="maps both"):
-        load_column(p, "real_time", key="func")
-
-
-def test_compare_key_func_matches_across_suites(tmp_path: Path) -> None:
-    """`key="func"` matches benchmarks by function name across differently named bench files."""
-    # The cross-engine A/B shape: same function names, different bench files.
-    base = tmp_path / "ducky.json"
-    other = tmp_path / "duckdb.json"
-    _write_json(base, [_row("bench_ducky.py::bench_select", 100.0)])
-    _write_json(other, [_row("bench_duckdb.py::bench_select", 80.0)])
-
-    console = Console(width=200)
-    assert compare([base, other], console=Console()) == 1  # no overlap by name
-    code = compare([base, other], key="func", console=console)
-    assert code == 0
-    out = console.export_text()
-    assert "bench_select" in out
-    assert "-20.00%" in out
 
 
 @pytest.mark.parametrize(

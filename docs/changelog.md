@@ -7,6 +7,9 @@ releases may break the API.
 
 ### Breaking changes
 
+- `mew compare --key func` and `compare(key=)` are gone: rows match by their
+  full name. For an A/B comparison, run one benchmark file against each side;
+  see the A/B guide.
 - `mew.Fanout` is gone: pass a list to `mew.run(reporter=[...])`.
 - `mew compare` no longer takes `--metric iterations`: Google Benchmark picks
   the count to fill `min_time`, so it only mirrored the time.

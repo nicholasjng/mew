@@ -218,24 +218,6 @@ def _number(value: Any, row: dict[str, Any], metric: str) -> float:
         raise ValueError(f"{row.get('name')!r}: {metric} is {value!r}, not a number") from None
 
 
-def _normalize_samples(samples: dict[str, Sample], key: str, source: str) -> dict[str, Sample]:
-    """Re-key samples for the requested match key, erroring on collisions.
-
-    ``key="func"`` strips the ``file.py::`` prefix from each registered name.
-    """
-    if key == "name":
-        return samples
-    origin: dict[str, str] = {}  # short name -> the full name it came from
-    for full in samples:
-        short = full.rsplit("::", 1)[-1]
-        if (first := origin.setdefault(short, full)) != full:
-            raise ValueError(
-                f"{source}: --key {key} maps both {first!r} and {full!r} "
-                f"to {short!r}; disambiguate or use the default --key name"
-            )
-    return {short: samples[full] for short, full in origin.items()}
-
-
 def read_rows(path: Path) -> list[dict[str, Any]]:
     """Read a result file's rows.
 
@@ -356,12 +338,11 @@ def _warn_pooled_skew(path: Path, runs: list[list[dict[str, Any]]]) -> None:
 def load_column(
     path: Path,
     metric: str,
-    key: str = "name",
     selector: str | None = None,
     statistic: Statistic | None = None,
     reader: Callable[[Path], list[dict[str, Any]]] = read_rows,
 ) -> tuple[dict[str, Sample], dict[str, Any], dict[str, str]]:
-    """Load one comparison column from a result file: read, select a run, re-key.
+    """Load one comparison column from a result file: read, select a run, reduce.
 
     Returns the samples by name, the provenance of the newest measured row, and
     the benchmarks the run skipped, by name, with their reasons, so a caller can
@@ -384,8 +365,7 @@ def load_column(
     except ValueError as e:
         raise ValueError(f"{path}: {e}") from e
     skipped = {
-        (r["name"].rsplit("::", 1)[-1] if key == "func" else r["name"]): r["skip"].get("message")
-        or r["skip"].get("reason", "skipped")
+        r["name"]: r["skip"].get("message") or r["skip"].get("reason", "skipped")
         for r in selected
         if isinstance(r.get("skip"), dict) and r["name"] not in groups
     }
@@ -393,7 +373,7 @@ def load_column(
     # `@*` pools runs; the newest speaks for them, so say how many there were.
     if (runs := len({_run_key(r) for r in measured})) > 1:
         provenance["runs"] = runs
-    return _normalize_samples(samples, key, str(path)), provenance, skipped
+    return samples, provenance, skipped
 
 
 def load_run(

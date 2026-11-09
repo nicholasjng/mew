@@ -733,25 +733,22 @@ def test_compare_gates_on_a_counter_in_its_configured_direction(
 @pytest.mark.parametrize(
     ("pyproject", "args", "shown", "hidden"),
     [
-        # The files' benchmarks share only their function names.
-        ("", (), "no overlapping benchmarks", "bench_a"),
-        ("", ("--key", "func"), "+0.00%", "+900.00%"),  # the median of 1, 1, 10 is 1
-        ("", ("--key", "func", "-k", "bench_a"), "bench_a", "bench_b"),
-        ("", ("--key", "func", "--statistic", "max"), "+900.00%", "+0.00%"),
+        ("", (), "+0.00%", "+900.00%"),  # the median of 1, 1, 10 is 1
+        ("", ("-k", "bench_a"), "bench_a", "bench_b"),
+        ("", ("--statistic", "max"), "+900.00%", "+0.00%"),
         # [tool.mew] statistic applies without the flag; the flag wins over it.
-        ('[tool.mew]\nstatistic = "max"\n', ("--key", "func"), "+900.00%", "+0.00%"),
-        ('[tool.mew]\nstatistic = "max"\n', ("--key", "func", "--statistic", "median"), "+0.00%",
-         "+900.00%"),
+        ('[tool.mew]\nstatistic = "max"\n', (), "+900.00%", "+0.00%"),
+        ('[tool.mew]\nstatistic = "max"\n', ("--statistic", "median"), "+0.00%", "+900.00%"),
     ],
 )  # fmt: skip
 def test_compare_options_reach_the_comparison(mew_cli, tmp_path, pyproject, args, shown, hidden):
-    """`--key`, `-k`, `--statistic` and `[tool.mew] statistic` change what
+    """`-k`, `--statistic` and `[tool.mew] statistic` change what
     `mew compare` prints, not only what it accepts."""
     other, base = _write_pair(
         tmp_path,
         # bench_b moves +20%, so +0.00% can only be bench_a's median.
         other=[*(_row("x.py::bench_a", t) for t in (1.0, 1.0, 10.0)), _row("x.py::bench_b", 6.0)],
-        base=[*(_row("y.py::bench_a", 1.0) for _ in range(3)), _row("y.py::bench_b", 5.0)],
+        base=[*(_row("x.py::bench_a", 1.0) for _ in range(3)), _row("x.py::bench_b", 5.0)],
     )
     (tmp_path / "pyproject.toml").write_text(pyproject)
     res = mew_cli("compare", str(base), str(other), *args, cwd=tmp_path)

@@ -139,7 +139,6 @@ Compare two or more result files (`.json`, `.jsonl`, or `.jsonl.gz`). The first 
 ```console
 $ mew compare baseline.json head.json
 $ mew compare --metric cpu_time --pattern 'sort' a.json b.json
-$ mew compare --key func suite_a.jsonl suite_b.jsonl   # match by function name
 $ mew compare --regression-threshold 5% --exit-non-zero-on-regression baseline.json head.json
 ```
 

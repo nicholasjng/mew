@@ -63,22 +63,13 @@ size, so -10 to -5 is +50%, and its ratio shows `—`: a ratio jumps sign where
 the values cross zero, and a quantity that goes negative has no zero to be a
 multiple of.
 
-## Matching benchmarks across suites
+## Matching benchmarks
 
-The default key is the full registered name (`file.py::func`).
-For equivalent benchmarks in different files, use `--key func`:
-
-```console
-$ mew run benchmarks/bench_ducky.py -o ducky.jsonl
-$ mew run benchmarks/bench_duckdb.py -o duckdb.jsonl
-$ mew compare --key func duckdb.jsonl ducky.jsonl
-```
-
-If stripping the prefix makes two benchmarks in one file collide, `compare` exits with an error rather than guessing.
-
-Rows match on their `name`: parametrized cases by their labels
-(`bench_sort[n=10]`), thread counts as a dimension (`/threads:2`). Per-benchmark
-options such as `min_time` do not affect matching.
+Rows match on their full `name`, `file.py::func`, relative to the project
+root: parametrized cases by their labels (`bench_sort[n=10]`), thread counts
+as a dimension (`/threads:2`). Per-benchmark options such as `min_time` do not
+affect matching. To compare two implementations, run one benchmark file
+against each; see {doc}`ab-comparison`.
 
 ## Context and noise
 
@@ -158,8 +149,7 @@ reason = "Bubble sort is intentionally slow; skip the gate."
 
 Rules are read from the `pyproject.toml` that `[tool.mew]` configuration comes
 from. Patterns use `*` and `?` wildcards (brackets match literally) against the
-benchmark name as `mew compare` keys it: `file.py::func[label]` by default,
-`func[label]` under `--key func`.
+benchmark name, `file.py::func[label]`.
 Each rule must include a `reason` so the allowlist stays explainable, and a
 `threshold` in percent that replaces the default for matching benchmarks:
 looser, stricter, or `inf` to exempt them. An exempt benchmark is still listed
