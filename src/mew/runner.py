@@ -17,7 +17,7 @@ import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, BinaryIO
+from typing import Any, BinaryIO
 
 from mew import _core
 from mew._options import (
@@ -28,7 +28,6 @@ from mew._options import (
     check_strict,
     is_threaded,
     parse_min_time,
-    thread_counts,
     threaded_on_gil,
 )
 from mew._registry import REGISTRY, Entry, longest_row_name, selected_cases
@@ -36,9 +35,6 @@ from mew._results import encode_context
 from mew._typing import MemoryManager, ProfilerManager
 from mew.machine import machine_context
 from mew.reporter import Fanout, Reporter, RichReporter
-
-if TYPE_CHECKING:
-    from mew._typing import BenchmarkOptions
 
 __all__ = ["run"]
 
@@ -70,27 +66,6 @@ def _new_run_id() -> str:
         value = max(value, _last_run_id + 1)
         _last_run_id = value
     return str(uuid.UUID(int=value))
-
-
-def _apply_options(handle: _core.BenchmarkHandle, opts: BenchmarkOptions) -> None:
-    if (v := opts.get("min_time")) is not None:
-        handle.min_time(float(v))
-    if (v := opts.get("min_warmup_time")) is not None:
-        handle.min_warmup_time(float(v))
-    if (v := opts.get("iterations")) is not None:
-        handle.iterations(int(v))
-    if (v := opts.get("repetitions")) is not None:
-        handle.repetitions(int(v))
-    if opts.get("use_real_time"):
-        handle.use_real_time()
-    if opts.get("use_manual_time"):
-        handle.use_manual_time()
-    if opts.get("measure_process_cpu_time"):
-        handle.measure_process_cpu_time()
-    if opts.get("threads") is not None:
-        # GB accumulates: one Threads() call per count runs the benchmark once each.
-        for n in thread_counts(opts):
-            handle.threads(n)
 
 
 _DEFAULT_MIN_TIME = "0.5s"
@@ -278,13 +253,13 @@ def run(
     params: dict[str, dict[str, Any]] = {}
     for entry in selected:
         if entry.case_labels is None:
-            _apply_options(_core.register_benchmark(entry.name, entry.fn), entry.options)
+            _core.register_benchmark(entry.name, entry.fn, dict(entry.options))
             continue
         # One benchmark per case, named `name[label]`, its index bound for the
         # trampoline. A name filter may have narrowed the cases.
         for i, case_name in selected_cases(entry):
-            handle = _core.register_benchmark(case_name, functools.partial(entry.fn, case=i))
-            _apply_options(handle, entry.options)
+            fn = functools.partial(entry.fn, case=i)
+            _core.register_benchmark(case_name, fn, dict(entry.options))
             if entry.case_params is not None:
                 params[case_name] = entry.case_params[i]
 
