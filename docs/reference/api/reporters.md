@@ -24,9 +24,6 @@
 .. autoclass:: JSONLReporter
    :members:
 
-.. autoclass:: Fanout
-   :members:
-
 .. autoclass:: Terminal
    :members:
 ```

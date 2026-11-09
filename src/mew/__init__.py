@@ -27,7 +27,6 @@ from mew._typing import (
 from mew.api import benchmark, grid, parametrize
 from mew.machine import machine_context, vcs_context
 from mew.reporter import (
-    Fanout,
     JSONLReporter,
     JSONReporter,
     Reporter,
@@ -52,7 +51,6 @@ __all__ = [
     "CounterFlags",
     "CounterOneK",
     "Entry",
-    "Fanout",
     "JSONLReporter",
     "JSONReporter",
     "MemoryManager",

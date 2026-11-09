@@ -31,8 +31,8 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
 : Streams self-contained NDJSON rows. Use it for append-only or
   interruption-tolerant archives.
 
-{class}`~mew.Fanout`
-: Broadcasts callbacks to several reporters. A child exception stops the run.
+To use several, pass a list: `mew.run(reporter=[a, b])` calls each in order.
+An exception from one stops the run, and `finalize()` still reaches every one.
 
 ## Reading results back
 
