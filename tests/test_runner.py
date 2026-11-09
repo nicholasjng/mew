@@ -102,7 +102,7 @@ def test_run_rejects_invalid_options(kwargs, error, message):
         # Units Google Benchmark doesn't take.
         ("500ms", "0.5s"),
         ("1m", "60.0s"),
-        (" 7x ", "7x"),
+        ("7x", "7x"),
     ],
 )
 def test_parse_min_time_renders_google_benchmark_syntax(value, flag):

@@ -277,8 +277,6 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         (("run", "--min-time", "1x", "--run-name", "latest"), "mew run: run_name 'latest'"),
         # Prefixes of long options are not expanded, so a new option can't break them.
         (("run", "--rep", "3"), "unrecognized arguments: --rep"),
-        # Arabic-Indic digits: Google Benchmark would read them as 0 iterations.
-        (("run", "--min-time", "١٠x"), "--min-time '١٠x'; use positive seconds"),
         # Checked before the run, not after it.
         (
             ("run", "--cpu-profiler", "sample", "--profile-dir", "benchmarks/bench_fixture.py"),

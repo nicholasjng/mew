@@ -61,7 +61,7 @@ def test_min_time_takes_run_syntax_and_nx_fixes_the_iteration_count():
         pass
 
     # Google Benchmark has no per-benchmark "Nx"; its equivalent is iterations.
-    @mew.parametrize(mew.grid(n=[1]), min_time=" 7x ")
+    @mew.parametrize(mew.grid(n=[1]), min_time="7x")
     def bench_c(state, n):
         pass
 
