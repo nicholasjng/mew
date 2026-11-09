@@ -296,17 +296,18 @@ def test_malformed_manager_result_propagates_out_of_run(kind, result):
         mew.run(reporter=Capture(), **kwargs)
 
 
-@pytest.mark.parametrize(("memory_iterations", "expected"), [(None, 16), (4, 4), (1000, 50)])
-def test_memory_iterations_caps_the_memory_pass(memory_iterations, expected):
-    """`memory_iterations` caps the memory pass (16 by default), never above the benchmark's own."""
-    _register_noop(iterations=50)
+@pytest.mark.parametrize(("iterations", "expected"), [(50, 16), (4, 4)])
+def test_memory_pass_runs_at_most_16_iterations(iterations, expected):
+    """As in Google Benchmark, the memory pass runs 16 iterations, or fewer if the benchmark
+    runs fewer."""
+    _register_noop(iterations=iterations)
     rep = Capture()
-    mew.run(reporter=rep, memory_manager=FakeMemoryManager(), memory_iterations=memory_iterations)
+    mew.run(reporter=rep, memory_manager=FakeMemoryManager())
     assert rep.runs[0]["memory"]["iterations"] == expected
 
 
 def test_memory_pass_counts_batch_overshoot():
-    """The memory pass counts whole batches: 4 requested iterations in batches of 10 count as 10."""
+    """The memory pass counts whole batches: 16 iterations in batches of 10 count as 20."""
 
     @mew.benchmark(iterations=20)
     def bench_batch(state):
@@ -316,11 +317,10 @@ def test_memory_pass_counts_batch_overshoot():
     rep = Capture()
     mew.run(
         reporter=rep,
-        memory_manager=FakeMemoryManager({"peak_bytes": 0, "total_allocations": 10}),
-        memory_iterations=4,
+        memory_manager=FakeMemoryManager({"peak_bytes": 0, "total_allocations": 20}),
     )
     mem = rep.runs[0]["memory"]
-    assert (mem["iterations"], mem["allocations_per_iteration"]) == (10, 1.0)
+    assert (mem["iterations"], mem["allocations_per_iteration"]) == (20, 1.0)
 
 
 @pytest.mark.skipif(
@@ -347,8 +347,7 @@ def test_manager_passes_run_a_single_thread():
     prof, rep = FakeProfilerManager(), Capture()
     mew.run(
         reporter=rep,
-        memory_manager=FakeMemoryManager({"peak_bytes": 0, "total_allocations": 4}),
-        memory_iterations=4,
+        memory_manager=FakeMemoryManager({"peak_bytes": 0, "total_allocations": 10}),
         profiler_manager=prof,
     )
     # Timed run: both threads see 2. Each pass: thread 0 alone sees 1.
@@ -356,7 +355,7 @@ def test_manager_passes_run_a_single_thread():
     assert seen[2:] == [(0, 1), (0, 1)]
     assert prof.calls == ["start", "stop"]
     mem = rep.runs[0]["memory"]
-    assert (mem["iterations"], mem["allocations_per_iteration"]) == (4, 1.0)
+    assert (mem["iterations"], mem["allocations_per_iteration"]) == (10, 1.0)
 
 
 @pytest.mark.parametrize("kind", ["memory", "profiler"])
@@ -826,7 +825,7 @@ def test_body_frame_finds_the_benchmark_when_the_loop_is_in_a_helper():
             super().start()
 
     for probe in (Probe(), Wrapped()):
-        mew.run(reporter=Capture(), memory_manager=probe, memory_iterations=1)
+        mew.run(reporter=Capture(), memory_manager=probe)
         assert probe.seen == [
             ("bench_direct", "bench_direct"),
             ("bench_helper", "bench_helper"),
@@ -849,7 +848,7 @@ def test_memray_captures_go_with_the_manager_quietly():
             bytearray(1_000)
 
     manager = _memory.MemrayManager()
-    mew.run(reporter=Capture(), memory_manager=manager, memory_iterations=1)
+    mew.run(reporter=Capture(), memory_manager=manager)
     captures = manager._dir
     assert any(captures.iterdir())
     # Recorded, not raised: a warning from a finalizer would only be printed.
@@ -874,7 +873,7 @@ def test_memray_counts_python_objects(tmp_path):
             del rows
 
     rep = Capture()
-    mew.run(reporter=rep, memory_manager=_memory.MemrayManager(), memory_iterations=4)
+    mew.run(reporter=rep, memory_manager=_memory.MemrayManager())
     memory = rep.runs[0]["memory"]
     # 5,000 dicts and strings are well over 500 KiB; untraced, the peak was ~40 KiB.
     assert memory["peak_bytes"] > 500 * 1024

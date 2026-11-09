@@ -77,7 +77,6 @@ def test_run_reports_rows_and_the_run_context():
     ("kwargs", "error", "message"),
     [
         ({"repetitions": 0}, ValueError, "repetitions must be >= 1"),
-        ({"memory_iterations": 0}, ValueError, "memory_iterations must be >= 1"),
         ({"min_time": "forever"}, ValueError, "min_time must be positive"),
         ({"min_warmup_time": -1}, ValueError, "min_warmup_time must be a finite"),
         ({"run_name": 1}, TypeError, "run_name must be a string"),

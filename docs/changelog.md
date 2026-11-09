@@ -7,6 +7,9 @@ releases may break the API.
 
 ### Breaking changes
 
+- `mew run --memory-iterations` and `run(memory_iterations=)` are gone: the
+  memory pass runs Google Benchmark's 16 iterations, or fewer if the benchmark
+  runs fewer.
 - `mew compare` always reduces repetitions to their median: `--statistic`,
   `[tool.mew] statistic` and `compare(statistic=)` are gone. For another
   reduction, query the result file, e.g. with DuckDB.

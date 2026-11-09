@@ -104,7 +104,6 @@ frames, sample the process from outside: see {doc}`profiling-native`.
 | ------------------------ | --------------------------------------------------------------------------- |
 | `--cpu-profiler NAME`    | Profile CPU time with a preset: `sample`, one of yours, or a class spec.    |
 | `--memory-profiler NAME` | Profile memory with a preset: `memray`, one of yours, or a class spec.      |
-| `--memory-iterations N`  | Cap the memory pass at `N` iterations (default 16).                         |
 | `--profile-dir DIR`      | Write the profilers' reports to `DIR/cpu` and `DIR/memory`.                 |
 
 Each flag takes mew's built-in preset, `sample` for CPU sampling

@@ -65,8 +65,7 @@ class MemrayManager(MemoryManager):
     """Memory manager that tracks allocations with memray.
 
     It records one capture per benchmark and repetition, covering the timing
-    loop of an extra, untimed, single-threaded pass of at most
-    ``memory_iterations`` iterations (see :func:`mew.run`).
+    loop of an extra, untimed, single-threaded pass of at most 16 iterations.
     ``allocations_per_iteration`` divides by the iterations that ran, which a
     batched loop can push past that cap.
 

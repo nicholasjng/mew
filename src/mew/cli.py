@@ -309,7 +309,6 @@ def run(
     capture: str,
     cpu_profiler: str | None,
     memory_profiler: str | None,
-    memory_iterations: int | None,
     profile_dir: Path | None,
 ) -> None:
     """Discover and run benchmarks."""
@@ -380,7 +379,6 @@ def run(
             strict=strict,
             capture_output=capture == "fd",
             memory_manager=memory_manager,
-            memory_iterations=memory_iterations,
             profiler_manager=profiler_manager,
         )
 
@@ -774,12 +772,6 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         metavar="<preset>",
         help="Profile memory in an extra, untimed pass with <preset> from "
         "[tool.mew.profilers], the built-in 'memray', or a module:Class spec.",
-    )
-    p.add_argument(
-        "--memory-iterations",
-        type=_positive_int,
-        metavar="<n>",
-        help="Run at most <n> iterations under the memory profiler (default 16).",
     )
     p.add_argument(
         "--profile-dir",

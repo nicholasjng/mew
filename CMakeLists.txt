@@ -98,12 +98,11 @@ set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 set(MEW_BENCHMARK_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profiler-stop-on-early-exit.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-profilermanager-result.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-memory-iterations-flag.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0004-skip-passes-after-failure.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-timer-running.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-manager-pass-thread-count.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-start-timer-cpu-first.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0008-skip-cpu-frequency-estimate.patch")
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-skip-passes-after-failure.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0004-timer-running.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-manager-pass-thread-count.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-start-timer-cpu-first.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-skip-cpu-frequency-estimate.patch")
 
 string(JOIN "|" _mew_patches_arg ${MEW_BENCHMARK_PATCHES})
 
