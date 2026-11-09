@@ -121,10 +121,10 @@ def run(
     Parameters
     ----------
     entries : Sequence[Entry], optional
-        Benchmarks to run, e.g. from :meth:`Registry.filter`; ``None`` runs every
+        Benchmarks to run, e.g. from :meth:`Registry.filter`. ``None`` runs every
         registered benchmark.
     reporter : Reporter, Iterable[Reporter], or None, optional
-        One reporter or several; ``None``, or none, prints mew's console table
+        One reporter or several. ``None`` prints mew's console table
         (:class:`~mew.reporter.RichReporter`).
     min_time : str or float, optional
         Minimum time per benchmark (``0.5``, ``"0.5s"``, ``"500ms"``, ``"1m"``),
@@ -133,17 +133,17 @@ def run(
     min_warmup_time : float, optional
         Seconds each benchmark warms up before it is measured.
     repetitions : int, optional
-        Runs per benchmark; statistics across runs need at least 2.
+        Runs per benchmark. Statistics across runs need at least 2.
     random_interleaving : bool, default False
         Shuffle repetitions across benchmarks, so drift in load or temperature
         spreads over all of them. Needs ``repetitions > 1``.
     run_name : str, optional
-        A name for the run, e.g. ``"before"``, stored with its ID; ``mew log``
-        and ``mew compare`` show it. It can't be empty.
+        A name for the run, e.g. ``"before"``, stored with its ID. ``mew log``
+        and ``mew compare`` show it.
     context : Mapping[str, Any], optional
         What to record about the run beside the machine, e.g. a dataset or a
-        commit, in every row's ``context``; its keys win over mew's own. Nested
-        mappings and lists are kept; a value JSON can't hold is stored as its
+        commit, in every row's ``context``. Its keys win over mew's own. Nested
+        mappings and lists are kept. A value JSON can't hold is stored as its
         type's qualified name, a path as its string.
     strict : bool, default False
         Raise when threaded benchmarks are selected on a GIL build, where they
@@ -151,11 +151,11 @@ def run(
         CI, that can hide a misconfiguration.
     memory_manager : MemoryManager, optional
         Measures memory in an extra, untimed pass of at most 16 iterations, as
-        in Google Benchmark, e.g. :class:`mew.memory.MemrayManager`; its
+        in Google Benchmark, e.g. :class:`mew.memory.MemrayManager`. Its
         figures land in each row's ``memory`` block.
     profiler_manager : ProfilerManager, optional
-        Profiles an extra, untimed pass, e.g. :class:`mew.cpu.TachyonManager`;
-        its summary lands in each row's ``cpu_profile`` block.
+        Profiles an extra, untimed pass, e.g. :class:`mew.cpu.TachyonManager`.
+        Its summary lands in each row's ``cpu_profile`` block.
     capture_output : bool, default True
         Hold back what benchmarks write to stdout and stderr, native code
         included, and print it to stderr after the run, so it can't break up
@@ -165,7 +165,7 @@ def run(
     Returns
     -------
     int
-        How many benchmarks ran; ``0`` if none were selected.
+        How many benchmarks ran, ``0`` if none were selected.
 
     Raises
     ------

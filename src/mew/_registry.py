@@ -62,7 +62,7 @@ class Entry:
         Each family case's parameters as result rows hold them: JSON scalars,
         other values as their type's qualified name.
     cases : list[int], optional
-        Selected case indices; ``None`` selects every case.
+        Selected case indices. ``None`` selects every case.
     """
 
     name: str

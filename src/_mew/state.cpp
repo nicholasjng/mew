@@ -173,9 +173,9 @@ void register_state(nb::module_& m) {
 
     nb::class_<benchmark::State>(
         m, "State", nb::type_slots(state_slots),
-        "The state of a running benchmark; iterating it runs the timed loop.\n"
+        "The state of a running benchmark. Iterating it runs the timed loop.\n"
         "\n"
-        "Only the body of ``for _ in state:`` is timed; code before and after the\n"
+        "Only the body of ``for _ in state:`` is timed. Code before and after the\n"
         "loop is setup and teardown.")
         .def(
             "batches",
@@ -194,14 +194,14 @@ void register_state(nb::module_& m) {
             "Yields\n"
             "------\n"
             "int\n"
-            "    ``n`` at each step; the final batch may exceed the iteration budget.\n"
+            "    ``n`` at each step. The final batch may exceed the iteration budget.\n"
             "\n"
             "Raises\n"
             "------\n"
             "ValueError\n"
             "    If ``n`` is less than 1.")
         .def("skip_with_error", &benchmark::State::SkipWithError, "msg"_a,
-             "Abort this benchmark and mark it failed; the row reports as skipped.\n"
+             "Abort this benchmark and mark it failed. The row reports as skipped.\n"
              "\n"
              "Parameters\n"
              "----------\n"
@@ -220,7 +220,7 @@ void register_state(nb::module_& m) {
              "Parameters\n"
              "----------\n"
              "label : str\n"
-             "    The label; it replaces one set before.")
+             "    The label string.")
         .def("set_iteration_time", &benchmark::State::SetIterationTime, "seconds"_a,
              "Report the elapsed time of one iteration yourself.\n"
              "\n"
@@ -268,9 +268,10 @@ void register_state(nb::module_& m) {
             "one_k : CounterOneK, default CounterOneK.kIs1000\n"
             "    Whether the console scales the value with decimal or binary prefixes.")
         .def_prop_ro("iterations", &benchmark::State::iterations,
-                     "Iterations completed so far; the total once the loop finishes.")
+                     "Iterations completed so far, equal to the total iteration count once the "
+                     "loop finishes.")
         .def_prop_ro("threads", &benchmark::State::threads,
-                     "Threads in this run; 1 without threaded mode or in a profiling pass.")
+                     "Threads used in this run, 1 without threaded mode or in a profiling pass.")
         .def_prop_ro("thread_index", &benchmark::State::thread_index,
                      "Index of the thread owning this State, in ``[0, threads)``.")
         .def_prop_ro("name", &benchmark::State::name, "The registered benchmark name.")

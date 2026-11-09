@@ -116,8 +116,8 @@ class JSONReporter(Reporter):
     Parameters
     ----------
     output : Path, TextIO, or None, optional
-        A path is opened for the run and closed after it; a stream is written
-        as is; ``None`` writes to ``sys.stdout``.
+        A path is opened for the run and closed after it. A stream is written
+        as is, and ``None`` writes to ``sys.stdout``.
     """
 
     def __init__(self, *, output: Path | TextIO | None = None) -> None:
@@ -167,7 +167,7 @@ class JSONLReporter(Reporter):
     ----------
     output : Path, TextIO, or None, optional
         A path is opened for the run and closed after it, gzip-compressed for
-        ``.gz``; a stream is written as is; ``None`` writes to ``sys.stdout``.
+        ``.gz``. A stream is written as is, and ``None`` writes to ``sys.stdout``.
     append : bool, default False
         Append to a path instead of replacing it, adding the run to those
         already in the file.
@@ -215,17 +215,17 @@ class RichReporter(Reporter):
     Parameters
     ----------
     terminal : mew.Terminal, optional
-        Where to print; defaults to stdout, colored when it is a terminal.
+        Where to print, stdout by default, colored when it is a terminal.
     show_memory : bool, default False
         Add a ``Peak Mem`` column.
     show_cpu : bool, default False
         List each row's sample count and hottest function.
     name_width : int, optional
-        Width of the name column, such as the longest name the run will report;
-        by default all the width the other columns leave.
+        Width of the name column, such as the longest name the run will report.
+        By default, all the width the other columns leave.
     show_repetitions : bool, default True
         Print each repetition of a repeated benchmark. Without them, it appears
-        only in the closing summary; result files keep every repetition either way.
+        only in the closing summary. Result files keep every repetition either way.
     """
 
     def __init__(

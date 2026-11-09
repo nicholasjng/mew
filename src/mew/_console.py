@@ -1,10 +1,10 @@
 """Minimal terminal rendering: ANSI styles, column tables, line filling, and
 the formatting of times, byte counts and counters as text.
 
-It needs no third-party dependency. There is no markup language; a cell carries
-its style out of band, so ``[label]`` needs no escaping. Long cells in a
-table's one flexible column are left-ellipsized, and :func:`fill` lays out
-parts on lines without splitting any. There is no East-Asian width handling.
+It needs no third-party dependency. A cell carries its style out of band,
+so ``[label]`` needs no escaping. Long cells in a table's one flexible column
+are left-ellipsized, and :func:`fill` lays out parts on lines without splitting any.
+There is no East-Asian width handling.
 """
 
 from __future__ import annotations
@@ -109,7 +109,7 @@ class Terminal:
     Parameters
     ----------
     file : TextIO, optional
-        The stream to write to; ``sys.stdout`` by default.
+        The stream to write to, ``sys.stdout`` by default.
     width : int, optional
         A fixed width in columns. By default, the width is read at each print:
         ``COLUMNS``, else the width of the terminal on stdout, stderr or

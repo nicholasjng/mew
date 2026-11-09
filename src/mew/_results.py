@@ -386,8 +386,8 @@ class RunSummary:
 def run_summaries(path: str | Path) -> list[RunSummary]:
     """Summarize every run in a result file, newest first, as ``mew log`` lists them.
 
-    ``rows`` counts every stored row of the run; ``benchmarks`` counts
-    distinct measured benchmarks (skipped rows excluded).
+    ``rows`` counts every stored row of the run, and ``benchmarks`` the
+    distinct measured benchmarks, without skipped rows.
 
     Parameters
     ----------
@@ -397,7 +397,7 @@ def run_summaries(path: str | Path) -> list[RunSummary]:
     Returns
     -------
     list[RunSummary]
-        One summary per run; runs with the same date are ordered by their
+        One summary per run. Runs with the same date are ordered by their
         time-ordered id.
 
     Raises
@@ -405,7 +405,7 @@ def run_summaries(path: str | Path) -> list[RunSummary]:
     ValueError
         If the file has another extension or is not a mew result file.
     OSError
-        If the file can't be read; :class:`FileNotFoundError` if it doesn't exist.
+        If the file can't be read, :class:`FileNotFoundError` if it doesn't exist.
     """
     by_run = _group_by_run(read_rows(Path(path)))
     out: list[RunSummary] = []
@@ -426,7 +426,7 @@ def run_summaries(path: str | Path) -> list[RunSummary]:
 def read_results(path: str | Path) -> list[BenchmarkResult]:
     """Read result rows in file order.
 
-    Accepts JSON, JSONL, and gzip-compressed results; every row carries its own
+    Accepts JSON, JSONL, and gzip-compressed results. Every row carries its own
     ``run`` and ``context``.
 
     Parameters
@@ -444,7 +444,7 @@ def read_results(path: str | Path) -> list[BenchmarkResult]:
     ValueError
         If the file has another extension or is not a mew result file.
     OSError
-        If the file can't be read; :class:`FileNotFoundError` if it doesn't exist.
+        If the file can't be read, :class:`FileNotFoundError` if it doesn't exist.
     """
     return cast("list[BenchmarkResult]", read_rows(Path(path)))
 

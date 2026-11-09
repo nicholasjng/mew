@@ -175,7 +175,7 @@ void register_managers(nb::module_& m) {
         },
         "manager"_a,
         "Register `manager` as Google Benchmark's memory manager, replacing any other.\n"
-        "Requires `start()` and `stop()`; `stop()` returns memory metrics or None.\n"
+        "Requires `start()` and `stop()`. `stop()` returns memory metrics or None.\n"
         "Pair with `unregister_memory_manager`.");
     m.def("unregister_memory_manager", [] {
         benchmark::RegisterMemoryManager(nullptr);
@@ -193,7 +193,7 @@ void register_managers(nb::module_& m) {
         },
         "manager"_a,
         "Register `manager` as Google Benchmark's profiler manager, replacing any other.\n"
-        "Requires `after_setup_start()` and `before_teardown_stop()`; supports optional\n"
+        "Requires `after_setup_start()` and `before_teardown_stop()`. Supports optional\n"
         "`get_result()`, `pause()`, and `resume()` hooks.\n"
         "Pair with `unregister_profiler_manager`.");
     m.def("unregister_profiler_manager", [] {
