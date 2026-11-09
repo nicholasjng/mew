@@ -20,7 +20,7 @@ from mew._typing import (
     MemoryMetrics,
     ProfilerManager,
     ProfilerSummary,
-    SessionInfo,
+    RunInfo,
     SkipInfo,
     State,
 )
@@ -64,7 +64,7 @@ __all__ = [
     "Registry",
     "Reporter",
     "RichReporter",
-    "SessionInfo",
+    "RunInfo",
     "SkipInfo",
     "State",
     "Terminal",

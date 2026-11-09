@@ -34,7 +34,7 @@ $ uv tool install mew-bench
 
 The tool environment does not contain your benchmark suite's dependencies:
 
-- `mew compare`, `mew sessions` and `mew completions` work from the tool
+- `mew compare`, `mew log` and `mew completions` work from the tool
   environment.
 - `mew run` and `mew list` require the dependencies imported by the benchmark
   files.

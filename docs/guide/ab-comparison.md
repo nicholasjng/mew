@@ -51,9 +51,9 @@ Benchmark │   alpha │    beta │                Δ% │ speedup
 scan      │ 1.79 us │ 3.28 us │ +83.41% (signif.) │  ×0.545
 ```
 
-To keep both sides in one archive instead, give each run a `--session-tag` and
+To keep both sides in one archive instead, give each run a `--run-name` and
 address them as `results.jsonl@beta results.jsonl@alpha`; see
-[](regressions.md#comparing-sessions-in-one-file).
+[](regressions.md#comparing-runs-in-one-file).
 
 ## Different interpreters
 

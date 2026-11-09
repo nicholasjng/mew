@@ -76,7 +76,7 @@ stderr after the run under `output from benchmarks:`. It can neither break up th
 table nor corrupt JSON on stdout. `--capture=no` shows it live instead, e.g. when
 debugging a crash: captured output is lost if the process dies.
 
-`--append` adds the run as a new session to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). Combined with `--session-tag`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-sessions-in-one-file). `latest` is reserved and can't be a session tag: `path@latest` always selects the newest session.
+`--append` adds the run to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). Combined with `--run-name`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-runs-in-one-file). `latest` is reserved and can't be a run name: `path@latest` always selects the newest run.
 
 ### Selecting from stdin
 
@@ -146,8 +146,8 @@ With `--exit-non-zero-on-regression`, a regression exits with code 3.
 
 ## `mew show`
 
-Print what a result file holds as `mew run` printed it: the newest session by
-default, or the one a `@<tag>` selector names. Skipped benchmarks show with
+Print what a result file holds as `mew run` printed it: the newest run by
+default, or the newest run of the name a `@<name>` selector gives. Skipped benchmarks show with
 their reason, and repeated ones get the closing summary.
 
 ```console
@@ -161,14 +161,14 @@ matches nothing exits with code 1. The `Peak Mem` column and the CPU profile
 lines appear when the rows have them. With several files, each prints after
 its name.
 
-## `mew sessions`
+## `mew log`
 
-List what a result file holds, newest session first, to pick a `@<tag>`
-selector for `mew compare` or `mew show`:
+List the runs a result file holds, newest first, to pick a `@<name>` selector
+for `mew compare` or `mew show`:
 
 ```console
-$ mew sessions results.jsonl
-Id       │ Date                │ Tag    │ Benchmarks │ Rows
+$ mew log results.jsonl
+Id       │ Date                │ Name   │ Benchmarks │ Rows
 ───────────────────────────────────────────────────────────
 01a0c787 │ 2026-09-22T05:12:29 │ after  │          7 │   63
 01a0c786 │ 2026-09-22T05:12:28 │ before │          7 │   63

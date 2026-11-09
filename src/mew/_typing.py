@@ -18,25 +18,24 @@ from typing import (
 from mew._core import CounterFlags, CounterOneK
 
 
-class SessionInfo(TypedDict):
-    """The identity of the run a result came from.
+class RunInfo(TypedDict):
+    """The identity of the run a result came from: one call of :func:`mew.run`.
 
     Attributes
     ----------
     id : str
         A time-ordered UUIDv7, unique to the run.
     date : str
-        When the run started, in ISO 8601.
-    mew_version : str, optional
-        The mew that wrote the row, and so its format.
-    tag : str, optional
-        The run's session tag.
+        When the run started, in UTC with milliseconds, e.g.
+        ``"2026-11-08T12:24:23.559Z"``.
+    name : str, optional
+        The run's name, from ``--run-name`` or ``run_name=``; ``path@<name>``
+        selects the newest run of that name.
     """
 
     id: str
     date: str
-    mew_version: NotRequired[str]
-    tag: NotRequired[str]
+    name: NotRequired[str]
 
 
 class SkipInfo(TypedDict):
@@ -90,7 +89,7 @@ class BenchmarkResult(TypedDict):
         ``one_k`` (1024 for binary prefixes), ``rate`` (shown per second),
         ``inverted`` (an inverted rate, shown in seconds) and ``exponent``
         (exponent notation).
-    session : SessionInfo, optional
+    run : RunInfo, optional
         Identity of the run that produced this result.
     context : dict, optional
         Provenance: :func:`mew.machine_context`, plus what was set with
@@ -117,7 +116,7 @@ class BenchmarkResult(TypedDict):
     skip: SkipInfo | None
     counters: list[dict[str, Any]]
     schema_version: NotRequired[int]
-    session: NotRequired[SessionInfo]
+    run: NotRequired[RunInfo]
     context: NotRequired[dict[str, Any]]
     memory: NotRequired[dict[str, Any]]
     cpu_profile: NotRequired[dict[str, Any]]

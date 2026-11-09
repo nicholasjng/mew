@@ -1,6 +1,6 @@
 # Reporters
 
-A reporter implements `report_context(context)` and `report_runs(runs)`, with an
+A reporter implements `report_context(context)` and `report_results(runs)`, with an
 optional `finalize()`. Calls arrive on the main thread. Rows are plain
 {class}`~mew.BenchmarkResult` dictionaries.
 
@@ -23,7 +23,7 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
   appear only there.
 
 {class}`~mew.JSONReporter`
-: Streams one `{"session": ..., "context": ..., "benchmarks": [...]}` document
+: Streams one `{"run": ..., "context": ..., "benchmarks": [...]}` document
   whose rows are the same self-contained objects JSONL writes. It becomes valid
   JSON at `finalize()`. Pass a path, text stream, or omit for stdout.
 
@@ -37,18 +37,18 @@ optional `finalize()`. Calls arrive on the main thread. Rows are plain
 ## Reading results back
 
 {func}`mew.compare.read_results` returns every stored row of a JSON, JSONL, or
-gzip-compressed result file. {func}`mew.compare.session_summaries`
-lists the sessions a file holds, newest first (what `mew sessions` prints).
+gzip-compressed result file. {func}`mew.compare.run_summaries`
+lists the runs a file holds, newest first (what `mew log` prints).
 
 ```python
 from statistics import median
 
-from mew.compare import read_results, session_summaries
+from mew.compare import read_results, run_summaries
 
-newest = session_summaries("results.jsonl")[0]
+newest = run_summaries("results.jsonl")[0]
 rows = [
     r for r in read_results("results.jsonl")
-    if r["session"]["id"] == newest.id and r["skip"] is None
+    if r["run"]["id"] == newest.id and r["skip"] is None
 ]
 for name in sorted({r["name"] for r in rows}):
     print(name, median(r["real_time"] for r in rows if r["name"] == name))
@@ -66,7 +66,7 @@ recipes below.
 | Growing archive, SQL analytics            | `JSONLReporter` (`-o b.jsonl[.gz]`) |
 | Console output + persisted artifact       | `-o -` plus `-o file.{json,jsonl}` |
 
-Each JSONL row carries `session` and `context`. `.jsonl.gz` compresses the archive;
+Each JSONL row carries `run` and `context`. `.jsonl.gz` compresses the archive;
 `--append` adds a gzip member without rewriting earlier data.
 
 ## Custom reporters
@@ -84,7 +84,7 @@ class MetricsExporter:
     def report_context(self, context: dict[str, Any]) -> None:
         self._context = context
 
-    def report_runs(self, runs: list[BenchmarkResult]) -> None:
+    def report_results(self, runs: list[BenchmarkResult]) -> None:
         for row in runs:
             self._sink.push(name=row["name"], value=row["real_time"])
 
@@ -157,15 +157,15 @@ import polars as pl
 df = pl.read_ndjson("results.jsonl")
 ```
 
-Pull one session out of a large archive into a file `mew compare` reads
-directly. DuckDB infers `session.id` as a UUID and `session.date` as a
+Pull one run out of a large archive into a file `mew compare` reads
+directly. DuckDB infers `run.id` as a UUID and `run.date` as a
 timestamp, hence the casts:
 
 ```sql
-COPY (SELECT * FROM 'results.jsonl.gz' WHERE session.tag = 'before')
+COPY (SELECT * FROM 'results.jsonl.gz' WHERE run.name = 'before')
   TO 'before.jsonl' (FORMAT JSON);
 COPY (SELECT * FROM 'results.jsonl.gz'
-      WHERE starts_with(session.id::VARCHAR, '01a0c787'))
+      WHERE starts_with(run.id::VARCHAR, '01a0c787'))
   TO 'run.jsonl' (FORMAT JSON);
 ```
 

@@ -12,16 +12,19 @@ mew.update_context(
 ```
 
 {func}`mew.run` snapshots context at startup.
-`session` identifies the run; `context` holds user and machine provenance.
+`run` identifies the run; `context` holds user and machine provenance. Every
+row of a result file carries both blocks:
 
 ```text
 {
-  "session": {
+  "schema_version": 1,
+  "run": {
     "id": "01975f2e-9c40-7b31-a1d4-8f0e2c5b7a90",
-    "date": "2026-05-19T10:00:00+00:00",
-    "mew_version": "0.3.0"
+    "date": "2026-05-19T10:00:00.000Z",
+    "name": "before"
   },
   "context": {
+    "mew": "0.4.0",
     "cpu_model": "Apple M1 Pro",
     "num_cpus": 10,
     "cpu_scaling_enabled": false,
@@ -29,29 +32,30 @@ mew.update_context(
     "git_sha": "abc123",
     "dataset": {"name": "uniform-1k", "size": 1000}
   },
-  "benchmarks": [...]
+  "name": "benchmarks/bench_sort.py::bench_sort",
+  ...
 }
 ```
 
-Every row, in JSON and JSONL alike, carries both blocks as well; the JSON
-header repeats them for readers.
-
-`context.cpu_model` is the name the OS gives the CPU, or `null` where it gives
-none, as on Linux on Arm.
+`context.mew` is the mew that ran the benchmarks, so `mew compare` warns when
+two files come from different versions. `context.cpu_model` is the name the OS
+gives the CPU, or `null` where it gives none, as on Linux on Arm.
 
 `context.python` tells apart results from several interpreters in one archive,
 such as a suite run on 3.14 and on free-threaded 3.15t. `mew compare` labels
-each column with its version when the versions differ. `session.mew_version` is
-the mew that wrote the rows, and so their format.
+each column with its version when the versions differ.
 
-## Session identity
+(run-identity)=
+## Run identity
 
-Every run gets a time-ordered UUIDv7 session ID, stored on each row.
+Every run gets a time-ordered UUIDv7 ID and its start date, in UTC with
+milliseconds, stored on each row.
 
-Set `session.tag` with `--session-tag` or `session_tag=`; `mew compare` can
-select a session in a multi-session file by it (`results.jsonl@before`). The tag
-`latest` is reserved: `results.jsonl@latest` selects the newest session.
-Benchmark selection tags (`-t`) are unrelated.
+Name a run with `--run-name` or `run_name=`; `mew compare` and `mew show`
+select the newest run of that name in a file that holds several
+(`results.jsonl@before`), and `mew log` lists them. The name `latest` is
+reserved: `results.jsonl@latest` selects the newest run. Benchmark selection
+tags (`-t`) are unrelated.
 
 ## Applying context to every run
 

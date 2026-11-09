@@ -40,7 +40,7 @@ importable from `mew` directly:
    Fanout
    Terminal
    BenchmarkResult
-   SessionInfo
+   RunInfo
    SkipInfo
    MemoryMetrics
    CounterFlags

@@ -107,8 +107,8 @@ nb::dict run_to_dict(const Run& r, const nb::dict& params) {
 class PyReporter : public BenchmarkReporter {
    public:
     nb::object py;
-    // mew's session and provenance block, reported instead of GB's Context.
-    nb::dict session_context;
+    // mew's run and provenance block, reported instead of GB's Context.
+    nb::dict run_context;
     // Registered name -> the case's parameters; see run_to_dict.
     nb::dict params;
     // mew._capture.OutputCapture, or None. Suspended around every callback so
@@ -118,7 +118,7 @@ class PyReporter : public BenchmarkReporter {
     // Constructed and destroyed by `run_benchmarks` while it holds the GIL.
     PyReporter(nb::object obj, nb::dict context, nb::dict case_params, nb::object cap)
         : py(std::move(obj)),
-          session_context(std::move(context)),
+          run_context(std::move(context)),
           params(std::move(case_params)),
           capture(std::move(cap)) {}
 
@@ -138,7 +138,7 @@ class PyReporter : public BenchmarkReporter {
         nb::gil_scoped_acquire gil;
         try {
             suspend_capture();
-            py.attr("report_context")(session_context);
+            py.attr("report_context")(run_context);
             resume_capture();
             return true;
         } catch (...) {
@@ -161,7 +161,7 @@ class PyReporter : public BenchmarkReporter {
                 rows.append(run_to_dict(r, params));
             }
             // Google Benchmark reports a benchmark's aggregates as a batch of their own.
-            if (rows.size() > 0) py.attr("report_runs")(rows);
+            if (rows.size() > 0) py.attr("report_results")(rows);
             resume_capture();
         } catch (...) {
             mew_set_pending_abort(std::current_exception());
@@ -205,7 +205,7 @@ void register_reporter(nb::module_& m) {
 
     m.def(
         "run_benchmarks",
-        [](std::vector<std::string> argv, nb::object reporter, nb::dict session_context,
+        [](std::vector<std::string> argv, nb::object reporter, nb::dict run_context,
            nb::dict params, nb::object capture) {
             // GB only shuffles the char** array, never writes into the strings.
             std::vector<char*> argp;
@@ -217,7 +217,7 @@ void register_reporter(nb::module_& m) {
             // `--help` in argv still triggers exit(0); documented GB behavior.
             benchmark::Initialize(&argc, argp.data());
 
-            PyReporter pr(std::move(reporter), std::move(session_context), std::move(params),
+            PyReporter pr(std::move(reporter), std::move(run_context), std::move(params),
                           std::move(capture));
             size_t count;
             {
@@ -233,7 +233,7 @@ void register_reporter(nb::module_& m) {
             }
             return count;
         },
-        "argv"_a, "reporter"_a, "session_context"_a = nb::dict(), "params"_a = nb::dict(),
+        "argv"_a, "reporter"_a, "run_context"_a = nb::dict(), "params"_a = nb::dict(),
         "capture"_a = nb::none(),
         "Initialize Google Benchmark with `argv` and run all registered benchmarks,\n"
         "reporting through `reporter`.\n"

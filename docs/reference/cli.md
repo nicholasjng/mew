@@ -35,10 +35,10 @@ a regression. See [](../guide/cli.md#exit-codes).
 :language: console
 ```
 
-(cli-sessions)=
-## `mew sessions`
+(cli-log)=
+## `mew log`
 
-```{literalinclude} ../_generated/cli-help-sessions.txt
+```{literalinclude} ../_generated/cli-help-log.txt
 :language: console
 ```
 

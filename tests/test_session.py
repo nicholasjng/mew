@@ -15,10 +15,11 @@ from pathlib import Path
 import pytest
 
 import mew
-from mew.compare import read_results, session_summaries
+from mew import runner
+from mew.compare import read_results, run_summaries
 from mew.machine import _cpuinfo_model
 from mew.reporter import JSONLReporter, JSONReporter
-from mew.runner import _new_session_id
+from mew.runner import _new_run_id
 from mew.vcs import vcs_context
 
 
@@ -44,13 +45,16 @@ def _isolated_vcs(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
     monkeypatch.delenv("DYLD_INSERT_LIBRARIES", raising=False)
 
 
-def test_new_session_id_is_a_uuid7_led_by_the_unix_ms(monkeypatch: pytest.MonkeyPatch):
+def test_new_run_id_is_a_uuid7_led_by_the_unix_ms(monkeypatch: pytest.MonkeyPatch):
     """The 48-bit millisecond timestamp leads, so ids sort by creation time."""
     monkeypatch.setattr(time, "time_ns", lambda: 1_750_000_000_123_456_789)
-    first, second = uuid.UUID(_new_session_id()), uuid.UUID(_new_session_id())
+    monkeypatch.setattr(runner, "_last_run_id", 0)  # forget earlier tests' ids
+    first, second = uuid.UUID(_new_run_id()), uuid.UUID(_new_run_id())
     assert (first.version, first.variant) == (7, uuid.RFC_4122)
     assert first.int >> 80 == 1_750_000_000_123
-    assert first != second  # random bits keep same-millisecond ids apart
+    # On the same clock reading, the second id still sorts after the first.
+    assert second.version == 7
+    assert str(first) < str(second)
 
 
 @pytest.mark.usefixtures("_isolated_vcs")
@@ -159,8 +163,8 @@ def test_cpuinfo_model(lines: list[str], model: str | None):
 @pytest.mark.parametrize(
     ("reporter", "suffix"), [(JSONReporter, ".json"), (JSONLReporter, ".jsonl")]
 )
-def test_run_stamps_session_identity_on_every_row(tmp_path: Path, reporter, suffix: str):
-    """JSON and JSONL rows alike carry the run's `session` and `context` blocks."""
+def test_run_stamps_its_identity_on_every_row(tmp_path: Path, reporter, suffix: str):
+    """JSON and JSONL rows alike carry the run's `run` and `context` blocks."""
     mew.set_context("build", "asan")
 
     @mew.benchmark
@@ -169,22 +173,22 @@ def test_run_stamps_session_identity_on_every_row(tmp_path: Path, reporter, suff
             pass
 
     out = tmp_path / f"out{suffix}"
-    mew.run(min_time="1x", repetitions=2, reporter=reporter(output=out), session_tag="before")
+    mew.run(min_time="1x", repetitions=2, reporter=reporter(output=out), run_name="before")
     # read_results rejects anything but rows, such as a JSONL context line.
     first, second = read_results(out)
-    session = first["session"]
-    assert uuid.UUID(session["id"]).version == 7
-    assert session["tag"] == "before"
-    assert session["date"]
+    run = first["run"]
+    assert uuid.UUID(run["id"]).version == 7
+    assert run["name"] == "before"
+    assert run["date"].endswith("Z")
     # The host name often names a person, so mew doesn't record it.
-    assert "host" not in session
+    assert "host" not in run and "host" not in first["context"]
     assert first["context"]["build"] == "asan"
-    assert (second["session"], second["context"]) == (session, first["context"])
+    assert (second["run"], second["context"]) == (run, first["context"])
 
 
 @pytest.mark.parametrize("suffix", [".jsonl", ".jsonl.gz"])
-def test_jsonl_append_makes_two_sessions(tmp_path: Path, suffix: str):
-    """Two runs appending to one JSONL file, plain or gzipped, record two distinct sessions."""
+def test_jsonl_append_keeps_both_runs(tmp_path: Path, suffix: str):
+    """Two runs appending to one JSONL file, plain or gzipped, stay two distinct runs."""
 
     # The gzip sink appends too, instead of starting the archive over.
     @mew.benchmark
@@ -193,13 +197,12 @@ def test_jsonl_append_makes_two_sessions(tmp_path: Path, suffix: str):
             pass
 
     out = tmp_path / f"acc{suffix}"
-    mew.run(min_time="1x", reporter=JSONLReporter(output=out), session_tag="before")
-    mew.run(min_time="1x", reporter=JSONLReporter(output=out, append=True), session_tag="after")
+    mew.run(min_time="1x", reporter=JSONLReporter(output=out), run_name="before")
+    mew.run(min_time="1x", reporter=JSONLReporter(output=out, append=True), run_name="after")
 
-    sessions = session_summaries(out)
-    assert len(sessions) == 2
-    assert {s.tag for s in sessions} == {"before", "after"}
-    assert len({s.id for s in sessions}) == 2
+    runs = run_summaries(out)
+    assert [r.name for r in runs] == ["after", "before"]  # newest first
+    assert len({r.id for r in runs}) == 2
 
 
 def test_git_dirty_state_is_unknown_when_status_fails(monkeypatch):

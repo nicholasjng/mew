@@ -74,15 +74,15 @@ def check_count(value: object, name: str) -> None:
         raise ValueError(f"{name} must be >= 1, got {value!r}")
 
 
-def check_session_tag(tag: object) -> None:
-    """Reject a session tag that isn't a non-empty string, or is the reserved ``latest``."""
-    if not isinstance(tag, str):
-        raise TypeError(f"session_tag must be a string, got {tag!r}")
-    if not tag.strip():
-        raise ValueError("session_tag must not be empty")
-    if tag == "latest":
+def check_run_name(name: object) -> None:
+    """Reject a run name that isn't a non-empty string, or is the reserved ``latest``."""
+    if not isinstance(name, str):
+        raise TypeError(f"run_name must be a string, got {name!r}")
+    if not name.strip():
+        raise ValueError("run_name must not be empty")
+    if name == "latest":
         raise ValueError(
-            "session_tag 'latest' is reserved: `mew compare path@latest` selects the newest session"
+            "run_name 'latest' is reserved: `mew compare path@latest` selects the newest run"
         )
 
 
