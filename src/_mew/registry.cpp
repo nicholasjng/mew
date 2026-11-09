@@ -29,67 +29,66 @@ std::string skip_message(const nb::python_error& e) noexcept {
     return message;
 }
 
+// Apply mew's normalized benchmark options (see mew._options.normalize_options).
+// Keys absent from `options` keep Google Benchmark's defaults.
+void apply_options(benchmark::Benchmark* b, const nb::dict& options) {
+    auto get = [&](const char* key) -> nb::handle {
+        return options.contains(key) ? nb::handle(options[key]) : nb::handle();
+    };
+    if (auto v = get("min_time")) b->MinTime(nb::cast<double>(v));
+    if (auto v = get("min_warmup_time")) b->MinWarmUpTime(nb::cast<double>(v));
+    if (auto v = get("iterations")) b->Iterations(nb::cast<benchmark::IterationCount>(v));
+    if (auto v = get("repetitions")) b->Repetitions(nb::cast<int>(v));
+    if (auto v = get("use_real_time"); v && nb::cast<bool>(v)) b->UseRealTime();
+    if (auto v = get("use_manual_time"); v && nb::cast<bool>(v)) b->UseManualTime();
+    if (auto v = get("measure_process_cpu_time"); v && nb::cast<bool>(v)) {
+        b->MeasureProcessCPUTime();
+    }
+    // GB accumulates: one Threads() call per count runs the benchmark once each.
+    if (auto v = get("threads")) {
+        for (nb::handle n : v) b->Threads(nb::cast<int>(n));
+    }
+}
+
 }  // namespace
 
 void register_registry(nb::module_& m) {
-    nb::class_<benchmark::Benchmark>(
-        m, "BenchmarkHandle",
-        "Handle to a registered Google Benchmark.\n"
-        "Invalidated by the next `clear_registered_benchmarks()` call or "
-        "interpreter shutdown; using a stale handle is undefined behaviour.")
-        .def("min_time", &benchmark::Benchmark::MinTime, "seconds"_a, nb::rv_policy::reference,
-             "Run at least this many seconds before reporting.")
-        .def("min_warmup_time", &benchmark::Benchmark::MinWarmUpTime, "seconds"_a,
-             nb::rv_policy::reference, "Warm up for this many seconds before measuring.")
-        .def("iterations", &benchmark::Benchmark::Iterations, "n"_a, nb::rv_policy::reference,
-             "Run exactly `n` iterations instead of timing out on `min_time`.")
-        .def("repetitions", &benchmark::Benchmark::Repetitions, "n"_a, nb::rv_policy::reference,
-             "Repeat the whole benchmark `n` times; variance metrics need at least 2.")
-        .def("use_real_time", &benchmark::Benchmark::UseRealTime, nb::rv_policy::reference,
-             "Report wall-clock rather than CPU time as the primary measure.")
-        .def("use_manual_time", &benchmark::Benchmark::UseManualTime, nb::rv_policy::reference,
-             "Take timings from `State.set_iteration_time` instead of the built-in timer.")
-        .def("measure_process_cpu_time", &benchmark::Benchmark::MeasureProcessCPUTime,
-             nb::rv_policy::reference,
-             "Measure CPU time across the whole process, not just the running thread.")
-        .def("threads", &benchmark::Benchmark::Threads, "n"_a, nb::rv_policy::reference,
-             "Run the benchmark with `n` threads, each with its own State and timer.\n"
-             "Repeat to run once per thread count. Requires a free-threaded "
-             "interpreter; mew skips it otherwise.");
-
     m.def(
         "register_benchmark",
-        [](const std::string& name, nb::callable fn) -> benchmark::Benchmark* {
-            // GB owns the lambda until clear_registered_benchmarks().
-            return benchmark::RegisterBenchmark(name, [fn = std::move(fn)](benchmark::State& s) {
-                // Avoid Python calls while an abort is pending.
-                if (mew_abort_pending()) {
-                    s.SkipWithError("aborted");
-                    return;
-                }
-                nb::gil_scoped_acquire gil;
-                try {
-                    fn(nb::cast(&s, nb::rv_policy::reference));
-                    // A return or break in the final iteration leaves the timer
-                    // running with a complete iteration count, which GB would
-                    // report as a near-zero time.
-                    if (s.in_timed_section()) {
-                        s.SkipWithError("The benchmark did not complete its loop.");
+        [](const std::string& name, nb::callable fn, nb::dict options) {
+            // GB owns the lambda until clear_registered_benchmarks(). The Benchmark
+            // pointer stays here, so Python never holds one that a clear invalidates.
+            benchmark::Benchmark* b =
+                benchmark::RegisterBenchmark(name, [fn = std::move(fn)](benchmark::State& s) {
+                    // Avoid Python calls while an abort is pending.
+                    if (mew_abort_pending()) {
+                        s.SkipWithError("aborted");
+                        return;
                     }
-                } catch (nb::python_error& e) {
-                    s.SkipWithError(skip_message(e));
-                    // BaseException-only (KeyboardInterrupt, SystemExit) must
-                    // stop the whole run, not skip one benchmark.
-                    if (!e.matches(PyExc_Exception)) {
-                        mew_set_pending_abort(std::current_exception());
+                    nb::gil_scoped_acquire gil;
+                    try {
+                        fn(nb::cast(&s, nb::rv_policy::reference));
+                        // A return or break in the final iteration leaves the timer
+                        // running with a complete iteration count, which GB would
+                        // report as a near-zero time.
+                        if (s.in_timed_section()) {
+                            s.SkipWithError("The benchmark did not complete its loop.");
+                        }
+                    } catch (nb::python_error& e) {
+                        s.SkipWithError(skip_message(e));
+                        // BaseException-only (KeyboardInterrupt, SystemExit) must
+                        // stop the whole run, not skip one benchmark.
+                        if (!e.matches(PyExc_Exception)) {
+                            mew_set_pending_abort(std::current_exception());
+                        }
+                    } catch (std::exception& e) {
+                        s.SkipWithError(e.what());
                     }
-                } catch (std::exception& e) {
-                    s.SkipWithError(e.what());
-                }
-            });
+                });
+            apply_options(b, options);
         },
-        "name"_a, "fn"_a, nb::rv_policy::reference,
-        "Register `fn` as a benchmark under `name` and return a chainable handle.");
+        "name"_a, "fn"_a, "options"_a = nb::dict(),
+        "Register `fn` as a benchmark under `name`, with mew's normalized benchmark options.");
 
     m.def("clear_registered_benchmarks", &benchmark::ClearRegisteredBenchmarks,
           "Drop all previously registered benchmarks from the global registry.");

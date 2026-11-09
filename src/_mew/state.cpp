@@ -12,7 +12,8 @@ using namespace nb::literals;
 namespace {
 // A plain CPython type rather than a nanobind class: CPython calls its methods
 // without nanobind's argument dispatch, which would otherwise count toward the
-// timed part of each `with state.pause()`.
+// timed part of each `with state.pause()`, some 20-40 ns: much of a small body,
+// which `pause()` exists to measure without its setup.
 //
 // A scope entered while another holds the pause does nothing, so timing resumes
 // when the outer scope exits. (A nested ScopedPauseTiming in Google Benchmark

@@ -31,7 +31,7 @@ def test_native_registry_keeps_the_callable_alive_until_cleared():
     ref = weakref.ref(bench)
     _core.clear_registered_benchmarks()
     try:
-        _core.register_benchmark("owned_callable", bench).iterations(1).repetitions(1)
+        _core.register_benchmark("owned_callable", bench, {"iterations": 1, "repetitions": 1})
         del bench
         gc.collect()
         assert ref() is not None

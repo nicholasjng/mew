@@ -225,8 +225,8 @@ void register_reporter(nb::module_& m) {
                 count = benchmark::RunSpecifiedBenchmarks(&pr);
             }
 
-            // Do NOT clear here: callers clear before registering and atexit
-            // handles teardown, so BenchmarkHandles stay valid until the next clear.
+            // Not cleared here: callers clear before registering, and atexit at
+            // teardown, which keeps the registered callables alive until then.
 
             if (auto abort = mew_take_pending_abort()) {
                 std::rethrow_exception(abort);

@@ -245,48 +245,9 @@ class State:
     def max_iterations(self) -> int:
         """Iteration count Google Benchmark budgeted for this run."""
 
-class BenchmarkHandle:
+def register_benchmark(name: str, fn: Callable, options: dict = {}) -> None:
     """
-    Handle to a registered Google Benchmark.
-    Invalidated by the next `clear_registered_benchmarks()` call or interpreter shutdown; using a stale handle is undefined behaviour.
-    """
-
-    def min_time(self, seconds: float) -> BenchmarkHandle:
-        """Run at least this many seconds before reporting."""
-
-    def min_warmup_time(self, seconds: float) -> BenchmarkHandle:
-        """Warm up for this many seconds before measuring."""
-
-    def iterations(self, n: int) -> BenchmarkHandle:
-        """Run exactly `n` iterations instead of timing out on `min_time`."""
-
-    def repetitions(self, n: int) -> BenchmarkHandle:
-        """
-        Repeat the whole benchmark `n` times; variance metrics need at least 2.
-        """
-
-    def use_real_time(self) -> BenchmarkHandle:
-        """Report wall-clock rather than CPU time as the primary measure."""
-
-    def use_manual_time(self) -> BenchmarkHandle:
-        """
-        Take timings from `State.set_iteration_time` instead of the built-in timer.
-        """
-
-    def measure_process_cpu_time(self) -> BenchmarkHandle:
-        """
-        Measure CPU time across the whole process, not just the running thread.
-        """
-
-    def threads(self, n: int) -> BenchmarkHandle:
-        """
-        Run the benchmark with `n` threads, each with its own State and timer.
-        Repeat to run once per thread count. Requires a free-threaded interpreter; mew skips it otherwise.
-        """
-
-def register_benchmark(name: str, fn: Callable) -> BenchmarkHandle:
-    """
-    Register `fn` as a benchmark under `name` and return a chainable handle.
+    Register `fn` as a benchmark under `name`, with mew's normalized benchmark options.
     """
 
 def clear_registered_benchmarks() -> None:
