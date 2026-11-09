@@ -181,29 +181,6 @@ def test_compare_config_allow_rule_passes_the_gate(tmp_path: Path) -> None:
     assert compare([base, other], regressions=cfg, console=Console(width=200)) == 0
 
 
-def test_compare_iterations_metric_regression(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Fewer iterations count as a regression, and the displayed delta keeps its sign."""
-    # Fewer iterations is slower.
-    other, base = _write_pair(
-        tmp_path,
-        other=[_row("b", 1.0, iterations=800)],
-        base=[_row("b", 1.0, iterations=1000)],
-    )
-    cfg = RegressionConfig(default_threshold=5.0)
-    code = compare(
-        [base, other],
-        metric="iterations",
-        regressions=cfg,
-        console=Console(width=200),
-    )
-    assert code == 3
-    err = capsys.readouterr().err
-    # Display the raw signed delta; only evaluate() flips it for higher-is-better.
-    assert "-20.00%" in err
-
-
 _COUNTER_RULES = CounterConfig(
     rules=(
         CounterRule("l1_misses", True),

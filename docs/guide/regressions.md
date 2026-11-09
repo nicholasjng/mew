@@ -17,8 +17,7 @@ $ mew compare --metric cpu_time baseline.json head.json
 $ mew compare --pattern 'sort' baseline.json head.json
 ```
 
-Supported metrics: `real_time` (default), `cpu_time`, `iterations`.
-For `iterations`, higher is better, so the regression direction is inverted.
+Supported metrics: `real_time` (default) and `cpu_time`.
 Files produced with `--memory-profiler memray` additionally support `memory.peak_bytes` and `memory.allocations_per_iteration`:
 
 ```console
