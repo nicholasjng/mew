@@ -45,7 +45,6 @@ from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, r
 
 __all__ = ["RunSummary", "compare", "read_results", "run_summaries"]
 
-_HIGHER_IS_BETTER = frozenset({"iterations"})
 _KEYS = frozenset({"name", "func"})
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
@@ -116,8 +115,6 @@ def _fmt_value(sample: Sample, metric: str) -> str:
         return fmt_counter(sample.value, sample.counter_format)
     if metric == "memory.allocations_per_iteration":  # fractional per-call count
         return f"{sample.value:,.1f}"
-    if metric == "iterations":
-        return f"{int(sample.value):,}"
     if metric in MEMORY_METRICS:  # remaining memory metrics are byte-valued
         return fmt_bytes(int(sample.value))
     return fmt_time(sample.value)
@@ -171,7 +168,7 @@ def _fmt_delta(delta: float, *, higher_is_better: bool | None = False) -> tuple[
     text = f"{pct:+.2f}%" if math.isfinite(pct) else "+∞%" if pct > 0 else "-∞%"
     if higher_is_better is None:  # a counter without a direction: neither good nor bad
         return text, ""
-    # Color by improvement direction: +20% iterations is green, +20% time red.
+    # Color by improvement direction: +20% throughput is green, +20% time red.
     worse = -delta if higher_is_better else delta
     style = "green" if worse < 0 else "red" if worse > 0 else ""
     return text, style
@@ -390,7 +387,7 @@ def compare(
         at its last ``@`` only after a ``.json``, ``.jsonl`` or ``.jsonl.gz``
         extension, so ``a@b.json`` is a file name.
     metric : str, default "real_time"
-        ``"real_time"``, ``"cpu_time"``, ``"iterations"``, or, for results with
+        ``"real_time"``, ``"cpu_time"``, or, for results with
         memory figures, ``"memory.peak_bytes"`` or
         ``"memory.allocations_per_iteration"``; the latter compares
         implementations of different speed. ``"counters.<name>"`` compares the
@@ -437,10 +434,10 @@ def compare(
         raise ValueError(
             f"unknown metric {metric!r}; choose from {sorted(METRICS)} or counters.<name>"
         )
-    if counter is None:
-        higher_is_better = metric in _HIGHER_IS_BETTER
-    else:
-        higher_is_better = (counters or CounterConfig()).direction(counter)
+    # Lower is better for times and memory; a counter goes the way `counters` says.
+    higher_is_better = (
+        False if counter is None else (counters or CounterConfig()).direction(counter)
+    )
     if regressions is not None and higher_is_better is None:
         # A gate that skipped the counter would pass without checking anything.
         raise ValueError(

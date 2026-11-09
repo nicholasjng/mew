@@ -665,7 +665,7 @@ def test_fmt_delta_colors_by_improvement_direction() -> None:
     """`_fmt_delta` colors a delta by improvement direction and shows an infinite one as `+∞%`."""
     assert _fmt_delta(0.2) == ("+20.00%", "red")  # slower time: bad
     assert _fmt_delta(-0.2) == ("-20.00%", "green")
-    # More iterations is an improvement, fewer a regression.
+    # Where up is better, as for a throughput counter, a rise is an improvement.
     assert _fmt_delta(0.2, higher_is_better=True)[1] == "green"
     assert _fmt_delta(-0.2, higher_is_better=True)[1] == "red"
     assert _fmt_delta(0.0) == ("+0.00%", "")
@@ -725,7 +725,7 @@ def test_rows_are_the_benchmarks_candidate_and_baseline_share(
 @pytest.mark.parametrize(
     ("base_value", "other_value", "higher_is_better", "delta", "ratio"),
     [
-        (100, 200, True, 1, 2),  # e.g. iterations
+        (100, 200, True, 1, 2),  # e.g. items_per_second
         (100, 200, False, 1, 0.5),  # e.g. memory.peak_bytes
         (0, 1, False, float("inf"), 0),
         (1, 0, False, -1, float("inf")),

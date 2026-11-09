@@ -66,7 +66,7 @@ MEMORY_METRICS = frozenset(
         "memory.allocations_per_iteration",
     }
 )
-METRICS = frozenset({"real_time", "cpu_time", "iterations"}) | MEMORY_METRICS
+METRICS = TIME_METRICS | MEMORY_METRICS
 
 
 def counter_name(metric: str) -> str | None:

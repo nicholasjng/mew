@@ -1,8 +1,8 @@
 """Regression gating: classify benchmark deltas against thresholds.
 
 A *regression* is a benchmark whose delta against the baseline exceeds a threshold
-in the slower direction (larger for ``real_time`` / ``cpu_time``, smaller for
-``iterations``). Per-benchmark allowlist rules replace a benchmark's threshold,
+in the worse direction (larger for times and memory, either way for a
+counter with a direction). Per-benchmark allowlist rules replace a benchmark's threshold,
 with ``inf`` to exempt it, matched against the full name with ``*`` and ``?``
 wildcards.
 Counter rules say which direction is an improvement for a counter.
@@ -234,7 +234,8 @@ class RegressionConfig:
             Full benchmark name (matched against ``rule.pattern``).
         delta_pct : float
             Signed percent change vs baseline. Positive means slower for
-            ``real_time`` / ``cpu_time``; for ``iterations`` use ``higher_is_better=True``.
+            ``real_time`` / ``cpu_time``; for a counter where up is better,
+            pass ``higher_is_better=True``.
         higher_is_better : bool
             Invert the sign when computing the regression magnitude.
 
@@ -244,8 +245,8 @@ class RegressionConfig:
             The verdict, with the matched rule attached (if any).
         """
         rule = self.find_rule(name)
-        # Magnitude in the "worse" direction: slower for time metrics, fewer
-        # iters (negative delta) for iterations.
+        # Magnitude in the "worse" direction: slower for time metrics, a fall
+        # (negative delta) for a counter where up is better.
         magnitude = -delta_pct if higher_is_better else delta_pct
         threshold = self.default_threshold if rule is None else rule.threshold
         if magnitude > threshold:

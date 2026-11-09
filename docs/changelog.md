@@ -7,6 +7,8 @@ releases may break the API.
 
 ### Breaking changes
 
+- `mew compare` no longer takes `--metric iterations`: Google Benchmark picks
+  the count to fill `min_time`, so it only mirrored the time.
 - The JSON document is `{"benchmarks": [...]}`: its rows carry `run` and
   `context` themselves, as in JSONL, so the document no longer repeats them.
 - `set_context()`, `update_context()`, `get_context()`, `clear_context()` and
