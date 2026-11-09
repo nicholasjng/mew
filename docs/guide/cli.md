@@ -78,6 +78,8 @@ debugging a crash: captured output is lost if the process dies.
 
 `--append` adds the run to an existing `.jsonl[.gz]` sink instead of overwriting (not supported for `.json`). Combined with `--run-name`, this collects several runs in one file that `mew compare` can then address individually; see [](regressions.md#comparing-runs-in-one-file). `latest` is reserved and can't be a run name: `path@latest` always selects the newest run.
 
+`--context <key>=<value>` records a string in the run's context, over what the setup file's `context()` returns, and repeats; see [](context.md#the-context-hook).
+
 ### Selecting from stdin
 
 `--stdin` reads literal, newline-delimited selectors. This supports piping a

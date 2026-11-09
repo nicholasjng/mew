@@ -9,8 +9,8 @@ import mew
 mew.run(context={"git_sha": "abc123", "dataset": {"name": "uniform-1k", "size": 1000}})
 ```
 
-From the CLI, a setup file's `context()` hook supplies it; see
-[below](#the-context-hook).
+From the CLI, a setup file's `context()` hook supplies it, and `--context`
+adds to it for one run; see [below](#the-context-hook).
 
 mew snapshots the context when the run starts.
 `run` identifies the run; `context` holds user and machine provenance. Every
@@ -92,6 +92,21 @@ def context() -> dict:
 - Every selected benchmark gets the same context, whichever files the run
   imported. For data that differs per case, such as an input size, use
   `@mew.parametrize`: each row records its case in `params`.
+
+### One run's values: `--context`
+
+`--context <key>=<value>` adds a value to one run's context, over what
+`context()` returns, for what differs between invocations of the same suite,
+such as the side of an A/B comparison:
+
+```console
+$ mew run bench_alpha.py --context engine="alpha 1.5.3" -o alpha.json
+```
+
+It repeats, and a later value for a key wins. Values stay strings, `8` and
+`true` included, since the shell can't say whether you meant a number, and a
+key is used as written: `--context ci.job=42` records the key `ci.job`, not a
+nested `ci` table. Compute anything richer in `context()`.
 
 (recording-the-host)=
 ### Recording the host

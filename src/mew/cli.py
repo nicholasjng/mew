@@ -304,6 +304,7 @@ def run(
     repetitions: int | None,
     summary_only: bool,
     run_name: str | None,
+    context_args: list[tuple[str, str]],
     append: bool,
     strict: bool,
     capture: str,
@@ -351,7 +352,8 @@ def run(
             )
         profiler_manager = managers["cpu"].manager if "cpu" in managers else None
         memory_manager = managers["memory"].manager if "memory" in managers else None
-        context = _setup_context(cfg)
+        # --context wins over the setup file's context(), as the more specific source.
+        context = {**_setup_context(cfg), **dict(context_args)}
         if managers:
             # Provenance, as the machine's: `mew compare` shows where files differ.
             context["profilers"] = {slot: m.record for slot, m in managers.items()}
@@ -554,6 +556,18 @@ def completions(shell: str) -> None:
     sys.stdout.write(_completions.generate(shell, _build_parser()))
 
 
+def _context_arg(value: str) -> tuple[str, str]:
+    """Parse a ``--context`` value: ``key=value``, split at the first ``=``.
+
+    The value stays a string, whatever it looks like, and the key is used as
+    written: a dot doesn't nest it, as a Python dict's key wouldn't.
+    """
+    key, sep, text = value.partition("=")
+    if not sep or not key.strip():
+        raise argparse.ArgumentTypeError(f"expected <key>=<value>, got {value!r}")
+    return key, text
+
+
 def _warmup_seconds(value: str) -> float:
     """Parse a ``--min-warmup-time`` value, such as ``0.2``, ``200ms`` or ``1m``, into seconds."""
     try:
@@ -718,6 +732,16 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         "--run-name",
         metavar="<name>",
         help="Name this run <name>, which <file>@<name> selects ('latest' and '*' are reserved).",
+    )
+    p.add_argument(
+        "--context",
+        dest="context_args",
+        action="append",
+        default=[],
+        type=_context_arg,
+        metavar="<key>=<value>",
+        help="Record <key>=<value> in the run's context, over the setup file's context() "
+        "(repeatable; the value is a string).",
     )
     p.add_argument(
         "--append",
