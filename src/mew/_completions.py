@@ -118,12 +118,12 @@ def _bash(parser: argparse.ArgumentParser) -> str:
         file_flags = [f for o in c.opts if o.value == "file" for f in o.flags]
         if file_flags:
             out.append(f"        {'|'.join(file_flags)}) _mew_files; return;;")
-        for o in c.opts:
-            if isinstance(o.value, list):
-                out.append(
-                    f"        {'|'.join(o.flags)}) "
-                    f'COMPREPLY=( $(compgen -W "{" ".join(o.value)}" -- "$cur") ); return;;'
-                )
+        out.extend(
+            f"        {'|'.join(o.flags)}) "
+            f'COMPREPLY=( $(compgen -W "{" ".join(o.value)}" -- "$cur") ); return;;'
+            for o in c.opts
+            if isinstance(o.value, list)
+        )
         out.append("        esac")
         flags = [f for o in c.opts for f in o.flags]
         out.append('        if [ "${cur:0:1}" = "-" ]; then')
@@ -210,10 +210,11 @@ def _fquote(s: str) -> str:
 
 def _fish(parser: argparse.ArgumentParser) -> str:
     cmds = _commands(parser)
-    out = []
-    for c in cmds:
-        for name in c.names:
-            out.append(f"complete -c mew -n __fish_use_subcommand -a {name} -d {_fquote(c.help)}")
+    out = [
+        f"complete -c mew -n __fish_use_subcommand -a {name} -d {_fquote(c.help)}"
+        for c in cmds
+        for name in c.names
+    ]
     out += [_fish_opt("__fish_use_subcommand", o) for o in _top_opts(parser)]
     for c in cmds:
         cond = "'__fish_seen_subcommand_from " + " ".join(c.names) + "'"
@@ -225,8 +226,7 @@ def _fish(parser: argparse.ArgumentParser) -> str:
 
 def _fish_opt(cond: str, o: _Opt) -> str:
     parts = [f"complete -c mew -n {cond}"]
-    for f in o.flags:
-        parts.append(f"-l {f[2:]}" if f.startswith("--") else f"-s {f[1:]}")
+    parts += [f"-l {f[2:]}" if f.startswith("--") else f"-s {f[1:]}" for f in o.flags]
     if o.takes_value:
         if isinstance(o.value, list):
             parts.append(f"-xa {_fquote(' '.join(o.value))}")

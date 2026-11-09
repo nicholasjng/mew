@@ -142,9 +142,9 @@ class MemrayManager(MemoryManager):
         function, e.g. ``0-bench_sort.html``, since a case label may hold
         characters a file name can't. Each is memray's own report, rooted at the
         benchmark body, with the benchmark's full name as the command line in its
-        Stats dialog; ``index.html`` links them all by that name. A benchmark's further repetitions, which repeat its
-        first, are left out. When nothing was captured, nothing is written and a
-        warning goes to stderr.
+        Stats dialog; ``index.html`` links them all by that name. A benchmark's
+        further repetitions, which repeat its first, are left out. When nothing
+        was captured, nothing is written and a warning goes to stderr.
 
         Parameters
         ----------

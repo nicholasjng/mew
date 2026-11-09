@@ -183,7 +183,7 @@ def test_unknown_option_suggests_the_close_one(root):
 
 def test_option_for_a_class_without_init_fails_as_a_value_error(root):
     # No signature to check the option against, so construction rejects it.
-    with pytest.raises(ValueError, match="^m: Bare"):
+    with pytest.raises(ValueError, match=r"^m: Bare"):
         _load("m", root, {"m": Preset("managers.py:Bare", {"bogus": 1}, name="m")})
 
 

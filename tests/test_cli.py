@@ -463,8 +463,8 @@ _SAMPLED_ITERATIONS = "200x"
 
 
 def test_run_profile_memray_renders_the_run_and_annotates_rows(mew_cli, tmp_path):
-    """`--memory-profiler memray --profile-dir` writes a memray report per benchmark to `<dir>/memory`,
-    and the rows and console table show peak memory."""
+    """`--memory-profiler memray --profile-dir` writes a memray report per benchmark to
+    `<dir>/memory`, and the rows and console table show peak memory."""
     pytest.importorskip("memray")
     from mew._console import fmt_bytes
 
@@ -1187,7 +1187,8 @@ def test_benchmark_names_are_relative_to_the_project_root(mew_cli, tmp_path):
     for sub in ("x", "y"):
         (proj / sub).mkdir(parents=True)
         (proj / sub / "bench_sort.py").write_text(
-            "import mew\n\n@mew.benchmark\ndef bench_sort(state):\n    for _ in state:\n        pass\n"
+            "import mew\n\n@mew.benchmark\n"
+            "def bench_sort(state):\n    for _ in state:\n        pass\n"
         )
     (proj / "pyproject.toml").write_text("")
     (tmp_path / "other").mkdir()

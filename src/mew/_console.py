@@ -231,13 +231,13 @@ class Table:
         lines.append(
             sgr("─" * (sum(widths) + (len(widths) - 1) * len(COL_SEP)), "dim", enabled=color)
         )
-        for row in self._rows:
-            lines.append(
-                COL_SEP.join(
-                    _format_cell(c, w, j, color)
-                    for c, w, j in zip(row, widths, self._justify, strict=True)
-                )
+        lines.extend(
+            COL_SEP.join(
+                _format_cell(c, w, j, color)
+                for c, w, j in zip(row, widths, self._justify, strict=True)
             )
+            for row in self._rows
+        )
         return lines
 
 

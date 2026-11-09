@@ -116,8 +116,10 @@ def test_file_reporter_can_be_reused(tmp_path, reporter, suffix):
 
 @pytest.mark.parametrize("reporter", [JSONReporter, JSONLReporter])
 def test_file_reporters_write_each_row_as_it_arrives(tmp_path, reporter):
-    """JSON and JSONL reporters write each row to disk in `report_results()`, before `finalize()`."""
-    # On disk before the run ends, not buffered; JSONL is the format that survives an interruption.
+    """JSON and JSONL reporters write each row to disk in `report_results()`, before
+    `finalize()`."""
+    # On disk before the run ends, not buffered; JSONL is the format that
+    # survives an interruption.
     out = tmp_path / "results"
     rep = reporter(output=out)
     rep.report_context({})
