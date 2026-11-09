@@ -54,7 +54,7 @@ allocations, or a profiler of your own. For native C frames, sample the process 
 :::{grid-item-card} Compare
 :link: guide/regressions
 :link-type: doc
-`mew compare head.json baseline.json --regression-threshold 5% --exit-non-zero-on-regression` for CI
+`mew compare baseline.json head.json --regression-threshold 5% --exit-non-zero-on-regression` for CI
 regression gates with an allowlist.
 :::
 

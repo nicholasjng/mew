@@ -29,7 +29,7 @@ After changing the code under test, measure again and compare against the baseli
 
 ```console
 $ mew run --repetitions 10 -o candidate.json
-$ mew compare --stddev candidate.json baseline.json
+$ mew compare baseline.json candidate.json
 ```
 
 You can parametrize inputs, run benchmarks from a Python script, and save results as JSON or an appendable JSONL archive.

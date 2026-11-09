@@ -40,7 +40,7 @@ def test_compare_custom_statistic_end_to_end(tmp_path: Path) -> None:
     )
 
     console = Console(width=200)
-    code = compare([other, base], statistic=max, console=console)
+    code = compare([base, other], statistic=max, console=console)
     assert code == 0
     out = console.export_text()
     assert "99.00 ns" in out
@@ -61,7 +61,7 @@ def test_load_skips_skipped_rows(tmp_path: Path) -> None:
             _row("only_skipped", 0.0, skipped=True),
         ],
     )
-    samples, _ = load_column(p, "real_time")
+    samples, _, _ = load_column(p, "real_time")
     assert samples.keys() == {"b"}
     assert samples["b"].values == (5.0, 7.0)
 
@@ -75,7 +75,7 @@ def test_compare_speedup_signs(tmp_path: Path) -> None:
     )
 
     console = Console(width=200)
-    code = compare([other, base], console=console)
+    code = compare([base, other], console=console)
     assert code == 0
     out = console.export_text()
     assert "-20.00%" in out
@@ -99,7 +99,7 @@ def test_compare_warns_on_missing_names(tmp_path: Path, capsys: pytest.CaptureFi
     )
 
     console = Console(width=200)
-    code = compare([other, base], console=console)
+    code = compare([base, other], console=console)
     assert code == 0
     err = capsys.readouterr().err
     assert "bench_only_in_base" in err
@@ -111,7 +111,7 @@ def test_compare_warns_on_missing_names(tmp_path: Path, capsys: pytest.CaptureFi
 def test_compare_empty_overlap(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """`compare` exits with code 1 when the files share no benchmarks."""
     other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("a", 1.0)])
-    code = compare([other, base], console=Console())
+    code = compare([base, other], console=Console())
     assert code == 1
     assert "no overlapping benchmarks" in capsys.readouterr().err
 
@@ -129,7 +129,7 @@ def test_compare_pattern_is_a_regex_unless_literal(
         tmp_path, other=[_row(n, 5.0) for n in names], base=[_row(n, 10.0) for n in names]
     )
     console = Console(width=200)
-    assert compare([other, base], pattern=pattern, literal=literal, console=console) == 0
+    assert compare([base, other], pattern=pattern, literal=literal, console=console) == 0
     out = console.export_text()
     assert [n for n in names if n in out] == shown
 
@@ -169,29 +169,28 @@ def _mem_row(name: str, real_time: float, peak: int, allocs: int, *, iterations:
     )
 
 
-@pytest.mark.parametrize(
-    ("metric", "stddevs"),
-    [
-        ("real_time", ["1.00 ns", "2.00 ns"]),
-        # Scaled like the value, not raw bytes ("1048576.00").
-        ("memory.peak_bytes", ["1.0 MB", "2.0 MB"]),
-    ],
-)
-def test_compare_stddev_column_uses_the_value_unit(
-    tmp_path: Path, metric: str, stddevs: list[str]
-) -> None:
-    """The stddev columns are formatted in the metric's value unit, such as `ns` or `MB`."""
+@pytest.mark.parametrize("metric", ["real_time", "memory.peak_bytes"])
+def test_compare_values_carry_their_spread(tmp_path: Path, metric: str) -> None:
+    """Each value shows its repetitions' spread relative to their mean, whatever the metric's
+    unit; one past 25% is flagged as too noisy to trust, and a single repetition has none."""
     mib = 1 << 20
     other, base = _write_pair(
         tmp_path,
-        other=[_mem_row("b", v, peak=v * mib, allocs=1) for v in (2, 4, 6)],
-        base=[_mem_row("b", v, peak=v * mib, allocs=1) for v in (4, 5, 6)],
+        other=[_mem_row("b", v, peak=v * mib, allocs=1) for v in (2, 4, 6)]
+        + [_mem_row("once", 1, peak=mib, allocs=1)],
+        base=[_mem_row("b", v, peak=v * mib, allocs=1) for v in (4, 5, 6)]
+        + [_mem_row("once", 1, peak=mib, allocs=1)],
     )
     console = Console(width=200)
-    assert compare([other, base], metric=metric, show_stddev=True, console=console) == 0
-    # The row's cells: name, base, ± stddev, other, Δ%, ratio, ± stddev.
-    cells = [c.strip() for c in console.export_text().splitlines()[-1].split("│")]
-    assert [cells[2], cells[-1]] == stddevs
+    assert compare([base, other], metric=metric, console=console) == 0
+    rows = {
+        cells[0]: cells
+        for line in console.export_text().splitlines()
+        if (cells := [c.strip() for c in line.split("│")])[0] in ("b", "once")
+    }
+    assert rows["b"][1].endswith(" ±20%")  # stdev 1 of mean 5
+    assert rows["b"][2].endswith(" ±50% (!)")  # stdev 2 of mean 4
+    assert "±" not in rows["once"][1]
 
 
 _ROW_LINE = json.dumps(_row("b", 1.0))
@@ -254,8 +253,8 @@ def test_compare_key_func_matches_across_suites(tmp_path: Path) -> None:
     _write_json(other, [_row("bench_duckdb.py::bench_select", 80.0)])
 
     console = Console(width=200)
-    assert compare([other, base], console=Console()) == 1  # no overlap by name
-    code = compare([other, base], key="func", console=console)
+    assert compare([base, other], console=Console()) == 1  # no overlap by name
+    code = compare([base, other], key="func", console=console)
     assert code == 0
     out = console.export_text()
     assert "bench_select" in out
@@ -291,7 +290,7 @@ def test_compare_two_runs_of_one_file(tmp_path: Path) -> None:
         ],
     )
     console = Console(width=200)
-    assert compare([Path(f"{p}@after"), Path(f"{p}@before")], console=console) == 0
+    assert compare([Path(f"{p}@before"), Path(f"{p}@after")], console=console) == 0
     out = console.export_text()
     # Selector-aware labels keep the two columns distinct.
     assert "@before" in out and "@after" in out
@@ -306,7 +305,7 @@ def test_compare_reads_every_result_format(tmp_path: Path, suffix: str) -> None:
         tmp_path, other=[_row("bench_x", 50.0)], base=[_row("bench_x", 100.0)], suffix=suffix
     )
     console = Console(width=200)
-    assert compare([other, base], console=console) == 0
+    assert compare([base, other], console=console) == 0
     out = console.export_text()
     assert "-50.00%" in out and "×2.000" in out
 
@@ -340,18 +339,19 @@ def test_name_selector_picks_the_newest_run_of_that_name(tmp_path: Path) -> None
             _row("b", 99.0, date="2026-03-01T00:00:00", run_id="cccc", run_name="other"),
         ],
     )
-    named, ctx = load_column(p, "real_time", selector="ab")
+    named, ctx, _ = load_column(p, "real_time", selector="ab")
     assert named["b"].values == (20.0,)
     assert ctx["run"]["id"] == "bbbb"
     for selector in (None, "latest"):
-        newest, ctx = load_column(p, "real_time", selector=selector)
+        newest, ctx, _ = load_column(p, "real_time", selector=selector)
         assert newest["b"].value == 99.0
         assert ctx["run"]["name"] == "other"
 
 
 def test_star_selector_pools_every_run_in_a_file(tmp_path: Path, capsys) -> None:
     """`@*` pools every run as repetitions of one sample, for an A/B loop that appends a run per
-    round; provenance comes from the newest run. Runs from one machine pool quietly."""
+    round; provenance comes from the newest run, with the count of runs. Runs from one machine
+    pool quietly."""
     p = tmp_path / "r.jsonl"
     same = {"cpu_model": "M2", "python": {"version": "3.13"}}
     _write_jsonl(
@@ -361,10 +361,13 @@ def test_star_selector_pools_every_run_in_a_file(tmp_path: Path, capsys) -> None
             _row("b", 20.0, date="2026-02-01T00:00:00", run_id="bbbb", custom=same),
         ],
     )
-    pooled, ctx = load_column(p, "real_time", selector="*")
+    pooled, ctx, _ = load_column(p, "real_time", selector="*")
     assert pooled["b"].values == (10.0, 20.0)
-    assert ctx["run"]["id"] == "bbbb"
+    assert (ctx["run"]["id"], ctx["runs"]) == ("bbbb", 2)
     assert capsys.readouterr().err == ""
+    console = Console(width=200)
+    compare([Path(f"{p}@*"), Path(f"{p}@latest")], console=console)
+    assert "2 runs, newest 2026-02-01" in console.export_text()
 
 
 @pytest.mark.parametrize(
@@ -455,7 +458,7 @@ def test_compare_prints_context_and_warns_on_skew(
         },
     )
     console = Console(width=200)
-    assert compare([other, base], console=console) == 0
+    assert compare([base, other], console=console) == 0
     out = console.export_text()
     assert "host=h1" in out
     assert "host=h2" in out
@@ -483,11 +486,12 @@ def test_compare_labels_columns_by_interpreter(
         base_context={"context": {**machine, "python": {**python, "version": "3.14.3"}}},
     )
     console = Console(width=200)
-    assert compare([other, base], console=console) == 0
+    assert compare([base, other], console=console) == 0
     out = console.export_text()
-    assert "(python.version=3.14.3)" in out
-    assert "(python.version=3.15.0)" in out
-    assert "cpu_model=Apple M1" in out  # the matching machine context was read, and not warned on
+    assert "python.version=3.14.3" in out
+    assert "python.version=3.15.0" in out
+    # What both files share goes unsaid, and isn't warned on.
+    assert "cpu_model" not in out
     assert "differ in" not in capsys.readouterr().err
 
 
@@ -500,7 +504,7 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
     )
 
     console = Console(width=200)
-    code = compare([other, base], metric="memory.peak_bytes", console=console)
+    code = compare([base, other], metric="memory.peak_bytes", console=console)
     assert code == 0
     out = console.export_text()
     assert "1.0 MB" in out  # byte-formatted baseline
@@ -510,7 +514,7 @@ def test_compare_memory_metric(tmp_path: Path) -> None:
     assert "speedup" not in out
 
     console = Console(width=200)
-    code = compare([other, base], metric="memory.allocations_per_iteration", console=console)
+    code = compare([base, other], metric="memory.allocations_per_iteration", console=console)
     assert code == 0
     assert "-50.00%" in console.export_text()
 
@@ -537,7 +541,7 @@ def test_compare_counter_gates_in_its_configured_direction(
         tmp_path, other=[counter_row("b", counter, other)], base=[counter_row("b", counter, base)]
     )
     result = compare(
-        [other_path, base_path],
+        [base_path, other_path],
         metric=f"counters.{counter}",
         regressions=RegressionConfig(5),
         counters=CounterConfig(rules=tuple(rules)),
@@ -552,7 +556,7 @@ def test_compare_refuses_to_gate_on_counters_without_a_direction(tmp_path: Path)
         tmp_path, other=[counter_row("b", "work", 0)], base=[counter_row("b", "work", 1)]
     )
     with pytest.raises(ValueError, match="no direction is declared"):
-        compare([other, base], metric="counters.work", regressions=RegressionConfig(5))
+        compare([base, other], metric="counters.work", regressions=RegressionConfig(5))
 
 
 def test_compare_counter_without_a_direction_shows_a_plain_ratio(tmp_path: Path) -> None:
@@ -561,7 +565,7 @@ def test_compare_counter_without_a_direction_shows_a_plain_ratio(tmp_path: Path)
         tmp_path, other=[counter_row("b", "work", 200)], base=[counter_row("b", "work", 100)]
     )
     console = Console(width=200)
-    assert compare([other, base], metric="counters.work", console=console) == 0
+    assert compare([base, other], metric="counters.work", console=console) == 0
     out = console.export_text()
     assert "+100.00%" in out
     assert "×2.000" in out
@@ -578,7 +582,7 @@ def test_compare_counter_formats_like_the_console(tmp_path: Path) -> None:
         base=[counter_row("b", "work", v * 2**30, format=rate) for v in (1, 1, 1)],
     )
     console = Console(width=200)
-    assert compare([other, base], metric="counters.work", show_stddev=True, console=console) == 0
+    assert compare([base, other], metric="counters.work", console=console) == 0
     out = console.export_text()
     assert "1Gi/s" in out  # baseline value
     assert "3Gi/s" in out  # contender median
@@ -592,7 +596,7 @@ def test_compare_missing_counter_hints_set_counter(
     other, base = _write_pair(
         tmp_path, other=[counter_row("b", "work", 1.0)], base=[counter_row("b", "work", 1.0)]
     )
-    assert compare([other, base], metric="counters.missing", console=Console()) == 1
+    assert compare([base, other], metric="counters.missing", console=Console()) == 1
     err = capsys.readouterr().err
     assert "'missing'" in err
     assert "set_counter" in err
@@ -603,7 +607,7 @@ def test_compare_memory_metric_without_data_hints_profile_flag(
 ) -> None:
     """A memory metric on results without memory data exits 1 and points to `--memory-profiler memray`."""
     other, base = _write_pair(tmp_path, other=[_row("bench_x", 1.0)], base=[_row("bench_x", 1.0)])
-    code = compare([other, base], metric="memory.peak_bytes", console=Console())
+    code = compare([base, other], metric="memory.peak_bytes", console=Console())
     assert code == 1
     assert "--memory-profiler memray" in capsys.readouterr().err
 
@@ -631,7 +635,7 @@ def test_compare_marks_only_high_cv_rows(
         tmp_path, other=[_row("b", v) for v in other], base=[_row("b", v) for v in base]
     )
     console = Console(width=200)
-    assert compare([other_path, base_path], statistic=statistic, console=console) == 0
+    assert compare([base_path, other_path], statistic=statistic, console=console) == 0
     assert re.findall(r"±\d+% \(!\)", console.export_text()) == markers
 
 
@@ -652,7 +656,7 @@ def test_compare_marks_only_significant_deltas(
         tmp_path, other=[_row("b", v) for v in other], base=[_row("b", v) for v in base]
     )
     console = Console(width=200)
-    assert compare([other_path, base_path], console=console) == 0
+    assert compare([base_path, other_path], console=console) == 0
     assert ("(signif.)" in console.export_text()) is significant
 
 
@@ -681,7 +685,7 @@ def test_compare_custom_statistic_error_is_surfaced(tmp_path: Path) -> None:
 
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     with pytest.raises(ValueError, match="statistic failed on 'b': needs more data"):
-        compare([other, base], statistic=failing, console=Console(width=200))
+        compare([base, other], statistic=failing, console=Console(width=200))
 
 
 def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
@@ -700,10 +704,9 @@ def test_read_results_returns_rows_as_stored(tmp_path: Path) -> None:
     assert rows[0]["context"]["engine"] == "x"
 
 
-@pytest.mark.parametrize("show_stddev", [False, True])
 @pytest.mark.parametrize(("gate", "code"), [(None, 0), (RegressionConfig(5), 3)])
 def test_rows_are_the_benchmarks_candidate_and_baseline_share(
-    tmp_path: Path, show_stddev: bool, gate: RegressionConfig | None, code: int
+    tmp_path: Path, gate: RegressionConfig | None, code: int
 ) -> None:
     """Gated or not, one row set: a benchmark the history lacks still shows, so it
     can't hide a regression, and one the candidate lacks has nothing to compare."""
@@ -712,8 +715,8 @@ def test_rows_are_the_benchmarks_candidate_and_baseline_share(
     _write_json(history, [_row("ok", 100), _row("gone", 100)])
     _write_json(baseline, [_row("slow", 100), _row("ok", 100), _row("gone", 100)])
     console = Console(width=200)
-    files = [head, history, baseline]
-    assert compare(files, regressions=gate, show_stddev=show_stddev, console=console) == code
+    files = [baseline, head, history]  # the baseline first; the second file is gated
+    assert compare(files, regressions=gate, console=console) == code
     lines = console.export_text().splitlines()
     assert [line.split("│")[0].strip() for line in lines if "│" in line][1:] == ["ok", "slow"]
 
@@ -767,7 +770,7 @@ def test_compare_shows_no_ratio_for_a_negative_counter(tmp_path: Path) -> None:
     console = Console(width=120)
     rule = CounterRule(pattern="balance", higher_is_better=True)
     counters = CounterConfig(rules=(rule,))
-    compare([other, base], metric="counters.balance", counters=counters, console=console)
+    compare([base, other], metric="counters.balance", counters=counters, console=console)
     row = next(line for line in console.export_text().splitlines() if line.startswith("b "))
     assert "+50.00%" in row
     assert row.rstrip().endswith("—")
@@ -776,7 +779,7 @@ def test_compare_shows_no_ratio_for_a_negative_counter(tmp_path: Path) -> None:
 def test_compare_filter_matching_nothing_says_so(tmp_path: Path, capsys) -> None:
     """A `-k` pattern that matches nothing says that, not that the files don't overlap."""
     other, base = _write_pair(tmp_path, other=[_row("b", 1.0)], base=[_row("b", 1.0)])
-    assert compare([other, base], pattern="nomatch", console=Console()) == 1
+    assert compare([base, other], pattern="nomatch", console=Console()) == 1
     assert capsys.readouterr().err.strip() == "no benchmarks match 'nomatch'"
 
 
@@ -808,3 +811,82 @@ def test_unreadable_values_name_the_file(tmp_path: Path) -> None:
     _write_json(bad, [_row("b", 1.0) | {"real_time": "fast"}])
     with pytest.raises(ValueError, match=r"bad\.json: 'b': real_time is 'fast', not a number"):
         load_column(bad, "real_time")
+
+
+def test_compare_tells_skipped_benchmarks_from_missing_ones(tmp_path: Path, capsys) -> None:
+    """A benchmark the run skipped is reported with its reason; one not in the file at all is
+    missing."""
+    base, head = tmp_path / "base.json", tmp_path / "head.json"
+    _write_json(base, [_row("a", 1.0), _row("gpu", 1.0), _row("new", 0.0, skipped=True)])
+    reason = {"reason": "skipped", "message": "no GPU"}
+    _write_json(head, [_row("a", 1.0), _row("gpu", 0.0, skip=reason), _row("new", 1.0)])
+    other = tmp_path / "other.json"
+    _write_json(other, [_row("a", 1.0)])
+    assert compare([base, head, other], console=Console(width=200)) == 0
+    err = capsys.readouterr().err
+    assert f"skipped in {head}: gpu (no GPU)" in err
+    assert f"skipped in {base}: new (skipped)" in err
+    assert f"{other} missing 2 benchmark(s): gpu, new" in err
+
+
+@pytest.mark.parametrize(
+    ("names", "title", "rows"),
+    [
+        (["b.py::x", "b.py::y"], "Comparison of b.py (real_time", ["x", "y"]),
+        (["a.py::x", "b.py::y"], "Comparison (real_time", ["a.py::x", "b.py::y"]),
+    ],
+)
+def test_compare_names_a_shared_file_once_in_the_title(tmp_path: Path, names, title, rows) -> None:
+    """When every row comes from one file, the file goes in the title and the rows drop it."""
+    base, other = tmp_path / "base.json", tmp_path / "other.json"
+    for p in (base, other):
+        _write_json(p, [_row(n, 1.0) for n in names])
+    console = Console(width=200)
+    assert compare([base, other], console=console) == 0
+    out = console.export_text()
+    assert title in out
+    lines = [line for line in out.splitlines() if "│" in line][1:]
+    assert [line.split("│")[0].strip() for line in lines] == rows
+
+
+@pytest.mark.parametrize(
+    ("other", "metric", "summary"),
+    [
+        # 200 -> 400 for `slow`, unchanged `ok`, 5 repetitions a side: one significant change.
+        (
+            {"slow": 400.0, "ok": 100.0},
+            "real_time",
+            "1 slower, 0 faster, 1 not significantly different",
+        ),
+        (
+            {"slow": 100.0, "ok": 100.0},
+            "real_time",
+            "0 slower, 1 faster, 1 not significantly different",
+        ),
+    ],
+)
+def test_compare_sums_up_the_second_file_against_the_baseline(
+    tmp_path: Path, other, metric, summary
+) -> None:
+    """A line under the table counts the benchmarks that changed significantly, by direction."""
+    base_path, other_path = tmp_path / "base.json", tmp_path / "head.json"
+    jitter = (0.99, 1.0, 1.01, 0.995, 1.005)
+    _write_json(
+        base_path, [_row(n, v * j) for n, v in {"slow": 200.0, "ok": 100.0}.items() for j in jitter]
+    )
+    _write_json(other_path, [_row(n, v * j) for n, v in other.items() for j in jitter])
+    console = Console(width=200)
+    compare([base_path, other_path], metric=metric, console=console)
+    assert console.export_text().splitlines()[-1] == f"head against base: {summary}"
+
+
+def test_compare_summary_without_repetitions_says_there_is_no_test(tmp_path: Path) -> None:
+    """With one repetition a side there is no significance test, and the summary says so."""
+    other, base = _write_pair(tmp_path, other=[_row("b", 2.0)], base=[_row("b", 1.0)])
+    console = Console(width=200)
+    compare([base, other], console=console)
+    last = console.export_text().splitlines()[-1]
+    assert (
+        last
+        == "other against base: 1 compared; no significance test, which needs 2+ repetitions a side"
+    )

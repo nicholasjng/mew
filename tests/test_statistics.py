@@ -19,7 +19,9 @@ def test_statistic_replaces_the_median_but_not_the_stddev(tmp_path: Path) -> Non
     (median,) = load_column(tmp_path / "r.json", "real_time")[0].values()
     assert median.value == 2.5
     # A Fraction, like a numpy scalar, is no float subclass, so this catches a dropped cast.
-    samples, _ = load_column(tmp_path / "r.json", "real_time", statistic=lambda v: Fraction(max(v)))
+    samples, _, _ = load_column(
+        tmp_path / "r.json", "real_time", statistic=lambda v: Fraction(max(v))
+    )
     (center,) = samples.values()
     assert (type(center.value), center.value) == (float, 100.0)
     assert center.stddev == median.stddev == statistics.stdev(values)

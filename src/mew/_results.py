@@ -360,10 +360,13 @@ def load_column(
     selector: str | None = None,
     statistic: Statistic | None = None,
     reader: Callable[[Path], list[dict[str, Any]]] = read_rows,
-) -> tuple[dict[str, Sample], dict[str, Any]]:
+) -> tuple[dict[str, Sample], dict[str, Any], dict[str, str]]:
     """Load one comparison column from a result file: read, select a run, re-key.
 
-    ``reader`` lets a caller comparing several selectors of one file parse it once.
+    Returns the samples by name, the provenance of the newest measured row, and
+    the benchmarks the run skipped, by name, with their reasons, so a caller can
+    tell a skipped benchmark from a missing one. ``reader`` lets a caller
+    comparing several selectors of one file parse it once.
     """
     # Selected before filtering, so `@latest` is the run `mew show` prints
     # even when all of it was skipped.
@@ -380,7 +383,17 @@ def load_column(
         samples = _samples_from_groups(groups, metric, statistic)
     except ValueError as e:
         raise ValueError(f"{path}: {e}") from e
-    return _normalize_samples(samples, key, str(path)), _provenance(measured)
+    skipped = {
+        (r["name"].rsplit("::", 1)[-1] if key == "func" else r["name"]): r["skip"].get("message")
+        or r["skip"].get("reason", "skipped")
+        for r in selected
+        if isinstance(r.get("skip"), dict) and r["name"] not in groups
+    }
+    provenance = _provenance(measured)
+    # `@*` pools runs; the newest speaks for them, so say how many there were.
+    if (runs := len({_run_key(r) for r in measured})) > 1:
+        provenance["runs"] = runs
+    return _normalize_samples(samples, key, str(path)), provenance, skipped
 
 
 def load_run(

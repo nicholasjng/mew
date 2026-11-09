@@ -402,12 +402,11 @@ def compare(
     key: str,
     pattern: str | None,
     literal: bool,
-    stddev: bool,
     statistic: str | None,
     regression_threshold: float | None,
     exit_non_zero_on_regression: bool,
 ) -> None:
-    """Compare benchmark result files; the last file is the baseline."""
+    """Compare benchmark result files; the first file is the baseline."""
     from mew.compare import compare as _compare
 
     cfg = _load_config_or_exit()
@@ -431,7 +430,6 @@ def compare(
             key=key,
             pattern=pattern,
             literal=literal,
-            show_stddev=stddev,
             statistic=reduce,
             regressions=gate,
             counters=cfg.counters,
@@ -477,6 +475,21 @@ def show(files: list[str], *, pattern: str | None, literal: bool, summary_only: 
         raise SystemExit(1)
 
 
+def _unique_prefix_width(ids: list[str]) -> int:
+    """The shortest prefix, of at least 8 characters, that tells ``ids`` apart.
+
+    A UUIDv7 leads with its time, so runs from the same minute share 8 digits.
+    """
+    width, distinct = 8, len(set(ids))
+    longest = max(map(len, ids), default=0)
+    # Past a UUID's hyphen too, which tells nothing apart.
+    while width < longest and (
+        len({i[:width] for i in ids}) < distinct or ids[0][width - 1 : width] == "-"
+    ):
+        width += 1
+    return width
+
+
 def log(files: list[Path]) -> None:
     """List the runs stored in result files, newest first."""
     term = Terminal()
@@ -489,9 +502,10 @@ def log(files: list[Path]) -> None:
         table.add_column("Rows", justify="right")
         with _usage_error("log", ValueError, OSError):
             summaries = run_summaries(path)
+        width = _unique_prefix_width([s.id for s in summaries if s.id])
         for s in summaries:
             table.add_row(
-                (s.id or "-")[:8],
+                (s.id or "-")[:width],
                 (s.date or "-")[:19],
                 s.name or "-",
                 str(s.benchmarks),
@@ -790,7 +804,7 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "files",
         nargs="+",
-        help="Compare result files against the last file (<file>@<name> picks a run).",
+        help="Compare result files against the first, the baseline (<file>@<name> picks a run).",
     )
     p.add_argument(
         "-m",
@@ -806,7 +820,6 @@ def _add_compare_cmd(sub: argparse._SubParsersAction) -> None:
         help="Match benchmarks by name or func (default name).",
     )
     _add_filter_args(p, verb="Compare")
-    p.add_argument("--stddev", action="store_true", help="Show standard-deviation columns.")
     p.add_argument(
         "--statistic",
         metavar="<name>",

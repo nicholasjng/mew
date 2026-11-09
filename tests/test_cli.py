@@ -22,6 +22,7 @@ from _helpers import (
     counter_row,
     row as _row,
     write_json as _write_json,
+    write_jsonl as _write_jsonl,
     write_pair as _write_pair,
 )
 
@@ -270,7 +271,7 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         (("compare", "a.json", "b.json", "--regression-threshold=nan%"), "got 'nan%'"),
         # What the library raises, as one line rather than a traceback.
         (("compare", "a.json"), "mew compare: expected at least two result files"),
-        (("compare", "a.json", "b.json"), "mew compare: result file not found: b.json"),
+        (("compare", "a.json", "b.json"), "mew compare: result file not found: a.json"),
         (("log", "a.json"), "mew log: result file not found: a.json"),
         # `@latest` selects the newest run, so no run may carry that name.
         (("run", "--min-time", "1x", "--run-name", "latest"), "mew run: run_name 'latest'"),
@@ -691,7 +692,7 @@ def test_compare_exit_non_zero_on_regression_gates(mew_cli, tmp_path, flags, cod
     threshold when `--regression-threshold` is absent."""
     # +20%, well over both the 5% threshold and the 5% default:
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
-    res = mew_cli("compare", str(other), str(base), *flags, cwd=tmp_path)
+    res = mew_cli("compare", str(base), str(other), *flags, cwd=tmp_path)
     assert res.returncode == code, res.stderr
     assert "❌" in res.stderr
 
@@ -701,7 +702,7 @@ def test_compare_regression_threshold_wins_over_the_configured_default(mew_cli, 
     # +20%: within the file's 50% default, over the flag's 5%.
     other, base = _write_pair(tmp_path, other=[_row("b", 120.0)], base=[_row("b", 100.0)])
     (tmp_path / "pyproject.toml").write_text("[tool.mew.regressions]\ndefault-threshold = 50.0\n")
-    args = ("compare", str(other), str(base), "--exit-non-zero-on-regression")
+    args = ("compare", str(base), str(other), "--exit-non-zero-on-regression")
     assert mew_cli(*args, cwd=tmp_path).returncode == 0
     res = mew_cli(*args, "--regression-threshold", "5%", cwd=tmp_path)
     assert res.returncode == 3, res.stderr
@@ -726,7 +727,7 @@ def test_compare_gates_on_a_counter_in_its_configured_direction(
     )
     (tmp_path / "pyproject.toml").write_text(pyproject)
     args = ("-m", "counters.tlb_misses", "--exit-non-zero-on-regression")
-    res = mew_cli("compare", str(other), str(base), *args, cwd=tmp_path)
+    res = mew_cli("compare", str(base), str(other), *args, cwd=tmp_path)
     assert res.returncode == code, res.stderr
     assert message in res.stderr
 
@@ -736,9 +737,8 @@ def test_compare_gates_on_a_counter_in_its_configured_direction(
     [
         # The files' benchmarks share only their function names.
         ("", (), "no overlapping benchmarks", "bench_a"),
-        ("", ("--key", "func"), "+0.00%", "± stddev"),  # the median of 1, 1, 10 is 1
+        ("", ("--key", "func"), "+0.00%", "+900.00%"),  # the median of 1, 1, 10 is 1
         ("", ("--key", "func", "-k", "bench_a"), "bench_a", "bench_b"),
-        ("", ("--key", "func", "--stddev"), "± stddev", "+900.00%"),
         ("", ("--key", "func", "--statistic", "max"), "+900.00%", "+0.00%"),
         # [tool.mew] statistic applies without the flag; the flag wins over it.
         ('[tool.mew]\nstatistic = "max"\n', ("--key", "func"), "+900.00%", "+0.00%"),
@@ -747,7 +747,7 @@ def test_compare_gates_on_a_counter_in_its_configured_direction(
     ],
 )  # fmt: skip
 def test_compare_options_reach_the_comparison(mew_cli, tmp_path, pyproject, args, shown, hidden):
-    """`--key`, `-k`, `--stddev`, `--statistic` and `[tool.mew] statistic` change what
+    """`--key`, `-k`, `--statistic` and `[tool.mew] statistic` change what
     `mew compare` prints, not only what it accepts."""
     other, base = _write_pair(
         tmp_path,
@@ -756,7 +756,7 @@ def test_compare_options_reach_the_comparison(mew_cli, tmp_path, pyproject, args
         base=[*(_row("y.py::bench_a", 1.0) for _ in range(3)), _row("y.py::bench_b", 5.0)],
     )
     (tmp_path / "pyproject.toml").write_text(pyproject)
-    res = mew_cli("compare", str(other), str(base), *args, cwd=tmp_path)
+    res = mew_cli("compare", str(base), str(other), *args, cwd=tmp_path)
     output = res.stdout + res.stderr
     assert shown in output
     assert hidden not in output
@@ -778,6 +778,23 @@ def test_log_lists_runs_newest_first(mew_cli, tmp_path):
     assert lines[0].startswith("Id")
     assert lines[2].startswith("bbbbbbbb") and "after" in lines[2]
     assert lines[3].startswith("aaaaaaaa") and "before" in lines[3]
+
+
+def test_log_ids_tell_runs_from_the_same_minute_apart(mew_cli, tmp_path):
+    """UUIDv7s of runs from the same minute share 8 digits, so `mew log` shows enough to tell
+    them apart, without ending on a hyphen."""
+    p = tmp_path / "r.jsonl"
+    ids = ["01a1bf92-b3c4-7000-8000-000000000001", "01a1bf92-b3d9-7000-8000-000000000002"]
+    # 8 digits collide, and a 9th would end on the hyphen.
+    _write_jsonl(
+        p, [_row("b", 1.0, date=f"2026-01-01T00:00:0{i}", run_id=id_) for i, id_ in enumerate(ids)]
+    )
+    res = mew_cli("log", str(p), cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert {line.split()[0] for line in res.stdout.splitlines()[2:]} == {
+        "01a1bf92-b3c",
+        "01a1bf92-b3d",
+    }
 
 
 def _two_runs(path: Path) -> None:
