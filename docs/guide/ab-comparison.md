@@ -29,14 +29,15 @@ def bench_scan(state):
 
 ## Run them interleaved
 
-Write each side to its own file. `--append` accumulates the repetitions:
+Write each side to its own file, a run per round with `--append`, and pool
+each file's runs with `@*`:
 
 ```console
 $ for i in 1 2 3 4 5; do
 >   mew run bench_alpha.py --append -o alpha.jsonl
 >   mew run bench_beta.py  --append -o beta.jsonl
 > done
-$ mew compare --key func beta.jsonl alpha.jsonl
+$ mew compare --key func 'beta.jsonl@*' 'alpha.jsonl@*'
 ```
 
 Interleave the suites (A B A B …, not AAAAA BBBBB) to avoid bias from thermal
@@ -64,20 +65,13 @@ $ for i in 1 2 3; do
 >   .venv-gil/bin/mew run bench_x.py --append -o gil.jsonl
 >   .venv-ft/bin/mew  run bench_x.py --append -o ft.jsonl
 > done
-$ mew compare ft.jsonl gil.jsonl
+$ mew compare 'ft.jsonl@*' 'gil.jsonl@*'
 ```
 
-Here both sides are the *same* benchmark file, distinguished by the interpreter.
-Record which is which from inside the suite, so the context lines say so:
-
-```python
-import sys
-
-import mew
-
-mew.update_context(mew.vcs_context())
-mew.set_context("build", "free-threaded" if not sys._is_gil_enabled() else "gil")
-```
+Here both sides are the *same* benchmark file, distinguished by the
+interpreter. Every row records it in `context.python` (version, free-threaded
+build, whether the GIL was on), and `mew compare` shows the values that differ
+on each column's context line, so the sides label themselves.
 
 ## Profiling both sides
 

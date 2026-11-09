@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import statistics
+import sys
 import zlib
 from collections import defaultdict
 from collections.abc import Callable
@@ -17,6 +18,13 @@ from mew._typing import BenchmarkResult
 
 # Stamped onto every row so each one stands alone, in JSON and JSONL alike.
 ROW_STAMP_FIELDS = ("run", "context")
+
+#: Context fields that describe the machine and the mew that ran a benchmark:
+#: results that differ in them compare environments, not only code.
+SKEW_FIELDS = ("host", "cpu_model", "num_cpus", "cpu_scaling_enabled", "mew")
+
+#: The selector that pools every run in a file.
+POOL_ALL = "*"
 
 #: The result format this mew writes and reads, on every row of a result file.
 #: Bumped only for changes that break readers; added fields don't bump it.
@@ -304,15 +312,20 @@ def _select_rows(
 ) -> list[dict[str, Any]]:
     """Pick the rows of the run a ``path@selector`` names.
 
-    ``None`` and ``latest`` select the newest run; :func:`mew.run` rejects
-    ``latest`` as a run name. Any other selector is a run name, and selects the
-    newest run of that name: runs are never pooled, since two runs may come from
-    different machines or interpreters. ``mew log`` lists what a file holds.
+    ``None`` and ``latest`` select the newest run, and ``*`` pools every run in
+    the file, as repetitions of one sample, with a warning on stderr when the
+    runs came from different machines, interpreters or mew versions;
+    :func:`mew.run` rejects both as run names. Any other selector is a run name,
+    and selects the newest run of that name: a name never pools, since two runs
+    may come from different machines. ``mew log`` lists what a file holds.
     """
     if not by_run:
         raise ValueError(f"{path}: no measurements in file")
     if selector is None or selector == "latest":
         return by_run[max(by_run)]
+    if selector == POOL_ALL:
+        _warn_pooled_skew(path, list(by_run.values()))
+        return [r for rows in by_run.values() for r in rows]
     if not selector:
         raise ValueError(f"{path}: empty run name after '@'")
     named = [key for key, rows in by_run.items() if _run_block(rows[0]).get("name") == selector]
@@ -322,6 +335,18 @@ def _select_rows(
         hint = f" (run names in file: {shown})" if names else " (no named runs in file)"
         raise ValueError(f"{path}: no run named {selector!r}{hint}; see `mew log {path}`")
     return by_run[max(named)]
+
+
+def _warn_pooled_skew(path: Path, runs: list[list[dict[str, Any]]]) -> None:
+    """Warn when the runs ``file@*`` pools differ in their machine or interpreter."""
+    for field in (*SKEW_FIELDS, "python"):
+        values = {json.dumps((r[0].get("context") or {}).get(field), sort_keys=True) for r in runs}
+        if len(values) > 1:
+            print(
+                f"warning: {path}@{POOL_ALL} pools runs that differ in {field} "
+                f"({', '.join(sorted(values))}); their repetitions mix environments",
+                file=sys.stderr,
+            )
 
 
 def load_column(

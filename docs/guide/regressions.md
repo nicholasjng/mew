@@ -106,10 +106,13 @@ $ mew compare results.jsonl@after results.jsonl@before
 
 `path@latest` names the newest run explicitly, so `latest` is reserved:
 `--run-name latest` is an error. A name selects the newest run that has it, so
-running again under a name replaces the earlier run in comparisons; runs are
-never pooled, since two runs can come from different machines or interpreters.
-For more repetitions, raise `--repetitions` in one run. Two files, one per
-side, work the same way without names (see {doc}`ab-comparison`).
+running again under a name replaces the earlier run in comparisons. Two
+files, one per side, work the same way without names (see {doc}`ab-comparison`).
+
+`path@*` pools every run in a file as repetitions of one sample, for a loop
+that appends a run per round (see {doc}`ab-comparison`). Runs from different
+machines, interpreters or mew versions would mix environments, so `mew compare`
+warns when the pooled runs differ in them; `*` can't be a run name either.
 The selector follows the last `@` that comes after a `.json`, `.jsonl`, or
 `.jsonl.gz` extension. Any other `@` is part of the file name, so
 `runs@ci.jsonl` names a file.

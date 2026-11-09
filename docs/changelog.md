@@ -87,6 +87,9 @@ releases may break the API.
 
 ### Added
 
+- `file@*` pools every run in a file, for A/B loops that append a run per
+  round; `mew compare` warns when the pooled runs came from different machines,
+  interpreters or mew versions.
 - Rows carry `params`, a family case's parameters; values JSON can't represent
   are stored as their type's qualified name, such as `"torch.Tensor"`.
 - `mew.grid(**axes)` gives every combination of some values as cases for
