@@ -75,16 +75,11 @@ def check_count(value: object, name: str) -> None:
 
 
 def check_run_name(name: object) -> None:
-    """Reject a run name that isn't a non-empty string, or is the reserved ``latest``."""
+    """Reject a run name that isn't a non-empty string."""
     if not isinstance(name, str):
         raise TypeError(f"run_name must be a string, got {name!r}")
     if not name.strip():
         raise ValueError("run_name must not be empty")
-    if name in ("latest", "*"):
-        raise ValueError(
-            f"run_name {name!r} is reserved: `mew compare path@latest` selects the newest run, "
-            "and `path@*` pools every run"
-        )
 
 
 def thread_counts(opts: BenchmarkOptions) -> tuple[int, ...]:

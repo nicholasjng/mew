@@ -34,8 +34,12 @@ releases may break the API.
   `SessionInfo`, `SessionSummary` and `session_summaries()` are `RunInfo`,
   `RunSummary` and `run_summaries()`; `Reporter.report_runs()` is
   `report_results()`.
-- `file@<name>` selects the newest run with that name instead of pooling every
-  run with the tag, which could merge runs from different machines.
+- Result-file selectors are gone: `mew compare` and `mew show` no longer take
+  `file@<tag>` or `file@latest`, and `latest` is a valid run name again. A
+  file is one sample: `mew compare` pools every run in it, and warns when the
+  runs differ in machine, interpreter, mew version or commit. `mew show`
+  prints each run. To compare runs of one archive, extract them first, e.g.
+  with DuckDB.
 - `session.mew_version` is `context.mew`, and `mew compare` warns when it differs.
 - Result format 1: every row of a result file starts with `schema_version: 1`,
   and mew rejects rows without it, such as files from earlier versions.
@@ -105,9 +109,6 @@ releases may break the API.
 
 - `mew run --context <key>=<value>` records a string in one run's context, over
   the setup file's `context()`.
-- `file@*` pools every run in a file, for A/B loops that append a run per
-  round; `mew compare` warns when the pooled runs came from different machines,
-  interpreters or mew versions.
 - Rows carry `params`, a family case's parameters; values JSON can't represent
   are stored as their type's qualified name, such as `"torch.Tensor"`.
 - `mew.grid(**axes)` gives every combination of some values as cases for
@@ -130,7 +131,7 @@ releases may break the API.
 - The `mew compare` ratio column shows `—` when a counter is negative.
 - A memory manager's `stop()` may return extra keys; mew ignores them.
 - `mew compare` shows each value's spread inline, as `±N%`, red past 25%.
-- `mew compare` context lines show a run's name and date, how many runs `@*`
+- `mew compare` context lines show a run's name and date, how many runs a file
   pooled, and only the context values that differ between the files.
 - `mew compare` reports skipped benchmarks with their reason instead of as missing.
 - `mew compare` names a file prefix all rows share once, in the title.
@@ -150,9 +151,6 @@ releases may break the API.
   its own method.
 - `mew compare` gave counter deltas with a negative or zero baseline the wrong
   sign.
-- `mew compare file@latest` and `file@<tag>` could select a different session
-  than `mew show`.
-- Session tags containing `//` couldn't be selected.
 - memray merged benchmarks whose loop runs in a shared helper; Tachyon cut their
   stacks at the helper.
 - Calling `mew.cli.main()` twice in one process leaked context values into the

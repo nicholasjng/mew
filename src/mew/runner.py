@@ -138,9 +138,8 @@ def run(
         Shuffle repetitions across benchmarks, so drift in load or temperature
         spreads over all of them. Needs ``repetitions > 1``.
     run_name : str, optional
-        A name for the run, e.g. ``"before"``, stored with its ID;
-        ``mew compare path@<name>`` selects the newest run of that name. It
-        can't be empty or ``"latest"``, which selects the newest run.
+        A name for the run, e.g. ``"before"``, stored with its ID; ``mew log``
+        and ``mew compare`` show it. It can't be empty.
     context : Mapping[str, Any], optional
         What to record about the run beside the machine, e.g. a dataset or a
         commit, in every row's ``context``; its keys win over mew's own. Nested
@@ -173,8 +172,7 @@ def run(
     TypeError
         If a run option has the wrong type.
     ValueError
-        If a run option is out of range, or ``run_name`` is empty or
-        ``"latest"``.
+        If a run option is out of range, or ``run_name`` is empty.
     RuntimeError
         With ``strict``, if threaded benchmarks are selected on a GIL build.
     """

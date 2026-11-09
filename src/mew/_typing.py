@@ -29,8 +29,8 @@ class RunInfo(TypedDict):
         When the run started, in UTC with milliseconds, e.g.
         ``"2026-11-08T12:24:23.559Z"``.
     name : str, optional
-        The run's name, from ``--run-name`` or ``run_name=``; ``path@<name>``
-        selects the newest run of that name.
+        The run's name, from ``--run-name`` or ``run_name=``, a label that
+        ``mew log``, ``mew show`` and ``mew compare`` show.
     """
 
     id: str

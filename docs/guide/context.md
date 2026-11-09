@@ -52,11 +52,9 @@ each column with its version when the versions differ.
 Every run gets a time-ordered UUIDv7 ID and its start date, in UTC with
 milliseconds, stored on each row.
 
-Name a run with `--run-name` or `run_name=`; `mew compare` and `mew show`
-select the newest run of that name in a file that holds several
-(`results.jsonl@before`), and `mew log` lists them. The name `latest` is
-reserved: `results.jsonl@latest` selects the newest run. Benchmark selection
-tags (`-t`) are unrelated.
+Name a run with `--run-name` or `run_name=`; `mew log`, `mew show` and
+`mew compare` show the name, and the DuckDB recipes in {doc}`reporters` select
+runs by it. Benchmark selection tags (`-t`) are unrelated.
 
 (the-context-hook)=
 ## The `context()` hook

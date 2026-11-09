@@ -18,7 +18,7 @@ from _helpers import (
     write_pair as _write_pair,
 )
 
-from mew._results import Sample, load_column, split_selector
+from mew._results import Sample, load_column
 from mew.compare import (
     _compare_samples,
     _fmt_delta,
@@ -216,43 +216,6 @@ def test_load_rejects_unreadable_files(
         load_column(p, "real_time")
 
 
-@pytest.mark.parametrize(
-    ("raw", "path", "selector"),
-    [
-        ("results.json", "results.json", None),
-        ("results.json@before", "results.json", "before"),
-        ("v@2/results.JSONL.GZ@before", "v@2/results.JSONL.GZ", "before"),
-        ("results.jsonl@", "results.jsonl", ""),  # loading rejects the empty selector
-        # Only an `@` after a result-file extension splits, whether or not the
-        # file exists.
-        ("weird@name.json", "weird@name.json", None),
-        ("results@before", "results@before", None),
-    ],
-)
-def test_split_selector(raw: str, path: str, selector: str | None) -> None:
-    """`split_selector` splits off `@selector` only after a result-file extension."""
-    assert split_selector(raw) == (Path(path), selector)
-
-
-def test_compare_two_runs_of_one_file(tmp_path: Path) -> None:
-    """`file@name` selectors compare two runs of one file, with distinct column labels."""
-    p = tmp_path / "results.json"
-    _write_json(
-        p,
-        [
-            _row("b", 100.0, date="2026-01-01", run_id="0197aaaa11", run_name="before"),
-            _row("b", 80.0, date="2026-02-01", run_id="0197bbbb22", run_name="after"),
-        ],
-    )
-    console = Console(width=200)
-    assert compare([Path(f"{p}@before"), Path(f"{p}@after")], console=console) == 0
-    out = console.export_text()
-    # Selector-aware labels keep the two columns distinct.
-    assert "@before" in out and "@after" in out
-    assert "-20.00%" in out  # 100 -> 80
-    assert "run=before" in out and "run=after" in out
-
-
 @pytest.mark.parametrize("suffix", [".json", ".jsonl", ".jsonl.gz"])
 def test_compare_reads_every_result_format(tmp_path: Path, suffix: str) -> None:
     """`compare` reads `.json`, `.jsonl` and `.jsonl.gz` result files."""
@@ -265,8 +228,8 @@ def test_compare_reads_every_result_format(tmp_path: Path, suffix: str) -> None:
     assert "-50.00%" in out and "×2.000" in out
 
 
-def test_same_second_runs_stay_distinct_and_order_by_session_id(tmp_path: Path) -> None:
-    """Two runs in the same second stay separate sessions, ordered by their time-ordered id."""
+def test_same_second_runs_stay_distinct_and_order_by_run_id(tmp_path: Path) -> None:
+    """Two runs in the same second stay separate runs, ordered by their time-ordered id."""
     p = tmp_path / "agg.json"
     when = "2026-06-12T10:00:00"
     _write_json(
@@ -276,39 +239,15 @@ def test_same_second_runs_stay_distinct_and_order_by_session_id(tmp_path: Path) 
             _row("b", 20.0, date=when, run_id="0197-bbbb", run_name="after"),
         ],
     )
-    assert load_column(p, "real_time", selector="before")[0]["b"].value == 10.0
-    assert load_column(p, "real_time")[0]["b"].value == 20.0
     assert [s.id for s in run_summaries(p)] == ["0197-bbbb", "0197-aaaa"]
 
 
-def test_name_selector_picks_the_newest_run_of_that_name(tmp_path: Path) -> None:
-    """`@name` selects the newest run with that name; older runs of the name are not pooled
-    into it, since they may come from another machine. Without a selector, or with `@latest`,
-    the newest run of any name counts."""
-    p = tmp_path / "r.json"
-    _write_json(
-        p,
-        [
-            _row("b", 10.0, date="2026-01-01T00:00:00", run_id="aaaa", run_name="ab"),
-            _row("b", 20.0, date="2026-02-01T00:00:00", run_id="bbbb", run_name="ab"),
-            _row("b", 99.0, date="2026-03-01T00:00:00", run_id="cccc", run_name="other"),
-        ],
-    )
-    named, ctx, _ = load_column(p, "real_time", selector="ab")
-    assert named["b"].values == (20.0,)
-    assert ctx["run"]["id"] == "bbbb"
-    for selector in (None, "latest"):
-        newest, ctx, _ = load_column(p, "real_time", selector=selector)
-        assert newest["b"].value == 99.0
-        assert ctx["run"]["name"] == "other"
-
-
-def test_star_selector_pools_every_run_in_a_file(tmp_path: Path, capsys) -> None:
-    """`@*` pools every run as repetitions of one sample, for an A/B loop that appends a run per
-    round; provenance comes from the newest run, with the count of runs. Runs from one machine
-    pool quietly."""
+def test_a_file_pools_every_run(tmp_path: Path, capsys) -> None:
+    """A file is one sample: the runs appended to it pool as repetitions, e.g. the rounds of
+    an interleaved A/B loop. Provenance comes from the newest run, with the count of runs.
+    Runs from one machine, interpreter and commit pool quietly."""
     p = tmp_path / "r.jsonl"
-    same = {"cpu_model": "M2", "python": {"version": "3.13"}}
+    same = {"cpu_model": "M2", "python": {"version": "3.13"}, "vcs": {"commit": "abc"}}
     _write_jsonl(
         p,
         [
@@ -316,24 +255,30 @@ def test_star_selector_pools_every_run_in_a_file(tmp_path: Path, capsys) -> None
             _row("b", 20.0, date="2026-02-01T00:00:00", run_id="bbbb", custom=same),
         ],
     )
-    pooled, ctx, _ = load_column(p, "real_time", selector="*")
+    pooled, ctx, _ = load_column(p, "real_time")
     assert pooled["b"].values == (10.0, 20.0)
     assert (ctx["run"]["id"], ctx["runs"]) == ("bbbb", 2)
     assert capsys.readouterr().err == ""
+    base = tmp_path / "base.json"
+    _write_json(base, [_row("b", 15.0)])
     console = Console(width=200)
-    compare([Path(f"{p}@*"), Path(f"{p}@latest")], console=console)
+    compare([base, p], console=console)
     assert "2 runs, newest 2026-02-01" in console.export_text()
 
 
 @pytest.mark.parametrize(
     ("other", "field"),
-    [({"cpu_model": "M4"}, "cpu_model"), ({"python": {"version": "3.15"}}, "python")],
+    [
+        ({"cpu_model": "M4"}, "cpu_model"),
+        ({"python": {"version": "3.15"}}, "python"),
+        ({"vcs": {"commit": "def"}}, "commit"),
+    ],
 )
-def test_star_selector_warns_when_pooled_runs_differ(tmp_path: Path, capsys, other, field) -> None:
-    """Pooling runs from another machine or interpreter warns: their repetitions mix
-    environments."""
+def test_pooled_runs_warn_when_they_differ(tmp_path: Path, capsys, other, field) -> None:
+    """Pooling runs from another machine, interpreter or commit warns: their repetitions mix
+    environments, as an archive appended to over months would."""
     p = tmp_path / "r.jsonl"
-    base = {"cpu_model": "M2", "python": {"version": "3.13"}}
+    base = {"cpu_model": "M2", "python": {"version": "3.13"}, "vcs": {"commit": "abc"}}
     _write_jsonl(
         p,
         [
@@ -341,40 +286,8 @@ def test_star_selector_warns_when_pooled_runs_differ(tmp_path: Path, capsys, oth
             _row("b", 20.0, date="2026-02-01T00:00:00", run_id="bbbb", custom={**base, **other}),
         ],
     )
-    load_column(p, "real_time", selector="*")
-    assert f"r.jsonl@* pools runs that differ in {field}" in capsys.readouterr().err
-
-
-def test_unknown_selector_lists_the_run_names(tmp_path: Path) -> None:
-    """An unknown run name errors with the file's first five names, as does an empty selector."""
-    p = tmp_path / "r.json"
-    _write_json(p, [_row("b", 1.0, run_id=f"s{i}", run_name=f"t{i}") for i in range(7)])
-    with pytest.raises(
-        ValueError,
-        match=r"no run named 'nope' \(run names in file: t0, t1, t2, t3, t4 \(\+2 more\)",
-    ):
-        load_column(p, "real_time", selector="nope")
-    with pytest.raises(ValueError, match="empty run name"):
-        load_column(p, "real_time", selector="")
-
-
-def test_session_summaries_newest_first(tmp_path: Path) -> None:
-    """`run_summaries` lists sessions newest first, with benchmark and row counts."""
-    p = tmp_path / "r.json"
-    new = dict(date="2026-02-01T00:00:00", run_id="new")
-    _write_json(
-        p,
-        [
-            _row("b", 1.0, date="2026-01-01T00:00:00", run_id="old"),
-            _row("b[n=1]", 1.0, run_name="t", **new),
-            _row("b[n=1]", 2.0, run_name="t", **new),
-            _row("c", 0.0, skipped=True, run_name="t", **new),
-        ],
-    )
-    newest, oldest = run_summaries(p)
-    # `benchmarks` counts measured benchmarks; `rows` counts every stored row.
-    assert (newest.id, newest.name, newest.benchmarks, newest.rows) == ("new", "t", 1, 3)
-    assert (oldest.id, oldest.name, oldest.benchmarks, oldest.rows) == ("old", None, 1, 1)
+    load_column(p, "real_time")
+    assert f"r.jsonl pools 2 runs that differ in {field}" in capsys.readouterr().err
 
 
 def test_load_of_an_empty_file_errors_naming_it(tmp_path: Path) -> None:
@@ -723,22 +636,18 @@ def test_compare_filter_matching_nothing_says_so(tmp_path: Path, capsys) -> None
     assert capsys.readouterr().err.strip() == "no benchmarks match 'nomatch'"
 
 
-def test_compare_selects_the_session_show_selects(tmp_path: Path) -> None:
-    """A selector names a session before skipped rows are dropped, as in `mew show`: a newest
-    session that skipped everything is an error, not a silent fall-back to an older one."""
+def test_a_file_of_only_skipped_rows_has_no_measurements(tmp_path: Path) -> None:
+    """A file whose runs skipped everything is an error naming the file, not an empty column."""
     p = tmp_path / "r.jsonl"
     _write_jsonl(
         p,
         [
-            _row("b", 1.0, date="2026-01-01T00:00:00", run_id="old"),
-            _row("b", 0.0, date="2026-02-01T00:00:00", run_id="new", run_name="SKIP",
-                 skipped=True),
+            _row("b", 0.0, date="2026-01-01T00:00:00", run_id="old", skipped=True),
+            _row("b", 0.0, date="2026-02-01T00:00:00", run_id="new", skipped=True),
         ],
-    )  # fmt: skip
-    with pytest.raises(ValueError, match="the latest run has no measurements"):
+    )
+    with pytest.raises(ValueError, match=re.escape("r.jsonl: no measurements, only skipped rows")):
         load_column(p, "real_time")
-    with pytest.raises(ValueError, match="run 'SKIP' has no measurements"):
-        load_column(p, "real_time", selector="SKIP")
 
 
 def test_unreadable_values_name_the_file(tmp_path: Path) -> None:

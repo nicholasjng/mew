@@ -81,9 +81,6 @@ def test_run_reports_rows_and_the_run_context():
         ({"min_warmup_time": -1}, ValueError, "min_warmup_time must be a finite"),
         ({"run_name": 1}, TypeError, "run_name must be a string"),
         ({"run_name": ""}, ValueError, "run_name must not be empty"),
-        # `mew compare path@latest` selects the newest run.
-        ({"run_name": "latest"}, ValueError, "run_name 'latest' is reserved"),
-        ({"run_name": "*"}, ValueError, r"run_name '\*' is reserved"),
     ],
 )
 def test_run_rejects_invalid_options(kwargs, error, message):
