@@ -119,7 +119,7 @@ extend-select = ["UP", "B", "SIM", "RET", "PIE", "C4", "FURB", "PERF", "PT", "RU
 ignore = [
     "PLW1510",  # don't require check=False on subprocesses bound to a variable.
     "PT018",  # allow `assert a and b`.
-    "RUF001",  # `×` and non-ASCII digits in strings are deliberate.
+    "RUF001",  # `×` in strings is deliberate.
     "RUF003",  # the same in comments.
 ]
 
