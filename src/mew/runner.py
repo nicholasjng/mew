@@ -1,9 +1,14 @@
-"""Run registered benchmarks through Google Benchmark."""
+"""Run registered benchmarks through Google Benchmark.
+
+Also captures what benchmarks print, native writes included, for the run's
+duration (:class:`OutputCapture`).
+"""
 
 from __future__ import annotations
 
 import functools
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -12,11 +17,9 @@ import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from mew import _core
-from mew._capture import OutputCapture
-from mew._encode import encode_context
 from mew._options import (
     THREADED_ON_GIL,
     check_count,
@@ -29,6 +32,7 @@ from mew._options import (
     threaded_on_gil,
 )
 from mew._registry import REGISTRY, Entry, longest_row_name, selected_cases
+from mew._results import encode_context
 from mew._typing import MemoryManager, ProfilerManager
 from mew.machine import machine_context
 from mew.reporter import Fanout, Reporter, RichReporter
@@ -303,3 +307,35 @@ def run(
             capture = OutputCapture(stack.enter_context(tempfile.TemporaryFile()))
             stack.callback(capture.close)
         return _core.run_benchmarks(cli, rep, run_context, params, capture)
+
+
+class OutputCapture:
+    """Redirect fds 1 and 2 into ``file`` until :meth:`close`; the caller owns ``file``."""
+
+    def __init__(self, file: BinaryIO) -> None:
+        self._file = file
+        self._saved = (os.dup(1), os.dup(2))
+        self.resume()
+
+    def resume(self) -> None:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(self._file.fileno(), 1)
+        os.dup2(self._file.fileno(), 2)
+
+    def suspend(self) -> None:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(self._saved[0], 1)
+        os.dup2(self._saved[1], 2)
+
+    def close(self) -> None:
+        """Restore the streams, then print everything captured to stderr."""
+        # Suspending again when already suspended is a no-op.
+        self.suspend()
+        for fd in self._saved:
+            os.close(fd)
+        self._file.seek(0)
+        if captured := self._file.read().decode(errors="replace"):
+            sys.stderr.write(f"\noutput from benchmarks:\n{captured}")
+            sys.stderr.flush()

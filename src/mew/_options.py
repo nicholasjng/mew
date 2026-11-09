@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from math import isfinite
 from typing import TYPE_CHECKING, Any, cast
 
-from mew._format import overflow
+from mew._console import overflow
 from mew._typing import BenchmarkOptions
 from mew.machine import _gil_enabled
 

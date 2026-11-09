@@ -25,7 +25,7 @@ from mew._typing import (
     State,
 )
 from mew.api import benchmark, grid, parametrize
-from mew.machine import machine_context
+from mew.machine import machine_context, vcs_context
 from mew.reporter import (
     Fanout,
     JSONLReporter,
@@ -34,7 +34,6 @@ from mew.reporter import (
     RichReporter,
 )
 from mew.runner import run
-from mew.vcs import vcs_context
 
 __version__ = "0.3.0"
 

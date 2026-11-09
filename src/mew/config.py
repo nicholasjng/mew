@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from mew._managers import Preset, parse_presets
-from mew._statistics import resolve_statistic
+from mew._results import resolve_statistic
 from mew.regressions import AllowRule, CounterConfig, CounterRule, RegressionConfig
 
 # `[tool.mew]` keys.

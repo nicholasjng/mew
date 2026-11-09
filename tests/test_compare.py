@@ -19,8 +19,7 @@ from _helpers import (
     write_pair as _write_pair,
 )
 
-from mew._results import Sample, load_column, split_selector
-from mew._statistics import Statistic
+from mew._results import Sample, Statistic, load_column, split_selector
 from mew.compare import (
     _compare_samples,
     _fmt_delta,

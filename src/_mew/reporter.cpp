@@ -111,7 +111,7 @@ class PyReporter : public BenchmarkReporter {
     nb::dict run_context;
     // Registered name -> the case's parameters; see run_to_dict.
     nb::dict params;
-    // mew._capture.OutputCapture, or None. Suspended around every callback so
+    // mew.runner.OutputCapture, or None. Suspended around every callback so
     // reporters write to the real streams.
     nb::object capture;
 
@@ -239,7 +239,7 @@ void register_reporter(nb::module_& m) {
         "reporting through `reporter`.\n"
         "`params` maps a registered name to its case's parameters, stamped on its rows.\n"
 
-        "`capture` (an active mew._capture.OutputCapture) is suspended around every\n"
+        "`capture` (an active mew.runner.OutputCapture) is suspended around every\n"
         "reporter callback, so reporters write to the real stdout/stderr.\n"
         "Returns the number of benchmarks run.");
 }

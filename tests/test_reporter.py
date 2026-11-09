@@ -11,8 +11,7 @@ from _helpers import Capture
 
 import mew
 from mew import BenchmarkResult
-from mew._console import Terminal
-from mew._format import human_readable
+from mew._console import Terminal, human_readable
 from mew.compare import read_results
 from mew.reporter import Fanout, JSONLReporter, JSONReporter, RichReporter
 

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
-from mew import _discovery
+from mew import _registry
 
 Slot = Literal["cpu", "memory"]
 
@@ -165,7 +165,7 @@ def _import(preset: Preset, root: Path) -> Any:
         if not path.is_file():
             raise ValueError(f"{preset.label}: no file {target} in {root}")
         # Registered in sys.modules under a hashed name, so resolve_name finds it.
-        module = _discovery.import_file(path).__name__
+        module = _registry.import_file(path).__name__
     try:
         obj = pkgutil.resolve_name(f"{module}:{attr}")
     except AttributeError as e:

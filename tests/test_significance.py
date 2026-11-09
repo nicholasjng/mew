@@ -1,4 +1,4 @@
-"""Tests for `mew._statistics.mannwhitney_p` (stdlib Mann-Whitney U test).
+"""Tests for `mew._results.mannwhitney_p` (stdlib Mann-Whitney U test).
 
 Reference p-values are SciPy 1.18.1's ``mannwhitneyu(a, b, method="exact")`` for
 small samples without ties, and ``method="asymptotic", use_continuity=True``
@@ -12,7 +12,7 @@ from math import comb
 
 import pytest
 
-from mew._statistics import _EXACT_MAX, _u_counts, mannwhitney_p
+from mew._results import _EXACT_MAX, _u_counts, mannwhitney_p
 
 
 @pytest.mark.parametrize(
