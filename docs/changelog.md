@@ -7,6 +7,9 @@ releases may break the API.
 
 ### Breaking changes
 
+- `mew compare` always reduces repetitions to their median: `--statistic`,
+  `[tool.mew] statistic` and `compare(statistic=)` are gone. For another
+  reduction, query the result file, e.g. with DuckDB.
 - `mew compare --key func` and `compare(key=)` are gone: rows match by their
   full name. For an A/B comparison, run one benchmark file against each side;
   see the A/B guide.

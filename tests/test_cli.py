@@ -265,7 +265,6 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         (("run", "--repetitions", "0"), "--repetitions: expected a positive integer"),
         # Checked before reading the result files, which don't exist here. The
         # `=` keeps argparse from taking `-1%` for an option.
-        (("compare", "a.json", "b.json", "--statistic", "bogus"), "statistic 'bogus'"),
         (("compare", "a.json", "b.json", "--regression-threshold=5"), "like '5%', got '5'"),
         (("compare", "a.json", "b.json", "--regression-threshold=-1%"), "got '-1%'"),
         (("compare", "a.json", "b.json", "--regression-threshold=nan%"), "got 'nan%'"),
@@ -735,14 +734,10 @@ def test_compare_gates_on_a_counter_in_its_configured_direction(
     [
         ("", (), "+0.00%", "+900.00%"),  # the median of 1, 1, 10 is 1
         ("", ("-k", "bench_a"), "bench_a", "bench_b"),
-        ("", ("--statistic", "max"), "+900.00%", "+0.00%"),
-        # [tool.mew] statistic applies without the flag; the flag wins over it.
-        ('[tool.mew]\nstatistic = "max"\n', (), "+900.00%", "+0.00%"),
-        ('[tool.mew]\nstatistic = "max"\n', ("--statistic", "median"), "+0.00%", "+900.00%"),
     ],
 )  # fmt: skip
 def test_compare_options_reach_the_comparison(mew_cli, tmp_path, pyproject, args, shown, hidden):
-    """`-k`, `--statistic` and `[tool.mew] statistic` change what
+    """`-k` changes what
     `mew compare` prints, not only what it accepts."""
     other, base = _write_pair(
         tmp_path,

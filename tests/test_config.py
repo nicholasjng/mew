@@ -36,7 +36,6 @@ def test_load_reads_every_setting(tmp_path: Path):
         'benchpaths = "perf"\n'
         'python-files = ["bench_*.py", "*_perf.py"]\n'
         'setup = "benchmarks/conf.py"\n'
-        'statistic = "gmean"\n'
         "[tool.mew.regressions]\n"
         "default-threshold = 7.5\n"
         "[[tool.mew.counters]]\n"
@@ -50,7 +49,6 @@ def test_load_reads_every_setting(tmp_path: Path):
         benchpaths=["perf"],
         python_files=["bench_*.py", "*_perf.py"],
         setup="benchmarks/conf.py",
-        statistic="gmean",
         regressions=RegressionConfig(default_threshold=7.5),
         counters=CounterConfig(
             rules=(CounterRule("*_misses", False), CounterRule("*_per_second", True))
@@ -63,8 +61,7 @@ def test_load_reads_every_setting(tmp_path: Path):
     ("setting", "message"),
     [
         ("benchpaths = 42", "benchpaths must be a string or a list of strings"),
-        ("statistic = 95", "statistic must be a string"),
-        ('statistic = "average"', "[tool.mew] statistic 'average': unknown name"),
+        ("setup = 95", "setup must be a string"),
         # A typo would otherwise load the default.
         ('benchpath = "perf"', "unknown key 'benchpath' in [tool.mew]; did you mean 'benchpaths'?"),
         # Keys are dashed, as TOML spells them.
@@ -122,6 +119,6 @@ def test_load_rejects_a_table_that_is_not_one(tmp_path: Path, body: str, message
 
 def test_load_skips_a_directory_named_pyproject_toml(tmp_path: Path):
     """Only a file is a pyproject.toml; the search goes on past a directory of that name."""
-    _write(tmp_path, '[tool.mew]\nstatistic = "min"\n')
+    _write(tmp_path, '[tool.mew]\nsetup = "conf.py"\n')
     (tmp_path / "sub" / "pyproject.toml").mkdir(parents=True)
-    assert load(tmp_path / "sub").statistic == "min"
+    assert load(tmp_path / "sub").setup == "conf.py"
