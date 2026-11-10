@@ -43,8 +43,7 @@ class Config:
         The ``[[tool.mew.counters]]`` rules: which direction is an improvement
         per counter.
     profilers : dict[str, Preset]
-        The ``[tool.mew.profilers.<name>]`` presets ``mew run --cpu-profiler`` and
-        ``--memory-profiler`` name.
+        The ``[tool.mew.profilers.<name>]`` presets, by name.
     project_root : Path
         Directory of the ``pyproject.toml`` these settings came from, or the
         directory the search started in when there is none and defaults are

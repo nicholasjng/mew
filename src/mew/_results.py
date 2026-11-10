@@ -369,7 +369,7 @@ class RunSummary:
     date : str or None
         When the run started, in ISO 8601.
     name : str or None
-        Its ``--run-name``.
+        Its name, from :func:`mew.run`'s ``run_name``.
     benchmarks : int
         Distinct benchmarks it measured, without skipped rows.
     rows : int
@@ -384,7 +384,7 @@ class RunSummary:
 
 
 def run_summaries(path: str | Path) -> list[RunSummary]:
-    """Summarize every run in a result file, newest first, as ``mew log`` lists them.
+    """Summarize every run in a result file, newest first.
 
     ``rows`` counts every stored row of the run, and ``benchmarks`` the
     distinct measured benchmarks, without skipped rows.

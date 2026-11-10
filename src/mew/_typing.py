@@ -29,8 +29,7 @@ class RunInfo(TypedDict):
         When the run started, in UTC with milliseconds, e.g.
         ``"2026-11-08T12:24:23.559Z"``.
     name : str, optional
-        The run's name, from ``--run-name`` or ``run_name=``, a label that
-        ``mew log``, ``mew show`` and ``mew compare`` show.
+        The run's name, from :func:`mew.run`'s ``run_name``.
     """
 
     id: str
@@ -101,8 +100,8 @@ class BenchmarkResult(TypedDict):
         ``total_bytes`` and ``net_heap_growth``), when one ran and measured
         something.
     cpu_profile : dict, optional
-        The profiler manager's summary, when it returned one. Under
-        ``--cpu-profiler sample``, a :class:`mew.cpu.CpuProfile`.
+        The profiler manager's summary, when it returned one. The
+        ``mew.cpu`` profilers return a :class:`mew.cpu.CpuProfile`.
     """
 
     name: str
@@ -208,10 +207,8 @@ class MemoryManager(Protocol):
     def write_outputs(self, directory: Path) -> None:
         """Write the manager's files, such as an HTML report, to ``directory``.
 
-        Called after the run by ``mew run --profile-dir DIR``, with
-        ``DIR/memory``. Only for files: the row's figures come from
-        :meth:`stop`.
-        Does nothing unless a subclass overrides it.
+        Call it once the run is over. Only for files: the row's figures come
+        from :meth:`stop`. Does nothing unless a subclass overrides it.
 
         Parameters
         ----------
@@ -281,9 +278,8 @@ class ProfilerManager(Protocol):
     def write_outputs(self, directory: Path) -> None:
         """Write the manager's files, such as an HTML report, to ``directory``.
 
-        Called after the run by ``mew run --profile-dir DIR``, with
-        ``DIR/cpu``. Only for files: the row's figures come from
-        :meth:`get_result`. Does nothing unless a subclass overrides it.
+        Call it once the run is over. Only for files: the row's figures come
+        from :meth:`get_result`. Does nothing unless a subclass overrides it.
 
         Parameters
         ----------

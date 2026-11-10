@@ -138,8 +138,8 @@ def run(
         Shuffle repetitions across benchmarks, so drift in load or temperature
         spreads over all of them. Needs ``repetitions > 1``.
     run_name : str, optional
-        A name for the run, e.g. ``"before"``, stored with its ID. ``mew log``
-        and ``mew compare`` show it.
+        A name for the run, e.g. ``"before"``, stored with its ID in every
+        row's ``run`` block.
     context : Mapping[str, Any], optional
         What to record about the run beside the machine, e.g. a dataset or a
         commit, in every row's ``context``. Its keys win over mew's own. Nested

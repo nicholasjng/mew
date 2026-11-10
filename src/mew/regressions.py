@@ -135,7 +135,7 @@ class CounterRule:
 
 @dataclass(frozen=True, slots=True)
 class CounterConfig:
-    """Which direction is an improvement for which counter, for ``mew compare``.
+    """Which direction is an improvement for which counter, for :func:`mew.compare.compare`.
 
     ``[[tool.mew.counters]]`` configures it, as :attr:`mew.config.Config.counters`.
 
