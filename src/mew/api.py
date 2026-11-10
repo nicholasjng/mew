@@ -172,7 +172,8 @@ def benchmark(
         Replaces the default name, ``path/to/file.py::qualname``. It can't
         contain ``::``, brackets or newlines, which mew's selectors use.
     tags : Iterable[str] or str, optional
-        Tags to select the benchmark by (``mew run --tag``). A string is one tag.
+        Tags to select the benchmark by, as :meth:`Registry.filter` does. A string
+        is one tag.
     **options
         Google Benchmark options, see :class:`~mew.api.BenchmarkOptions`.
 

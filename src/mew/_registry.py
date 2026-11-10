@@ -190,7 +190,7 @@ class Registry:
             Selects entries with any of these tags.
         literal : bool, default False
             Match ``pattern`` as plain text, e.g. to keep a ``name[label]``'s
-            brackets, like ``mew run -F``.
+            brackets.
 
         Returns
         -------

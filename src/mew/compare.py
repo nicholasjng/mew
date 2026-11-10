@@ -358,8 +358,8 @@ def compare(
     ----------
     files : Sequence[str or Path]
         JSON, JSONL or gzipped JSONL result files, the baseline first:
-        ``mew compare base.json head.json`` compares head against base. A file
-        is one sample: the runs ``--append`` added to it pool as repetitions,
+        ``compare(["base.json", "head.json"])`` compares head against base. A
+        file is one sample: the runs appended to it pool as repetitions,
         with a warning when they differ in machine, interpreter, mew version
         or commit. To compare one run of an archive, extract it first.
     metric : str, default "real_time"
