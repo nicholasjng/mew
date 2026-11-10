@@ -60,11 +60,11 @@ class Preset:
     Attributes
     ----------
     spec : str
-        ``module:attr`` or ``path.py:attr``; a path is relative to the project root.
+        ``module:attr`` or ``path.py:attr``. A path is relative to the project root.
     options : dict
         Keyword arguments for the callable, in snake_case.
     name : str or None
-        The preset's name; ``None`` for a spec given on the CLI.
+        The preset's name, or ``None`` for a spec given on the CLI.
     """
 
     spec: str
@@ -134,7 +134,7 @@ def parse_presets(raw: Any) -> dict[str, Preset]:
 def resolve(value: str, presets: Mapping[str, Preset], *, flag: str) -> Preset:
     """The preset a ``flag`` value names.
 
-    A value with a ``:`` is a spec, run with the class's defaults; any other
+    A value with a ``:`` is a spec, run with the class's defaults. Any other
     value is a preset name, the user's or mew's own.
 
     Raises
@@ -155,7 +155,7 @@ def resolve(value: str, presets: Mapping[str, Preset], *, flag: str) -> Preset:
 
 
 def _import(preset: Preset, root: Path) -> Any:
-    """Import the callable a preset's spec names; a user preset's must be a class."""
+    """Import the callable a preset's spec names. A user preset's must be a class."""
     target, _, attr = preset.spec.rpartition(":")
     if not target or not attr:
         raise ValueError(f"{preset.label}: expected 'module:Class' or 'path.py:Class'")
@@ -238,7 +238,7 @@ def load(preset: Preset, slot: Slot, *, root: Path, stack: ExitStack) -> Loaded:
         is unknown, missing or of a type the constructor rejects with
         ``TypeError``, or the manager lacks the slot's methods.
     ImportError
-        If the spec's module can't be imported; the manager's other errors, such
+        If the spec's module can't be imported. The manager's other errors, such
         as a sampler that can't run here, propagate as they are.
     """
     target = _import(preset, root)

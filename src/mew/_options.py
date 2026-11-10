@@ -22,7 +22,7 @@ _OPTION_KEYS = BenchmarkOptions.__required_keys__ | BenchmarkOptions.__optional_
 def parse_seconds(text: str) -> float:
     """Seconds from a duration: ``"0.5"`` or ``"0.5s"``, ``"500ms"``, or ``"1m"``.
 
-    Raises :class:`ValueError` for any other text; callers check the range.
+    Raises :class:`ValueError` for any other text. Callers check the range.
     """
     text = text.strip()
     if text.endswith("ms"):  # before "s" and "m": "500ms" is neither
@@ -64,7 +64,7 @@ def check_min_warmup_time(value: object) -> None:
 
 
 def check_count(value: object, name: str) -> None:
-    """Reject a count that isn't an integer >= 1; a ``bool`` is not a count."""
+    """Reject a count that isn't an integer >= 1. A ``bool`` is not a count."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{name} must be an integer, got {value!r}")
     if value < 1:
@@ -80,7 +80,7 @@ def check_run_name(name: object) -> None:
 
 
 def thread_counts(opts: BenchmarkOptions) -> tuple[int, ...]:
-    """The thread counts a benchmark asked for; ``(1,)`` when unspecified."""
+    """The thread counts a benchmark asked for, ``(1,)`` when unspecified."""
     v = opts.get("threads")
     if v is None:
         return (1,)
@@ -119,7 +119,7 @@ def _normalize_threads(value: Any) -> tuple[int, ...]:
     """Coerce ``threads`` (an int or an iterable of ints) to a tuple of distinct counts.
 
     Google Benchmark accumulates thread counts, so each count runs the benchmark
-    once; duplicates are dropped and the given order is kept.
+    once. Duplicates are dropped and the given order is kept.
     """
     if isinstance(value, bool) or not isinstance(value, int | Iterable):
         raise TypeError(f"threads must be an int or an iterable of ints, got {value!r}")

@@ -63,7 +63,7 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
 def _ctx_summary(ctx: dict[str, Any], differing: dict[str, Any]) -> list[str]:
     """The parts of a comparison column's provenance line: its run, and the
     context values that differ from another column's. What every column shares
-    goes unsaid; the skew warnings flag a machine that differs.
+    goes unsaid. The skew warnings flag a machine that differs.
 
     An unnamed run goes by its date: a short id would not tell runs apart, as a
     UUIDv7's leading digits are its time to about a minute."""
@@ -185,8 +185,8 @@ def _value_cell(sample: Sample, metric: str) -> str | list[Span]:
 class _Column:
     """One comparison column: a result file, all of its runs as one sample.
 
-    ``source`` identifies the column in warnings, its path; ``label`` heads its
-    table column; ``skipped`` maps the benchmarks the file has only as skipped
+    ``source``, its path, identifies the column in warnings. ``label`` heads its
+    table column. ``skipped`` maps the benchmarks the file has only as skipped
     to their reasons.
     """
 
@@ -233,7 +233,7 @@ def _render(
 
     Column-shaped on purpose: anything producing labelled sample sets with contexts
     (files, or anything else) compares the same way. ``higher_is_better``
-    is the metric's direction; ``None`` leaves deltas uncolored and can't be gated.
+    is the metric's direction. ``None`` leaves deltas uncolored and can't be gated.
     """
     counter = counter_name(metric)
     all_names: set[str] = set().union(*(c.samples.keys() for c in columns))

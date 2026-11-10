@@ -66,7 +66,7 @@ def _body_frame(frame: FrameType) -> tuple[FrameType, State | None]:
     Profilers start from the body's first loop step, so ``frame`` is a profiler
     hook's caller: the loop's frame, or a frame between, such as a subclass's
     ``start()`` that wraps its parent's. The loop is the nearest frame holding a
-    ``State``, and may be in a helper the body calls; the body is the outermost
+    ``State``, and may be in a helper the body calls. The body is the outermost
     frame holding the same ``State``, not counting mew's own family wrapper.
     Without a ``State`` on the stack, ``frame`` stands for the body.
     """
