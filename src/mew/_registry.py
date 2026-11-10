@@ -80,7 +80,7 @@ class Entry:
 def case_names(entry: Entry) -> Iterator[tuple[int, str]]:
     """Yield ``(case_index, name[label])`` for each case of a family.
 
-    A ``-k`` regex matches against these; the form is the row's ``benchmark``
+    A ``-k`` regex matches against these. The form is the row's ``name``
     field, so one pattern selects the same set in ``mew run`` and ``mew compare``.
     """
     for i, label in enumerate(entry.case_labels or ()):
@@ -114,7 +114,7 @@ def narrow_entry(entry: Entry, filters: Iterable[re.Pattern[str]]) -> Entry | No
 
     A family whose own name matches keeps all its cases. A view narrows further, so
     narrowing by one filter group, then another, keeps the cases both select. The
-    entry is never mutated; a strict subset is a copy.
+    entry is never mutated. A strict subset is a copy.
     """
     n = len(entry.case_labels) if entry.case_labels is not None else 1
     current = set(range(n)) if entry.cases is None else set(entry.cases)
@@ -275,7 +275,7 @@ def select_entries(
 
 
 def parse(arg: str, *, root: Path | None = None, literal: bool = False) -> Selector:
-    """Parse ``path[::filter]``; a relative path resolves against ``root``, else the cwd.
+    """Parse ``path[::filter]``. A relative path resolves against ``root``, else the cwd.
 
     Raises :class:`ValueError` on a malformed filter.
     """

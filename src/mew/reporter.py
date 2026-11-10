@@ -384,7 +384,7 @@ class _Fanout(Reporter):
     """Pass every callback on to several reporters, in order, for ``run(reporter=[...])``.
 
     A callback that raises propagates before the reporters after it get the
-    call; ``finalize()`` still reaches every reporter.
+    call. ``finalize()`` still reaches every reporter.
 
     Parameters
     ----------

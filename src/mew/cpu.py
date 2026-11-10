@@ -249,11 +249,11 @@ class PyinstrumentManager(ProfilerManager):
 
 
 def _hottest_frame(root: Frame) -> TopFunction | None:
-    """The user function with the most self time; ``None`` if there is none.
+    """The user function with the most self time, ``None`` if there is none.
 
     Summed per function: pyinstrument records one frame per *call*, so the
     largest single frame would name the calling loop instead of a helper it calls
-    N times. Synthetic ``[self]`` frames are skipped; their parent already counts
+    N times. Synthetic ``[self]`` frames are skipped, as their parent already counts
     them. Its ``line`` stays ``None``: pyinstrument's is the ``def`` line.
     """
     totals: defaultdict[tuple[str, str | None, int | None], float] = defaultdict(float)
@@ -308,7 +308,7 @@ def _unwinder(pid: int) -> Any:
 def _hottest_function(
     lines: dict[tuple[str, str, int], float], wall_time: float
 ) -> TopFunction | None:
-    """The function with the most self time, at its hottest line; ``None`` if there is none.
+    """The function with the most self time, at its hottest line, ``None`` if there is none.
 
     ``lines`` maps ``(file, function, line)`` to self time.
     """
@@ -521,7 +521,7 @@ class TachyonManager(ProfilerManager):
         }
 
     def _cut_at_body(self, frames: tuple[Any, ...]) -> tuple[Any, ...]:
-        """Drop the frames that called the benchmark body; ``frames`` run leaf first."""
+        """Drop the frames that called the benchmark body. ``frames`` run leaf first."""
         for i in range(len(frames) - 1, -1, -1):
             if (frames[i].filename, frames[i].funcname) == self._body:
                 return frames[: i + 1]

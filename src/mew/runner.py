@@ -273,7 +273,7 @@ def run(
 
 
 class OutputCapture:
-    """Redirect fds 1 and 2 into ``file`` until :meth:`close`; the caller owns ``file``."""
+    """Redirect fds 1 and 2 into ``file`` until :meth:`close`. The caller owns ``file``."""
 
     def __init__(self, file: BinaryIO) -> None:
         self._file = file

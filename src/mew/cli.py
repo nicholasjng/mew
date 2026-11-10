@@ -61,7 +61,7 @@ def _load_config_or_exit() -> _config.Config:
 def _usage_error(*errors: type[Exception]) -> Generator[None]:
     """Turn ``errors`` into a ``mew: error: ...`` message and exit 2.
 
-    2 is the usage-or-environment code; uncaught, they would exit 1, the code
+    2 is the usage-or-environment code. Uncaught, they would exit 1, the code
     for "nothing matched".
     """
     try:
@@ -72,10 +72,10 @@ def _usage_error(*errors: type[Exception]) -> Generator[None]:
 
 
 def _import_or_exit(path: Path) -> None:
-    """Import a benchmark or setup file; if it raises, exit 2 after its traceback.
+    """Import a benchmark or setup file. If it raises, exit 2 after its traceback.
 
     The traceback shows what the file got wrong, e.g. an option a decorator
-    rejects; uncaught, it would exit 1, the code for "nothing matched".
+    rejects. Uncaught, it would exit 1, the code for "nothing matched".
     """
     try:
         _registry.import_file(path)
@@ -236,7 +236,7 @@ def _build_reporters(
     show_repetitions: bool = True,
     append: bool = False,
 ) -> list[Reporter]:
-    """Resolve ``-o`` sinks into reporters; ``-`` is stdout, a file's format its extension.
+    """Resolve ``-o`` sinks into reporters: ``-`` is stdout, a file's format its extension.
 
     Raises :class:`ValueError` for a sink the run can't write to, and for
     ``append`` without a ``.jsonl`` sink or with a ``.json`` one, which is a
@@ -399,7 +399,7 @@ def compare(
     regression_threshold: float | None,
     exit_non_zero_on_regression: bool,
 ) -> None:
-    """Compare benchmark result files; the first file is the baseline."""
+    """Compare benchmark result files. The first file is the baseline."""
     from mew.compare import compare as _compare
 
     cfg = _load_config_or_exit()
@@ -627,7 +627,7 @@ def _add_filter_args(p: argparse.ArgumentParser, *, verb: str) -> None:
     """Add the coupled ``-k/--pattern`` + ``-F/--literal`` pair.
 
     ``-F`` only means anything alongside ``-k``, so the two are always registered
-    together; only the help's verb differs per command.
+    together. Only the help's verb differs per command.
     """
     p.add_argument(
         "-k", "--pattern", metavar="<regex>", help=f"{verb} benchmarks whose name matches <regex>."

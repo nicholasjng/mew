@@ -37,7 +37,7 @@ def _matches(name: str, pattern: str) -> bool:
 
 
 def _check_threshold(value: object, field: str, *, infinite: bool = False) -> None:
-    """Raise unless ``value`` is a non-negative, non-``bool`` number; finite unless ``infinite``."""
+    """Raise unless ``value`` is a non-negative, non-``bool`` number, finite unless ``infinite``."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int | float)

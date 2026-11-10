@@ -64,7 +64,7 @@ def _read_table(raw: Any, known: Sequence[str], table: str) -> dict[str, Any]:
     """Return a config table with its dashed keys (the TOML idiom) in snake_case.
 
     A key not in ``known`` raises, because a typo would otherwise load the
-    default silently; a snake_case spelling of a dashed key is one too.
+    default silently. A snake_case spelling of a dashed key is one too.
     """
     # E.g. `mew = []`, which would otherwise loop over nothing and load defaults.
     if not isinstance(raw, dict):
@@ -78,7 +78,7 @@ def _read_table(raw: Any, known: Sequence[str], table: str) -> dict[str, Any]:
 
 
 def _parse_str_list(raw: Any, key: str) -> list[str]:
-    """Validate a string-list config field; a bare string means one entry.
+    """Validate a string-list config field. A bare string means one entry.
 
     `list("benchmarks")` would silently split into characters, so the string
     case must be handled before the list case.

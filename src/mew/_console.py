@@ -40,7 +40,7 @@ def warn(message: str) -> None:
 def fill(parts: list[str], width: int, *, indent: str, hang: str, sep: str) -> list[str]:
     """Lay ``parts`` out on lines no wider than ``width``, never splitting one.
 
-    The first line starts with ``indent``, the others with ``hang``; a part too
+    The first line starts with ``indent``, the others with ``hang``. A part too
     long for a line of its own is right-ellipsized.
     """
     lines: list[str] = []
@@ -54,7 +54,7 @@ def fill(parts: list[str], width: int, *, indent: str, hang: str, sep: str) -> l
 
 
 def sgr(text: str, *styles: str | None, enabled: bool = True) -> str:
-    """Wrap ``text`` in ANSI codes for ``styles``; a no-op when disabled or empty."""
+    """Wrap ``text`` in ANSI codes for ``styles``, a no-op when disabled or empty."""
     names = [s for s in styles if s]
     if not enabled or not names or not text:
         return text
@@ -195,7 +195,7 @@ class Table:
 
     The flexible column (``flex=True``, e.g. the benchmark name) absorbs leftover
     width and is left-ellipsized when narrowed, but keeps ``_FLEX_FLOOR`` columns
-    even if the table then overflows; fixed columns are sized to their widest cell
+    even if the table then overflows. Fixed columns are sized to their widest cell
     and right/left justified.
     """
 

@@ -33,7 +33,7 @@ SCHEMA = "v1"
 
 
 def result_format(name: str) -> Literal["json", "jsonl"] | None:
-    """``"json"`` or ``"jsonl"`` by a result file's extension, in any case; else ``None``."""
+    """``"json"`` or ``"jsonl"`` by a result file's extension, in any case, else ``None``."""
     name = name.lower()
     if name.endswith(".json"):
         return "json"
@@ -67,7 +67,7 @@ METRICS = TIME_METRICS | MEMORY_METRICS
 
 
 def counter_name(metric: str) -> str | None:
-    """The counter a ``counters.<name>`` metric names; ``None`` for any other metric.
+    """The counter a ``counters.<name>`` metric names, ``None`` for any other metric.
 
     ``<name>`` may itself contain dots.
     """
@@ -88,7 +88,7 @@ class Sample:
         The per-repetition values, in ``value``'s unit, for the significance test.
     counter_format : dict or None
         For a ``counters.<name>`` metric, the counter's ``format`` record from
-        the benchmark's first row that has the counter, if any; ``None`` for a
+        the benchmark's first row that has the counter, if any. ``None`` for a
         plain counter and for other metrics.
     """
 
@@ -98,7 +98,7 @@ class Sample:
 
     @property
     def stddev(self) -> float | None:
-        """The sample stddev of ``values``; ``None`` for a single repetition."""
+        """The sample stddev of ``values``, ``None`` for a single repetition."""
         return statistics.stdev(self.values) if len(self.values) > 1 else None
 
     @property
@@ -182,10 +182,10 @@ def _counter(row: dict[str, Any], name: str) -> dict[str, Any] | None:
 
 
 def _metric_value(row: dict[str, Any], metric: str) -> Any:
-    """Look up ``metric`` in a row; dotted metrics traverse one nested level.
+    """Look up ``metric`` in a row. Dotted metrics traverse one nested level.
 
     Counters are a list of ``{"name", "value"}`` records, so a counter is found
-    by name; ``memory`` is a mapping.
+    by name. ``memory`` is a mapping.
     """
     head, sep, tail = metric.partition(".")
     value = row.get(head)
@@ -198,7 +198,7 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
 
 
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
-    """Per-repetition values, dropping absent metrics; rows hold times in nanoseconds."""
+    """Per-repetition values, dropping absent metrics. Rows hold times in nanoseconds."""
     return [_number(v, r, metric) for r in rows if (v := _metric_value(r, metric)) is not None]
 
 
@@ -290,7 +290,7 @@ def _shown(value: Any) -> str:
 
 
 def _skew_value(row: dict[str, Any], field: str) -> Any:
-    """A context value pooled runs should share; ``commit`` is the VCS commit."""
+    """A context value pooled runs should share. ``commit`` is the VCS commit."""
     context = row.get("context") or {}
     if field == "commit":
         vcs = context.get("vcs")
@@ -481,7 +481,7 @@ def _u_counts(n1: int, n2: int) -> list[int]:
 
     The counts are the coefficients of the Gaussian binomial
     ``[n1 + n2 choose n1]_q``, built as the product over ``i`` of
-    ``(1 - q**(n2 + i)) / (1 - q**i)``; every partial product is a polynomial.
+    ``(1 - q**(n2 + i)) / (1 - q**i)``. Every partial product is a polynomial.
     """
     poly = [1]
     for i in range(1, n1 + 1):
@@ -496,7 +496,7 @@ def _u_counts(n1: int, n2: int) -> list[int]:
 
 
 def mannwhitney_p(a: list[float], b: list[float]) -> float:
-    """Return a two-sided p-value; compare passes two or more values per sample.
+    """Return a two-sided p-value. :func:`mew.compare.compare` passes two or more values per sample.
 
     Without ties and with at most ``_EXACT_MAX`` values per sample, the p-value
     is exact: the share of rank orders at least as extreme as the observed one.
@@ -541,9 +541,9 @@ def encode_param(value: Any) -> Any:
 def encode_context(value: Any) -> Any:
     """A context value as a row holds it.
 
-    Scalars stay; mappings and lists or tuples are encoded item by item, a
-    mapping's keys as strings; a path becomes its ``os.fspath``; anything else
-    its type's qualified name.
+    Scalars stay. Mappings and lists or tuples are encoded item by item, with a
+    mapping's keys as strings. A path becomes its ``os.fspath``, and anything
+    else its type's qualified name.
     """
     if isinstance(value, _SCALARS):
         return value
