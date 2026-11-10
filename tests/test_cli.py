@@ -183,6 +183,7 @@ def test_help_honors_force_color(mew_cli, tmp_path, monkeypatch):
     assert res.returncode == 0
     # mew's styling, not the theme argparse colors help with on 3.14+.
     assert sgr("--min-time", "cyan") in res.stdout
+    assert sgr("(rich | json | jsonl)", "yellow") in res.stdout
 
 
 def test_list_selects_symlinked_bench_file_in_benchpath(mew_cli, tmp_path):
@@ -258,6 +259,10 @@ def test_strict_run_of_threaded_benchmarks_on_a_gil_build_exits_2(mew_cli, tmp_p
         (("run", "--append"), "--append needs a .jsonl"),
         (("run", "--append", "-o", "out.jsonl", "-o", "out.json"), "--append needs a .jsonl"),
         (("run", "-o", "a.json", "-o", "./a.json"), "duplicate output sink: ./a.json"),
+        # A value outside a fixed set, as git words it, with the closest one if any.
+        (("rnu",), "mew: error: invalid command: 'rnu'\nhint: did you mean 'run'?\n"),
+        (("run", "--format", "jsn"), "--format: invalid value 'jsn'\nhint: did you mean 'json'?"),
+        (("run", "--capture", "yes"), "mew: error: --capture: invalid value 'yes'\n"),
         # `--flag:` names the flag in argparse's error line; the usage line above
         # it lists every flag.
         (

@@ -139,6 +139,10 @@ releases may break the API.
 - Errors and warnings are shorter, in the form `mew: error: <what>: <problem>`
   and `mew: warning: …`, with a fix, where one helps, on a `hint:` line. The
   CLI prints mew's own Python warnings the same way, without a source location.
+- A mistyped command or a value outside an option's fixed set reads
+  `invalid command: 'rnu'` or `--format: invalid value 'jsn'`, with the closest
+  match on a `hint:` line, on every Python version. Help shows such values as
+  `(rich | json | jsonl)`.
 
 ### Fixed
 
