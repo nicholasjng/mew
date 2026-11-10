@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import difflib
 import functools
 import math
 import os
@@ -515,11 +516,25 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
     def _metavar(self, action: argparse.Action) -> str:
         return f"<{action.dest.replace('_', '-')}>"
 
+    def _metavar_formatter(
+        self, action: argparse.Action, default_metavar: str
+    ) -> Callable[[int], tuple[str, ...]]:
+        """Show a fixed set of values as ``(a | b | c)``, as git's help does."""
+        if action.metavar is None and action.choices and not _is_command(action):
+            shown = f"({' | '.join(map(str, action.choices))})"
+            return lambda size: (shown,) * size
+        return super()._metavar_formatter(action, default_metavar)
+
     def _get_default_metavar_for_optional(self, action: argparse.Action) -> str:
         return self._metavar(action)
 
     def _get_default_metavar_for_positional(self, action: argparse.Action) -> str:
         return self._metavar(action)
+
+
+def _is_command(action: argparse.Action) -> bool:
+    """Whether ``action`` picks the subcommand, whose choices are the commands."""
+    return isinstance(action, argparse._SubParsersAction)
 
 
 def _style_help(text: str) -> str:
@@ -529,6 +544,7 @@ def _style_help(text: str) -> str:
         (r"(?<![\w-])--[A-Za-z][\w-]*", "cyan"),
         (r"(?<![\w-])-[A-Za-z](?![\w-])", "green"),
         (r"<[^>]+>", "yellow"),
+        (r"\((?:[\w.-]+ \| )+[\w.-]+\)", "yellow"),  # a fixed set of values
     ):
         text = re.sub(pattern, lambda m, s=style: sgr(m.group(), s), text)
     return text
@@ -541,9 +557,26 @@ class _Parser(argparse.ArgumentParser):
     """
 
     def error(self, message: str) -> NoReturn:
-        """Print the usage, then ``mew: error: <message>``, and exit 2."""
+        """Print the usage, then ``mew: error: <message>``, and exit 2.
+
+        argparse's ``argument --flag: ...`` reads ``--flag: ...``.
+        """
         self.print_usage(sys.stderr)
-        self.exit(2, f"mew: error: {message}\n")
+        self.exit(2, f"mew: error: {message.removeprefix('argument ')}\n")
+
+    def _check_value(self, action: argparse.Action, value: Any) -> None:
+        """Reject a value outside ``choices`` as git does, with a close match if any.
+
+        Replaces argparse's ``invalid choice: ... (choose from ...)``, and its
+        ``maybe you meant`` on 3.14+.
+        """
+        if action.choices is None or value in action.choices:
+            return
+        close = difflib.get_close_matches(str(value), [str(c) for c in action.choices], n=1)
+        hint = f"\nhint: did you mean {close[0]!r}?" if close else ""
+        if _is_command(action):
+            raise argparse.ArgumentError(None, f"invalid command: {value!r}{hint}")
+        raise argparse.ArgumentError(action, f"invalid value {value!r}{hint}")
 
     def print_help(self, file: SupportsWrite[str] | None = None) -> None:
         self._print_styled(self.format_help(), file)
@@ -707,8 +740,7 @@ def _add_run_cmd(sub: argparse._SubParsersAction) -> None:
         "--format",
         default="rich",
         choices=("rich", "json", "jsonl"),
-        metavar="<format>",
-        help="Set standard-output format to rich, json, or jsonl.",
+        help="Set the standard-output format.",
     )
     p.add_argument(
         "--min-time",
@@ -834,8 +866,7 @@ def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "shell",
         choices=_completions.SHELLS,
-        metavar="<shell>",
-        help=f"Generate completions for {', '.join(_completions.SHELLS)}.",
+        help="The shell to generate completions for.",
     )
     p.set_defaults(_func=completions)
 
