@@ -23,6 +23,16 @@ The `test` dependency group contains the core test dependencies.
 On GIL builds, add `--group duckdb` to enable the SQL archive integration tests.
 Free-threaded and TSAN environments should omit that group, since duckDB does not ship free-threaded wheels.
 
+To see which lines of the Python package the tests leave out, run them under coverage:
+
+```console
+$ uv run coverage run -m pytest tests/ -q
+$ uv run coverage report
+```
+
+`uv run coverage html` writes a browsable report to `htmlcov/`.
+Coverage measures the Python package only, not the C++ bindings.
+
 ## Docs
 
 If your change touches public API or CLI surface, update the corresponding page under `docs/guide/`, `docs/howto/`, or `docs/reference/`.

@@ -60,7 +60,7 @@ docs = [
     "sphinx-autodoc-typehints>=2.4",
 ]
 duckdb = ["duckdb>=1.5"]
-test = ["pytest>=8"]
+test = ["pytest>=8", "coverage>=7.10"]
 
 [tool.uv]
 default-groups = ["build"]
@@ -109,6 +109,15 @@ test-command = [
     "python {project}/tests/smoke_wheel.py",
     "mew --version",
 ]
+
+[tool.coverage.run]
+# The directory, not the package: mew imports benchmark files as `mew._bench_*` modules.
+source = ["src/mew"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
 
 [tool.ruff]
 line-length = 100
