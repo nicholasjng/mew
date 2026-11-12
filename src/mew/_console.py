@@ -274,21 +274,12 @@ class Table:
 NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
 
 
-def scale_time(ns: float) -> tuple[float, str]:
-    """Rescale nanoseconds to the largest of s/ms/us/ns that keeps the value >= 1.
-
-    For example, ``6995135790.99`` becomes ``(7.00, "s")``.
-    """
+def fmt_time(ns: float) -> str:
+    """Nanoseconds as ``7.00 s``, in the largest of s/ms/us/ns that keeps the value >= 1."""
     for threshold, unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):
         if abs(ns) >= threshold:
-            return ns / threshold, unit
-    return ns, "ns"
-
-
-def fmt_time(ns: float) -> str:
-    """Nanoseconds as ``7.00 s``, in the unit :func:`scale_time` picks."""
-    scaled, unit = scale_time(ns)
-    return f"{scaled:.2f} {unit}"
+            return f"{ns / threshold:.2f} {unit}"
+    return f"{ns:.2f} ns"
 
 
 def fmt_bytes(n: int) -> str:

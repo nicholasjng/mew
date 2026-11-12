@@ -78,17 +78,7 @@ def _fmt_profile(cpu: Mapping[str, Any] | None) -> list[str]:
     return parts
 
 
-def _fmt_counters(row: BenchmarkResult) -> list[str]:
-    """Counters as Google Benchmark's console shows them: ``name=1.2Gi/s``."""
-    return [f"{c['name']}={fmt_counter(c['value'], c.get('format'))}" for c in row["counters"]]
-
-
 _JSON_CLOSER = "\n  ]\n}\n"
-
-
-def _indent_block(text: str, spaces: int) -> str:
-    """Re-indent every line after the first by ``spaces`` (json.dumps indents from col 0)."""
-    return text.replace("\n", "\n" + " " * spaces)
 
 
 def _stamp(context: dict[str, Any]) -> dict[str, Any]:
@@ -142,8 +132,8 @@ class JSONReporter(Reporter):
             prefix = "" if self._first_row else ","
             self._first_row = False
             # mew encoded every value when it built the row, so plain json.dumps holds it.
-            rendered = _indent_block(json.dumps({**self._stamp, **row}, indent=2), 4)
-            self._fh.write(f"{prefix}\n    {rendered}")
+            rendered = textwrap.indent(json.dumps({**self._stamp, **row}, indent=2), "    ")
+            self._fh.write(f"{prefix}\n{rendered}")
         self._fh.flush()
 
     def finalize(self) -> None:
@@ -373,7 +363,10 @@ class RichReporter(Reporter):
         # A family case's own label is part of its name already.
         label = row["label"]
         details = [label] if label and f"[{label}]" not in full_name else []
-        details += _fmt_counters(row)
+        # Counters as Google Benchmark's console shows them: `name=1.2Gi/s`.
+        details += [
+            f"{c['name']}={fmt_counter(c['value'], c.get('format'))}" for c in row["counters"]
+        ]
         if self._show_cpu:
             details += _fmt_profile(row.get("cpu_profile"))
         for line in fill(details, self._width, indent="  ", hang="    ", sep=" · "):

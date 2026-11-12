@@ -42,7 +42,8 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
         module = getattr(fn, "__module__", None) or "<unknown>"
         return f"{module}::{qualname}"
     path = Path(file).resolve()
-    root = _project_root(path.parent) or Path.cwd()
+    # The nearest directory with a pyproject.toml.
+    root = next((d for d in path.parents if (d / "pyproject.toml").is_file()), None) or Path.cwd()
     try:
         # relpath, not relative_to: outside the root it gives `../x.py`, which
         # can't collide as a bare file name would. With `/` on every OS, so
@@ -51,13 +52,6 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
     except ValueError:  # on another drive than the root, on Windows
         rel = path.name
     return f"{rel}::{qualname}"
-
-
-def _project_root(directory: Path) -> Path | None:
-    """The nearest of ``directory`` and its parents that has a ``pyproject.toml``."""
-    return next(
-        (d for d in (directory, *directory.parents) if (d / "pyproject.toml").is_file()), None
-    )
 
 
 def _body_frame(frame: FrameType) -> tuple[FrameType, State | None]:
