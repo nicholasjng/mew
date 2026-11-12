@@ -594,7 +594,7 @@ def encode_context(value: Any) -> Any:
 
 
 def _key(key: Any) -> str:
-    """A mapping key as JSON needs it, a string: as JSON itself writes a number key."""
+    """A mapping key as JSON needs it, a string: a scalar as JSON writes it, such as ``true``."""
     if isinstance(key, str):
         return key
-    return str(key) if isinstance(key, _SCALARS) else type_name(key)
+    return json.dumps(key) if isinstance(key, _SCALARS) else type_name(key)
