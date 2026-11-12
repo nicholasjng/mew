@@ -530,7 +530,7 @@ class _CommandHelpFormatter(argparse.HelpFormatter):
 
     def _format_action(self, action: argparse.Action) -> str:
         text = super()._format_action(action)
-        if isinstance(action, argparse._SubParsersAction):
+        if _is_command(action):
             _, _, text = text.partition("\n")  # strip the leading `<command>` line
         return text
 

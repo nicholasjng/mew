@@ -204,11 +204,6 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
     return value.get(tail) if isinstance(value, dict) else None
 
 
-def _metric_values(rows: list[dict[str, Any]], metric: str) -> list[float]:
-    """Per-repetition values, dropping absent metrics. Rows hold times in nanoseconds."""
-    return [_number(v, r, metric) for r in rows if (v := _metric_value(r, metric)) is not None]
-
-
 def _number(value: Any, row: dict[str, Any], metric: str) -> float:
     """``value`` as a float, or a :class:`ValueError` naming the row and metric."""
     try:
@@ -262,7 +257,10 @@ def _samples_from_groups(
     samples: dict[str, Sample] = {}
     counter = counter_name(metric)
     for name, group in groups.items():
-        values = _metric_values(group, metric)
+        # Per repetition, dropping absent metrics. Rows hold times in nanoseconds.
+        values = [
+            _number(v, r, metric) for r in group if (v := _metric_value(r, metric)) is not None
+        ]
         if not values:
             continue
         fmt = None
@@ -282,10 +280,8 @@ def _group_by_run(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict
     skipped ones included, so ``mew show``, ``mew log`` and ``mew compare`` see
     the same runs.
     """
-    buckets: defaultdict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    for r in rows:
-        buckets[_run_key(r)].append(r)
-    return dict(sorted(buckets.items()))
+    # sorted() is stable, so each run's rows keep their file order.
+    return {k: list(g) for k, g in groupby(sorted(rows, key=_run_key), key=_run_key)}
 
 
 def _pooled_rows(path: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
