@@ -61,14 +61,15 @@ class _Model:
 
 def test_context_values_json_cannot_hold_are_named_by_type(tmp_path: Path):
     """A value JSON can't represent is stored as its type's qualified name, never its `str()`;
-    a path as its string; tuples as lists, number keys as strings, and NaN as JSON's `NaN`."""
+    a path as its string; tuples as lists, scalar keys as JSON writes them, and NaN as `NaN`."""
     _bench()
     out = tmp_path / "results.json"
     context = {
         "model": _Model(),
         "data": Path("data") / "train.csv",
         "shape": (2, 3),
-        "by_size": {1: "small"},
+        "by_size": {1: "small", 2.5: "medium"},
+        "by_flag": {True: "on", None: "unset", math.inf: "unbounded"},
         "loss": math.nan,
     }
     mew.run(min_time="1x", reporter=JSONReporter(output=out), context=context)
@@ -77,7 +78,8 @@ def test_context_values_json_cannot_hold_are_named_by_type(tmp_path: Path):
     assert recorded["model"] == f"{__name__}._Model"
     assert recorded["data"] == str(Path("data") / "train.csv")
     assert recorded["shape"] == [2, 3]
-    assert recorded["by_size"] == {"1": "small"}
+    assert recorded["by_size"] == {"1": "small", "2.5": "medium"}
+    assert recorded["by_flag"] == {"true": "on", "null": "unset", "Infinity": "unbounded"}
     assert math.isnan(recorded["loss"])
 
 
