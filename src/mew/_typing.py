@@ -94,14 +94,15 @@ class BenchmarkResult(TypedDict):
         Provenance: the mew version as ``mew``, :func:`mew.machine_context`,
         and what the run's ``context=``, or a setup file's ``context()`` hook,
         added.
-    memory : dict, optional
+    memory : dict or None
         The memory manager's figures (``peak_bytes``, ``total_allocations``,
         ``iterations``, ``allocations_per_iteration``, and optionally
-        ``total_bytes`` and ``net_heap_growth``), when one ran and measured
-        something.
-    cpu_profile : dict, optional
-        The profiler manager's summary, when it returned one. The
-        ``mew.cpu`` profilers return a :class:`mew.cpu.CpuProfile`.
+        ``total_bytes`` and ``net_heap_growth``), or ``None`` when none ran
+        or it measured nothing.
+    cpu_profile : dict or None
+        The profiler manager's summary, or ``None`` when none ran or it
+        returned none. The ``mew.cpu`` profilers return a
+        :class:`mew.cpu.CpuProfile`.
     """
 
     name: str
@@ -118,8 +119,8 @@ class BenchmarkResult(TypedDict):
     schema: NotRequired[str]
     run: NotRequired[RunInfo]
     context: NotRequired[dict[str, Any]]
-    memory: NotRequired[dict[str, Any]]
-    cpu_profile: NotRequired[dict[str, Any]]
+    memory: dict[str, Any] | None
+    cpu_profile: dict[str, Any] | None
 
 
 class BenchmarkOptions(TypedDict, total=False):
@@ -200,7 +201,7 @@ class MemoryManager(Protocol):
         -------
         MemoryMetrics or None
             The figures, or ``None`` when nothing was measured, which leaves the
-            row without a ``memory`` block.
+            row's ``memory`` block ``None``.
         """
         ...
 
@@ -253,8 +254,8 @@ class ProfilerManager(Protocol):
         Returns
         -------
         ProfilerSummary or None
-            The summary, an empty dict included, or ``None`` to leave the row
-            without a ``cpu_profile`` block.
+            The summary, an empty dict included, or ``None`` to leave the row's
+            ``cpu_profile`` block ``None``.
         """
         return None
 

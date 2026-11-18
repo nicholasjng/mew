@@ -20,6 +20,8 @@ Until 1.0, minor releases may break the API.
   For `mew run`, define `context()` in the `[tool.mew] setup` file, which `mew run` calls once before the first benchmark.
   Benchmark files can no longer add context when imported.
 - Context values JSON can't hold are stored as their type's qualified name instead of their `str()`, and paths as their string.
+- Every row has `memory` and `cpu_profile`, `null` without a profiler, as `skip` is without a skip, so DuckDB finds both columns in any file.
+  Check for a block with `row["memory"] is not None` rather than `"memory" in row`.
 - A row's `session` block is `run`: `{id, date, name}`, with `date` in UTC with milliseconds (`2026-11-08T12:24:23.559Z`).
   `--session-tag` and `session_tag=` are `--run-name` and `run_name=`.
   `mew sessions` is `mew log`.

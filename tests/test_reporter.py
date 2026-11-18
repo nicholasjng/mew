@@ -39,6 +39,8 @@ def _fake_row(name: str, label: str = "") -> BenchmarkResult:
         "label": label,
         "skip": None,
         "counters": [],
+        "memory": None,
+        "cpu_profile": None,
     }
 
 
@@ -51,7 +53,7 @@ def _feed(reporter, *rows: BenchmarkResult) -> None:
 
 def test_json_reporter_writes_the_documented_shape(tmp_path):
     """A row of result format v1 has exactly these keys, in this order, with the format version
-    first and its own `session` and `context`, so every row stands alone."""
+    first and its own `run` and `context`, so every row stands alone."""
     out = tmp_path / "results.json"
     _run_one(JSONReporter(output=out))
 
@@ -73,8 +75,12 @@ def test_json_reporter_writes_the_documented_shape(tmp_path):
         "label",
         "skip",
         "counters",
+        "memory",
+        "cpu_profile",
     ]
+    # The blocks are null without a profiler, as `skip` is without a skip.
     assert (bench["schema"], bench["params"], bench["skip"]) == ("v1", {}, None)
+    assert bench["memory"] is bench["cpu_profile"] is None
 
 
 def test_json_reporter_leaves_a_stream_open():

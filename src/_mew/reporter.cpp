@@ -96,11 +96,14 @@ nb::dict run_to_dict(const Run& r, const nb::dict& params) {
     d["counters"] = counters;
     // GB stamps the memory result on the Run, mew's patch the profiler one.
     // A memory manager that measured nothing leaves its tombstone in num_allocs.
-    if (r.memory_result.memory_iterations > 0 &&
-        r.memory_result.num_allocs != benchmark::MemoryManager::TombstoneValue)
-        d["memory"] = memory_block(r);
-    if (!r.profile_result.json.empty())
-        d["cpu_profile"] = nb::module_::import_("json").attr("loads")(r.profile_result.json);
+    // Both blocks are always present, null without a measurement as `skip` is,
+    // so readers like DuckDB find the column in a file no profiler wrote to.
+    bool measured = r.memory_result.memory_iterations > 0 &&
+                    r.memory_result.num_allocs != benchmark::MemoryManager::TombstoneValue;
+    d["memory"] = measured ? nb::object(memory_block(r)) : nb::none();
+    d["cpu_profile"] = r.profile_result.json.empty()
+                           ? nb::none()
+                           : nb::module_::import_("json").attr("loads")(r.profile_result.json);
     return d;
 }
 
