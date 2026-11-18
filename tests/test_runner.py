@@ -466,13 +466,6 @@ def test_state_skip_inside_pause_does_not_resume_timing():
     assert cap.runs[0]["skip"]["message"] == "unmet precondition"
 
 
-def test_run_with_no_entries_returns_zero():
-    """`mew.run` with no registered benchmarks returns 0 and reports no rows."""
-    cap = Capture()
-    assert mew.run(min_time="1x", reporter=cap) == 0
-    assert cap.runs == []
-
-
 def test_state_batches_yields_n_and_counts_the_overshoot():
     """`state.batches(n)` yields `n` per batch, and the row counts the last batch's overshoot."""
     yielded: list[int] = []

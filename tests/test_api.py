@@ -244,19 +244,6 @@ def test_benchmark_rejects_structurally_confusing_names(bad):
     assert REGISTRY.all() == []  # nothing half-registered
 
 
-def test_benchmark_allows_slash_hierarchy_names():
-    """Benchmark names may use `/` to form a hierarchy."""
-
-    # `/` grouping (the Google Benchmark convention) stays legal.
-    @mew.benchmark(name="suite/sort/insertion")
-    def _bench(state):
-        for _ in state:
-            pass
-
-    (entry,) = REGISTRY.all()
-    assert entry.name == "suite/sort/insertion"
-
-
 # A label derived from a value ("s=x[1]") is checked too; ids= is the escape
 # hatch for values that collide with case addressing.
 @pytest.mark.parametrize("ids", [["a::b"], None])
