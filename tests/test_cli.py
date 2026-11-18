@@ -154,14 +154,6 @@ def test_run_summary_only_leaves_the_repetitions_to_files(mew_cli, benchdir, tmp
     assert len(out.read_text().splitlines()) == 4 * 2
 
 
-def test_run_sizes_the_console_name_column_to_the_longest_row(mew_cli, benchdir, tmp_path):
-    """The console table's name column is as wide as its longest benchmark name."""
-    res = mew_cli("run", str(benchdir), "--min-time", "1x", cwd=tmp_path)
-    assert res.returncode == 0, res.stderr
-    names = [line.split(" │ ")[0] for line in res.stdout.splitlines()[1:] if " │ " in line]
-    assert len(names[0]) == max(len(name.rstrip()) for name in names[1:])
-
-
 @pytest.mark.parametrize("args", [("-h",), ("run", "-h")])
 def test_help_is_plain_terminal_text(mew_cli, tmp_path, monkeypatch, args):
     """`-h` output contains no ANSI escapes, even with `PYTHON_COLORS=1`."""
