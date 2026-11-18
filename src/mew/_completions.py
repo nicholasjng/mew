@@ -238,11 +238,5 @@ def _fish_opt(cond: str, o: _Opt) -> str:
     return " ".join(parts)
 
 
-_GENERATORS = {"bash": _bash, "zsh": _zsh, "fish": _fish}
-#: The shells ``mew completions`` writes scripts for.
-SHELLS = tuple(_GENERATORS)
-
-
-def generate(shell: str, parser: argparse.ArgumentParser) -> str:
-    """Return the completion script for ``shell`` built from ``parser``."""
-    return _GENERATORS[shell](parser)
+#: Each shell ``mew completions`` writes scripts for, with its script generator.
+GENERATORS = {"bash": _bash, "zsh": _zsh, "fish": _fish}

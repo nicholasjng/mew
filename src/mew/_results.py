@@ -30,7 +30,8 @@ from mew._typing import BenchmarkResult
 ROW_STAMP_FIELDS = ("run", "context")
 
 #: Context fields that describe the machine and the mew that ran a benchmark:
-#: results that differ in them compare environments, not only code.
+#: results that differ in them compare environments, not only code. `host` is
+#: there only where a suite records it; mew doesn't, since it often names a person.
 SKEW_FIELDS = ("host", "cpu_model", "num_cpus", "cpu_scaling_enabled", "mew")
 
 

@@ -131,11 +131,6 @@ def _setup_context(cfg: _config.Config) -> dict[str, Any]:
     return dict(value)
 
 
-def _shown_path(path: Path) -> Path:
-    """``path`` relative to the cwd when it is inside it, as the user likely typed it."""
-    return path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path
-
-
 def _collect(
     paths: list[str],
     *,
@@ -175,7 +170,10 @@ def _collect(
     try:
         files = _registry.collect_files(selectors, file_patterns=cfg.python_files)
     except FileNotFoundError as e:
-        error(f"no such file or directory: {_shown_path(e.args[0])}")
+        # Relative to the cwd when inside it, as the user likely typed it.
+        missing, cwd = e.args[0], Path.cwd()
+        shown = missing.relative_to(cwd) if missing.is_relative_to(cwd) else missing
+        error(f"no such file or directory: {shown}")
         raise SystemExit(2) from e
 
     REGISTRY.clear()
@@ -614,7 +612,7 @@ class _Parser(argparse.ArgumentParser):
 
 def completions(shell: str) -> None:
     """Print a shell-completion script for ``shell`` to stdout."""
-    sys.stdout.write(_completions.generate(shell, _build_parser()))
+    sys.stdout.write(_completions.GENERATORS[shell](_build_parser()))
 
 
 def _context_arg(value: str) -> tuple[tuple[str, ...], str]:
@@ -939,7 +937,7 @@ def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
     p = _add_command(sub, "completions", help="Print a shell-completion script for eval/install.")
     p.add_argument(
         "shell",
-        choices=_completions.SHELLS,
+        choices=tuple(_completions.GENERATORS),
         help="The shell to generate completions for.",
     )
     p.set_defaults(_func=completions)
