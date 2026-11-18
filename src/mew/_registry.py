@@ -241,9 +241,6 @@ class Selector:
     is_directory: bool
     pattern: re.Pattern[str] | None
 
-    def includes(self, source: Path) -> bool:
-        return source == self.path or (self.is_directory and source.is_relative_to(self.path))
-
 
 def select_entries(
     candidates: Iterable[tuple[Entry, Path | None]],
@@ -259,9 +256,10 @@ def select_entries(
     selected = []
     for entry, source in candidates:
         applicable = [
-            selector.pattern
-            for selector in selectors
-            if source is not None and selector.includes(source)
+            sel.pattern
+            for sel in selectors
+            if source is not None
+            and (source == sel.path or (sel.is_directory and source.is_relative_to(sel.path)))
         ]
         if not applicable:
             continue

@@ -271,9 +271,6 @@ class Table:
         return lines
 
 
-NS_PER_UNIT = {"ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
-
-
 def fmt_time(ns: float) -> str:
     """Nanoseconds as ``7.00 s``, in the largest of s/ms/us/ns that keeps the value >= 1."""
     for threshold, unit in ((1e9, "s"), (1e6, "ms"), (1e3, "us")):

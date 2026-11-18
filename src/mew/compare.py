@@ -52,7 +52,6 @@ _CTX_VALUE_WIDTH = 40
 
 # Coefficient of variation above which measurements are flagged as noisy.
 _CV_UNRELIABLE = 0.25
-# `host` only where a suite records it; mew doesn't, since it often names a person.
 
 
 def _ctx_value(value: Any) -> str:
