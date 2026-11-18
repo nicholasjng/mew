@@ -179,11 +179,11 @@ def test_memory_manager_is_driven_and_stamped_onto_rows(metrics, block):
     assert mgr.calls == ["start", "stop"]
     # The pass's iterations come from Google Benchmark, and the per-iteration
     # rate is derived from them.
-    assert rep.runs[0].get("memory") == block
+    assert rep.runs[0]["memory"] == block
 
 
 def test_profiler_manager_is_driven_and_an_empty_summary_is_stamped():
-    """An empty summary is a summary too; only None leaves the block out. (A full summary's
+    """An empty summary is a summary too; only None leaves the block null. (A full summary's
     trip through Google Benchmark is the JSON-types test below.)"""
     _register_noop(iterations=1)
     mgr = FakeProfilerManager({})
@@ -214,7 +214,7 @@ def test_profiler_manager_result_keeps_its_json_types():
     ids=["returns-none", "required-hooks-only"],
 )
 def test_profiler_manager_without_a_result_leaves_row_unannotated(manager):
-    """A profiler manager that returns `None` or has no `get_result()` leaves no `cpu_profile`."""
+    """A profiler manager that returns `None` or has no `get_result()` leaves `cpu_profile` null."""
 
     @mew.benchmark(iterations=2)
     def bench_paused(state):
@@ -224,7 +224,7 @@ def test_profiler_manager_without_a_result_leaves_row_unannotated(manager):
 
     rep = Capture()
     mew.run(reporter=rep, profiler_manager=manager)
-    assert "cpu_profile" not in rep.runs[0]
+    assert rep.runs[0]["cpu_profile"] is None
 
 
 @pytest.mark.parametrize("reuse_scope", [False, True])
@@ -260,8 +260,7 @@ def test_managers_do_not_leak_into_a_later_run():
 
     # GB's manager registration is process-global; the run must unregister both.
     assert mem.calls == prof.calls == ["start", "stop"]
-    assert "memory" not in rep.runs[0]
-    assert "cpu_profile" not in rep.runs[0]
+    assert rep.runs[0]["memory"] is rep.runs[0]["cpu_profile"] is None
 
 
 def test_memory_manager_stop_exception_propagates_out_of_run():
@@ -379,7 +378,7 @@ def test_interrupted_pass_still_stops_the_manager(kind):
 
 
 def test_failed_timed_runs_skip_the_manager_passes():
-    """A benchmark whose timed run raises gets no memory or profiler pass, and neither block."""
+    """A benchmark whose timed run raises gets no memory or profiler pass, and null blocks."""
 
     @mew.benchmark(iterations=4)
     def bench_raises(state):
@@ -393,8 +392,8 @@ def test_failed_timed_runs_skip_the_manager_passes():
     # Only bench_noop gets memory and profiler passes.
     assert mem.calls == prof.calls == ["start", "stop"]
     raises, ok = rep.runs
-    assert "memory" not in raises and "cpu_profile" not in raises
-    assert "memory" in ok and "cpu_profile" in ok
+    assert raises["memory"] is raises["cpu_profile"] is None
+    assert ok["memory"] is not None and ok["cpu_profile"] is not None
 
 
 # --- the real backends -------------------------------------------------------
@@ -573,7 +572,7 @@ def test_pass_that_skips_before_its_loop_has_no_profile(sampler):
 
     rep = Capture()
     mew.run(reporter=rep, profiler_manager=_sampling_nothing(sampler))
-    assert ["cpu_profile" in row for row in rep.runs] == [True, False]
+    assert [row["cpu_profile"] is not None for row in rep.runs] == [True, False]
 
 
 @pytest.mark.skipif(

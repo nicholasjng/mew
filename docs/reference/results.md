@@ -27,7 +27,9 @@ Gzipped archives grow by one gzip member per `--append`.
   "cpu_time": 12127.9,
   "label": "n=1000",
   "skip": null,
-  "counters": [{"name": "items_per_second", "value": 82432110.0, "format": {"rate": true}}]
+  "counters": [{"name": "items_per_second", "value": 82432110.0, "format": {"rate": true}}],
+  "memory": null,
+  "cpu_profile": null
 }
 ```
 
@@ -41,8 +43,8 @@ Gzipped archives grow by one gzip member per `--append`.
 | `real_time`, `cpu_time` | Nanoseconds per iteration. |
 | `skip` | `null` for a measured row, otherwise `{"reason": "error" or "skipped", "message": ...}`. |
 | `counters` | `{name, value, format}` records, with float values. |
-| `memory` | With a memory profiler: `peak_bytes`, `total_allocations`, `iterations`, `allocations_per_iteration`, and optionally `total_bytes` and `net_heap_growth`. |
-| `cpu_profile` | With a CPU profiler: its summary, such as `sample_count` and `top_function`. |
+| `memory` | With a memory profiler: `peak_bytes`, `total_allocations`, `iterations`, `allocations_per_iteration`, and optionally `total_bytes` and `net_heap_growth`. `null` without one, or when it measured nothing. |
+| `cpu_profile` | With a CPU profiler: its summary, such as `sample_count` and `top_function`. `null` without one, or when it returned none. |
 
 `context.python.free_threaded_build` records build capability and `context.python.gil_enabled` the runtime state.
 A free-threaded build can have both set to `true` when an extension enabled the GIL.
