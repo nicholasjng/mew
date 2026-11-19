@@ -1,5 +1,5 @@
 diff --git a/include/benchmark/managers.h b/include/benchmark/managers.h
-index 7d66001..3b7ed24 100644
+index 7d66001..25f373a 100644
 --- a/include/benchmark/managers.h
 +++ b/include/benchmark/managers.h
 @@ -18,6 +18,7 @@
@@ -29,7 +29,7 @@ index 7d66001..3b7ed24 100644
      BeforeTeardownStop();
    }
 +  // Optional: called after the pass to collect its summary.
-+  virtual void GetResult(Result& result) { (void)result; }
++  virtual void GetResult(Result&) {}
  };
  
  BENCHMARK_EXPORT
