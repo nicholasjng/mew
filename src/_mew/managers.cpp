@@ -150,8 +150,8 @@ class PyProfilerManager final : public benchmark::ProfilerManager, public PyMana
 
 // GB holds raw pointers; Python's exit hooks unregister any managers left behind
 // by low-level callers, releasing these owners before interpreter teardown.
-std::unique_ptr<PyMemoryManager> g_memory;
-std::unique_ptr<PyProfilerManager> g_profiler;
+constinit std::unique_ptr<PyMemoryManager> g_memory;
+constinit std::unique_ptr<PyProfilerManager> g_profiler;
 
 }  // namespace
 

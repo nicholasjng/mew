@@ -4,6 +4,8 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 
+#include <bit>
+
 #include "managers.h"
 
 namespace nb = nanobind;
@@ -67,10 +69,16 @@ PyObject* pause_scope_exit(PyObject* self, PyObject* const*, Py_ssize_t nargs) {
 }
 
 PyMethodDef pause_scope_methods[] = {
-    {"__enter__", pause_scope_enter, METH_NOARGS, nullptr},
-    {"__exit__", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(pause_scope_exit)),
-     METH_FASTCALL, nullptr},
-    {nullptr, nullptr, 0, nullptr}};
+    {.ml_name = "__enter__",
+     .ml_meth = pause_scope_enter,
+     .ml_flags = METH_NOARGS,
+     .ml_doc = nullptr},
+    // CPython calls a METH_FASTCALL method through the PyCFunction type.
+    {.ml_name = "__exit__",
+     .ml_meth = std::bit_cast<PyCFunction>(&pause_scope_exit),
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = nullptr},
+    {}};
 
 PyType_Slot pause_scope_slots[] = {
     {Py_tp_doc, (void*)"Context manager that pauses State timing within a scope."},
@@ -80,9 +88,11 @@ PyType_Slot pause_scope_slots[] = {
 // Created only by State.pause(): a scope without a State would crash on entry.
 // register_state() fills in the name.
 PyType_Spec pause_scope_spec = {
-    nullptr, sizeof(PauseScope), 0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_DISALLOW_INSTANTIATION,
-    pause_scope_slots};
+    .name = nullptr,
+    .basicsize = sizeof(PauseScope),
+    .itemsize = 0,
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    .slots = pause_scope_slots};
 
 PyObject* state_pause(PyObject* self, PyObject*) {
     PyObject* obj = PyType_GenericAlloc(pause_scope_type, 0);
@@ -95,17 +105,19 @@ PyObject* state_pause(PyObject* self, PyObject*) {
 
 // Bound through the type slots for the same reason as PauseScope's methods.
 PyMethodDef state_methods[] = {
-    {"pause", state_pause, METH_NOARGS,
-     "Return a context manager that pauses timing for its ``with`` block.\n"
-     "\n"
-     "Inside another pause it does nothing. Entering it outside the benchmark\n"
-     "loop, or again while it is active, raises :class:`RuntimeError`.\n"
-     "\n"
-     "Returns\n"
-     "-------\n"
-     "AbstractContextManager\n"
-     "    The pause scope."},
-    {nullptr, nullptr, 0, nullptr}};
+    {.ml_name = "pause",
+     .ml_meth = state_pause,
+     .ml_flags = METH_NOARGS,
+     .ml_doc = "Return a context manager that pauses timing for its ``with`` block.\n"
+               "\n"
+               "Inside another pause it does nothing. Entering it outside the benchmark\n"
+               "loop, or again while it is active, raises :class:`RuntimeError`.\n"
+               "\n"
+               "Returns\n"
+               "-------\n"
+               "AbstractContextManager\n"
+               "    The pause scope."},
+    {}};
 
 struct BatchIter {
     benchmark::State* state;
@@ -181,7 +193,7 @@ void register_state(nb::module_& m) {
             "batches",
             [](benchmark::State& self, int64_t n) {
                 if (n <= 0) throw nb::value_error("batch size must be positive");
-                return BatchIter{&self, n};
+                return BatchIter{.state = &self, .n = n};
             },
             "n"_a,
             "Iterate in batches of ``n``, reducing dispatch overhead for fast bodies.\n"

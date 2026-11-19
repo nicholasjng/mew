@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 project(mew LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+# Google Benchmark sets its own standard, C++17, for its directory.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
