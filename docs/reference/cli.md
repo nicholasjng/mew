@@ -66,6 +66,15 @@ They never import benchmarks, so they do not complete benchmark names.
 :language: console
 ```
 
+(cli-report)=
+## `mew report`
+
+See [publishing a history report](../recipes/history-report.md) for what the page shows.
+
+```{literalinclude} ../_generated/cli-help-report.txt
+:language: console
+```
+
 (cli-completions)=
 ## `mew completions`
 

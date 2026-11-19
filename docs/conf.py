@@ -110,6 +110,7 @@ def _render_cli_help() -> None:
         "compare": (["compare", "--help"], "mew compare --help"),
         "show": (["show", "--help"], "mew show --help"),
         "log": (["log", "--help"], "mew log --help"),
+        "report": (["report", "--help"], "mew report --help"),
         "completions": (["completions", "--help"], "mew completions --help"),
     }
     with open(os.path.join(out_dir, "cli-help.txt"), "w") as fh:

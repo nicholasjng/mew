@@ -11,6 +11,11 @@ Until 1.0, minor releases may break the API.
   `mew compare` marks a benchmark whose version differs from the baseline's with `≠`, counts it apart in the summary, and lists it in the regression panel without failing the gate.
   It warns when the runs a file pools measured different versions.
   Rows from earlier files have no version and compare as before.
+- `mew report ARCHIVE` writes a self-contained HTML page of an archive's history, a view per machine and metric.
+  In the project's repository, it orders runs along the first-parent history of `-r/--revision` (`HEAD`), pools reruns of a commit, and names the commits a step could come from.
+  A step needs the regression threshold and twice the benchmark's noise, and a slowdown an allowlist rule covers shows as allowed.
+  Picking two points gives a `mew compare` command for them.
+  The page inlines uPlot, MIT-licensed, whose license ships in `licenses/uplot.txt`.
 
 ### Changed
 

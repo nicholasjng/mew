@@ -7,4 +7,5 @@ Start with the one closest to your problem.
 | --- | --- | --- |
 | Stop regressions before they merge | [Gate pull requests on regressions](ci-gate.md) | A same-machine, alternating base-against-head job with a regression gate. |
 | Find when a project became slower | [Track performance through Git history](git-history.md) | A JAX benchmark, a revision archive, and an automated bisection. |
+| See an archive's history at a glance | [Publish a history report](history-report.md) | A nightly job that appends a run and publishes `mew report`'s page. |
 | Query a growing archive of runs | [Analyze saved results](analyzing-results.md) | Run extraction, timing summaries, SQL queries, and Parquet export. |

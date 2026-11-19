@@ -38,6 +38,8 @@ htmlcov/
 
 # flame graphs and profiles
 *.html
+# but not the page template `mew report` fills in
+!src/mew/_report/page.html
 
 # Sphinx
 docs/_build/

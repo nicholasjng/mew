@@ -51,6 +51,7 @@ howto/native-profiling
 recipes/index
 recipes/ci-gate
 recipes/git-history
+recipes/history-report
 recipes/analyzing-results
 ```
 

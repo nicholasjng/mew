@@ -151,6 +151,17 @@ $ .venv/bin/mew compare results/GOOD_COMMIT_SHA.json results/BAD_COMMIT_SHA.json
 Replace those placeholders with the full hashes, which `mew log` shows as run names.
 Use the [archive analysis recipe](analyzing-results.md) to summarize timings by revision.
 
+To see the archive as a page, run `mew report` from the checkout under test, since it reads commits from the repository it runs in:
+
+```console
+$ cd ../jax-history
+$ ../jax-bench/.venv/bin/mew report ../jax-bench/history.jsonl -r BAD_REF -o ../jax-bench/report.html
+```
+
+`-r BAD_REF` orders the runs along the history you measured, whichever commit the worktree is on.
+The page then uses JAX's `pyproject.toml`, which has no `[tool.mew]`, so steps use the default 5% threshold.
+See [publishing a history report](history-report.md) for what the page shows.
+
 For continuous benchmarking, call `measure.sh` after checking out each new revision on a dedicated runner.
 Serialize jobs so measurements do not compete for the machine or write to the same archive concurrently.
 Restore the fixed environment, record the exact source revision, and retain the JSON results, archive, environment file, harness, and build logs as job artifacts.
