@@ -49,7 +49,7 @@ memory = [ "memray>=1.15.0; sys_platform != 'win32'" ]
 build = [
     "nanobind>=3.0",  # for creating clangd compilation databases.
     "ruff>=0.17.0",  # for CMake's post-build stub formatting step.
-    "ty>=0.0.90",
+    "ty>=0.0.100",
 ]
 docs = [
     "sphinx>=8",
