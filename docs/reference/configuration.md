@@ -15,11 +15,11 @@ setup = "benchmarks/conf.py"               # imported before any benchmark file
 
 | Table | Purpose | Documented in |
 | --- | --- | --- |
-| `[tool.mew.regressions]`, `[[tool.mew.regressions.allow]]` | Default threshold and per-benchmark exceptions | [Allowlist](../guide/comparing.md#allowlist) |
+| `[tool.mew.regressions]`, `[[tool.mew.regressions.allow]]` | Default threshold and per-benchmark exceptions, for `mew compare`'s gate and `mew report`'s steps | [Allowlist](../guide/comparing.md#allowlist) |
 | `[[tool.mew.counters]]` | Which direction is better per counter | [Counters](../guide/comparing.md#counters) |
 | `[tool.mew.profilers.<name>]` | Profiler presets for `--cpu-profiler` and `--memory-profiler` | [Profiling](../howto/profiling.md#sample-cpu-time) |
 
-`mew run`, `mew list`, and `mew compare` check the whole table before they start.
+`mew run`, `mew list`, `mew compare`, and `mew report` check the whole table before they start.
 An unknown key or invalid value stops them with exit code 2 and suggests the closest key:
 
 ```console

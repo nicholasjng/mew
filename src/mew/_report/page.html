@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ · mew report</title><style>__UPLOT_CSS__</style><style>__CSS__</style></head>
+<body><main>
+<header><h1>__TITLE__</h1><p class="meta" id="meta"></p></header>
+<div class="bar">
+  <div class="row">
+    <label>Machine <select id="machine"></select></label>
+    <label>Metric <select id="metric"></select></label>
+    <span class="presets" role="group" aria-label="Range"><button data-last="50">Last 50</button><button data-last="200">Last 200</button><button data-last="all">All</button></span>
+    <input id="q" type="search" placeholder="Filter benchmarks" aria-label="Filter benchmarks">
+    <label class="check"><input id="only" type="checkbox"> Only with steps in view</label>
+    <label>Layout <select id="layout"><option value="auto">Auto</option><option value="grid">Grid</option><option value="table">Table</option></select></label>
+    <label id="sort-wrap">Sort <select id="sort"><option value="attention">Newest step first</option><option value="change">Largest change</option><option value="name">Name</option></select></label>
+  </div>
+  <div class="info" id="info"></div>
+  <div class="cmp" id="cmp" hidden></div>
+</div>
+<section class="panel"><div class="panel-head"><h2>Suite</h2><span class="hint" id="suite-hint"></span></div><div id="overview"></div></section>
+<section class="panel"><div class="panel-head"><h2 id="steps-title">Steps</h2></div><ul class="steps" id="steps"></ul></section>
+<div class="cards" id="cards"></div>
+<table class="tbl" id="table" hidden><colgroup><col style="width:30%"><col style="width:38%"><col style="width:10%"><col style="width:9%"><col style="width:13%"></colgroup><thead><tr><th>Benchmark</th><th>History in view</th><th class="num">Latest in view</th><th class="num">Change in view</th><th>Steps in view</th></tr></thead><tbody id="tbody"></tbody></table>
+<p class="empty" id="empty" hidden>No benchmarks match.</p>
+</main>
+<script id="data" type="application/gzip;base64">__DATA__</script>
+<script>__UPLOT_JS__</script>
+<script type="module">__JS__</script>
+</body></html>

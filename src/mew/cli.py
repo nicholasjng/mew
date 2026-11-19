@@ -485,6 +485,22 @@ def show(
         raise SystemExit(1)
 
 
+def report(
+    archive: Path, *, output: Path, revision: str | None, where_args: list[tuple[str, str]]
+) -> None:
+    """Write an HTML page of a result archive's history."""
+    from mew._report import write
+
+    cfg = _load_config_or_exit()
+    with _usage_error(ValueError, OSError):
+        s = write(archive, output, cfg, revision=revision, where=_where(where_args))
+    machines = f"{s.machines} machine{'s' if s.machines != 1 else ''}"
+    steps = f"{s.steps} step{'s' if s.steps != 1 else ''}"
+    size = f"{s.size / 1024:.0f} KiB"
+    runs = f"{s.runs} run{'s' if s.runs != 1 else ''}"
+    print(f"Wrote {output} ({size}): {runs} on {machines}, {steps} in real time")
+
+
 def _unique_prefix_width(ids: list[str]) -> int:
     """The shortest prefix, of at least 8 characters, that tells ``ids`` apart.
 
@@ -935,6 +951,30 @@ def _add_log_cmd(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(_func=log)
 
 
+def _add_report_cmd(sub: argparse._SubParsersAction) -> None:
+    p = _add_command(sub, "report", help="Write an HTML page of a result archive's history.")
+    p.add_argument(
+        "archive", type=Path, help="The JSONL archive, such as `mew run --append` writes."
+    )
+    p.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path("report.html"),
+        metavar="<file>",
+        help="Write the page to <file> (default report.html).",
+    )
+    p.add_argument(
+        "-r",
+        "--revision",
+        metavar="<rev>",
+        help="Order runs along the first-parent history of <rev> in the project's repository "
+        "(default HEAD).",
+    )
+    _add_where_arg(p, verb="Report")
+    p.set_defaults(_func=report)
+
+
 def _add_completions_cmd(sub: argparse._SubParsersAction) -> None:
     p = _add_command(sub, "completions", help="Print a shell-completion script for eval/install.")
     p.add_argument(
@@ -972,6 +1012,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_compare_cmd(sub)
     _add_show_cmd(sub)
     _add_log_cmd(sub)
+    _add_report_cmd(sub)
     _add_completions_cmd(sub)
 
     return parser

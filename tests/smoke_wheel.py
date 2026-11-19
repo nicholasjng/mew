@@ -25,11 +25,17 @@ assert mew.__version__, "mew.__version__ is empty"  # ty: ignore[redundant-condi
 # Declared package data, absent from the wheel if wheel.packages ever drifts.
 for data in ("py.typed", "_core.pyi"):
     assert (resources.files("mew") / data).is_file(), f"{data} missing from wheel"
+# `mew report` inlines its page's files into every page it writes.
+for data in ("page.html", "report.css", "report.js", "uPlot.iife.min.js", "uPlot.min.css"):
+    assert (resources.files("mew._report") / data).is_file(), f"_report/{data} missing from wheel"
 
-# The extension links in Google Benchmark and nanobind, whose licenses must ship.
+# The extension links in Google Benchmark and nanobind, and report pages inline uPlot:
+# their licenses must ship.
 dist = metadata.distribution("mew-bench")
 shipped = set(dist.metadata.get_all("License-File") or [])
-bundled = {f"licenses/{name}.txt" for name in ("google-benchmark", "nanobind", "robin-map")}
+bundled = {
+    f"licenses/{name}.txt" for name in ("google-benchmark", "nanobind", "robin-map", "uplot")
+}
 assert bundled <= shipped, f"license files missing from metadata: {bundled - shipped}"
 for name in shipped:
     assert dist.read_text(f"licenses/{name}"), f"{name} missing from wheel"
