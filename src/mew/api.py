@@ -10,7 +10,7 @@ import os
 import textwrap
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
-from functools import wraps
+from functools import lru_cache, wraps
 from pathlib import Path
 from types import FrameType
 from typing import Any, Unpack, overload
@@ -44,16 +44,22 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
         # `or`: code run with empty globals, as by exec(), has a `None` module.
         module = getattr(fn, "__module__", None) or "<unknown>"
         return f"{module}::{qualname}"
+    return f"{_relative_file(file, os.getcwd())}::{qualname}"
+
+
+@lru_cache(maxsize=256)
+def _relative_file(file: str, cwd: str) -> str:
+    """``file`` relative to its project root, else ``cwd``. Cached: a file's benchmarks
+    share it, and finding the root stats every directory above the file."""
     path = Path(file).resolve()
-    root = project_root(path.parent) or Path.cwd()
+    root = project_root(path.parent) or Path(cwd)
     try:
         # relpath, not relative_to: outside the root it gives `../x.py`, which
         # can't collide as a bare file name would. With `/` on every OS, so
         # results from any OS match in `mew compare`.
-        rel = Path(os.path.relpath(path, root)).as_posix()
+        return Path(os.path.relpath(path, root)).as_posix()
     except ValueError:  # on another drive than the root, on Windows
-        rel = path.name
-    return f"{rel}::{qualname}"
+        return path.name
 
 
 def _source_version(fn: BenchmarkFn) -> str | None:
