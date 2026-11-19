@@ -6,7 +6,7 @@
 
 - Python 3.11+
 - CMake ≥ 3.21
-- A C++17 compiler (Clang, GCC, MSVC).
+- A C++20 compiler (Clang, GCC, MSVC).
 - [`uv`](https://docs.astral.sh/uv/): recommended for environments and locking.
 - [`prek`](https://github.com/j178/prek): pre-commit runner used in CI.
 

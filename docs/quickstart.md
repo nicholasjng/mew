@@ -12,7 +12,7 @@ $ uv add --dev mew-bench        # in a uv project, then prefix commands with `uv
 
 mew needs Python 3.11 or later.
 Supported platforms get a pre-built wheel.
-Other platforms compile the C++ extension from source, which needs CMake 3.21 or later and a C++17 compiler.
+Other platforms compile the C++ extension from source, which needs CMake 3.21 or later and a C++20 compiler.
 Extras add the built-in profilers:
 
 | Extra | Pulls in | Enables |

@@ -19,6 +19,7 @@ Until 1.0, minor releases may break the API.
 
 ### Changed
 
+- Building from source needs a C++20 compiler.
 - In jj, `vcs_context()` records the commit the working copy builds on, `@-`, as git records `HEAD`, rather than `@`, whose id changes with every snapshot.
   `change_id` is the parent's for a clean working copy, and the working copy's own when it has edits.
 - Google Benchmark is pinned to `e3dbee6` (v1.10.0-36), which skips the memory and profiler passes of a skipped run itself, so mew no longer patches that.

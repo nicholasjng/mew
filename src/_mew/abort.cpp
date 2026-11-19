@@ -4,7 +4,7 @@
 #include <utility>
 
 namespace {
-std::mutex g_mutex;
+constinit std::mutex g_mutex;
 std::exception_ptr g_pending;
 }  // namespace
 
