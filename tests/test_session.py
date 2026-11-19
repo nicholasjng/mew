@@ -101,21 +101,37 @@ def test_vcs_context_in_a_git_repo(tmp_path: Path):
 
 @pytest.mark.usefixtures("_isolated_vcs")
 def test_vcs_context_prefers_jj(tmp_path: Path):
-    """In a colocated jj and git repo, `vcs_context` reports jj: change id, commit and dirty
-    flag."""
+    """In a colocated jj and git repo, `vcs_context` reports jj. Its commit is the one the
+    working copy builds on, git's HEAD, since @'s own id changes with every snapshot; the
+    change id is the parent's until @ has edits, then @'s, which survives rewrites."""
     if not shutil.which("jj"):
         pytest.skip("jj not available")
+
+    def jj(*args: str) -> str:
+        proc = subprocess.run(
+            ["jj", *args], cwd=tmp_path, capture_output=True, text=True, check=True
+        )
+        return proc.stdout.strip()
+
     # Colocated with one commit, git has a HEAD too: only the order picks jj.
-    for args in (["git", "init", "--colocate"], ["commit", "-m", "x"]):
-        subprocess.run(["jj", *args], cwd=tmp_path, capture_output=True, check=True)
-    info = vcs_context(cwd=tmp_path)["vcs"]
-    assert info["backend"] == "jj"
-    assert info["change_id"] and info["commit"]
-    assert info["dirty"] is False
+    jj("git", "init", "--colocate")
+    jj("commit", "-m", "x")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    parent_change = jj("log", "--no-graph", "-r", "@-", "-T", "change_id.short(12)")
+    assert vcs_context(cwd=tmp_path)["vcs"] == {
+        "backend": "jj",
+        "change_id": parent_change,
+        "commit": head,
+        "dirty": False,
+    }
 
     # Not yet snapshotted: only a fresh snapshot shows the edit.
     (tmp_path / "f.txt").write_text("x")
-    assert vcs_context(cwd=tmp_path)["vcs"]["dirty"] is True
+    info = vcs_context(cwd=tmp_path)["vcs"]
+    own_change = jj("log", "--no-graph", "-r", "@", "-T", "change_id.short(12)")
+    assert info == {"backend": "jj", "change_id": own_change, "commit": head, "dirty": True}
 
 
 def test_machine_context_names_the_cpu_or_none():

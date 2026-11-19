@@ -172,15 +172,26 @@ def _jj(cwd: Path | None) -> dict[str, Any] | None:
         "-r",
         "@",
         "-T",
-        'change_id.short(12) ++ "\\n" ++ commit_id ++ "\\n" ++ if(empty, "clean", "dirty")',
+        'commit_id ++ " " ++ change_id.short(12) ++ " " ++ if(empty, "clean", "dirty") ++ "\\n"'
+        ' ++ parents.map(|c| c.commit_id() ++ " " ++ c.change_id().short(12)).join("\\n")',
     )
     if not out:
         return None
-    parts = out.splitlines()
-    if len(parts) != 3:
+    lines = out.splitlines()
+    head = lines[0].split()
+    if len(head) != 3 or any(len(p.split()) != 2 for p in lines[1:]):
         return None
-    change_id, commit, state = parts
-    return {"backend": "jj", "change_id": change_id, "commit": commit, "dirty": state == "dirty"}
+    commit, change_id, state = head
+    dirty = state == "dirty"
+    parents = [p.split() for p in lines[1:]]
+    # @'s commit id changes with every snapshot, and an empty @ is abandoned at
+    # the next `jj new`, so record the commit the code is based on, as git's
+    # HEAD: the parent, with the parent's change when @ adds nothing. A merge
+    # or a child of the root has no such parent, so @ stands for itself.
+    if len(parents) == 1 and parents[0][0].strip("0"):  # the root commit is all zeros
+        base, base_change = parents[0]
+        commit, change_id = base, change_id if dirty else base_change
+    return {"backend": "jj", "change_id": change_id, "commit": commit, "dirty": dirty}
 
 
 def _git(cwd: Path | None) -> dict[str, Any] | None:
@@ -216,7 +227,11 @@ def vcs_context(cwd: Path | None = None) -> dict[str, Any]:
     -------
     dict[str, Any]
         ``{"vcs": {...}}`` with backend, commit, and dirty state, or ``{}``.
-        ``dirty`` is left out when ``git status`` fails, e.g. times out.
+        ``commit`` is the last commit the working copy builds on, ``HEAD`` in
+        git and ``@-`` in jj, and ``dirty`` says whether it has edits on top.
+        jj also records the ``change_id``: the parent's for a clean working
+        copy, else the working copy's own, which survives rewrites. ``dirty``
+        is left out when ``git status`` fails, e.g. times out.
     """
     info = _jj(cwd) or _git(cwd)
     return {"vcs": info} if info else {}
