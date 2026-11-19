@@ -206,14 +206,14 @@ void register_state(nb::module_& m) {
              "Parameters\n"
              "----------\n"
              "msg : str\n"
-             "    The reason, reported as the row's ``skip_message``.")
+             "    The reason, reported as the row's ``skip.message``.")
         .def("skip_with_message", &benchmark::State::SkipWithMessage, "msg"_a,
              "Abort this benchmark without marking it an error (e.g. an unmet precondition).\n"
              "\n"
              "Parameters\n"
              "----------\n"
              "msg : str\n"
-             "    The reason, reported as the row's ``skip_message``.")
+             "    The reason, reported as the row's ``skip.message``.")
         .def("set_label", &benchmark::State::SetLabel, "label"_a,
              "Attach a free-form label to this benchmark's reported row.\n"
              "\n"
