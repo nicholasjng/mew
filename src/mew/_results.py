@@ -13,6 +13,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import groupby
+from operator import itemgetter
 from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
@@ -288,8 +289,9 @@ def _group_by_run(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict
     skipped ones included, so ``mew show``, ``mew log`` and ``mew compare`` see
     the same runs.
     """
-    # sorted() is stable, so each run's rows keep their file order.
-    return {k: list(g) for k, g in groupby(sorted(rows, key=_run_key), key=_run_key)}
+    # sorted() is stable, so each run's rows keep their file order. Keyed once per row.
+    keyed = sorted(((_run_key(r), r) for r in rows), key=itemgetter(0))
+    return {k: [r for _, r in g] for k, g in groupby(keyed, key=itemgetter(0))}
 
 
 def _pooled_rows(path: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -379,8 +381,9 @@ def load_runs(
     rows = read_rows(path, where)
     if not rows:  # a file with rows that `where` all misses raised already
         raise ValueError(f"{path}: no measurements in file")
+    # A run's rows share its key, so any of them speaks for it.
     return [
-        (cast("list[BenchmarkResult]", run), _provenance(run))
+        (cast("list[BenchmarkResult]", run), _provenance(run[:1]))
         for run in _group_by_run(rows).values()
     ]
 
