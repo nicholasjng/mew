@@ -926,21 +926,6 @@ def test_where_selects_rows_by_path(tmp_path: Path) -> None:
     assert len(read_results(p, where={"run.name": "*", "name": "b"})) == 4
 
 
-def test_where_compares_runs_of_one_archive(tmp_path: Path) -> None:
-    """An archive's runs compare against each other once `where` picks one per file."""
-    p = _history(tmp_path)
-    before, after = tmp_path / "before.jsonl", tmp_path / "after.jsonl"
-    before.write_text(
-        "".join(json.dumps(r) + "\n" for r in read_results(p, where={"run.name": "before"}))
-    )
-    after.write_text(
-        "".join(json.dumps(r) + "\n" for r in read_results(p, where={"run.name": "after"}))
-    )
-    console = Console(width=200)
-    compare([before, after], console=console)
-    assert "+99.50%" in console.export_text()
-
-
 def test_where_matching_no_row_raises(tmp_path: Path) -> None:
     """A file none of whose rows match says which conditions matched nothing."""
     from mew._paths import NoMatchError

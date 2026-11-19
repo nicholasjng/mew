@@ -58,7 +58,7 @@ def test_new_run_id_is_a_uuid7_led_by_the_unix_ms(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.usefixtures("_isolated_vcs")
 def test_vcs_context_outside_a_repo(tmp_path: Path):
-    """Always safe to hand to `update_context`, work tree or not."""
+    """Outside a work tree there is nothing to record, so a setup file can merge it always."""
     assert vcs_context(cwd=tmp_path) == {}
 
 
