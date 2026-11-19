@@ -3,7 +3,7 @@
 Versions follow [semantic versioning](https://semver.org/).
 Until 1.0, minor releases may break the API.
 
-## Unreleased
+## Version 0.4.0 (Nov 23, 2026)
 
 ### Breaking changes
 
@@ -55,19 +55,17 @@ Until 1.0, minor releases may break the API.
 - Benchmark names are relative to the project root (the nearest `pyproject.toml` above the file), not the working directory.
 - Rows no longer record `session.host`.
   `SessionSummary.host` and the `Host` column of `mew sessions` are gone.
-  Use `mew.set_context("host", ...)`.
-- A raising benchmark's `skip_message` is `Type: message` plus notes, and the full traceback goes to stderr.
+  To record a host, return it from the setup file's `context()`, pass `mew run --context host=...`, or pass `mew.run(context={"host": ...})`.
+- A raising benchmark's `skip.message` is `Type: message` plus notes, and the full traceback goes to stderr.
 - `mew list --names-only` is gone.
   `mew run --stdin` lines are `file.py::name` selectors, as `mew list` prints them.
 - `-o stdout` is gone (use `-o -`).
   `--append` needs a `.jsonl` sink.
 - `[tool.mew] capture` is gone.
-- `pNN` percentiles are gone from `--statistic` and `[tool.mew] statistic`.
 - `State.range()` and `State.range_size` are gone, and a case's raw `name` drops `/case:N`.
 - Abbreviated long options, such as `--rep`, are rejected.
 - `python-files` patterns match file names only.
 - Stacking `@benchmark` and `@parametrize` raises `ValueError`.
-- `mew compare --key` takes only `name` or `func`.
 - `mew.gil_enabled()` and `mew.is_free_threaded_build()` are gone.
   Every row records both in `context.python`.
 - `mew.memory.Capture`, `MemrayManager.captures` and `mew.regressions.report()` are gone.

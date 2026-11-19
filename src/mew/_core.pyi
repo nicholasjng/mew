@@ -137,7 +137,7 @@ class State:
         Parameters
         ----------
         msg : str
-            The reason, reported as the row's ``skip_message``.
+            The reason, reported as the row's ``skip.message``.
         """
 
     def skip_with_message(self, msg: str) -> None:
@@ -147,7 +147,7 @@ class State:
         Parameters
         ----------
         msg : str
-            The reason, reported as the row's ``skip_message``.
+            The reason, reported as the row's ``skip.message``.
         """
 
     def set_label(self, label: str) -> None:
