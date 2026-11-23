@@ -1245,3 +1245,39 @@ def test_benchmark_names_are_relative_to_the_project_root(mew_cli, tmp_path):
         res = mew_cli("list", target, cwd=cwd)
         assert res.returncode == 0, res.stderr
         assert res.stdout.split() == expected  # with `/` on every OS
+
+
+def _write_bench(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "import mew\n\n@mew.benchmark\ndef bench_sort(state):\n    for _ in state:\n        pass\n"
+    )
+
+
+@pytest.mark.parametrize("marker", ["pyproject.toml", ".git", ".jj"])
+def test_names_from_list_select_from_a_subdirectory(mew_cli, tmp_path, marker):
+    """Names relative to the project, else the repository, root select from below it,
+    as `--stdin` lines and as positional selectors."""
+    if marker == "pyproject.toml":
+        (tmp_path / marker).write_text("")
+    else:
+        (tmp_path / marker).mkdir()
+    _write_bench(tmp_path / "x" / "sub" / "bench_sort.py")
+    expected = ["x/sub/bench_sort.py::bench_sort"]
+    for cwd in (tmp_path, tmp_path / "x" / "sub"):
+        listing = mew_cli("list", str(tmp_path / "x"), cwd=cwd)
+        assert listing.stdout.split() == expected
+    sub = tmp_path / "x" / "sub"
+    for args, stdin in ((("--stdin",), listing.stdout), (tuple(expected), None)):
+        res = mew_cli("run", *args, "--min-time", "1x", "--format", "json", stdin=stdin, cwd=sub)
+        assert res.returncode == 0, res.stderr
+        assert [r["name"] for r in json.loads(res.stdout)["benchmarks"]] == expected
+
+
+def test_a_selector_found_from_the_cwd_wins_over_the_root(mew_cli, tmp_path):
+    """The project root is only the fallback: a path that exists from the cwd is the one run."""
+    (tmp_path / "pyproject.toml").write_text("")
+    _write_bench(tmp_path / "bench_sort.py")
+    _write_bench(tmp_path / "sub" / "bench_sort.py")
+    res = mew_cli("list", "bench_sort.py", cwd=tmp_path / "sub")
+    assert res.stdout.split() == ["sub/bench_sort.py::bench_sort"]

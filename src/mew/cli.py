@@ -145,15 +145,18 @@ def _collect(
     Exits ``1`` (the shared "nothing matched" code) if nothing is selected,
     and ``2`` if a file fails to import.
 
-    Stdin lines are selectors, as positional paths are, but always literal.
+    Stdin lines are selectors, as positional paths are, but always literal. A
+    relative selector not found from the cwd is tried against the project
+    root, since ``mew list`` prints names relative to it.
     """
+    root = cfg.project_root
     lines = [line.strip() for line in sys.stdin.read().splitlines()] if stdin else []
     # Keep each filter attached to its discovery path. Otherwise selecting
     # a.py::x and b.py::y also selects a.py::y and b.py::x. Compiled before any
     # import, so a bad pattern fails before benchmark code runs.
     with _usage_error(ValueError):
-        selectors = [_registry.parse(p, literal=literal) for p in paths]
-        selectors += [_registry.parse(line, literal=True) for line in lines if line]
+        selectors = [_registry.parse(p, fallback=root, literal=literal) for p in paths]
+        selectors += [_registry.parse(line, fallback=root, literal=True) for line in lines if line]
         if pattern:
             compile_name_filter(pattern, literal=literal)
     # Files to import come from positional args and stdin selectors, else
@@ -162,7 +165,6 @@ def _collect(
         # Benchpaths resolve against pyproject.toml, not the cwd, so a subdirectory
         # works. A missing one means "nothing to discover" in a fresh project, not
         # a hard error like a mistyped positional path.
-        root = cfg.project_root
         selectors = [
             sel for p in cfg.benchpaths if (sel := _registry.parse(p, root=root)).path.exists()
         ]
