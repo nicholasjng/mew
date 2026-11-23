@@ -272,13 +272,35 @@ def select_entries(
     return selected
 
 
-def parse(arg: str, *, root: Path | None = None, literal: bool = False) -> Selector:
+def project_root(start: Path) -> Path | None:
+    """The root benchmark names are relative to, searching ``start`` and its parents.
+
+    That is the nearest directory with a ``pyproject.toml`` file, else the
+    nearest repository root (``.git``, ``.jj`` or ``.hg``), else ``None``.
+    """
+    dirs = [start, *start.parents]
+    project = next((d for d in dirs if (d / "pyproject.toml").is_file()), None)
+    # `.git` is a file in a worktree or submodule.
+    return project or next(
+        (d for d in dirs if (d / ".git").exists() or (d / ".jj").is_dir() or (d / ".hg").is_dir()),
+        None,
+    )
+
+
+def parse(
+    arg: str, *, root: Path | None = None, fallback: Path | None = None, literal: bool = False
+) -> Selector:
     """Parse ``path[::filter]``. A relative path resolves against ``root``, else the cwd.
+
+    A relative path that doesn't exist there resolves against ``fallback``, if
+    it exists there: a name ``mew list`` printed is relative to the project root.
 
     Raises :class:`ValueError` on a malformed filter.
     """
     raw, _, flt = arg.partition("::")
     path = (root / raw if root is not None else Path(raw)).resolve()  # absolute replaces root
+    if fallback is not None and not path.exists() and (alt := (fallback / raw).resolve()).exists():
+        path = alt
     return Selector(path, path.is_dir(), compile_name_filter(flt, literal=literal) if flt else None)
 
 

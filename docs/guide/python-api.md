@@ -61,7 +61,8 @@ A grid is a plain list, so join grids with `+` or filter one with a comprehensio
 Options such as `threads` go to `@mew.parametrize`, never to `grid`.
 
 Apply one registration decorator per function.
-Default names look like `bench_sort.py::bench_sorted[n=100]`, relative to the project root.
+Default names look like `bench_sort.py::bench_sorted[n=100]`, relative to the project root: the nearest directory above the file with a `pyproject.toml`, else its repository root.
+A name selects from anywhere in the project, as `mew run bench_sort.py::bench_sorted` or a `mew list` line on `mew run --stdin`.
 Use `name="sort"` for a stable custom name and `ids=["small", "large"]` for explicit case labels.
 Labels must be unique, with one per case.
 Keep names and labels stable when tracking history.

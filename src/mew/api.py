@@ -14,7 +14,7 @@ from typing import Any, Unpack, overload
 
 from mew._core import State
 from mew._options import normalize_options
-from mew._registry import REGISTRY, Entry
+from mew._registry import REGISTRY, Entry, project_root
 from mew._results import encode_param
 from mew._typing import BenchmarkFn, BenchmarkOptions
 
@@ -31,10 +31,10 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
     """Pytest-style nodeid: ``path/to/bench_foo.py::bench_name``.
 
     The path is relative to the file's project root, the nearest directory
-    above it with a ``pyproject.toml``, so a benchmark keeps its name, which
-    ``mew compare`` matches by, wherever mew runs from. Without a project, it
-    is relative to the working directory. Falls back to module + qualname when
-    the source file can't be resolved.
+    above it with a ``pyproject.toml``, else its repository root, so a
+    benchmark keeps its name, which ``mew compare`` matches by, wherever mew
+    runs from. Outside both, it is relative to the working directory. Falls
+    back to module + qualname when the source file can't be resolved.
     """
     qualname = fn.__qualname__
     if not file:
@@ -42,8 +42,7 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
         module = getattr(fn, "__module__", None) or "<unknown>"
         return f"{module}::{qualname}"
     path = Path(file).resolve()
-    # The nearest directory with a pyproject.toml.
-    root = next((d for d in path.parents if (d / "pyproject.toml").is_file()), None) or Path.cwd()
+    root = project_root(path.parent) or Path.cwd()
     try:
         # relpath, not relative_to: outside the root it gives `../x.py`, which
         # can't collide as a bare file name would. With `/` on every OS, so

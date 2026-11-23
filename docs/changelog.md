@@ -52,7 +52,8 @@ Until 1.0, minor releases may break the API.
 - `mew.ProfilerResultProvider` and `mew.PausableProfiler` are merged into `mew.ProfilerManager`.
 - `mew.cpu.write_html()` and `mew.memory.write_flamegraph()` are replaced by `manager.write_outputs(directory)`.
   `mew.memory.manager()` is gone: create a `mew.memory.MemrayManager()`, which raises `ImportError` without memray.
-- Benchmark names are relative to the project root (the nearest `pyproject.toml` above the file), not the working directory.
+- Benchmark names are relative to the project root, not the working directory: the nearest directory above the file with a `pyproject.toml`, else its repository root (`.git`, `.jj` or `.hg`).
+  Only a file outside both is named relative to the working directory.
 - Rows no longer record `session.host`.
   `SessionSummary.host` and the `Host` column of `mew sessions` are gone.
   To record a host, return it from the setup file's `context()`, pass `mew run --context host=...`, or pass `mew.run(context={"host": ...})`.
@@ -101,6 +102,7 @@ Until 1.0, minor releases may break the API.
 
 ### Changed
 
+- A relative selector, positional or on `--stdin`, that doesn't exist from the working directory is tried against the project root, so the names `mew list` prints select from any subdirectory.
 - The documentation is reorganized around a quickstart, microbenchmark setup, the Python API, and recipes for production workflows.
 - Discovery skips hidden directories, virtualenvs, `__pycache__`, `build`, `dist` and `node_modules` below the searched paths.
 - `mew compare` computes exact Mann-Whitney p-values for up to 20 repetitions per side without ties.

@@ -3,6 +3,7 @@
 The CLI reads `[tool.mew]` from the nearest `pyproject.toml`.
 Every key is optional and spelled with dashes.
 Paths are relative to that `pyproject.toml`.
+Without one, the defaults apply, relative to the repository root, else to the working directory.
 `mew.run()` from Python ignores the file and uses its arguments and the registered options.
 
 ```toml

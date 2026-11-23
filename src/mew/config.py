@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from mew._managers import Preset, parse_presets
+from mew._registry import project_root
 from mew.regressions import AllowRule, CounterConfig, CounterRule, RegressionConfig
 
 # `[tool.mew]` keys.
@@ -45,9 +46,11 @@ class Config:
     profilers : dict[str, Preset]
         The ``[tool.mew.profilers.<name>]`` presets, by name.
     project_root : Path
-        Directory of the ``pyproject.toml`` these settings came from, or the
-        directory the search started in when there is none and defaults are
-        in use. Paths in the settings resolve against it.
+        Directory of the ``pyproject.toml`` these settings came from. Without
+        one, the defaults are in use, rooted at the repository the search
+        started in, else at the directory it started in. Paths in the
+        settings, and selectors not found from the working directory, resolve
+        against it.
     """
 
     benchpaths: list[str] = field(default_factory=lambda: ["benchmarks"])
@@ -134,7 +137,7 @@ def load(start: Path | None = None) -> Config:
                 return _parse_config(raw, project_root=parent)
             except ValueError as e:
                 raise ValueError(f"{candidate}: {e}") from e
-    return Config(project_root=cwd)
+    return Config(project_root=project_root(cwd) or cwd)
 
 
 def _parse_config(raw: Mapping[str, Any], *, project_root: Path) -> Config:
