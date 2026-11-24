@@ -18,6 +18,7 @@ Gzipped archives grow by one gzip member per `--append`.
     "dataset": {"name": "uniform-1k", "size": 1000}
   },
   "name": "benchmarks/bench_sort.py::bench_sort[n=1000]",
+  "version": "sha256:6b4727dc7970",
   "params": {"n": 1000},
   "repetition": 0,
   "repetitions": 10,
@@ -39,6 +40,7 @@ Gzipped archives grow by one gzip member per `--append`.
 | `run` | The run's time-ordered UUIDv7 `id`, its start `date` in UTC with milliseconds, and the optional `name` from `--run-name`. |
 | `context` | The mew version, machine, interpreter, profilers, and your own context. Your keys win over mew's. |
 | `name` | The benchmark as mew addresses it, `file.py::func[label]`, relative to the project root, with `/threads:N` for threaded runs. Function names never contain `[`. |
+| `version` | The decorator's `version=`, else `sha256:` and the first 12 hex digits of a hash of the function's code, the same on every Python version. `null` when mew can't read the source, as for code from `exec()`. mew only compares versions for equality, so a set one can be any string. |
 | `params` | A parametrized case's arguments. |
 | `real_time`, `cpu_time` | Nanoseconds per iteration. |
 | `skip` | `null` for a measured row, otherwise `{"reason": "error" or "skipped", "message": ...}`. |

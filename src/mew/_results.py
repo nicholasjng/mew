@@ -16,7 +16,7 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
-from mew._console import warn
+from mew._console import overflow, warn
 from mew._paths import (
     NoMatchError,
     Where,
@@ -98,11 +98,15 @@ class Sample:
         For a ``counters.<name>`` metric, the counter's ``format`` record from
         the benchmark's first row that has the counter, if any. ``None`` for a
         plain counter and for other metrics.
+    versions : frozenset[str]
+        The ``version`` of its rows, empty where rows have none, as for a
+        benchmark whose source mew couldn't read.
     """
 
     value: float
     values: tuple[float, ...] = ()
     counter_format: dict[str, Any] | None = None
+    versions: frozenset[str] = frozenset()
 
     @property
     def stddev(self) -> float | None:
@@ -269,7 +273,10 @@ def _samples_from_groups(
             # From the first row that has the counter: flags don't change between repetitions.
             fmt = next((r.get("format") for g in group if (r := _counter(g, counter))), None)
         samples[name] = Sample(
-            value=float(statistics.median(values)), values=tuple(values), counter_format=fmt
+            value=float(statistics.median(values)),
+            values=tuple(values),
+            counter_format=fmt,
+            versions=frozenset(v for r in group if isinstance(v := r.get("version"), str)),
         )
     return samples
 
@@ -340,6 +347,9 @@ def load_column(
         samples = _samples_from_groups(groups, metric)
     except ValueError as e:
         raise ValueError(f"{path}: {e}") from e
+    if mixed := sorted(n for n, s in samples.items() if len(s.versions) > 1):
+        shown = ", ".join(mixed[:5])
+        warn(f"{path}: pooled runs differ in version for {shown}{overflow(len(mixed), 5)}")
     skipped = {
         r["name"]: r["skip"].get("message") or r["skip"].get("reason", "skipped")
         for r in selected

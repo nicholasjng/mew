@@ -65,6 +65,10 @@ class BenchmarkResult(TypedDict):
         The benchmark as mew addresses it: the registered name, ``[case label]``
         for a family case, ``/threads:N`` when the benchmark set ``threads``.
         Shared by all repetitions of one benchmark.
+    version : str or None
+        The benchmark's ``version=``, else ``sha256:`` and a hash of its function's
+        code, or ``None`` when mew can't read the source. ``mew compare`` doesn't
+        gate a benchmark whose version differs from the baseline's.
     params : dict
         A family case's parameters, ``{}`` for a plain benchmark. Values JSON
         represents as themselves are kept. Any other is its type's qualified
@@ -106,6 +110,7 @@ class BenchmarkResult(TypedDict):
     """
 
     name: str
+    version: str | None
     params: dict[str, Any]
     repetition: int
     repetitions: int

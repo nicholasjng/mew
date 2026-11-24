@@ -112,6 +112,10 @@ To compare two implementations, run one benchmark file against each, as in the [
 Only shared names are compared, so a passing gate does not prove complete coverage.
 mew warns about benchmarks a file has as skipped.
 
+A benchmark whose `version` differs from the baseline's is marked `≠`: its delta compares changed code, not only a slower or faster run.
+The summary counts these apart, and mew warns when the runs one file pools measured different versions.
+[Inputs, names, and tags](python-api.md#inputs-names-and-tags) explains what the version covers.
+
 ## Gate on regressions
 
 ```console
@@ -122,6 +126,7 @@ The `%` suffix is required.
 A threshold prints a verdict panel to stderr, and the exit flag returns code 3 when a benchmark regresses.
 The threshold defaults to 5%, configuration overrides that, and the flag overrides both.
 The gate uses only the median delta and the threshold, not significance markers or noise warnings.
+A benchmark whose code changed isn't gated: the panel lists it as changed, and it doesn't set the exit code.
 The [CI recipe](../recipes/ci-gate.md) sets up a gate end to end.
 
 (allowlist)=
@@ -152,6 +157,7 @@ Each rule needs a `reason` and a `threshold` in percent, looser, stricter, or `i
 | `OK` | Within the active threshold. |
 | `REGRESSED` | Over the active threshold, which fails the gate. |
 | `ALLOWED_OVER` | Over the default, but a rule accepts it. |
+| `CHANGED` | Its version differs from the baseline's, so it isn't gated. |
 
 (compare-from-python)=
 ## Compare from Python

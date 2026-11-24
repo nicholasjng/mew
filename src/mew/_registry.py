@@ -56,6 +56,8 @@ class Entry:
         Per-benchmark Google Benchmark options.
     tags : frozenset[str]
         Selection tags.
+    version : str, optional
+        The rows' ``version``: the decorator's, else a hash of the source.
     case_labels : list[str], optional
         Human-readable family case labels.
     case_params : list[dict], optional
@@ -70,6 +72,7 @@ class Entry:
     file: str | None = None
     options: BenchmarkOptions = field(default_factory=lambda: BenchmarkOptions())
     tags: frozenset[str] = field(default_factory=frozenset)
+    version: str | None = None
     # Set on parametrized families: `fn` is a trampoline that takes the case index.
     case_labels: list[str] | None = None
     case_params: list[dict[str, Any]] | None = None

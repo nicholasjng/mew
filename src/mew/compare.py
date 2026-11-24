@@ -40,7 +40,13 @@ from mew._results import (
     read_results,
     run_summaries,
 )
-from mew.regressions import BenchmarkVerdict, CounterConfig, RegressionConfig, render_panel
+from mew.regressions import (
+    BenchmarkVerdict,
+    CounterConfig,
+    RegressionConfig,
+    Verdict,
+    render_panel,
+)
 
 __all__ = ["RunSummary", "compare", "read_results", "run_summaries"]
 
@@ -251,20 +257,27 @@ def _shared_file_prefix(names: Collection[str]) -> str:
     return prefixes.pop() if len(prefixes) == 1 else ""
 
 
-def _summary(outcomes: list[tuple[int, bool | None]], *, metric: str, has_direction: bool) -> str:
-    """One line on the first file against the baseline: what changed significantly."""
+def _summary(
+    outcomes: list[tuple[int, bool | None]], *, metric: str, has_direction: bool, new_code: int = 0
+) -> str:
+    """One line on the first file against the baseline: what changed significantly.
+
+    ``outcomes`` leaves out the ``new_code`` benchmarks whose code changed.
+    """
+    tail = f", {new_code} with changed code (≠)" if new_code else ""
     if not outcomes:
-        return "nothing to compare"
+        return f"nothing else to compare{tail}" if new_code else "nothing to compare"
     if all(sig is None for _, sig in outcomes):
-        return f"{len(outcomes)} compared, no significance test (needs 2+ repetitions a side)"
+        return f"{len(outcomes)} compared, no significance test (needs 2+ repetitions a side){tail}"
     changed = [d for d, sig in outcomes if sig]
     rest = len(outcomes) - len(changed)
     if not has_direction:
-        return f"{len(changed)} changed significantly, {rest} not"
+        return f"{len(changed)} changed significantly, {rest} not{tail}"
     worse, better = ("slower", "faster") if metric in TIME_METRICS else ("worse", "better")
     n_worse = sum(1 for d in changed if d > 0)
     return (
-        f"{n_worse} {worse}, {len(changed) - n_worse} {better}, {rest} not significantly different"
+        f"{n_worse} {worse}, {len(changed) - n_worse} {better}, "
+        f"{rest} not significantly different{tail}"
     )
 
 
@@ -276,6 +289,8 @@ class _Cmp:
     result: _Comparison
     #: None without a significance test, at fewer than 2 repetitions a side.
     significant: bool | None
+    #: Whether its version differs from the baseline's: the delta compares different code.
+    new_code: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +310,8 @@ def _delta_cell(c: _Cmp, higher_is_better: bool | None) -> list[Span]:
     cell: list[Span] = [_fmt_delta(c.result.delta, higher_is_better=higher_is_better)]
     if c.significant:
         cell.append((" (signif.)", "bold"))
+    if c.new_code:
+        cell.append((" ≠", "yellow"))
     return cell
 
 
@@ -347,6 +364,8 @@ def _compact_cell(c: _Cmp, *, higher_is_better: bool | None, speedup: bool) -> l
         cell.append(("▲" if up else "▼", style or None))
     if c.sample.cv is not None and c.sample.cv >= _CV_UNRELIABLE:
         cell.append((" (!)", "red"))
+    if c.new_code:
+        cell.append((" ≠", "yellow"))
     return cell
 
 
@@ -478,8 +497,10 @@ def _render(
 
     baseline = columns[0].samples
     verdicts: list[BenchmarkVerdict] = []
-    # The first file against the baseline: (direction, significant) per row.
+    # The first file against the baseline: (direction, significant) per row,
+    # and how many rows compare changed code instead.
     outcomes: list[tuple[int, bool | None]] = []
+    new_code = 0
     rows: list[_Row] = []
 
     for name in sorted(shared):
@@ -491,18 +512,26 @@ def _render(
                 continue
             s = c.samples[name]
             result = _compare_samples(base, s, higher_is_better)
+            # Rows without a version can't tell.
+            changed = bool(base.versions and s.versions and base.versions != s.versions)
             if idx == 0 and regressions is not None:
-                # compare() refuses a gate without a direction.
-                verdicts.append(
-                    regressions.evaluate(
-                        name, result.delta * 100.0, higher_is_better=bool(higher_is_better)
+                if changed:  # a gate would judge the new code against the old
+                    verdicts.append(
+                        BenchmarkVerdict(name, result.delta * 100.0, Verdict.CHANGED, None)
                     )
-                )
+                else:  # compare() refuses a gate without a direction.
+                    verdicts.append(
+                        regressions.evaluate(
+                            name, result.delta * 100.0, higher_is_better=bool(higher_is_better)
+                        )
+                    )
             significant = None if result.p_value is None else result.p_value < _SIGNIFICANCE_ALPHA
-            if idx == 0:
+            if idx == 0 and changed:
+                new_code += 1
+            elif idx == 0:
                 worse = -result.delta if higher_is_better else result.delta
                 outcomes.append((0 if worse == 0 else (1 if worse > 0 else -1), significant))
-            others.append(_Cmp(s, result, significant))
+            others.append(_Cmp(s, result, significant, new_code=changed))
         rows.append(_Row(name.removeprefix(prefix), base, others))
 
     # Memory and counters: less isn't "faster".
@@ -525,8 +554,13 @@ def _render(
     else:
         table = tables[layout]
     term.print(table)
-    summary = _summary(outcomes, metric=metric, has_direction=higher_is_better is not None)
+    summary = _summary(
+        outcomes, metric=metric, has_direction=higher_is_better is not None, new_code=new_code
+    )
     term.print(sgr(f"{labels[1]} against {labels[0]}: {summary}", "dim", enabled=term.color))
+    if any(c is not None and c.new_code for r in rows for c in r.others):
+        note = "≠ the version differs from the baseline's: the delta compares changed code"
+        term.print(sgr(note, "dim", enabled=term.color))
 
     if regressions is not None:
         text, code = render_panel(verdicts, default_threshold=regressions.default_threshold)

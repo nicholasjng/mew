@@ -677,3 +677,29 @@ def test_rows_carry_case_params_with_objects_named_by_type():
     params = row["params"]
     assert (params["n"], params["model"]) == (3, f"{__name__}._Model")
     assert math.isnan(params["ratio"])
+
+
+def test_rows_carry_each_benchmarks_version():
+    """Every row records its benchmark's version: a family case its family's, a plain
+    benchmark `version=` when set."""
+
+    @mew.parametrize([{"n": 1}, {"n": 2}], min_time="1x")
+    def bench_family(state, n):
+        for _ in state:
+            pass
+
+    @mew.benchmark(min_time="1x", version="v2")
+    def bench_pinned(state):
+        for _ in state:
+            pass
+
+    cap = Capture()
+    mew.run(reporter=cap)
+    versions = {row["name"].rsplit("::", 1)[1]: row["version"] for row in cap.runs}
+    family = mew.REGISTRY.all()[0].version
+    assert family is not None and family.startswith("sha256:")
+    assert versions == {
+        "test_rows_carry_each_benchmarks_version.<locals>.bench_family[n=1]": family,
+        "test_rows_carry_each_benchmarks_version.<locals>.bench_family[n=2]": family,
+        "test_rows_carry_each_benchmarks_version.<locals>.bench_pinned": "v2",
+    }

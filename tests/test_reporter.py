@@ -29,6 +29,7 @@ def _fake_row(name: str, label: str = "") -> BenchmarkResult:
     """A minimal BenchmarkResult row for driving reporters without a run."""
     return {
         "name": name,
+        "version": None,
         "params": {},
         "repetition": 0,
         "repetitions": 1,
@@ -65,6 +66,7 @@ def test_json_reporter_writes_the_documented_shape(tmp_path):
         "run",
         "context",
         "name",
+        "version",
         "params",
         "repetition",
         "repetitions",

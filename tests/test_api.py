@@ -341,3 +341,95 @@ def test_a_benchmark_without_a_module_or_file_is_named_unknown():
     code = "import mew\n\n@mew.benchmark\ndef bench_x(state):\n    for _ in state:\n        pass\n"
     exec(compile(code, "<string>", "exec"), {})  # ruff: ignore[S102]
     assert [e.name for e in REGISTRY.all()] == ["<unknown>::bench_x"]
+
+
+_BASE = """
+import mew
+
+@mew.benchmark
+def bench_x(state):
+    data = list(range(10))
+    for _ in state:
+        sorted(data)
+"""
+
+
+def _entry_version(directory, source: str) -> str | None:
+    """The version of the one benchmark a file of ``source`` in ``directory`` registers."""
+    from mew._registry import discovered, import_file
+
+    directory.mkdir()
+    path = directory / "bench_x.py"
+    path.write_text(source)
+    with discovered():
+        import_file(path)
+        (entry,) = REGISTRY.all()
+        return entry.version
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        # Formatting, quotes and a formatter's parentheses and trailing commas.
+        _BASE.replace("list(range(10))", "list(\n        range(10),\n    )"),
+        # A comment and a docstring.
+        _BASE.replace("    data =", '    """Sort ten numbers."""\n    # warm\n    data ='),
+        # Its decorator: options, and for a family, its cases, which rows hold as params.
+        _BASE.replace("@mew.benchmark", "@mew.benchmark(min_time=0.5)"),
+    ],
+)
+def test_source_version_ignores_what_doesnt_change_the_code(tmp_path, variant):
+    """The default version hashes the function's syntax tree, not its text."""
+    base = _entry_version(tmp_path / "a", _BASE)
+    assert base is not None and base.startswith("sha256:")
+    assert _entry_version(tmp_path / "b", variant) == base
+
+
+def test_source_version_changes_with_the_code_and_yields_to_version(tmp_path):
+    """Changing the body changes the hash, and `version=` replaces it."""
+    base = _entry_version(tmp_path / "a", _BASE)
+    assert _entry_version(tmp_path / "b", _BASE.replace("10", "11")) != base
+    pinned = _BASE.replace("@mew.benchmark", '@mew.benchmark(version="2")')
+    assert _entry_version(tmp_path / "c", pinned) == "2"
+
+
+def test_family_cases_share_a_version_a_new_case_keeps():
+    """Every case of a family carries one version, and adding a case doesn't change it."""
+
+    @mew.parametrize([{"n": 1}])
+    def bench_a(state, n):
+        for _ in state:
+            pass
+
+    @mew.parametrize([{"n": 1}, {"n": 2}], name="bench_b")
+    def bench_a(state, n):  # noqa: F811
+        for _ in state:
+            pass
+
+    one, two = REGISTRY.all()
+    assert one.version == two.version is not None
+
+
+def test_version_is_none_without_source():
+    """A function without readable source, as from exec(), has no version."""
+    ns: dict = {}
+    exec("def bench_x(state):\n    for _ in state:\n        pass\n", ns)  # ruff: ignore[S102]
+    mew.benchmark(ns["bench_x"])
+    (entry,) = REGISTRY.all()
+    assert entry.version is None
+
+
+@pytest.mark.parametrize(
+    ("version", "error"), [(2, TypeError), ("", ValueError), ("a\nb", ValueError)]
+)
+def test_decorators_reject_a_bad_version(version, error):
+    """`version=` takes a non-empty, single-line string, on both decorators."""
+    with pytest.raises(error, match="version"):
+        mew.benchmark(version=version)
+    with pytest.raises(error, match="version"):
+        mew.parametrize([{"n": 1}], version=version)
+
+
+def test_source_version_is_pinned_across_python_versions(tmp_path):
+    """The hash of a fixed function is a constant, so CI's every Python version agrees on it."""
+    assert _entry_version(tmp_path / "a", _BASE) == "sha256:6b4727dc7970"
