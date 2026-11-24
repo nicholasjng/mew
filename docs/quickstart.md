@@ -24,7 +24,7 @@ Check the installation:
 
 ```console
 $ mew --version
-mew 0.3.0 (Google Benchmark v1.10.0-13-g3251a251+mew)
+mew 0.4.0 (Google Benchmark v1.10.0-36-ge3dbee68+mew)
 ```
 
 The trailing identifier names the Google Benchmark commit the extension was built against, with `+mew` marking [mew's patches](development/patches.md).
