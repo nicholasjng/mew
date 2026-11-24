@@ -1,5 +1,5 @@
 diff --git a/include/benchmark/managers.h b/include/benchmark/managers.h
-index 963bf58..6a3eb6e 100644
+index 7d66001..3b7ed24 100644
 --- a/include/benchmark/managers.h
 +++ b/include/benchmark/managers.h
 @@ -18,6 +18,7 @@
@@ -34,10 +34,10 @@ index 963bf58..6a3eb6e 100644
  
  BENCHMARK_EXPORT
 diff --git a/include/benchmark/reporter.h b/include/benchmark/reporter.h
-index 3faa21d..49f6572 100644
+index 43e693d..b2f892b 100644
 --- a/include/benchmark/reporter.h
 +++ b/include/benchmark/reporter.h
-@@ -119,6 +119,7 @@ class BENCHMARK_EXPORT BenchmarkReporter {
+@@ -118,6 +118,7 @@ class BENCHMARK_EXPORT BenchmarkReporter {
      UserCounters counters;
      MemoryManager::Result memory_result;
      double allocs_per_iter;
@@ -46,7 +46,7 @@ index 3faa21d..49f6572 100644
  
    struct PerFamilyRunReports {
 diff --git a/src/benchmark_runner.cc b/src/benchmark_runner.cc
-index 1f0be5e..ad58120 100644
+index 671de4d..1ad02b0 100644
 --- a/src/benchmark_runner.cc
 +++ b/src/benchmark_runner.cc
 @@ -83,11 +83,27 @@ constexpr IterationCount kMaxIterations = 1000000000000;
@@ -86,7 +86,7 @@ index 1f0be5e..ad58120 100644
  
      report.memory_result = memory_result;
      report.allocs_per_iter =
-@@ -456,35 +473,39 @@ void BenchmarkRunner::RunWarmUp() {
+@@ -465,36 +482,40 @@ void BenchmarkRunner::RunWarmUp() {
    }
  }
  
@@ -101,7 +101,8 @@ index 1f0be5e..ad58120 100644
    b.Setup();
 -  memory_manager->Start();
 -  RunInThread(&b, memory_iterations, 0, manager.get(),
--              perf_counters_measurement_ptr,
+-              // memory manager doesn't use perf counters
+-              /*perf_counters_measurement=*/nullptr,
 -              /*profiler_manager=*/nullptr);
 -  MemoryManager::Result memory_result;
 -  memory_manager->Stop(memory_result);
@@ -130,9 +131,10 @@ index 1f0be5e..ad58120 100644
 +MemoryManager::Result BenchmarkRunner::RunMemoryManager(
 +    IterationCount memory_iterations) {
 +  MemoryLoopScope scope(memory_manager);
-+  // Includes any overshoot from KeepRunningBatch().
-+  scope.result.memory_iterations = RunManagerPass(
-+      memory_iterations, &scope, perf_counters_measurement_ptr);
++  // Includes any overshoot from KeepRunningBatch(). The memory manager
++  // doesn't use perf counters.
++  scope.result.memory_iterations =
++      RunManagerPass(memory_iterations, &scope, /*pcm=*/nullptr);
 +  return scope.result;
 +}
 +
@@ -145,12 +147,13 @@ index 1f0be5e..ad58120 100644
  }
  
  void BenchmarkRunner::DoOneRepetition() {
-@@ -545,16 +566,18 @@ void BenchmarkRunner::DoOneRepetition() {
+@@ -555,17 +576,19 @@ void BenchmarkRunner::DoOneRepetition() {
      memory_result = RunMemoryManager(memory_iterations);
    }
  
 +  ProfilerManager::Result profile_result;
-   if (profiler_manager != nullptr) {
+   if (profiler_manager != nullptr &&
+       i.results.skipped_ == internal::NotSkipped) {
      // We want to externally profile the benchmark for the same number of
      // iterations because, for example, if we're tracing the benchmark then we
      // want trace data to reasonably match PMU data.

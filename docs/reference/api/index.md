@@ -76,7 +76,7 @@ Comparison helpers live in `mew.compare`, regression rules in `mew.regressions`,
 .. py:data:: BENCHMARK_VERSION
    :type: str
 
-   The Google Benchmark version the extension was built against, in ``git describe`` form with ``+mew`` marking mew's patches, such as ``v1.10.0-13-g3251a251+mew``.
+   The Google Benchmark version the extension was built against, in ``git describe`` form with ``+mew`` marking mew's patches, such as ``v1.10.0-36-ge3dbee68+mew``.
 
 .. py:data:: BENCHMARK_COMMIT
    :type: str

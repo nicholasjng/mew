@@ -5,7 +5,7 @@ FetchContent runs `cmake/apply_patches.cmake` as its patch step.
 A stamp file in the fetched tree records the base commit and each patch's hash.
 When either changes, the script resets the tree to the pin and re-applies the whole series.
 
-Because of the patches, the build reports Google Benchmark's version with `+mew` build metadata, for example `v1.10.0-13-g3251a251+mew`.
+Because of the patches, the build reports Google Benchmark's version with `+mew` build metadata, for example `v1.10.0-36-ge3dbee68+mew`.
 The mew version identifies the exact patch series, since the series only changes between mew releases.
 A build against your own checkout (`-DFETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK=...`) skips the patch step, so apply the series to it yourself.
 mew does not compile against an unpatched tree.

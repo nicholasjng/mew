@@ -77,7 +77,7 @@ find_package(nanobind CONFIG REQUIRED)
 # --- Google Benchmark ---------------------------------------------------------
 include(FetchContent)
 
-set(_mew_benchmark_default_commit "3251a251c4499a7b63b5e37b3d818b7a48b0c477")
+set(_mew_benchmark_default_commit "e3dbee683edba9cc274ae5320f54923184c4b466")
 
 # A plain CACHE default would keep an existing build tree on the old pin after
 # a bump. Follow the default unless the cached value was overridden, i.e. it
@@ -98,7 +98,6 @@ set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 set(MEW_BENCHMARK_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-profiler-stop-on-early-exit.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-profilermanager-result.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/0003-skip-passes-after-failure.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0004-timer-running.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0005-manager-pass-thread-count.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-start-timer-cpu-first.patch"

@@ -12,6 +12,10 @@ Until 1.0, minor releases may break the API.
   It warns when the runs a file pools measured different versions.
   Rows from earlier files have no version and compare as before.
 
+### Changed
+
+- Google Benchmark is pinned to `e3dbee6` (v1.10.0-36), which skips the memory and profiler passes of a skipped run itself, so mew no longer patches that.
+
 ## Version 0.4.0 (Nov 23, 2026)
 
 ### Breaking changes
