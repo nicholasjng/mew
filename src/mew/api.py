@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import inspect
 import itertools
 import os
+import textwrap
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
@@ -51,6 +54,52 @@ def _qualified_name(fn: BenchmarkFn, file: str | None) -> str:
     except ValueError:  # on another drive than the root, on Windows
         rel = path.name
     return f"{rel}::{qualname}"
+
+
+def _source_version(fn: BenchmarkFn) -> str | None:
+    """``sha256:`` and a short hash of ``fn``'s code, ``None`` without its source.
+
+    The hash is the first 12 hex digits of a SHA-256 of the function's syntax
+    tree, so formatting, comments and its docstring don't change it, and
+    neither do its decorators, whose cases rows hold as ``params``. Code it
+    calls isn't covered.
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    except (OSError, TypeError, SyntaxError):
+        return None
+    node = tree.body[0] if tree.body else None
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):  # e.g. a lambda
+        return None
+    node.decorator_list = []
+    first = node.body[0]
+    is_docstring = isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+    if is_docstring and isinstance(first.value.value, str):
+        node.body = node.body[1:]
+    return "sha256:" + hashlib.sha256(_canonical(node).encode()).hexdigest()[:12]
+
+
+def _canonical(node: Any) -> str:
+    """A syntax tree as text, the same on every Python version mew supports.
+
+    Not ``ast.dump``, whose output differs between versions. Empty fields are
+    left out, so ones a newer version adds, such as ``type_params``, don't count.
+    """
+    if isinstance(node, ast.AST):
+        fields = ((k, getattr(node, k, None)) for k in node._fields)
+        inner = ",".join(f"{k}={_canonical(v)}" for k, v in fields if v is not None and v != [])
+        return f"{type(node).__name__}({inner})"
+    if isinstance(node, list):
+        return "[" + ",".join(map(_canonical, node)) + "]"
+    return repr(node)
+
+
+def _check_version(version: object) -> None:
+    """Reject a ``version=`` that isn't a non-empty, single-line string."""
+    if not isinstance(version, str):
+        raise TypeError(f"version must be a string, got {version!r}")
+    if not version.strip() or "\n" in version or "\r" in version:
+        raise ValueError(f"version must be a non-empty single line, got {version!r}")
 
 
 def _body_frame(frame: FrameType) -> tuple[FrameType, State | None]:
@@ -111,10 +160,11 @@ def _register(
     name: str | None,
     options: BenchmarkOptions,
     tags: frozenset[str],
+    version: str | None,
     case_labels: list[str] | None = None,
     case_params: list[dict[str, Any]] | None = None,
 ) -> BenchmarkFn:
-    """Add ``target`` to the registry as ``fn``."""
+    """Add ``target`` to the registry as ``fn``, versioned by its source unless ``version``."""
     try:
         file = inspect.getsourcefile(target)
     except TypeError:
@@ -126,6 +176,7 @@ def _register(
             file=file,
             options=options,
             tags=tags,
+            version=version if version is not None else _source_version(target),
             case_labels=case_labels,
             case_params=case_params,
         )
@@ -140,6 +191,7 @@ def benchmark(
     *,
     name: str | None = None,
     tags: Iterable[str] | str | None = None,
+    version: str | None = None,
     **options: Unpack[BenchmarkOptions],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]: ...
 
@@ -150,6 +202,7 @@ def benchmark(
     *,
     name: str | None = None,
     tags: Iterable[str] | str | None = None,
+    version: str | None = None,
     **options: Unpack[BenchmarkOptions],
 ) -> BenchmarkFn | Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a function as a benchmark.
@@ -167,6 +220,13 @@ def benchmark(
     tags : Iterable[str] or str, optional
         Tags to select the benchmark by, as :meth:`Registry.filter` does. A string
         is one tag.
+    version : str, optional
+        The rows' ``version``, which ``mew compare`` checks to tell a changed
+        benchmark from a slower one. It compares versions only for equality,
+        so any string will do. By default ``sha256:`` and a short hash of the
+        function's code, without its formatting, comments, docstring and
+        decorators. Set it to keep history across a refactor, or to mark a
+        change in code the function calls, which the hash doesn't cover.
     **options
         Google Benchmark options, see :class:`~mew.api.BenchmarkOptions`.
 
@@ -178,10 +238,11 @@ def benchmark(
     Raises
     ------
     TypeError
-        If an option is unknown or has the wrong type.
+        If an option is unknown or has the wrong type, or ``version`` isn't a string.
     ValueError
         If an option is out of range or contradicts another, ``name``
-        contains ``::``, brackets or a newline, or a benchmark of that name is
+        contains ``::``, brackets or a newline, ``version`` is empty or
+        spans lines, or a benchmark of that name is
         already registered, as when another decorator registered the function.
 
     Examples
@@ -194,10 +255,14 @@ def benchmark(
     norm_options = normalize_options(options)
     if name is not None:
         _check_addressable(name, "benchmark name")
+    if version is not None:
+        _check_version(version)
     norm_tags = _normalize_tags(tags)
 
     def deco(target: BenchmarkFn) -> BenchmarkFn:
-        return _register(target, target, name=name, options=norm_options, tags=norm_tags)
+        return _register(
+            target, target, name=name, options=norm_options, tags=norm_tags, version=version
+        )
 
     if fn is not None:
         if not callable(fn):  # e.g. @mew.benchmark("name")
@@ -214,6 +279,7 @@ def _register_family(
     ids: Sequence[str] | None,
     options: BenchmarkOptions,
     tags: frozenset[str],
+    version: str | None,
 ) -> BenchmarkFn:
     # `cases` holds fresh dicts from parametrize, only ever unpacked
     # by the trampoline.
@@ -257,6 +323,7 @@ def _register_family(
         name=name,
         options=options,
         tags=tags,
+        version=version,
         case_labels=labels,
         case_params=params,
     )
@@ -268,6 +335,7 @@ def parametrize(
     name: str | None = None,
     ids: Sequence[str] | None = None,
     tags: Iterable[str] | str | None = None,
+    version: str | None = None,
     **options: Unpack[BenchmarkOptions],
 ) -> Callable[[BenchmarkFn], BenchmarkFn]:
     """Register a family of benchmark cases, one per parameter dict.
@@ -287,6 +355,9 @@ def parametrize(
         (``n=10-algo=merge``).
     tags : Iterable[str] or str, optional
         Tags for every case.
+    version : str, optional
+        Every case's ``version``, as for :func:`benchmark`. The default hash
+        leaves out the decorator, so adding a case doesn't change the others'.
     **options
         Google Benchmark options for every case, as for :func:`benchmark`.
 
@@ -300,10 +371,11 @@ def parametrize(
     ValueError
         If there are no cases, ``ids`` doesn't have one label per case, two
         labels are equal, a name or label contains ``::``, brackets or a
-        newline, an option is out of range or contradicts another, or a
-        benchmark of that name is already registered.
+        newline, ``version`` is empty or spans lines, an option is out of
+        range or contradicts another, or a benchmark of that name is already
+        registered.
     TypeError
-        If an option is unknown or has the wrong type.
+        If an option is unknown or has the wrong type, or ``version`` isn't a string.
 
     Examples
     --------
@@ -318,9 +390,11 @@ def parametrize(
     """
     norm_options = normalize_options(options)
     norm_tags = _normalize_tags(tags)
+    if version is not None:
+        _check_version(version)
     cases = [dict(p) for p in parameters]  # snapshot, allow generators
     return lambda target: _register_family(
-        target, cases, name=name, ids=ids, options=norm_options, tags=norm_tags
+        target, cases, name=name, ids=ids, options=norm_options, tags=norm_tags, version=version
     )
 
 

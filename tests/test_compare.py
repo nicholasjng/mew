@@ -947,3 +947,55 @@ def test_where_matching_no_row_raises(tmp_path: Path) -> None:
 
     with pytest.raises(NoMatchError, match=r"history.jsonl: no rows match run.name=nope"):
         read_results(_history(tmp_path), where={"run.name": "nope"})
+
+
+def test_compare_marks_changed_code_and_leaves_it_ungated(tmp_path: Path) -> None:
+    """A benchmark whose version differs from the baseline's is marked ≠, counted apart
+    in the summary and listed, not failed, by the gate; one without versions is compared."""
+    other, base = _write_pair(
+        tmp_path,
+        base=[_row("a", 10.0, version="1"), _row("b", 10.0, version="1"), _row("c", 10.0)],
+        other=[_row("a", 20.0, version="2"), _row("b", 10.0, version="1"), _row("c", 10.0)],
+    )
+    console = Console(width=120)
+    code = compare([base, other], regressions=RegressionConfig(5), console=console)
+    assert code == 0  # `a` doubled, but its code changed
+    out = console.export_text()
+    (a_line,) = [line for line in out.splitlines() if line.startswith("a ")]
+    assert "≠" in a_line
+    assert not any("≠" in line for line in out.splitlines() if line.startswith(("b ", "c ")))
+    assert (
+        "2 compared, no significance test (needs 2+ repetitions a side), 1 with changed code (≠)"
+        in out
+    )
+
+
+def test_compare_still_gates_unchanged_code_next_to_changed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only the changed benchmark leaves the gate: a regression beside it still fails."""
+    other, base = _write_pair(
+        tmp_path,
+        base=[_row("a", 10.0, version="1"), _row("b", 10.0, version="1")],
+        other=[_row("a", 20.0, version="2"), _row("b", 20.0, version="1")],
+    )
+    assert compare([base, other], regressions=RegressionConfig(5), console=Console()) == 3
+    panel = capsys.readouterr().err
+    assert "❌ b" in panel and "≠  a" in panel and "1 changed." in panel
+
+
+def test_pooled_runs_with_different_versions_warn(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A file whose runs measured different code for one benchmark says so."""
+    p = tmp_path / "a.jsonl"
+    _write_jsonl(
+        p,
+        [
+            _row("a", 10.0, version="1", run_id="r1", date="2026-01-01T00:00:00.000Z"),
+            _row("a", 12.0, version="2", run_id="r2", date="2026-01-02T00:00:00.000Z"),
+        ],
+    )
+    samples, _, _ = load_column(p, "real_time")
+    assert samples["a"].versions == {"1", "2"}
+    assert "pooled runs differ in version for a" in capsys.readouterr().err

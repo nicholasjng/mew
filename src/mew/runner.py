@@ -237,17 +237,21 @@ def run(
     # Clear before registering so a second mew.run() in the same process
     # doesn't double-register entries.
     _core.clear_registered_benchmarks()
-    # A family case's parameters by its registered name, for its rows' `params`.
+    # A family case's parameters by its registered name, for its rows' `params`,
+    # and every benchmark's version, for their `version`.
     params: dict[str, dict[str, Any]] = {}
+    versions: dict[str, str | None] = {}
     for entry in selected:
         if entry.case_labels is None:
             _core.register_benchmark(entry.name, entry.fn, dict(entry.options))
+            versions[entry.name] = entry.version
             continue
         # One benchmark per case, named `name[label]`, its index bound for the
         # trampoline. A name filter may have narrowed the cases.
         for i, case_name in selected_cases(entry):
             fn = functools.partial(entry.fn, case=i)
             _core.register_benchmark(case_name, fn, dict(entry.options))
+            versions[case_name] = entry.version
             if entry.case_params is not None:
                 params[case_name] = entry.case_params[i]
 
@@ -269,7 +273,7 @@ def run(
         if capture_output:
             capture = OutputCapture(stack.enter_context(tempfile.TemporaryFile()))
             stack.callback(capture.close)
-        return _core.run_benchmarks(cli, rep, run_context, params, capture)
+        return _core.run_benchmarks(cli, rep, run_context, params, versions, capture)
 
 
 class OutputCapture:

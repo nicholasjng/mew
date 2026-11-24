@@ -61,6 +61,7 @@ def row(name: str, real_time: float, **extra: Any) -> dict:
     out: dict[str, Any] = {
         "schema": "v1",
         "name": name,
+        "version": None,
         "params": {},
         "repetition": 0,
         "repetitions": 1,

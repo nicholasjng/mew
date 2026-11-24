@@ -30,6 +30,10 @@ class Verdict(Enum):
     """Over the default threshold but inside a rule-supplied one, ``inf`` included;
     listed with the rule's reason, so the allowlist stays visible."""
 
+    CHANGED = "changed"
+    """The benchmark's ``version`` differs from the baseline's, so its delta
+    compares different code. Listed, but not gated."""
+
 
 def _matches(name: str, pattern: str) -> bool:
     """Case-sensitive ``fnmatch``, with brackets matched literally, as in a case's ``[label]``."""
@@ -278,7 +282,8 @@ def render_panel(
     """
     regressed = [v for v in verdicts if v.verdict is Verdict.REGRESSED]
     allowed_over = [v for v in verdicts if v.verdict is Verdict.ALLOWED_OVER]
-    if not (regressed or allowed_over):
+    changed = [v for v in verdicts if v.verdict is Verdict.CHANGED]
+    if not (regressed or allowed_over or changed):
         return "", 0
 
     lines = [f"Regressions (threshold +{default_threshold:.1f}%):"]
@@ -295,8 +300,11 @@ def render_panel(
         lines.append(
             f"  ⚠️  {v.name}   {v.delta_pct:+.2f}%   (allowlisted: {limit}, {v.rule.reason})"
         )
+    lines += [f"  ≠  {v.name}   {v.delta_pct:+.2f}%   (code changed, not gated)" for v in changed]
 
     summary = f"{len(regressed)} regression(s), {len(allowed_over)} over-but-allowed."
+    if changed:
+        summary = f"{summary[:-1]}, {len(changed)} changed."
     lines.append("")
     lines.append(summary)
     # 3 keeps a failed gate apart from 1 (nothing to compare) and 2 (usage errors).

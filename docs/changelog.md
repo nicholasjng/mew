@@ -3,6 +3,15 @@
 Versions follow [semantic versioning](https://semver.org/).
 Until 1.0, minor releases may break the API.
 
+## Unreleased
+
+### Added
+
+- Every row records its benchmark's `version`: `sha256:` and a short hash of the function's code, which formatting, comments, the docstring and decorators don't change, or the decorators' new `version=`, any string, which mew only compares for equality.
+  `mew compare` marks a benchmark whose version differs from the baseline's with `≠`, counts it apart in the summary, and lists it in the regression panel without failing the gate.
+  It warns when the runs a file pools measured different versions.
+  Rows from earlier files have no version and compare as before.
+
 ## Version 0.4.0 (Nov 23, 2026)
 
 ### Breaking changes

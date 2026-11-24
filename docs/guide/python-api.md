@@ -66,6 +66,9 @@ A name selects from anywhere in the project, as `mew run bench_sort.py::bench_so
 Use `name="sort"` for a stable custom name and `ids=["small", "large"]` for explicit case labels.
 Labels must be unique, with one per case.
 Keep names and labels stable when tracking history.
+Each row also records a `version`, by default `sha256:` and a short hash of the function's code, so `mew compare` can tell a changed benchmark from a slower one.
+Formatting, comments, the docstring and the decorator don't change the hash, so adding a case keeps the others' versions.
+Code the function calls isn't covered: pass `version="2"` when a helper's change should count, or to keep one version across a refactor.
 `tags="sort"` or `tags=("sort", "hot-path")` adds selection tags.
 Each row records its case's arguments in `params`.
 

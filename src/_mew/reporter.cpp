@@ -53,11 +53,13 @@ std::string addressable_name(const Run& r) {
 }
 
 // `params` maps a registered name (`name[label]` for a family case) to its
-// case's parameters, already encoded for JSON by the runner.
-nb::dict run_to_dict(const Run& r, const nb::dict& params) {
+// case's parameters, already encoded for JSON by the runner, and `versions` to
+// its version string or None.
+nb::dict run_to_dict(const Run& r, const nb::dict& params, const nb::dict& versions) {
     nb::dict d;
     d["name"] = addressable_name(r);
     nb::str registered(r.run_name.function_name.c_str());
+    d["version"] = versions.contains(registered) ? nb::object(versions[registered]) : nb::none();
     // A copy per row: a reporter that edits one row's params must not edit the next.
     d["params"] = params.contains(registered) ? params[registered].attr("copy")() : nb::dict();
     d["repetition"] = r.repetition_index;
@@ -112,17 +114,20 @@ class PyReporter : public BenchmarkReporter {
     nb::object py;
     // mew's run and provenance block, reported instead of GB's Context.
     nb::dict run_context;
-    // Registered name -> the case's parameters; see run_to_dict.
+    // Registered name -> the case's parameters, and -> its version; see run_to_dict.
     nb::dict params;
+    nb::dict versions;
     // mew.runner.OutputCapture, or None. Suspended around every callback so
     // reporters write to the real streams.
     nb::object capture;
 
     // Constructed and destroyed by `run_benchmarks` while it holds the GIL.
-    PyReporter(nb::object obj, nb::dict context, nb::dict case_params, nb::object cap)
+    PyReporter(nb::object obj, nb::dict context, nb::dict case_params, nb::dict case_versions,
+               nb::object cap)
         : py(std::move(obj)),
           run_context(std::move(context)),
           params(std::move(case_params)),
+          versions(std::move(case_versions)),
           capture(std::move(cap)) {}
 
     // Both flush C stdio first, so output buffered while redirected stays on its side.
@@ -161,7 +166,7 @@ class PyReporter : public BenchmarkReporter {
             for (const auto& r : runs) {
                 // mew reduces repetitions itself, so drop GB-side aggregates.
                 if (r.run_type == Run::RT_Aggregate) continue;
-                rows.append(run_to_dict(r, params));
+                rows.append(run_to_dict(r, params, versions));
             }
             // Google Benchmark reports a benchmark's aggregates as a batch of their own.
             if (rows.size() > 0) py.attr("report_results")(rows);
@@ -209,7 +214,7 @@ void register_reporter(nb::module_& m) {
     m.def(
         "run_benchmarks",
         [](std::vector<std::string> argv, nb::object reporter, nb::dict run_context,
-           nb::dict params, nb::object capture) {
+           nb::dict params, nb::dict versions, nb::object capture) {
             // GB only shuffles the char** array, never writes into the strings.
             std::vector<char*> argp;
             argp.reserve(argv.size());
@@ -221,7 +226,7 @@ void register_reporter(nb::module_& m) {
             benchmark::Initialize(&argc, argp.data());
 
             PyReporter pr(std::move(reporter), std::move(run_context), std::move(params),
-                          std::move(capture));
+                          std::move(versions), std::move(capture));
             size_t count;
             {
                 nb::gil_scoped_release release;
@@ -237,10 +242,11 @@ void register_reporter(nb::module_& m) {
             return count;
         },
         "argv"_a, "reporter"_a, "run_context"_a = nb::dict(), "params"_a = nb::dict(),
-        "capture"_a = nb::none(),
+        "versions"_a = nb::dict(), "capture"_a = nb::none(),
         "Initialize Google Benchmark with `argv` and run all registered benchmarks,\n"
         "reporting through `reporter`.\n"
-        "`params` maps a registered name to its case's parameters, stamped on its rows.\n"
+        "`params` maps a registered name to its case's parameters, and `versions` to\n"
+        "its version, both stamped on its rows.\n"
 
         "`capture` (an active mew.runner.OutputCapture) is suspended around every\n"
         "reporter callback, so reporters write to the real stdout/stderr.\n"

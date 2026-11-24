@@ -22,12 +22,14 @@ def run_benchmarks(
     reporter: object,
     run_context: dict = {},
     params: dict = {},
+    versions: dict = {},
     capture: object | None = None,
 ) -> int:
     """
     Initialize Google Benchmark with `argv` and run all registered benchmarks,
     reporting through `reporter`.
-    `params` maps a registered name to its case's parameters, stamped on its rows.
+    `params` maps a registered name to its case's parameters, and `versions` to
+    its version, both stamped on its rows.
     `capture` (an active mew.runner.OutputCapture) is suspended around every
     reporter callback, so reporters write to the real stdout/stderr.
     Returns the number of benchmarks run.
